@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "planai-pm"
+version = "0.1.0"
+description = "Local project management tool for AI coding workflows"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = []
+
+[project.scripts]
+planai = "planai.cli_main:main"
+planai-web = "planai.run_server:main"
+
+[tool.setuptools]
+include-package-data = true
+packages = ["planai"]
+
+[tool.setuptools.package-dir]
+planai = "."
+
+[tool.setuptools.package-data]
+planai = [
+  "ui/dist/**/*",
+  "ui/dist/*",
+  "ui/README.md"
+]

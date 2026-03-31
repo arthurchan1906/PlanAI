@@ -1,0 +1,38 @@
+# Python cache and local tooling
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local runtime data
+.planai/
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.sqlite-journal
+*.sqlite3-journal
+
+# Logs and temp files
+*.log
+*.tmp
+*.temp
+*.bak
+*.pid
+*.seed
+*.out
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Frontend build output
+ui/dist/
+ui/node_modules/
