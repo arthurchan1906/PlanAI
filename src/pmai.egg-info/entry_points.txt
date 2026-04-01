@@ -1,0 +1,3 @@
+[console_scripts]
+pmai = pmai.cli_main:main
+pmai-web = pmai.run_server:main

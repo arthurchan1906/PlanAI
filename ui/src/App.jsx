@@ -1319,16 +1319,16 @@ function ConsoleApp() {
     try {
       const dailyQuery = date ? `?date=${encodeURIComponent(date)}` : "";
       const [summaryData, canonData, taskData, commitData, ideaData, docData, auditData, decisionData, dailyData, historyData] = await Promise.all([
-        api("/planai/dashboard"),
-        api("/planai/canon"),
-        api("/planai/tasks"),
-        api("/planai/commits"),
-        api("/planai/ideas"),
-        api("/planai/docs"),
-        api("/planai/docs/audit"),
-        api("/planai/decisions"),
-        api(`/planai/daily${dailyQuery}`),
-        api("/planai/daily/history"),
+        api("/pmai/dashboard"),
+        api("/pmai/canon"),
+        api("/pmai/tasks"),
+        api("/pmai/commits"),
+        api("/pmai/ideas"),
+        api("/pmai/docs"),
+        api("/pmai/docs/audit"),
+        api("/pmai/decisions"),
+        api(`/pmai/daily${dailyQuery}`),
+        api("/pmai/daily/history"),
       ]);
 
       setDashboard(summaryData);
@@ -1409,7 +1409,7 @@ function ConsoleApp() {
       <Layout>
         <Header className="console-header">
           <div>
-            <Text className="header-kicker">PlanAI 本地面板</Text>
+            <Text className="header-kicker">PMAI 本地面板</Text>
             <Title level={3} className="header-title">
               {NAV_ITEMS.find((item) => item.key === view)?.label}
             </Title>
@@ -1442,7 +1442,7 @@ function ConsoleApp() {
               onSubmitCanon={() =>
                 runAction(
                   () =>
-                    api("/planai/canon/update", {
+                    api("/pmai/canon/update", {
                       method: "POST",
                       body: JSON.stringify({
                         decision_id: canonForm.decisionId,
@@ -1478,7 +1478,7 @@ function ConsoleApp() {
               onCreateTask={() =>
                 runAction(
                   () =>
-                    api("/planai/tasks", {
+                    api("/pmai/tasks", {
                       method: "POST",
                       body: JSON.stringify({
                         title: taskForm.title,
@@ -1493,7 +1493,7 @@ function ConsoleApp() {
               onUpdateTask={(taskId, status) =>
                 runAction(
                   () =>
-                    api(`/planai/tasks/${taskId}`, {
+                    api(`/pmai/tasks/${taskId}`, {
                       method: "PATCH",
                       body: JSON.stringify({ status, note: "updated from antd ui" }),
                     }),
@@ -1518,7 +1518,7 @@ function ConsoleApp() {
               onCreateCommit={() =>
                 runAction(
                   () =>
-                    api("/planai/commits", {
+                    api("/pmai/commits", {
                       method: "POST",
                       body: JSON.stringify({
                         title: commitForm.title,
@@ -1552,7 +1552,7 @@ function ConsoleApp() {
               onUpdateCommit={(commitId, payload) =>
                 runAction(
                   () =>
-                    api(`/planai/commits/${commitId}`, {
+                    api(`/pmai/commits/${commitId}`, {
                       method: "PATCH",
                       body: JSON.stringify(payload),
                     }),
@@ -1575,13 +1575,13 @@ function ConsoleApp() {
               onCreateIdea={() =>
                 runAction(
                   () =>
-                    api("/planai/ideas", {
+                    api("/pmai/ideas", {
                       method: "POST",
                       body: JSON.stringify({
                         title: ideaForm.title,
                         summary: ideaForm.summary,
                         impact: ideaForm.impact,
-                        source: "planai-ui",
+                        source: "pmai-ui",
                       }),
                     }).then(() => setIdeaForm({ title: "", summary: "", impact: "" })),
                   "Idea created",
@@ -1590,7 +1590,7 @@ function ConsoleApp() {
               onUpdateIdea={(ideaId, status) =>
                 runAction(
                   () =>
-                    api(`/planai/ideas/${ideaId}`, {
+                    api(`/pmai/ideas/${ideaId}`, {
                       method: "PATCH",
                       body: JSON.stringify({ status, note: "updated from antd ui" }),
                     }),
@@ -1610,7 +1610,7 @@ function ConsoleApp() {
               onSubmitDoc={() =>
                 runAction(
                   () =>
-                    api("/planai/docs", {
+                    api("/pmai/docs", {
                       method: "PATCH",
                       body: JSON.stringify({
                         path: docForm.path,
@@ -1641,7 +1641,7 @@ function ConsoleApp() {
               onCreateDecision={() =>
                 runAction(
                   () =>
-                    api("/planai/decisions", {
+                    api("/pmai/decisions", {
                       method: "POST",
                       body: JSON.stringify({
                         title: decisionForm.title,
@@ -1656,7 +1656,7 @@ function ConsoleApp() {
               onUpdateDecision={(decisionId, status) =>
                 runAction(
                   () =>
-                    api(`/planai/decisions/${decisionId}`, {
+                    api(`/pmai/decisions/${decisionId}`, {
                       method: "PATCH",
                       body: JSON.stringify({ status }),
                     }),
@@ -1679,7 +1679,7 @@ function ConsoleApp() {
                   const nextDate = dailyForm.noteDate || todayString();
                   const query = nextDate ? `?date=${encodeURIComponent(nextDate)}` : "";
                   setSelectedDailyDate(nextDate);
-                  return api(`/planai/daily${query}`, {
+                  return api(`/pmai/daily${query}`, {
                     method: "POST",
                     body: JSON.stringify({
                       completed: splitValues(dailyForm.completed),
@@ -1696,7 +1696,7 @@ function ConsoleApp() {
                 setSelectedDailyDate(nextDate);
                 return runAction(
                   () =>
-                    api(`/planai/daily${query}`, {
+                    api(`/pmai/daily${query}`, {
                       method: "PUT",
                       body: JSON.stringify({
                         completed: splitValues(dailyForm.completed),
@@ -1745,4 +1745,3 @@ export default function App() {
     </ConfigProvider>
   );
 }
-

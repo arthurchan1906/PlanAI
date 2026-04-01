@@ -10,7 +10,7 @@ export default defineConfig({
     port: 5174,
     strictPort: true,
     proxy: {
-      "/planai": {
+      "/pmai": {
         target: "http://127.0.0.1:8011",
         changeOrigin: true,
       },
@@ -21,4 +21,3 @@ export default defineConfig({
     emptyOutDir: true,
   },
 });
-

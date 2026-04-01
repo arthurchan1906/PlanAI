@@ -3,26 +3,43 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "planai-pm"
+name = "pmai"
 version = "0.1.0"
 description = "Local project management tool for AI coding workflows"
 readme = "README.md"
 requires-python = ">=3.8"
+license = { file = "LICENSE" }
+keywords = ["ai", "project-management", "cli", "developer-tools"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: Software Development :: Build Tools",
+]
 dependencies = []
 
 [project.scripts]
-planai = "planai.cli_main:main"
-planai-web = "planai.run_server:main"
+pmai = "pmai.cli_main:main"
+pmai-web = "pmai.run_server:main"
 
 [tool.setuptools]
 include-package-data = true
-packages = ["planai"]
+license-files = ["LICENSE"]
 
-[tool.setuptools.package-dir]
-planai = "."
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["pmai*"]
 
 [tool.setuptools.package-data]
-planai = [
+pmai = [
   "ui/dist/**/*",
   "ui/dist/*",
   "ui/README.md"
