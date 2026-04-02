@@ -1,12 +1,11 @@
 ﻿from __future__ import annotations
 
 import argparse
-import json
 from typing import Any
 
 try:
     from .bootstrap import bootstrap_project_db
-    from .json_store import (
+    from .store import (
         append_daily_note,
         create_commit,
         create_decision,
@@ -25,7 +24,7 @@ try:
     from .usage_guide import build_usage_markdown, write_usage_file
 except ImportError:
     from bootstrap import bootstrap_project_db
-    from json_store import (
+    from store import (
         append_daily_note,
         create_commit,
         create_decision,
@@ -57,7 +56,7 @@ def init_project(args: argparse.Namespace) -> None:
         save_runtime_config({})
     bootstrap_project_db()
     write_usage_file()
-    print(json.dumps(describe_runtime(), ensure_ascii=False, indent=2))
+    print("Initialized .pmai")
 
 
 def show_info() -> None:
@@ -73,7 +72,7 @@ def show_help_text() -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="PMAI CLI")
+    parser = argparse.ArgumentParser(description="AIPM CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
     init_parser = subparsers.add_parser("init")
     init_parser.add_argument("--host", default="")
@@ -180,7 +179,7 @@ def main() -> None:
     elif args.command == "commit" and args.commit_command == "add":
         print(json.dumps(create_commit({"title": args.title, "summary": args.summary, "branch": args.branch, "commit_hash": args.commit_hash, "task_id": args.task_id or None, "decision_id": args.decision_id or None, "status": args.status, "test_status": args.test_status, "review_status": args.review_status, "files": args.files}), ensure_ascii=False, indent=2))
     elif args.command == "daily" and args.daily_command == "show":
-        from json_store import get_daily_note
+        from store import get_daily_note
         print(json.dumps(get_daily_note(args.date), ensure_ascii=False, indent=2))
     elif args.command == "daily" and args.daily_command == "close":
         print(json.dumps(append_daily_note({"completed": args.completed, "problems": args.problems, "risks": args.risks, "next": args.next}), ensure_ascii=False, indent=2))

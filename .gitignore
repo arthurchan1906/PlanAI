@@ -18,6 +18,9 @@ env/
 *.sqlite-journal
 *.sqlite3-journal
 
+dist/
+src/aipm_cli.egg-info/
+
 # Logs and temp files
 *.log
 *.tmp

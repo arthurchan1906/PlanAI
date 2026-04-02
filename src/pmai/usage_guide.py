@@ -12,67 +12,67 @@ USAGE_FILENAME = "USAGE.md"
 
 
 def build_usage_markdown() -> str:
-    return """# PMAI Usage
+    return """# AIPM CLI Usage
 
-PMAI 是给 AI 编码项目使用的本地项目管理工具。
+AIPM CLI 是给 AI 编码项目使用的本地项目管理工具。
 
 建议 AI 先读：
 - `.pmai/USAGE.md`
-- `.pmai/data/pmai.json`
+- `.pmai/data/pmai.db`
 - `README.md`
 
 常用命令：
 
 ```bash
-pmai help
-pmai info
-pmai canon show
-pmai task list
-pmai decision list
-pmai commit list
-pmai idea list
-pmai daily show
-pmai-web
+aipmc help
+aipmc info
+aipmc canon show
+aipmc task list
+aipmc decision list
+aipmc commit list
+aipmc idea list
+aipmc daily show
+aipmv
 ```
 
 初始化：
 
 ```bash
-pmai init
+aipmc init
 ```
 
 这会创建：
 - `.pmai/config.json`
-- `.pmai/data/pmai.json`
+- `.pmai/data/pmai.db`
 - `.pmai/USAGE.md`
 
 常用写入命令：
 
 ```bash
-pmai task add --title "实现 xxx" --acceptance "完成 yyy"
-pmai task update --id <task-id> --status in_progress
-pmai decision add --title "采用方案A" --background "..." --decision "..."
-pmai commit add --title "实现任务" --summary "..." --files a.py b.py
-pmai idea capture --title "优化想法" --summary "..."
-pmai daily close --completed "..." --problems "..." --risks "..." --next "..."
+aipmc task add --title "实现 xxx" --acceptance "完成 yyy"
+aipmc task update --id <task-id> --status in_progress
+aipmc decision add --title "采用方案A" --background "..." --decision "..."
+aipmc commit add --title "实现任务" --summary "..." --files a.py b.py
+aipmc idea capture --title "优化想法" --summary "..."
+aipmc daily close --completed "..." --problems "..." --risks "..." --next "..."
 ```
 
 状态查看：
 
 ```bash
-pmai info
-pmai canon show
-pmai task list
-pmai commit list
-pmai decision list
-pmai idea list
-pmai daily show
+aipmc info
+aipmc canon show
+aipmc task list
+aipmc commit list
+aipmc decision list
+aipmc idea list
+aipmc daily show
 ```
 
 Web：
 
 ```bash
-pmai-web
+aipmv
 ```
 
 默认地址：
@@ -80,7 +80,7 @@ pmai-web
 
 说明：
 - 这是单人本地工具，运行数据保存在项目内 `.pmai/`
-- 从 PyPI 安装后直接使用 `pmai` 和 `pmai-web`
+- 从 PyPI 安装后直接使用 `aipmc` 和 `aipmv`
 - Windows 下 `pip install` 后会自动生成对应命令入口，无需手写 `.cmd` 或额外可执行文件
 """
 

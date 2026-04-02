@@ -3,8 +3,8 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pmai"
-version = "0.1.0"
+name = "aipm-cli"
+version = "0.1.1"
 description = "Local project management tool for AI coding workflows"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -27,8 +27,8 @@ classifiers = [
 dependencies = []
 
 [project.scripts]
-pmai = "pmai.cli_main:main"
-pmai-web = "pmai.run_server:main"
+aipmc = "pmai.cli_main:main"
+aipmv = "pmai.run_server:main"
 
 [tool.setuptools]
 include-package-data = true

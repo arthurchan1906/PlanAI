@@ -1,12 +1,12 @@
-# PMAI
+# AIPM CLI
 
-PMAI 是一个给 AI 编码项目使用的本地项目管理工具。
+AIPM CLI 是一个给 AI 编码项目使用的本地项目管理工具。
 
-PyPI 分发名：`pmai`
+PyPI 分发名：`aipm-cli`
 
 特性：
-- `pmai init` 在当前项目创建 `.pmai/` 隐藏目录
-- JSON 数据库存放在 `.pmai/data/pmai.json`
+- `aipmc init` 在当前项目创建 `.pmai/` 隐藏目录
+- SQLite 数据库存放在 `.pmai/data/pmai.db`
 - Web 配置存放在 `.pmai/config.json`
 - AI 使用说明可写入 `.pmai/USAGE.md`
 - CLI 可记录 canon、task、decision、commit、daily
@@ -16,16 +16,16 @@ PyPI 分发名：`pmai`
 常用命令：
 
 ```bash
-pip install pmai
-pmai init
-pmai help
-pmai info
-pmai canon show
-pmai-web
+pip install aipm-cli
+aipmc init
+aipmc help
+aipmc info
+aipmc canon show
+aipmv
 ```
 
 运行时目录：
-- `.pmai/data/pmai.json`
+- `.pmai/data/pmai.db`
 - `.pmai/config.json`
 - `.pmai/USAGE.md`
 

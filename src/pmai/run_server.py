@@ -25,7 +25,7 @@ def main() -> None:
         or config.get("web_port", DEFAULT_WEB_PORT)
     )
     server = create_server(host, port)
-    print(f"PMAI web server listening on http://{host}:{port}")
+    print(f"AIPM web server listening on http://{host}:{port}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

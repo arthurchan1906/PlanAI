@@ -9,9 +9,8 @@ from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 
-PACKAGE_ROOT = Path(__file__).resolve().parent
 RUNTIME_DIRNAME = ".pmai"
-DB_FILENAME = "pmai.json"
+DB_FILENAME = "pmai.db"
 CONFIG_FILENAME = "config.json"
 DEFAULT_WEB_HOST = "127.0.0.1"
 DEFAULT_WEB_PORT = 8011
@@ -122,6 +121,77 @@ def describe_runtime(start: Optional[Path] = None) -> Dict[str, str]:
 def ensure_runtime_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(
         """
+        CREATE TABLE IF NOT EXISTS canon (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            updated_at TEXT NOT NULL,
+            product_goal TEXT NOT NULL,
+            engineering_focus TEXT NOT NULL,
+            architecture TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS canon_items (
+            item_type TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            value TEXT NOT NULL,
+            PRIMARY KEY (item_type, position)
+        );
+
+        CREATE TABLE IF NOT EXISTS tasks (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            status TEXT NOT NULL,
+            priority TEXT NOT NULL,
+            phase TEXT NOT NULL,
+            acceptance_json TEXT NOT NULL,
+            related_docs_json TEXT NOT NULL,
+            related_decisions_json TEXT NOT NULL,
+            last_note TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS decisions (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            date TEXT NOT NULL,
+            status TEXT NOT NULL,
+            background TEXT NOT NULL,
+            decision_text TEXT NOT NULL,
+            impact_json TEXT NOT NULL,
+            alternatives_json TEXT NOT NULL,
+            related_tasks_json TEXT NOT NULL,
+            updates_canon INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS ideas (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            impact TEXT NOT NULL,
+            source TEXT NOT NULL,
+            status TEXT NOT NULL,
+            canon_conflict INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS doc_records (
+            path TEXT PRIMARY KEY,
+            type TEXT NOT NULL,
+            status TEXT NOT NULL,
+            layer TEXT NOT NULL,
+            source_of_truth INTEGER NOT NULL DEFAULT 0,
+            last_reviewed TEXT NOT NULL,
+            superseded_by TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS daily_notes (
+            note_date TEXT PRIMARY KEY,
+            completed_json TEXT NOT NULL,
+            problems_json TEXT NOT NULL,
+            risks_json TEXT NOT NULL,
+            next_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS commits (
             id TEXT PRIMARY KEY,
             title TEXT NOT NULL,
@@ -139,6 +209,17 @@ def ensure_runtime_schema(conn: sqlite3.Connection) -> None:
         );
         """
     )
+
+
+def bootstrap_database(start: Optional[Path] = None) -> Path:
+    db_path = get_db_path(start, create_parent=True)
+    conn = sqlite3.connect(db_path)
+    try:
+        ensure_runtime_schema(conn)
+        conn.commit()
+    finally:
+        conn.close()
+    return db_path
 
 
 def _recover_database_from_primary(db_path: Path) -> Path:

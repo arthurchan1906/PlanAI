@@ -7,7 +7,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 try:
-    from .json_store import (
+    from .store import (
         append_daily_note,
         audit_docs,
         create_commit,
@@ -32,7 +32,7 @@ try:
         update_task,
     )
 except ImportError:
-    from json_store import (
+    from store import (
         append_daily_note,
         audit_docs,
         create_commit,
