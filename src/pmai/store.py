@@ -262,12 +262,27 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 
+def empty_canon() -> Dict[str, Any]:
+    return {
+        "id": "canon-current",
+        "updated_at": None,
+        "product_goal": "",
+        "engineering_focus": "",
+        "architecture": "",
+        "version_scope": [],
+        "avoid_now": [],
+        "top_tasks": [],
+        "source_docs": [],
+        "related_decisions": [],
+    }
+
+
 def fetch_canon() -> Dict[str, Any]:
     conn = get_connection()
     try:
         row = conn.execute("SELECT * FROM canon WHERE id = 1").fetchone()
         if not row:
-            raise FileNotFoundError("Canon not found in pmai.db")
+            return empty_canon()
         items = conn.execute(
             "SELECT item_type, position, value FROM canon_items ORDER BY item_type, position"
         ).fetchall()
@@ -299,6 +314,17 @@ def update_canon(payload: Dict[str, Any]) -> Dict[str, Any]:
         ).fetchone()
         if not decision:
             raise KeyError(payload["decision_id"])
+
+        row = conn.execute("SELECT * FROM canon WHERE id = 1").fetchone()
+        if not row:
+            conn.execute(
+                """
+                INSERT INTO canon (id, updated_at, product_goal, engineering_focus, architecture)
+                VALUES (1, ?, ?, ?, ?)
+                """,
+                (today(), "", "", ""),
+            )
+            conn.commit()
 
         canon = fetch_canon()
         version_scope = canon["version_scope"][:]
