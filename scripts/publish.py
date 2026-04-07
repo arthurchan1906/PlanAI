@@ -64,7 +64,7 @@ def main() -> int:
         return 0
 
     step(f"Uploading to {args.repository}")
-    upload_cmd = [sys.executable, "-m", "twine", "upload"]
+    upload_cmd = [sys.executable, "-m", "twine", "upload", "--verbose"]
     if args.repository == "testpypi":
         upload_cmd.extend(["--repository", "testpypi"])
     upload_cmd.extend(str(path) for path in dist_files)
