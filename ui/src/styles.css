@@ -223,10 +223,69 @@ body {
   word-break: break-word;
 }
 
+.task-list .ant-list-items {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.task-lane-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.task-lane {
+  border: 1px solid rgba(88, 125, 176, 0.14);
+  border-radius: 18px;
+  background: rgba(244, 249, 255, 0.65);
+  padding: 12px;
+}
+
+.task-lane__head {
+  margin-bottom: 8px;
+}
+
+.task-list__row {
+  border: 1px solid rgba(88, 125, 176, 0.14);
+  border-radius: 16px;
+  background: rgba(244, 249, 255, 0.82);
+  padding: 12px 14px;
+}
+
+.task-list__row .ant-list-item-meta-title,
+.task-list__row .ant-typography {
+  word-break: break-word;
+}
+
 .history-row {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+.commit-files-scroll {
+  max-width: 100%;
+  max-height: 92px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-content: flex-start;
+  padding-right: 2px;
+}
+
+.commit-files-scroll .ant-tag {
+  margin: 0;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.commit-files-scroll .ant-typography {
+  margin-bottom: 0;
 }
 
 .page-loading {

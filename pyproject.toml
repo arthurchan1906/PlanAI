@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=69", "wheel"]
+requires = ["setuptools>=61", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "aipm-cli"
-version = "0.1.2"
+version = "0.1.7"
 description = "Local project management tool for AI coding workflows"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -33,10 +33,12 @@ aipmv = "pmai.run_server:main"
 [tool.setuptools]
 include-package-data = true
 license-files = ["LICENSE"]
+package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["pmai*"]
+namespaces = false
 
 [tool.setuptools.package-data]
 pmai = [

@@ -6,56 +6,30 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-try:
-    from .store import (
-        append_daily_note,
-        audit_docs,
-        create_commit,
-        create_decision,
-        create_idea,
-        create_task,
-        fetch_canon,
-        get_dashboard_summary,
-        get_daily_note,
-        list_commits,
-        list_decisions,
-        list_daily_notes,
-        list_doc_records,
-        list_ideas,
-        list_tasks,
-        replace_daily_note,
-        review_idea,
-        update_canon,
-        update_commit,
-        update_decision_status,
-        update_doc_record,
-        update_task,
-    )
-except ImportError:
-    from store import (
-        append_daily_note,
-        audit_docs,
-        create_commit,
-        create_decision,
-        create_idea,
-        create_task,
-        fetch_canon,
-        get_dashboard_summary,
-        get_daily_note,
-        list_commits,
-        list_decisions,
-        list_daily_notes,
-        list_doc_records,
-        list_ideas,
-        list_tasks,
-        replace_daily_note,
-        review_idea,
-        update_canon,
-        update_commit,
-        update_decision_status,
-        update_doc_record,
-        update_task,
-    )
+from .store import (
+    append_daily_note,
+    audit_docs,
+    create_commit,
+    create_decision,
+    create_idea,
+    create_task,
+    fetch_canon,
+    get_dashboard_summary,
+    get_daily_note,
+    list_commits,
+    list_decisions,
+    list_daily_notes,
+    list_doc_records,
+    list_ideas,
+    list_tasks,
+    replace_daily_note,
+    review_idea,
+    update_canon,
+    update_commit,
+    update_decision_status,
+    update_doc_record,
+    update_task,
+)
 
 WEB_DIR = Path(__file__).resolve().parent / 'ui' / 'dist'
 
@@ -131,13 +105,29 @@ class PMAIRequestHandler(SimpleHTTPRequestHandler):
             elif method == 'POST' and path == '/pmai/canon/update':
                 self.send_json(update_canon(self.read_json()))
             elif method == 'GET' and path == '/pmai/tasks':
-                self.send_json({'tasks': list_tasks()})
+                self.send_json({'tasks': list_tasks((query.get('status') or [None])[0])})
             elif method == 'POST' and path == '/pmai/tasks':
                 self.send_json(create_task(self.read_json()))
             elif method == 'PATCH' and path.startswith('/pmai/tasks/'):
-                payload = self.read_json(); self.send_json(update_task(path.rsplit('/', 1)[-1], payload['status'], payload.get('note', '')))
+                payload = self.read_json()
+                self.send_json(
+                    update_task(
+                        path.rsplit('/', 1)[-1],
+                        payload['status'],
+                        payload.get('note', ''),
+                        bool(payload.get('allow_without_commit', False)),
+                    )
+                )
             elif method == 'GET' and path == '/pmai/commits':
-                self.send_json({'commits': list_commits((query.get('status') or [None])[0])})
+                self.send_json(
+                    {
+                        'commits': list_commits(
+                            (query.get('status') or [None])[0],
+                            (query.get('task_id') or [None])[0],
+                            (query.get('decision_id') or [None])[0],
+                        )
+                    }
+                )
             elif method == 'POST' and path == '/pmai/commits':
                 self.send_json(create_commit(self.read_json()))
             elif method == 'PATCH' and path.startswith('/pmai/commits/'):

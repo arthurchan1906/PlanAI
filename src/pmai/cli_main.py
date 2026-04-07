@@ -1,46 +1,31 @@
 ﻿from __future__ import annotations
 
 import argparse
+import json
 from typing import Any
 
-try:
-    from .bootstrap import bootstrap_project_db
-    from .store import (
-        append_daily_note,
-        create_commit,
-        create_decision,
-        create_idea,
-        create_task,
-        fetch_canon,
-        list_commits,
-        list_decisions,
-        list_ideas,
-        list_tasks,
-        review_idea,
-        update_canon,
-        update_task,
-    )
-    from .store import describe_runtime, get_config_path, get_runtime_dir, save_runtime_config
-    from .usage_guide import build_usage_markdown, write_usage_file
-except ImportError:
-    from bootstrap import bootstrap_project_db
-    from store import (
-        append_daily_note,
-        create_commit,
-        create_decision,
-        create_idea,
-        create_task,
-        fetch_canon,
-        list_commits,
-        list_decisions,
-        list_ideas,
-        list_tasks,
-        review_idea,
-        update_canon,
-        update_task,
-    )
-    from store import describe_runtime, get_config_path, get_runtime_dir, save_runtime_config
-    from usage_guide import build_usage_markdown, write_usage_file
+from .bootstrap import bootstrap_project_db
+from .store import (
+    append_daily_note,
+    create_commit,
+    create_decision,
+    create_idea,
+    create_task,
+    describe_runtime,
+    fetch_canon,
+    get_config_path,
+    get_runtime_dir,
+    list_commits,
+    list_decisions,
+    list_ideas,
+    list_tasks,
+    review_idea,
+    save_runtime_config,
+    update_canon,
+    update_commit,
+    update_task,
+)
+from .usage_guide import build_usage_markdown, write_usage_file
 
 
 def init_project(args: argparse.Namespace) -> None:
@@ -109,7 +94,8 @@ def build_parser() -> argparse.ArgumentParser:
     idea_review.add_argument("--status", required=True)
     idea_review.add_argument("--note", default="")
     task = subparsers.add_parser("task").add_subparsers(dest="task_command", required=True)
-    task.add_parser("list")
+    task_list = task.add_parser("list")
+    task_list.add_argument("--status", default="")
     task_add = task.add_parser("add")
     task_add.add_argument("--title", required=True)
     task_add.add_argument("--priority", default="P1")
@@ -120,9 +106,12 @@ def build_parser() -> argparse.ArgumentParser:
     task_update.add_argument("--id", required=True)
     task_update.add_argument("--status", required=True)
     task_update.add_argument("--note", default="")
+    task_update.add_argument("--allow-without-commit", action="store_true", dest="allow_without_commit")
     commit = subparsers.add_parser("commit").add_subparsers(dest="commit_command", required=True)
     commit_list = commit.add_parser("list")
     commit_list.add_argument("--status", default="")
+    commit_list.add_argument("--task-id", default="", dest="task_id")
+    commit_list.add_argument("--decision-id", default="", dest="decision_id")
     commit_add = commit.add_parser("add")
     commit_add.add_argument("--title", required=True)
     commit_add.add_argument("--summary", default="")
@@ -134,6 +123,21 @@ def build_parser() -> argparse.ArgumentParser:
     commit_add.add_argument("--test-status", default="not_run", dest="test_status")
     commit_add.add_argument("--review-status", default="pending", dest="review_status")
     commit_add.add_argument("--files", nargs="*", default=[])
+    commit_add.add_argument("--auto-git", action="store_true", dest="auto_git")
+    commit_update = commit.add_parser("update")
+    commit_update.add_argument("--id", required=True)
+    commit_update.add_argument("--title", default=None)
+    commit_update.add_argument("--summary", default=None)
+    commit_update.add_argument("--branch", default=None)
+    commit_update.add_argument("--commit-hash", default=None, dest="commit_hash")
+    commit_update.add_argument("--task-id", default=None, dest="task_id")
+    commit_update.add_argument("--decision-id", default=None, dest="decision_id")
+    commit_update.add_argument("--status", default=None)
+    commit_update.add_argument("--test-status", default=None, dest="test_status")
+    commit_update.add_argument("--review-status", default=None, dest="review_status")
+    commit_update.add_argument("--files", nargs="*", default=None)
+    commit_update.add_argument("--clear-task-id", action="store_true", dest="clear_task_id")
+    commit_update.add_argument("--clear-decision-id", action="store_true", dest="clear_decision_id")
     daily = subparsers.add_parser("daily").add_subparsers(dest="daily_command", required=True)
     daily_show = daily.add_parser("show")
     daily_show.add_argument("--date", default=None)
@@ -169,17 +173,42 @@ def main() -> None:
     elif args.command == "idea" and args.idea_command == "review":
         print(json.dumps(review_idea(args.id, args.status, args.note), ensure_ascii=False, indent=2))
     elif args.command == "task" and args.task_command == "list":
-        print(json.dumps({"tasks": list_tasks()}, ensure_ascii=False, indent=2))
+        print(json.dumps({"tasks": list_tasks(args.status or None)}, ensure_ascii=False, indent=2))
     elif args.command == "task" and args.task_command == "add":
         print(json.dumps(create_task({"title": args.title, "priority": args.priority, "status": args.status, "phase": args.phase, "acceptance": args.acceptance}), ensure_ascii=False, indent=2))
     elif args.command == "task" and args.task_command == "update":
-        print(json.dumps(update_task(args.id, args.status, args.note), ensure_ascii=False, indent=2))
+        print(
+            json.dumps(
+                update_task(
+                    args.id,
+                    args.status,
+                    args.note,
+                    allow_without_commit=args.allow_without_commit,
+                ),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
     elif args.command == "commit" and args.commit_command == "list":
-        print(json.dumps({"commits": list_commits(args.status or None)}, ensure_ascii=False, indent=2))
+        print(
+            json.dumps(
+                {
+                    "commits": list_commits(
+                        args.status or None,
+                        args.task_id or None,
+                        args.decision_id or None,
+                    )
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
     elif args.command == "commit" and args.commit_command == "add":
-        print(json.dumps(create_commit({"title": args.title, "summary": args.summary, "branch": args.branch, "commit_hash": args.commit_hash, "task_id": args.task_id or None, "decision_id": args.decision_id or None, "status": args.status, "test_status": args.test_status, "review_status": args.review_status, "files": args.files}), ensure_ascii=False, indent=2))
+        print(json.dumps(create_commit({"title": args.title, "summary": args.summary, "branch": args.branch, "commit_hash": args.commit_hash, "task_id": args.task_id or None, "decision_id": args.decision_id or None, "status": args.status, "test_status": args.test_status, "review_status": args.review_status, "files": args.files, "auto_git": args.auto_git}), ensure_ascii=False, indent=2))
+    elif args.command == "commit" and args.commit_command == "update":
+        print(json.dumps(update_commit(args.id, {"title": args.title, "summary": args.summary, "branch": args.branch, "commit_hash": args.commit_hash, "task_id": args.task_id, "decision_id": args.decision_id, "status": args.status, "test_status": args.test_status, "review_status": args.review_status, "files": args.files, "clear_task_id": args.clear_task_id, "clear_decision_id": args.clear_decision_id}), ensure_ascii=False, indent=2))
     elif args.command == "daily" and args.daily_command == "show":
-        from store import get_daily_note
+        from .store import get_daily_note
         print(json.dumps(get_daily_note(args.date), ensure_ascii=False, indent=2))
     elif args.command == "daily" and args.daily_command == "close":
         print(json.dumps(append_daily_note({"completed": args.completed, "problems": args.problems, "risks": args.risks, "next": args.next}), ensure_ascii=False, indent=2))

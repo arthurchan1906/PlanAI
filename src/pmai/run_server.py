@@ -1,13 +1,9 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import os
 
-try:
-    from .store import DEFAULT_WEB_HOST, DEFAULT_WEB_PORT, load_runtime_config
-    from .web_server import create_server
-except ImportError:
-    from store import DEFAULT_WEB_HOST, DEFAULT_WEB_PORT, load_runtime_config
-    from web_server import create_server
+from .store import DEFAULT_WEB_HOST, DEFAULT_WEB_PORT, load_runtime_config
+from .web_server import create_server
 
 
 def main() -> None:

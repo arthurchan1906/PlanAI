@@ -399,7 +399,18 @@ function TasksView({
     });
   }, [tasks, taskSearch, taskStatusFilter]);
 
-  const groups = ["todo", "in_progress", "blocked", "done"];
+  const laneOrder = ["in_progress", "todo", "blocked", "done"];
+  const groupedTasks = useMemo(() => {
+    const byLane = Object.fromEntries(laneOrder.map((status) => [status, []]));
+    filteredTasks.forEach((task) => {
+      const lane = laneOrder.includes(task.status) ? task.status : "todo";
+      byLane[lane].push(task);
+    });
+    laneOrder.forEach((status) => {
+      byLane[status].sort((a, b) => (a.id || "").localeCompare(b.id || ""));
+    });
+    return byLane;
+  }, [filteredTasks]);
 
   return (
     <div className="view-stack">
@@ -478,68 +489,71 @@ function TasksView({
           </Space>
         }
       >
-        <div className="board-grid">
-          {groups.map((status) => {
-            const items = filteredTasks.filter((task) => task.status === status);
-            return (
-              <div key={status} className="board-column">
-                <div className="board-column__head">
-                  <span>{status}</span>
-                  <Badge count={items.length} color="#b55e32" />
-                </div>
-                <div className="board-column__body">
+        {filteredTasks.length ? (
+          <div className="task-lane-stack">
+            {laneOrder.map((status) => {
+              const items = groupedTasks[status] || [];
+              return (
+                <div key={status} className="task-lane">
+                  <div className="task-lane__head">
+                    <Space>
+                      <Tag color={statusColor(status)}>{status}</Tag>
+                      <Badge count={items.length} color="#b55e32" />
+                    </Space>
+                  </div>
                   {items.length ? (
-                    items.map((task) => (
-                      <Card key={task.id} size="small" className="inner-card" bordered={false}>
-                        <Space direction="vertical" size={8} style={{ width: "100%" }}>
-                          <Space wrap>
-                            <Tag>{task.priority}</Tag>
-                            <Tag>{task.phase}</Tag>
+                    <List
+                      dataSource={items}
+                      className="task-list"
+                      renderItem={(task) => (
+                        <List.Item key={task.id} className="task-list__row">
+                          <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                            <Space wrap>
+                              <Tag>{task.priority}</Tag>
+                              <Tag>{task.phase}</Tag>
+                              <Text type="secondary">{task.id}</Text>
+                            </Space>
+                            <Text strong>{task.title}</Text>
+                            {(task.acceptance || []).length ? (
+                              <div className="tag-wrap">
+                                {task.acceptance.map((item) => (
+                                  <Tag key={item} bordered={false}>
+                                    {item}
+                                  </Tag>
+                                ))}
+                              </div>
+                            ) : null}
+                            <Space wrap>
+                              {task.status !== "in_progress" ? (
+                                <Button size="small" onClick={() => onUpdateTask(task.id, "in_progress")}>
+                                  In Progress
+                                </Button>
+                              ) : null}
+                              {task.status !== "blocked" ? (
+                                <Button size="small" onClick={() => onUpdateTask(task.id, "blocked")}>
+                                  Blocked
+                                </Button>
+                              ) : null}
+                              {task.status !== "done" ? (
+                                <Button size="small" type="primary" ghost onClick={() => onUpdateTask(task.id, "done")}>
+                                  Done
+                                </Button>
+                              ) : null}
+                            </Space>
                           </Space>
-                          <Text strong>{task.title}</Text>
-                          <Text type="secondary">{task.id}</Text>
-                          {(task.acceptance || []).length ? (
-                            <div className="tag-wrap">
-                              {task.acceptance.map((item) => (
-                                <Tag key={item} bordered={false}>
-                                  {item}
-                                </Tag>
-                              ))}
-                            </div>
-                          ) : null}
-                          <Space wrap>
-                            {status !== "in_progress" ? (
-                              <Button size="small" onClick={() => onUpdateTask(task.id, "in_progress")}>
-                                In Progress
-                              </Button>
-                            ) : null}
-                            {status !== "blocked" ? (
-                              <Button size="small" onClick={() => onUpdateTask(task.id, "blocked")}>
-                                Blocked
-                              </Button>
-                            ) : null}
-                            {status !== "done" ? (
-                              <Button
-                                size="small"
-                                type="primary"
-                                ghost
-                                onClick={() => onUpdateTask(task.id, "done")}
-                              >
-                                Done
-                              </Button>
-                            ) : null}
-                          </Space>
-                        </Space>
-                      </Card>
-                    ))
+                        </List.Item>
+                      )}
+                    />
                   ) : (
                     <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="空" />
                   )}
                 </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        ) : (
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="空" />
+        )}
       </Card>
     </div>
   );
@@ -799,7 +813,7 @@ function DecisionsView({
     <div className="view-stack">
       <Card className="console-card" title="新建决策" bordered={false}>
         <Form layout="vertical" onFinish={onCreateDecision}>
-          <Form.Item label="鏍囬" required>
+          <Form.Item label="标题" required>
             <Input
               value={decisionForm.title}
               onChange={(event) =>
@@ -925,6 +939,7 @@ function CommitsView({
       title: "提交",
       dataIndex: "title",
       key: "title",
+      width: 280,
       render: (_, record) => (
         <Space direction="vertical" size={2}>
           <Text strong>{record.title}</Text>
@@ -936,6 +951,7 @@ function CommitsView({
     {
       title: "关联",
       key: "links",
+      width: 180,
       render: (_, record) => (
         <Space direction="vertical" size={2}>
           <Text type="secondary">任务: {record.task_id || "-"}</Text>
@@ -946,6 +962,7 @@ function CommitsView({
     {
       title: "状态",
       key: "status",
+      width: 160,
       render: (_, record) => (
         <Space direction="vertical" size={6}>
           <Tag color={statusColor(record.status)}>{record.status}</Tag>
@@ -961,8 +978,9 @@ function CommitsView({
     {
       title: "文件",
       key: "files",
+      width: 340,
       render: (_, record) => (
-        <div className="tag-wrap">
+        <div className="commit-files-scroll">
           {(record.files || []).length ? record.files.map((file) => <Tag key={file}>{file}</Tag>) : <Text type="secondary">-</Text>}
         </div>
       ),
@@ -970,6 +988,7 @@ function CommitsView({
     {
       title: "操作",
       key: "actions",
+      width: 290,
       render: (_, record) => (
         <Space wrap>
           {record.status !== "committed" ? (
@@ -1121,6 +1140,8 @@ function CommitsView({
           rowKey="id"
           columns={columns}
           dataSource={filteredCommits}
+          tableLayout="fixed"
+          scroll={{ x: 1280 }}
           pagination={{ pageSize: 8 }}
           locale={{ emptyText: "暂无提交" }}
         />

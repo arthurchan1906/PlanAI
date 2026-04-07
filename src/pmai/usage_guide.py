@@ -1,11 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 
-try:
-    from .store import get_runtime_dir
-except ImportError:
-    from store import get_runtime_dir
+from .store import get_runtime_dir
 
 
 USAGE_FILENAME = "USAGE.md"
@@ -14,14 +11,13 @@ USAGE_FILENAME = "USAGE.md"
 def build_usage_markdown() -> str:
     return """# AIPM CLI Usage
 
-AIPM CLI 是给 AI 编码项目使用的本地项目管理工具。
-
-建议 AI 先读：
+AIPM CLI is for local AI coding projects.
+Read these first:
 - `.pmai/USAGE.md`
 - `.pmai/data/pmai.db`
 - `README.md`
 
-常用命令：
+Common commands:
 
 ```bash
 aipmc help
@@ -30,58 +26,65 @@ aipmc canon show
 aipmc task list
 aipmc decision list
 aipmc commit list
+aipmc task list --status in_progress
+aipmc commit list --task-id <task-id>
 aipmc idea list
 aipmc daily show
 aipmv
 ```
 
-初始化：
+Initialize:
 
 ```bash
 aipmc init
 ```
 
-这会创建：
+This creates:
 - `.pmai/config.json`
 - `.pmai/data/pmai.db`
 - `.pmai/USAGE.md`
 
-常用写入命令：
+Write commands:
 
 ```bash
-aipmc task add --title "实现 xxx" --acceptance "完成 yyy"
+aipmc task add --title "Implement xxx" --acceptance "Complete yyy"
 aipmc task update --id <task-id> --status in_progress
-aipmc decision add --title "采用方案A" --background "..." --decision "..."
-aipmc commit add --title "实现任务" --summary "..." --files a.py b.py
-aipmc idea capture --title "优化想法" --summary "..."
+aipmc decision add --title "Choose approach A" --background "..." --decision "..."
+aipmc commit add --title "Implement task" --summary "..." --auto-git
+aipmc commit update --id <commit-id> --status committed --review-status approved
+aipmc task update --id <task-id> --status done
+aipmc idea capture --title "Optimization idea" --summary "..."
 aipmc daily close --completed "..." --problems "..." --risks "..." --next "..."
 ```
 
-状态查看：
+Status commands:
 
 ```bash
 aipmc info
 aipmc canon show
 aipmc task list
 aipmc commit list
+aipmc task list --status done
+aipmc commit list --status committed --task-id <task-id>
 aipmc decision list
 aipmc idea list
 aipmc daily show
 ```
 
-Web：
+Web:
 
 ```bash
 aipmv
 ```
 
-默认地址：
+Default address:
 - `http://127.0.0.1:8011/`
 
-说明：
-- 这是单人本地工具，运行数据保存在项目内 `.pmai/`
-- 从 PyPI 安装后直接使用 `aipmc` 和 `aipmv`
-- Windows 下 `pip install` 后会自动生成对应命令入口，无需手写 `.cmd` 或额外可执行文件
+Notes:
+- Runtime data is stored under `.pmai/` in the project.
+- After installing from PyPI, use `aipmc` and `aipmv` directly.
+- If the shell cannot find those commands, use `python -m pmai` and `python -m pmai.run`.
+- Marking a task `done` requires at least one linked approved commit (`status=committed|merged` and `review_status=approved`). Use `--allow-without-commit` only for emergency override.
 """
 
 

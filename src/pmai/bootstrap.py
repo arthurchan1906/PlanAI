@@ -1,7 +1,4 @@
-﻿try:
-    from .store import bootstrap_database, fetch_canon as _fetch_canon
-except ImportError:
-    from store import bootstrap_database, fetch_canon as _fetch_canon
+﻿from .store import bootstrap_database, fetch_canon as _fetch_canon
 
 
 def bootstrap_project_db() -> bool:

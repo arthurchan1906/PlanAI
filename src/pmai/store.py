@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -277,6 +278,52 @@ def empty_canon() -> Dict[str, Any]:
     }
 
 
+def _run_git(args: List[str]) -> Optional[str]:
+    try:
+        completed = subprocess.run(
+            ["git", "-c", "core.quotepath=false", *args],
+            cwd=str(get_project_root()),
+            capture_output=True,
+            text=True,
+            check=False,
+            encoding="utf-8",
+        )
+    except OSError:
+        return None
+    if completed.returncode != 0:
+        return None
+    return completed.stdout.strip()
+
+
+def infer_git_metadata() -> Dict[str, Any]:
+    branch = _run_git(["rev-parse", "--abbrev-ref", "HEAD"]) or ""
+    commit_hash = _run_git(["rev-parse", "HEAD"]) or ""
+
+    files: List[str] = []
+    for args in [
+        ["diff", "--name-only", "--relative"],
+        ["diff", "--name-only", "--relative", "--cached"],
+        ["ls-files", "--others", "--exclude-standard"],
+    ]:
+        output = _run_git(args)
+        if not output:
+            continue
+        for line in output.splitlines():
+            candidate = line.strip().replace("\\", "/")
+            if candidate.startswith('"') and candidate.endswith('"'):
+                candidate = candidate[1:-1]
+            if candidate.startswith(".pmai/"):
+                continue
+            if candidate and candidate not in files:
+                files.append(candidate)
+
+    return {
+        "branch": branch,
+        "commit_hash": commit_hash,
+        "files": files,
+    }
+
+
 def fetch_canon() -> Dict[str, Any]:
     conn = get_connection()
     try:
@@ -377,12 +424,17 @@ def update_canon(payload: Dict[str, Any]) -> Dict[str, Any]:
         conn.close()
 
 
-def list_tasks() -> List[Dict[str, Any]]:
+def list_tasks(status: Optional[str] = None) -> List[Dict[str, Any]]:
     conn = get_connection()
     try:
-        rows = conn.execute(
-            """
+        query = """
             SELECT * FROM tasks
+            """
+        params: List[Any] = []
+        if status:
+            query += " WHERE status = ?"
+            params.append(status)
+        query += """
             ORDER BY CASE status
                 WHEN 'in_progress' THEN 0
                 WHEN 'todo' THEN 1
@@ -390,7 +442,7 @@ def list_tasks() -> List[Dict[str, Any]]:
                 ELSE 3
             END, priority, updated_at DESC
             """
-        ).fetchall()
+        rows = conn.execute(query, params).fetchall()
         return [
             {
                 "id": row["id"],
@@ -452,12 +504,35 @@ def create_task(payload: Dict[str, Any]) -> Dict[str, Any]:
         conn.close()
 
 
-def update_task(task_id: str, status: str, note: str = "") -> Dict[str, Any]:
+def update_task(
+    task_id: str,
+    status: str,
+    note: str = "",
+    allow_without_commit: bool = False,
+) -> Dict[str, Any]:
     conn = get_connection()
     try:
         row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
         if not row:
             raise KeyError(task_id)
+        if status == "done" and row["status"] != "done" and not allow_without_commit:
+            ready_commit = conn.execute(
+                """
+                SELECT id
+                FROM commits
+                WHERE task_id = ?
+                  AND status IN ('committed', 'merged')
+                  AND review_status = 'approved'
+                ORDER BY updated_at DESC, created_at DESC, id DESC
+                LIMIT 1
+                """,
+                (task_id,),
+            ).fetchone()
+            if not ready_commit:
+                raise ValueError(
+                    "task cannot be marked done without at least one approved commit "
+                    "(status=committed|merged, review_status=approved) linked by --task-id"
+                )
         conn.execute(
             "UPDATE tasks SET status = ?, last_note = ?, updated_at = ? WHERE id = ?",
             (status, note, today(), task_id),
@@ -480,14 +555,27 @@ def update_task(task_id: str, status: str, note: str = "") -> Dict[str, Any]:
         conn.close()
 
 
-def list_commits(status: Optional[str] = None) -> List[Dict[str, Any]]:
+def list_commits(
+    status: Optional[str] = None,
+    task_id: Optional[str] = None,
+    decision_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     conn = get_connection()
     try:
         query = "SELECT * FROM commits"
         params: List[Any] = []
+        where_clauses: List[str] = []
         if status:
-            query += " WHERE status = ?"
+            where_clauses.append("status = ?")
             params.append(status)
+        if task_id:
+            where_clauses.append("task_id = ?")
+            params.append(task_id)
+        if decision_id:
+            where_clauses.append("decision_id = ?")
+            params.append(decision_id)
+        if where_clauses:
+            query += " WHERE " + " AND ".join(where_clauses)
         query += " ORDER BY created_at DESC, id DESC"
         rows = conn.execute(query, params).fetchall()
         return [
@@ -515,6 +603,11 @@ def list_commits(status: Optional[str] = None) -> List[Dict[str, Any]]:
 def create_commit(payload: Dict[str, Any]) -> Dict[str, Any]:
     conn = get_connection()
     try:
+        if payload.get("auto_git"):
+            git_meta = infer_git_metadata()
+        else:
+            git_meta = {}
+
         if payload.get("task_id"):
             task = conn.execute("SELECT id FROM tasks WHERE id = ?", (payload["task_id"],)).fetchone()
             if not task:
@@ -530,14 +623,14 @@ def create_commit(payload: Dict[str, Any]) -> Dict[str, Any]:
             "id": commit_id,
             "title": payload["title"],
             "summary": payload.get("summary", ""),
-            "branch": payload.get("branch", ""),
-            "commit_hash": payload.get("commit_hash", ""),
+            "branch": payload.get("branch") or git_meta.get("branch", ""),
+            "commit_hash": payload.get("commit_hash") or git_meta.get("commit_hash", ""),
             "task_id": payload.get("task_id"),
             "decision_id": payload.get("decision_id"),
             "status": payload.get("status", "draft"),
             "test_status": payload.get("test_status", "not_run"),
             "review_status": payload.get("review_status", "pending"),
-            "files": payload.get("files", []),
+            "files": payload.get("files", []) or git_meta.get("files", []),
             "created_at": created_at,
             "updated_at": created_at,
         }
