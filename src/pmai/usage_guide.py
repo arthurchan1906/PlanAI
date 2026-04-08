@@ -81,6 +81,8 @@ Default address:
 - `http://127.0.0.1:8011/`
 
 Notes:
+- Virtual python environment must be activated before using `aipmc` command or you can run `/path/to/python3 -m pmai help...command`
+- Privilege must be granted if any write or modify operation is requested in Container environment.
 - Runtime data is stored under `.pmai/` in the project.
 - After installing from PyPI, use `aipmc` and `aipmv` directly.
 - If the shell cannot find those commands, use `python -m pmai` and `python -m pmai.run`.
