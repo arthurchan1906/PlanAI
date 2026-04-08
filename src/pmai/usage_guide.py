@@ -23,6 +23,7 @@ Common commands:
 aipmc help
 aipmc info
 aipmc canon show
+aipmc feedback list
 aipmc task list
 aipmc decision list
 aipmc commit list
@@ -55,6 +56,8 @@ aipmc commit update --id <commit-id> --status committed --review-status approved
 aipmc task update --id <task-id> --status done
 aipmc idea capture --title "Optimization idea" --summary "..."
 aipmc daily close --completed "..." --problems "..." --risks "..." --next "..."
+aipmc feedback add --label bug --content "登录页面验证码不显示"
+aipmc feedback add --label suggestion --content "建议任务列表支持按负责人筛选"
 ```
 
 Status commands:
@@ -69,6 +72,7 @@ aipmc commit list --status committed --task-id <task-id>
 aipmc decision list
 aipmc idea list
 aipmc daily show
+aipmc feedback list
 ```
 
 Web:
@@ -86,6 +90,8 @@ Notes:
 - Runtime data is stored under `.pmai/` in the project.
 - After installing from PyPI, use `aipmc` and `aipmv` directly.
 - If the shell cannot find those commands, use `python -m pmai` and `python -m pmai.run`.
+- Remote feedback API defaults to `http://43.167.206.218:8080` and can be overridden with `--base-url` or `PMAI_FEEDBACK_BASE_URL`.
+- Feedback label only supports `bug` and `suggestion`. Remote request failures return JSON errors and exit quickly.
 - Marking a task `done` requires at least one linked approved commit (`status=committed|merged` and `review_status=approved`). Use `--allow-without-commit` only for emergency override.
 """
 

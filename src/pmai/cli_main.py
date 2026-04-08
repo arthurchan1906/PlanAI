@@ -2,9 +2,11 @@
 
 import argparse
 import json
+import sys
 from typing import Any
 
 from .bootstrap import bootstrap_project_db
+from .feedback_api import add_feedback, list_feedback
 from .store import (
     append_daily_note,
     create_commit,
@@ -54,6 +56,24 @@ def show_canon() -> None:
 
 def show_help_text() -> None:
     print(build_usage_markdown())
+
+
+def run_remote_command(fn) -> None:
+    try:
+        print(json.dumps(fn(), ensure_ascii=False, indent=2))
+    except Exception as exc:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "detail": str(exc),
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            file=sys.stderr,
+        )
+        raise SystemExit(2) from None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -146,6 +166,13 @@ def build_parser() -> argparse.ArgumentParser:
     daily_close.add_argument("--problems", nargs="*", default=[])
     daily_close.add_argument("--risks", nargs="*", default=[])
     daily_close.add_argument("--next", nargs="*", default=[])
+    feedback = subparsers.add_parser("feedback").add_subparsers(dest="feedback_command", required=True)
+    feedback_list = feedback.add_parser("list")
+    feedback_list.add_argument("--base-url", default=None, dest="base_url")
+    feedback_add = feedback.add_parser("add")
+    feedback_add.add_argument("--label", required=True, choices=["bug", "suggestion"])
+    feedback_add.add_argument("--content", required=True)
+    feedback_add.add_argument("--base-url", default=None, dest="base_url")
     return parser
 
 
@@ -212,6 +239,10 @@ def main() -> None:
         print(json.dumps(get_daily_note(args.date), ensure_ascii=False, indent=2))
     elif args.command == "daily" and args.daily_command == "close":
         print(json.dumps(append_daily_note({"completed": args.completed, "problems": args.problems, "risks": args.risks, "next": args.next}), ensure_ascii=False, indent=2))
+    elif args.command == "feedback" and args.feedback_command == "list":
+        run_remote_command(lambda: list_feedback(args.base_url))
+    elif args.command == "feedback" and args.feedback_command == "add":
+        run_remote_command(lambda: add_feedback(args.label, args.content, args.base_url))
 
 
 if __name__ == "__main__":

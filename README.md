@@ -31,6 +31,8 @@ aipmc init
 aipmc help
 aipmc info
 aipmc canon show
+aipmc feedback list
+aipmc feedback add --label bug --content "登录页面验证码不显示"
 aipmc task list --status in_progress
 aipmc commit list --task-id <task-id>
 aipmc commit add --title "Implement task" --summary "..." --auto-git
@@ -38,6 +40,20 @@ aipmc commit update --id <commit-id> --status committed --review-status approved
 aipmc task update --id <task-id> --status done
 aipmv
 ```
+
+Remote feedback commands:
+
+```bash
+aipmc feedback list
+aipmc feedback add --label bug --content "登录页面验证码不显示"
+aipmc feedback add --label suggestion --content "建议任务列表支持按负责人筛选"
+```
+
+Optional override:
+- `--base-url http://43.167.206.218:8080`
+- `PMAI_FEEDBACK_BASE_URL=http://43.167.206.218:8080`
+- `label` only supports `bug` and `suggestion`
+- Remote request failures return a JSON error and exit quickly instead of hanging
 
 Task governance rule:
 - Marking a task `done` requires at least one linked approved commit (`status=committed|merged` and `review_status=approved`).
