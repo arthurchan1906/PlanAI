@@ -16,6 +16,7 @@ from .store import (
     fetch_canon,
     get_dashboard_summary,
     get_daily_note,
+    get_inbox_summary,
     list_commits,
     list_decisions,
     list_daily_notes,
@@ -102,6 +103,8 @@ class PMAIRequestHandler(SimpleHTTPRequestHandler):
                 self.send_json(fetch_canon())
             elif method == 'GET' and path == '/pmai/dashboard':
                 self.send_json(get_dashboard_summary())
+            elif method == 'GET' and path == '/pmai/inbox':
+                self.send_json(get_inbox_summary())
             elif method == 'POST' and path == '/pmai/canon/update':
                 self.send_json(update_canon(self.read_json()))
             elif method == 'GET' and path == '/pmai/tasks':

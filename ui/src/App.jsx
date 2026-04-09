@@ -39,13 +39,13 @@ const { Title, Paragraph, Text } = Typography;
 const { TextArea } = Input;
 
 const VIEW_ITEMS = [
-  { key: "dashboard", label: "总览", icon: <DashboardOutlined /> },
-  { key: "canon", label: "规范", icon: <SettingOutlined /> },
-  { key: "tasks", label: "任务", icon: <ScheduleOutlined /> },
-  { key: "ideas", label: "想法", icon: <BulbOutlined /> },
-  { key: "docs", label: "文档", icon: <BookOutlined /> },
-  { key: "decisions", label: "决策", icon: <FundProjectionScreenOutlined /> },
-  { key: "daily", label: "日报", icon: <FileTextOutlined /> },
+  { key: "dashboard", label: "今日工作台", icon: <DashboardOutlined /> },
+  { key: "canon", label: "规范基线", icon: <SettingOutlined /> },
+  { key: "tasks", label: "执行任务", icon: <ScheduleOutlined /> },
+  { key: "ideas", label: "想法池", icon: <BulbOutlined /> },
+  { key: "docs", label: "文档治理", icon: <BookOutlined /> },
+  { key: "decisions", label: "决策审批", icon: <FundProjectionScreenOutlined /> },
+  { key: "daily", label: "每日记录", icon: <FileTextOutlined /> },
 ];
 
 const TASK_STATUSES = ["todo", "in_progress", "blocked", "done", "dropped"];
@@ -58,7 +58,7 @@ const DOC_STATUSES = ["draft", "active", "archived", "obsolete"];
 const DOC_LAYERS = ["baseline", "decision", "task", "exploration", "history", "topic"];
 const NAV_ITEMS = [
   ...VIEW_ITEMS.slice(0, 3),
-  { key: "commits", label: "提交", icon: <BranchesOutlined /> },
+  { key: "commits", label: "交付提交", icon: <BranchesOutlined /> },
   ...VIEW_ITEMS.slice(3),
 ];
 
@@ -92,10 +92,47 @@ function todayString() {
   return new Date().toISOString().slice(0, 10);
 }
 
-function DashboardView({ dashboard, canon, tasks, decisions, commits, loading, onOpenCanon }) {
+function DashboardView({
+  dashboard,
+  inbox,
+  canon,
+  tasks,
+  decisions,
+  commits,
+  loading,
+  onOpenCanon,
+  onOpenDecisions,
+  onOpenTasks,
+  onOpenCommits,
+}) {
   const inProgressTasks = (tasks || []).filter((task) => task.status === "in_progress").slice(0, 5);
   const acceptedDecisions = (decisions || []).filter((decision) => decision.status === "accepted").slice(0, 4);
   const recentCommits = (commits || []).slice(0, 5);
+  const recommendedActions = inbox?.recommended_actions || [];
+  const inboxCounts = inbox?.counts || {};
+  const canonMeta = inbox?.canon || {};
+
+  function handleRecommendedAction(action) {
+    if (action.kind === "decision_review") {
+      onOpenDecisions?.();
+      return;
+    }
+    if (action.kind === "canon_followup") {
+      onOpenCanon?.(action.target_id);
+      return;
+    }
+    if (action.kind === "commit_review") {
+      onOpenCommits?.();
+      return;
+    }
+    if (action.kind === "verification_gap") {
+      onOpenCommits?.();
+      return;
+    }
+    if (action.kind === "task_closure_blocker") {
+      onOpenTasks?.();
+    }
+  }
 
   if (loading && !dashboard) {
     return (
@@ -116,33 +153,49 @@ function DashboardView({ dashboard, canon, tasks, decisions, commits, loading, o
         </Col>
         <Col xs={24} md={12} xl={6}>
           <Card className="console-card stat-card" bordered={false}>
-            <Statistic title="待处理想法" value={dashboard?.idea_counts?.inbox || 0} />
-            <Text type="secondary">总数 {dashboard?.idea_counts?.total || 0}</Text>
+            <Statistic title="待审批事项" value={inboxCounts.total || 0} />
+            <Text type="secondary">优先先看 inbox</Text>
           </Card>
         </Col>
         <Col xs={24} md={12} xl={6}>
           <Card className="console-card stat-card" bordered={false}>
-            <Statistic title="已采纳决策" value={dashboard?.decision_counts?.accepted || 0} />
-            <Text type="secondary">总数 {dashboard?.decision_counts?.total || 0}</Text>
+            <Statistic title="待决策" value={inboxCounts.proposed_decisions || 0} />
+            <Text type="secondary">显式 review 后再推进</Text>
           </Card>
         </Col>
         <Col xs={24} md={12} xl={6}>
           <Card className="console-card stat-card" bordered={false}>
-            <Statistic title="真相文档" value={dashboard?.doc_counts?.source_of_truth || 0} />
-            <Text type="secondary">总数 {dashboard?.doc_counts?.total || 0}</Text>
+            <Statistic title="待规范同步" value={inboxCounts.canon_followups || 0} />
+            <Text type="secondary">canon 已关联 {canonMeta.related_decisions_count || 0}</Text>
           </Card>
         </Col>
         <Col xs={24} md={12} xl={6}>
           <Card className="console-card stat-card" bordered={false}>
-            <Statistic title="代码提交" value={dashboard?.commit_counts?.committed || 0} />
-            <Text type="secondary">待审查 {dashboard?.commit_counts?.needs_review || 0}</Text>
+            <Statistic title="待提交审查" value={inboxCounts.review_commits || 0} />
+            <Text type="secondary">已提交 {dashboard?.commit_counts?.committed || 0}</Text>
+          </Card>
+        </Col>
+        <Col xs={24} md={12} xl={6}>
+          <Card className="console-card stat-card" bordered={false}>
+            <Statistic title="验证缺口" value={inboxCounts.verification_gaps || 0} />
+            <Text type="secondary">
+              需要补测试或审查
+            </Text>
+          </Card>
+        </Col>
+        <Col xs={24} md={12} xl={6}>
+          <Card className="console-card stat-card" bordered={false}>
+            <Statistic title="任务收口阻塞" value={inboxCounts.task_closure_blockers || 0} />
+            <Text type="secondary">
+              先处理 closure blockers
+            </Text>
           </Card>
         </Col>
       </Row>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={14}>
-          <Card className="console-card" title="当前建议" bordered={false}>
+          <Card className="console-card" title="当下建议" bordered={false}>
             {dashboard?.current_recommendations?.length ? (
               <List
                 dataSource={dashboard.current_recommendations}
@@ -154,7 +207,7 @@ function DashboardView({ dashboard, canon, tasks, decisions, commits, loading, o
           </Card>
         </Col>
         <Col xs={24} xl={10}>
-          <Card className="console-card" title="当前风险" bordered={false}>
+          <Card className="console-card" title="当前阻塞与风险" bordered={false}>
             {dashboard?.current_risks?.length ? (
               <List
                 dataSource={dashboard.current_risks}
@@ -174,7 +227,81 @@ function DashboardView({ dashboard, canon, tasks, decisions, commits, loading, o
 
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={12}>
-          <Card className="console-card" title="规范摘要" bordered={false}>
+          <Card className="console-card" title="待审批中心" bordered={false}>
+            {inboxCounts.total ? (
+              <Space direction="vertical" size={14} style={{ width: "100%" }}>
+                <div className="tag-wrap">
+                  <Tag color="gold">待决策 {inboxCounts.proposed_decisions || 0}</Tag>
+                  <Tag color="blue">待规范同步 {inboxCounts.canon_followups || 0}</Tag>
+                  <Tag color="volcano">待提交审查 {inboxCounts.review_commits || 0}</Tag>
+                  <Tag color="magenta">验证缺口 {inboxCounts.verification_gaps || 0}</Tag>
+                  <Tag color="purple">收口阻塞 {inboxCounts.task_closure_blockers || 0}</Tag>
+                </div>
+                <List
+                  locale={{ emptyText: "暂无待处理事项" }}
+                  dataSource={[
+                    ...(inbox?.pending_items?.proposed_decisions || []).slice(0, 2),
+                    ...(inbox?.pending_items?.review_commits || []).slice(0, 2),
+                    ...(inbox?.pending_items?.task_closure_blockers || []).slice(0, 2),
+                  ]}
+                  renderItem={(item) => (
+                    <List.Item>
+                      <Space direction="vertical" size={2} style={{ width: "100%" }}>
+                        <Space wrap>
+                          {"status" in item ? <Tag color={statusColor(item.status)}>{item.status}</Tag> : null}
+                          {"priority" in item ? <Tag>{item.priority}</Tag> : null}
+                          {"date" in item ? <Text type="secondary">{item.date}</Text> : null}
+                        </Space>
+                        <Text strong>{item.title}</Text>
+                        <Text type="secondary">{item.id}</Text>
+                        {"reasons" in item ? (
+                          <Text type="secondary">阻塞原因: {item.reasons.join(", ")}</Text>
+                        ) : null}
+                      </Space>
+                    </List.Item>
+                  )}
+                />
+              </Space>
+            ) : (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无待审批事项" />
+            )}
+          </Card>
+        </Col>
+        <Col xs={24} xl={12}>
+          <Card className="console-card" title="推荐动作" bordered={false}>
+            {recommendedActions.length ? (
+              <List
+                dataSource={recommendedActions}
+                renderItem={(action) => (
+                  <List.Item
+                    actions={[
+                      <Button key="open" type="link" onClick={() => handleRecommendedAction(action)}>
+                        打开处理
+                      </Button>,
+                    ]}
+                  >
+                    <Space direction="vertical" size={4} style={{ width: "100%" }}>
+                      <Space wrap>
+                        <Tag color={action.priority === "high" ? "red" : "gold"}>{action.priority}</Tag>
+                        <Tag>{action.kind}</Tag>
+                      </Space>
+                      <Text strong>{action.title}</Text>
+                      <Text type="secondary">{action.reason}</Text>
+                      <Text code>{action.command}</Text>
+                    </Space>
+                  </List.Item>
+                )}
+              />
+            ) : (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无推荐动作" />
+            )}
+          </Card>
+        </Col>
+      </Row>
+
+      <Row gutter={[16, 16]}>
+        <Col xs={24} xl={12}>
+          <Card className="console-card" title="当前规范基线" bordered={false}>
             {canon ? (
               <div className="canon-grid">
                 <div>
@@ -204,7 +331,7 @@ function DashboardView({ dashboard, canon, tasks, decisions, commits, loading, o
           </Card>
         </Col>
         <Col xs={24} xl={12}>
-          <Card className="console-card" title="主线执行" bordered={false}>
+          <Card className="console-card" title="当前执行主线" bordered={false}>
             <List
               locale={{ emptyText: "暂无主线项目" }}
               dataSource={[...inProgressTasks, ...acceptedDecisions]}
@@ -225,7 +352,7 @@ function DashboardView({ dashboard, canon, tasks, decisions, commits, loading, o
           </Card>
         </Col>
       </Row>
-      <Card className="console-card" title="最近提交" bordered={false}>
+      <Card className="console-card" title="最近交付提交" bordered={false}>
         {recentCommits.length ? (
           <List
             dataSource={recentCommits}
@@ -264,7 +391,7 @@ function CanonView({ canon, decisions, canonForm, setCanonForm, onSubmitCanon, b
     <div className="view-stack">
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={15}>
-          <Card className="console-card" title="更新规范" bordered={false}>
+          <Card className="console-card" title="同步规范基线" bordered={false}>
             <Form layout="vertical" onFinish={onSubmitCanon}>
               <Form.Item label="已采纳决策" required>
                 <Select
@@ -329,13 +456,13 @@ function CanonView({ canon, decisions, canonForm, setCanonForm, onSubmitCanon, b
                 </Col>
               </Row>
               <Button type="primary" htmlType="submit" loading={busy}>
-                更新规范
+                同步规范
               </Button>
             </Form>
           </Card>
         </Col>
         <Col xs={24} xl={9}>
-          <Card className="console-card" title="当前规范" bordered={false}>
+          <Card className="console-card" title="当前基线快照" bordered={false}>
             {canon ? (
               <Space direction="vertical" size={16} style={{ width: "100%" }}>
                 <div>
@@ -414,7 +541,7 @@ function TasksView({
 
   return (
     <div className="view-stack">
-      <Card className="console-card" title="新建任务" bordered={false}>
+      <Card className="console-card" title="登记执行任务" bordered={false}>
         <Form layout="vertical" onFinish={onCreateTask}>
           <Row gutter={16}>
             <Col xs={24} xl={12}>
@@ -461,14 +588,14 @@ function TasksView({
             </Col>
           </Row>
           <Button type="primary" htmlType="submit" loading={busy}>
-            创建任务
+            登记任务
           </Button>
         </Form>
       </Card>
 
       <Card
         className="console-card"
-        title="任务工作台"
+        title="执行任务看板"
         bordered={false}
         extra={
           <Space wrap>
@@ -580,7 +707,7 @@ function IdeasView({
 
   return (
     <div className="view-stack">
-      <Card className="console-card" title="捕获想法" bordered={false}>
+      <Card className="console-card" title="记录新想法" bordered={false}>
         <Form layout="vertical" onFinish={onCreateIdea}>
           <Form.Item label="标题" required>
             <Input
@@ -602,7 +729,7 @@ function IdeasView({
             />
           </Form.Item>
           <Button type="primary" htmlType="submit" loading={busy}>
-            创建想法
+            记录想法
           </Button>
         </Form>
       </Card>
@@ -694,7 +821,7 @@ function DocsView({ docs, docAudit, docForm, setDocForm, onSubmitDoc, busy }) {
     <div className="view-stack">
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={10}>
-      <Card className="console-card" title="文档记录" bordered={false}>
+      <Card className="console-card" title="更新文档状态" bordered={false}>
             <Form layout="vertical" onFinish={onSubmitDoc}>
               <Form.Item label="路径" required>
                 <Input
@@ -735,13 +862,13 @@ function DocsView({ docs, docAudit, docForm, setDocForm, onSubmitDoc, busy }) {
                 />
               </Form.Item>
               <Button type="primary" htmlType="submit" loading={busy}>
-                保存文档记录
+                保存状态
               </Button>
             </Form>
           </Card>
         </Col>
         <Col xs={24} xl={14}>
-          <Card className="console-card" title="文档审计" bordered={false}>
+          <Card className="console-card" title="文档治理审计" bordered={false}>
             {docAudit ? (
               <Row gutter={[16, 16]}>
                 <Col xs={12} md={6}>
@@ -767,7 +894,7 @@ function DocsView({ docs, docAudit, docForm, setDocForm, onSubmitDoc, busy }) {
         </Col>
       </Row>
 
-      <Card className="console-card" title="文档目录" bordered={false}>
+      <Card className="console-card" title="文档治理清单" bordered={false}>
         <Table
           rowKey="path"
           columns={columns}
@@ -811,7 +938,7 @@ function DecisionsView({
 
   return (
     <div className="view-stack">
-      <Card className="console-card" title="新建决策" bordered={false}>
+      <Card className="console-card" title="发起决策草案" bordered={false}>
         <Form layout="vertical" onFinish={onCreateDecision}>
           <Form.Item label="标题" required>
             <Input
@@ -840,14 +967,14 @@ function DecisionsView({
             />
           </Form.Item>
           <Button type="primary" htmlType="submit" loading={busy}>
-            创建决策
+            创建草案
           </Button>
         </Form>
       </Card>
 
       <Card
         className="console-card"
-        title="决策日志"
+        title="决策审批队列"
         bordered={false}
         extra={
           <Space wrap>
@@ -1014,7 +1141,7 @@ function CommitsView({
 
   return (
     <div className="view-stack">
-      <Card className="console-card" title="登记提交" bordered={false}>
+      <Card className="console-card" title="登记交付提交" bordered={false}>
         <Form layout="vertical" onFinish={onCreateCommit}>
           <Row gutter={16}>
             <Col xs={24} xl={12}>
@@ -1108,14 +1235,14 @@ function CommitsView({
             </Col>
           </Row>
           <Button type="primary" htmlType="submit" loading={busy}>
-            登记提交
+            登记交付
           </Button>
         </Form>
       </Card>
 
       <Card
         className="console-card"
-        title="提交面板"
+        title="交付审查面板"
         bordered={false}
         extra={
           <Space wrap>
@@ -1155,7 +1282,7 @@ function DailyView({ daily, dailyHistory, dailyForm, setDailyForm, onAppendDaily
     <div className="view-stack">
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={10}>
-      <Card className="console-card" title="日报编辑" bordered={false}>
+      <Card className="console-card" title="每日收口" bordered={false}>
             <Form layout="vertical" onFinish={onAppendDaily}>
               <Form.Item label="日期">
                 <Input
@@ -1222,7 +1349,7 @@ function DailyView({ daily, dailyHistory, dailyForm, setDailyForm, onAppendDaily
             {daily ? (
               <Row gutter={[16, 16]}>
                 <Col xs={24} md={12}>
-                  <Card size="small" className="inner-card" title="已完成" bordered={false}>
+        <Card size="small" className="inner-card" title="今日完成" bordered={false}>
                     <List
                       dataSource={daily.completed || []}
                       locale={{ emptyText: "暂无" }}
@@ -1231,7 +1358,7 @@ function DailyView({ daily, dailyHistory, dailyForm, setDailyForm, onAppendDaily
                   </Card>
                 </Col>
                 <Col xs={24} md={12}>
-                  <Card size="small" className="inner-card" title="问题" bordered={false}>
+        <Card size="small" className="inner-card" title="当前问题" bordered={false}>
                     <List
                       dataSource={daily.problems || []}
                       locale={{ emptyText: "暂无" }}
@@ -1240,7 +1367,7 @@ function DailyView({ daily, dailyHistory, dailyForm, setDailyForm, onAppendDaily
                   </Card>
                 </Col>
                 <Col xs={24} md={12}>
-                  <Card size="small" className="inner-card" title="风险" bordered={false}>
+        <Card size="small" className="inner-card" title="当前风险" bordered={false}>
                     <List
                       dataSource={daily.risks || []}
                       locale={{ emptyText: "暂无" }}
@@ -1249,7 +1376,7 @@ function DailyView({ daily, dailyHistory, dailyForm, setDailyForm, onAppendDaily
                   </Card>
                 </Col>
                 <Col xs={24} md={12}>
-                  <Card size="small" className="inner-card" title="下一步" bordered={false}>
+        <Card size="small" className="inner-card" title="下一步动作" bordered={false}>
                     <List
                       dataSource={daily.next || []}
                       locale={{ emptyText: "暂无" }}
@@ -1265,7 +1392,7 @@ function DailyView({ daily, dailyHistory, dailyForm, setDailyForm, onAppendDaily
         </Col>
       </Row>
 
-      <Card className="console-card" title="历史日报" bordered={false}>
+      <Card className="console-card" title="历史每日记录" bordered={false}>
         <div className="history-row">
           {dailyHistory.length ? (
             dailyHistory.map((item) => (
@@ -1290,6 +1417,7 @@ function ConsoleApp() {
   const [selectedDailyDate, setSelectedDailyDate] = useState("");
 
   const [dashboard, setDashboard] = useState(null);
+  const [inbox, setInbox] = useState(null);
   const [canon, setCanon] = useState(null);
   const [tasks, setTasks] = useState([]);
   const [commits, setCommits] = useState([]);
@@ -1339,8 +1467,9 @@ function ConsoleApp() {
     setLoading(true);
     try {
       const dailyQuery = date ? `?date=${encodeURIComponent(date)}` : "";
-      const [summaryData, canonData, taskData, commitData, ideaData, docData, auditData, decisionData, dailyData, historyData] = await Promise.all([
+      const [summaryData, inboxData, canonData, taskData, commitData, ideaData, docData, auditData, decisionData, dailyData, historyData] = await Promise.all([
         api("/pmai/dashboard"),
+        api("/pmai/inbox"),
         api("/pmai/canon"),
         api("/pmai/tasks"),
         api("/pmai/commits"),
@@ -1352,8 +1481,9 @@ function ConsoleApp() {
         api("/pmai/daily/history"),
       ]);
 
-      setDashboard(summaryData);
-      setCanon(canonData);
+        setDashboard(summaryData);
+        setInbox(inboxData);
+        setCanon(canonData);
       setTasks(taskData.tasks || []);
       setCommits(commitData.commits || []);
       setIdeas(ideaData.ideas || []);
@@ -1428,12 +1558,12 @@ function ConsoleApp() {
       </Sider>
 
       <Layout>
-        <Header className="console-header">
-          <div>
-            <Text className="header-kicker">PMAI 本地面板</Text>
-            <Title level={3} className="header-title">
-              {NAV_ITEMS.find((item) => item.key === view)?.label}
-            </Title>
+          <Header className="console-header">
+            <div>
+              <Text className="header-kicker">PMAI Workflow Console</Text>
+              <Title level={3} className="header-title">
+                {NAV_ITEMS.find((item) => item.key === view)?.label}
+              </Title>
           </div>
           <Button icon={<ReloadOutlined />} onClick={() => loadAll(selectedDailyDate)} loading={busy}>
             刷新
@@ -1444,12 +1574,16 @@ function ConsoleApp() {
           {view === "dashboard" ? (
             <DashboardView
               dashboard={dashboard}
+              inbox={inbox}
               canon={canon}
               tasks={tasks}
               decisions={decisions}
               commits={commits}
               loading={loading}
-              onOpenCanon={() => openCanonWithDecision("")}
+              onOpenCanon={openCanonWithDecision}
+              onOpenDecisions={() => setView("decisions")}
+              onOpenTasks={() => setView("tasks")}
+              onOpenCommits={() => setView("commits")}
             />
           ) : null}
 

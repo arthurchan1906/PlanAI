@@ -1200,3 +1200,176 @@ def get_dashboard_summary() -> Dict[str, Any]:
         "current_risks": current_risks,
         "recent_commits": commits[:5],
     }
+
+
+def get_inbox_summary() -> Dict[str, Any]:
+    canon = fetch_canon()
+    tasks = list_tasks()
+    decisions = list_decisions()
+    commits = list_commits()
+    doc_audit = audit_docs()
+    canon_related_decisions = set(canon.get("related_decisions", []))
+
+    proposed_decisions = [item for item in decisions if item["status"] == "proposed"]
+    canon_followups = [
+        item
+        for item in decisions
+        if item["status"] == "accepted"
+        and item["updates_canon"]
+        and item["id"] not in canon_related_decisions
+    ]
+    review_commits = [
+        item
+        for item in commits
+        if item["status"] in ("committed", "merged") and item["review_status"] != "approved"
+    ]
+    verification_gaps = [
+        item
+        for item in commits
+        if item["status"] in ("committed", "merged")
+        and (item["test_status"] != "passed" or item["review_status"] != "approved")
+    ]
+    task_closure_blockers: List[Dict[str, Any]] = []
+    for task in tasks:
+        if task["status"] not in ("in_progress", "blocked"):
+            continue
+        linked_commits = [item for item in commits if item["task_id"] == task["id"]]
+        approved_linked_commits = [
+            item
+            for item in linked_commits
+            if item["status"] in ("committed", "merged") and item["review_status"] == "approved"
+        ]
+        blocker_reasons: List[str] = []
+        if not linked_commits:
+            blocker_reasons.append("no_linked_commit")
+        if linked_commits and not approved_linked_commits:
+            blocker_reasons.append("no_approved_commit")
+        if any(item["test_status"] != "passed" for item in linked_commits):
+            blocker_reasons.append("verification_incomplete")
+        if blocker_reasons:
+            task_closure_blockers.append(
+                {
+                    "id": task["id"],
+                    "title": task["title"],
+                    "status": task["status"],
+                    "priority": task["priority"],
+                    "phase": task["phase"],
+                    "reasons": blocker_reasons,
+                    "linked_commit_ids": [item["id"] for item in linked_commits],
+                }
+            )
+    blocking_doc_issues: List[Dict[str, Any]] = []
+    for path in doc_audit.get("obsolete_without_replacement", []):
+        blocking_doc_issues.append(
+            {
+                "type": "obsolete_without_replacement",
+                "path": path,
+            }
+        )
+    for path in doc_audit.get("invalid_truth_records", []):
+        blocking_doc_issues.append(
+            {
+                "type": "invalid_truth_records",
+                "path": path,
+            }
+        )
+
+    recommended_actions: List[Dict[str, Any]] = []
+    for item in proposed_decisions[:3]:
+        recommended_actions.append(
+            {
+                "kind": "decision_review",
+                "priority": "high",
+                "target_id": item["id"],
+                "title": item["title"],
+                "command": f"aipmc decision review --id {item['id']} --status accepted",
+                "reason": "Proposed decisions should be explicitly accepted or rejected before downstream work continues.",
+            }
+        )
+    for item in canon_followups[:3]:
+        recommended_actions.append(
+            {
+                "kind": "canon_followup",
+                "priority": "high",
+                "target_id": item["id"],
+                "title": item["title"],
+                "command": f"aipmc canon update --decision-id {item['id']}",
+                "reason": "Accepted decisions marked as canon-affecting should be reflected in canon explicitly.",
+            }
+        )
+    for item in review_commits[:3]:
+        recommended_actions.append(
+            {
+                "kind": "commit_review",
+                "priority": "medium",
+                "target_id": item["id"],
+                "title": item["title"],
+                "command": f"aipmc commit update --id {item['id']} --review-status approved",
+                "reason": "Committed changes should be reviewed so related tasks can close without manual guesswork.",
+            }
+        )
+    for item in verification_gaps[:3]:
+        recommended_actions.append(
+            {
+                "kind": "verification_gap",
+                "priority": "medium",
+                "target_id": item["id"],
+                "title": item["title"],
+                "command": f"aipmc commit update --id {item['id']} --test-status passed --review-status approved",
+                "reason": "Committed changes without passing verification or review should not be treated as closure-ready.",
+            }
+        )
+    for item in task_closure_blockers[:3]:
+        recommended_actions.append(
+            {
+                "kind": "task_closure_blocker",
+                "priority": "medium",
+                "target_id": item["id"],
+                "title": item["title"],
+                "command": f"aipmc commit list --task-id {item['id']}",
+                "reason": f"Task remains closure-blocked because: {', '.join(item['reasons'])}.",
+            }
+        )
+    for item in blocking_doc_issues[:3]:
+        recommended_actions.append(
+            {
+                "kind": "doc_governance",
+                "priority": "medium",
+                "target_id": item["path"],
+                "title": item["path"],
+                "command": "aipmc docs audit",
+                "reason": f"Document issue `{item['type']}` needs explicit cleanup to keep source-of-truth status reliable.",
+            }
+        )
+
+    return {
+        "canon": {
+            "updated_at": canon.get("updated_at"),
+            "related_decisions_count": len(canon_related_decisions),
+        },
+        "counts": {
+            "proposed_decisions": len(proposed_decisions),
+            "canon_followups": len(canon_followups),
+            "review_commits": len(review_commits),
+            "verification_gaps": len(verification_gaps),
+            "task_closure_blockers": len(task_closure_blockers),
+            "doc_issues": len(blocking_doc_issues),
+            "total": (
+                len(proposed_decisions)
+                + len(canon_followups)
+                + len(review_commits)
+                + len(verification_gaps)
+                + len(task_closure_blockers)
+                + len(blocking_doc_issues)
+            ),
+        },
+        "pending_items": {
+            "proposed_decisions": proposed_decisions,
+            "canon_followups": canon_followups,
+            "review_commits": review_commits,
+            "verification_gaps": verification_gaps,
+            "task_closure_blockers": task_closure_blockers,
+            "doc_issues": blocking_doc_issues,
+        },
+        "recommended_actions": recommended_actions,
+    }

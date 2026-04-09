@@ -22,8 +22,13 @@ Common commands:
 ```bash
 aipmc help
 aipmc info
+aipmc doctor
+aipmc inbox
 aipmc canon show
+aipmc docs list
+aipmc docs audit
 aipmc feedback list
+aipmc decision review --id <decision-id> --status accepted
 aipmc task list
 aipmc decision list
 aipmc commit list
@@ -51,11 +56,13 @@ Write commands:
 aipmc task add --title "Implement xxx" --acceptance "Complete yyy"
 aipmc task update --id <task-id> --status in_progress
 aipmc decision add --title "Choose approach A" --background "..." --decision "..."
+aipmc decision review --id <decision-id> --status accepted
 aipmc commit add --title "Implement task" --summary "..." --auto-git
 aipmc commit update --id <commit-id> --status committed --review-status approved
 aipmc task update --id <task-id> --status done
 aipmc idea capture --title "Optimization idea" --summary "..."
 aipmc daily close --completed "..." --problems "..." --risks "..." --next "..."
+aipmc daily replace --completed "..." --problems "..." --risks "..." --next "..."
 aipmc feedback add --label bug --content "登录页面验证码不显示"
 aipmc feedback add --label suggestion --content "建议任务列表支持按负责人筛选"
 ```
@@ -64,7 +71,11 @@ Status commands:
 
 ```bash
 aipmc info
+aipmc doctor
+aipmc inbox
 aipmc canon show
+aipmc docs list
+aipmc docs audit
 aipmc task list
 aipmc commit list
 aipmc task list --status done
@@ -81,10 +92,13 @@ Web:
 aipmv
 ```
 
+`aipmc inbox` is the shortest way to inspect pending review and governance items before opening the web UI.
+
 Default address:
 - `http://127.0.0.1:8011/`
 
 Notes:
+- pipx is recommended for CLI-style installation across Windows, Linux, and macOS.
 - Virtual python environment must be activated before using `aipmc` command or you can run `/path/to/python3 -m pmai help...command`
 - Privilege must be granted if any write or modify operation is requested in Container environment.
 - Runtime data is stored under `.pmai/` in the project.
