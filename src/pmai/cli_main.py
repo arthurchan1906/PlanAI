@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 import json
@@ -13,30 +13,49 @@ from .feedback_api import add_feedback, list_feedback
 from .store import (
     append_daily_note,
     audit_docs,
+    build_brief,
     create_commit,
     create_decision,
     create_idea,
+    create_link,
+    create_principle,
     create_task,
+    create_vision,
     describe_runtime,
     fetch_canon,
     get_config_path,
+    get_decision,
+    get_git_diff_summary,
+    get_git_worktree_status,
     get_inbox_summary,
+    get_principle,
     get_runtime_dir,
     get_db_path,
+    get_status_snapshot,
+    get_task,
+    get_vision,
+    get_commit,
+    get_idea,
     list_commits,
     list_decisions,
     list_doc_records,
     list_ideas,
+    list_links,
+    list_principles,
+    list_recent_git_commits,
     list_tasks,
+    list_visions,
     load_runtime_config,
     replace_daily_note,
     review_idea,
     save_runtime_config,
-    update_decision_status,
-    update_doc_record,
     update_canon,
     update_commit,
+    update_decision_status,
+    update_doc_record,
     update_task,
+    update_vision,
+    update_principle,
 )
 from .feedback_api import get_feedback_base_url
 from .usage_guide import build_usage_markdown, write_usage_file
@@ -183,7 +202,15 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("help")
     subparsers.add_parser("info")
     subparsers.add_parser("doctor")
+    subparsers.add_parser("status")
     subparsers.add_parser("inbox")
+    code = subparsers.add_parser("code").add_subparsers(dest="code_command", required=True)
+    code.add_parser("status")
+    code_diff = code.add_parser("diff")
+    code_diff.add_argument("--staged", action="store_true")
+    code_recent = code.add_parser("recent")
+    code_recent.add_argument("--limit", type=int, default=10)
+    subparsers.add_parser("brief").add_subparsers(dest="brief_command", required=True).add_parser("product").parent.add_parser("architecture").parent.add_parser("modules")
     canon = subparsers.add_parser("canon").add_subparsers(dest="canon_command", required=True)
     canon.add_parser("show")
     canon_update = canon.add_parser("update")
@@ -193,8 +220,57 @@ def build_parser() -> argparse.ArgumentParser:
     canon_update.add_argument("--architecture", default="")
     canon_update.add_argument("--add-scope", nargs="*", default=[])
     canon_update.add_argument("--add-avoid", nargs="*", default=[])
+    vision = subparsers.add_parser("vision").add_subparsers(dest="vision_command", required=True)
+    vision_list = vision.add_parser("list")
+    vision_list.add_argument("--status", default="")
+    vision_show = vision.add_parser("show")
+    vision_show.add_argument("--id", required=True)
+    vision_add = vision.add_parser("add")
+    vision_add.add_argument("--title", required=True)
+    vision_add.add_argument("--summary", default="")
+    vision_add.add_argument("--status", default="active")
+    vision_add.add_argument("--horizon", default="long_term")
+    vision_update = vision.add_parser("update")
+    vision_update.add_argument("--id", required=True)
+    vision_update.add_argument("--title", default=None)
+    vision_update.add_argument("--summary", default=None)
+    vision_update.add_argument("--status", default=None)
+    vision_update.add_argument("--horizon", default=None)
+    principle = subparsers.add_parser("principle").add_subparsers(dest="principle_command", required=True)
+    principle_list = principle.add_parser("list")
+    principle_list.add_argument("--status", default="")
+    principle_list.add_argument("--kind", default="")
+    principle_show = principle.add_parser("show")
+    principle_show.add_argument("--id", required=True)
+    principle_add = principle.add_parser("add")
+    principle_add.add_argument("--title", required=True)
+    principle_add.add_argument("--summary", default="")
+    principle_add.add_argument("--kind", default="governance")
+    principle_add.add_argument("--status", default="active")
+    principle_update = principle.add_parser("update")
+    principle_update.add_argument("--id", required=True)
+    principle_update.add_argument("--title", default=None)
+    principle_update.add_argument("--summary", default=None)
+    principle_update.add_argument("--kind", default=None)
+    principle_update.add_argument("--status", default=None)
+    link = subparsers.add_parser("link").add_subparsers(dest="link_command", required=True)
+    link_list = link.add_parser("list")
+    link_list.add_argument("--source-id", default="")
+    link_list.add_argument("--target-id", default="")
+    link_list.add_argument("--relation", default="")
+    link_add = link.add_parser("add")
+    link_add.add_argument("--source-type", required=True)
+    link_add.add_argument("--source-id", required=True)
+    link_add.add_argument("--relation", required=True)
+    link_add.add_argument("--target-type", required=True)
+    link_add.add_argument("--target-id", required=True)
+    link_add.add_argument("--note", default="")
+    link_delete = link.add_parser("delete")
+    link_delete.add_argument("--id", required=True)
     decision = subparsers.add_parser("decision").add_subparsers(dest="decision_command", required=True)
     decision.add_parser("list")
+    decision_show = decision.add_parser("show")
+    decision_show.add_argument("--id", required=True)
     decision_add = decision.add_parser("add")
     decision_add.add_argument("--title", required=True)
     decision_add.add_argument("--background", required=True)
@@ -206,6 +282,8 @@ def build_parser() -> argparse.ArgumentParser:
     idea = subparsers.add_parser("idea").add_subparsers(dest="idea_command", required=True)
     idea_list = idea.add_parser("list")
     idea_list.add_argument("--status", default="")
+    idea_show = idea.add_parser("show")
+    idea_show.add_argument("--id", required=True)
     idea_capture = idea.add_parser("capture")
     idea_capture.add_argument("--title", required=True)
     idea_capture.add_argument("--summary", required=True)
@@ -219,6 +297,8 @@ def build_parser() -> argparse.ArgumentParser:
     task = subparsers.add_parser("task").add_subparsers(dest="task_command", required=True)
     task_list = task.add_parser("list")
     task_list.add_argument("--status", default="")
+    task_show = task.add_parser("show")
+    task_show.add_argument("--id", required=True)
     task_add = task.add_parser("add")
     task_add.add_argument("--title", required=True)
     task_add.add_argument("--priority", default="P1")
@@ -235,6 +315,8 @@ def build_parser() -> argparse.ArgumentParser:
     commit_list.add_argument("--status", default="")
     commit_list.add_argument("--task-id", default="", dest="task_id")
     commit_list.add_argument("--decision-id", default="", dest="decision_id")
+    commit_show = commit.add_parser("show")
+    commit_show.add_argument("--id", required=True)
     commit_add = commit.add_parser("add")
     commit_add.add_argument("--title", required=True)
     commit_add.add_argument("--summary", default="")
@@ -259,6 +341,7 @@ def build_parser() -> argparse.ArgumentParser:
     commit_update.add_argument("--test-status", default=None, dest="test_status")
     commit_update.add_argument("--review-status", default=None, dest="review_status")
     commit_update.add_argument("--files", nargs="*", default=None)
+    commit_update.add_argument("--auto-git", action="store_true", dest="auto_git")
     commit_update.add_argument("--clear-task-id", action="store_true", dest="clear_task_id")
     commit_update.add_argument("--clear-decision-id", action="store_true", dest="clear_decision_id")
     daily = subparsers.add_parser("daily").add_subparsers(dest="daily_command", required=True)
@@ -310,8 +393,18 @@ def main() -> None:
         run_local_command(lambda: describe_runtime())
     elif args.command == "doctor":
         show_doctor()
+    elif args.command == "status":
+        run_local_command(get_status_snapshot)
     elif args.command == "inbox":
         run_local_command(get_inbox_summary)
+    elif args.command == "code" and args.code_command == "status":
+        run_local_command(get_git_worktree_status)
+    elif args.command == "code" and args.code_command == "diff":
+        run_local_command(lambda: get_git_diff_summary(staged=args.staged))
+    elif args.command == "code" and args.code_command == "recent":
+        run_local_command(lambda: {"items": list_recent_git_commits(args.limit)})
+    elif args.command == "brief":
+        run_local_command(lambda: build_brief(args.brief_command))
     elif args.command == "canon" and args.canon_command == "show":
         run_local_command(fetch_canon)
     elif args.command == "canon" and args.canon_command == "update":
@@ -327,8 +420,60 @@ def main() -> None:
                 }
             )
         )
+    elif args.command == "vision" and args.vision_command == "list":
+        run_local_command(lambda: {"visions": list_visions(args.status or None)})
+    elif args.command == "vision" and args.vision_command == "show":
+        run_local_command(lambda: get_vision(args.id))
+    elif args.command == "vision" and args.vision_command == "add":
+        run_local_command(lambda: create_vision({
+            "title": args.title,
+            "summary": args.summary,
+            "status": args.status,
+            "horizon": args.horizon,
+        }))
+    elif args.command == "vision" and args.vision_command == "update":
+        run_local_command(lambda: update_vision(args.id, {
+            "title": args.title,
+            "summary": args.summary,
+            "status": args.status,
+            "horizon": args.horizon,
+        }))
+    elif args.command == "principle" and args.principle_command == "list":
+        run_local_command(lambda: {"principles": list_principles(args.status or None, args.kind or None)})
+    elif args.command == "principle" and args.principle_command == "show":
+        run_local_command(lambda: get_principle(args.id))
+    elif args.command == "principle" and args.principle_command == "add":
+        run_local_command(lambda: create_principle({
+            "title": args.title,
+            "summary": args.summary,
+            "kind": args.kind,
+            "status": args.status,
+        }))
+    elif args.command == "principle" and args.principle_command == "update":
+        run_local_command(lambda: update_principle(args.id, {
+            "title": args.title,
+            "summary": args.summary,
+            "kind": args.kind,
+            "status": args.status,
+        }))
+    elif args.command == "link" and args.link_command == "list":
+        run_local_command(lambda: {"links": list_links(args.source_id or None, args.target_id or None, args.relation or None)})
+    elif args.command == "link" and args.link_command == "add":
+        run_local_command(lambda: create_link({
+            "source_type": args.source_type,
+            "source_id": args.source_id,
+            "relation": args.relation,
+            "target_type": args.target_type,
+            "target_id": args.target_id,
+            "note": args.note,
+        }))
+    elif args.command == "link" and args.link_command == "delete":
+        from .store import delete_link
+        run_local_command(lambda: {"ok": delete_link(args.id)})
     elif args.command == "decision" and args.decision_command == "list":
         run_local_command(lambda: {"decisions": list_decisions()})
+    elif args.command == "decision" and args.decision_command == "show":
+        run_local_command(lambda: get_decision(args.id))
     elif args.command == "decision" and args.decision_command == "add":
         run_local_command(
             lambda: create_decision(
@@ -344,6 +489,8 @@ def main() -> None:
         run_local_command(lambda: update_decision_status(args.id, args.status))
     elif args.command == "idea" and args.idea_command == "list":
         run_local_command(lambda: {"ideas": list_ideas(args.status or None)})
+    elif args.command == "idea" and args.idea_command == "show":
+        run_local_command(lambda: get_idea(args.id))
     elif args.command == "idea" and args.idea_command == "capture":
         run_local_command(
             lambda: create_idea(
@@ -360,6 +507,8 @@ def main() -> None:
         run_local_command(lambda: review_idea(args.id, args.status, args.note))
     elif args.command == "task" and args.task_command == "list":
         run_local_command(lambda: {"tasks": list_tasks(args.status or None)})
+    elif args.command == "task" and args.task_command == "show":
+        run_local_command(lambda: get_task(args.id))
     elif args.command == "task" and args.task_command == "add":
         run_local_command(
             lambda: create_task(
@@ -391,6 +540,8 @@ def main() -> None:
                     )
                 },
         )
+    elif args.command == "commit" and args.commit_command == "show":
+        run_local_command(lambda: get_commit(args.id))
     elif args.command == "commit" and args.commit_command == "add":
         run_local_command(
             lambda: create_commit(
@@ -424,6 +575,7 @@ def main() -> None:
                     "test_status": args.test_status,
                     "review_status": args.review_status,
                     "files": args.files,
+                    "auto_git": args.auto_git,
                     "clear_task_id": args.clear_task_id,
                     "clear_decision_id": args.clear_decision_id,
                 },

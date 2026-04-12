@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pathlib import Path
 
@@ -17,10 +17,35 @@ Read these first:
 - `.pmai/data/pmai.db`
 - `README.md`
 
+Quick status commands:
+
+```bash
+aipmc status
+aipmc code status
+aipmc code diff
+aipmc code recent
+aipmc inbox
+aipmc info
+aipmc daily show
+aipmc help
+```
+
 Common commands:
 
 ```bash
 aipmc help
+aipmc status
+aipmc brief product
+aipmc brief architecture
+aipmc brief modules
+aipmc vision list
+aipmc vision show --id <vision-id>
+aipmc principle list
+aipmc principle show --id <principle-id>
+aipmc link list
+aipmc code status
+aipmc code diff
+aipmc code recent
 aipmc info
 aipmc doctor
 aipmc inbox
@@ -30,11 +55,13 @@ aipmc docs audit
 aipmc feedback list
 aipmc decision review --id <decision-id> --status accepted
 aipmc task list
+aipmc task show --id <task-id>
 aipmc decision list
+aipmc decision show --id <decision-id>
 aipmc commit list
-aipmc task list --status in_progress
-aipmc commit list --task-id <task-id>
+aipmc commit show --id <commit-id>
 aipmc idea list
+aipmc idea show --id <idea-id>
 aipmc daily show
 aipmv
 ```
@@ -53,23 +80,33 @@ This creates:
 Write commands:
 
 ```bash
+aipmc vision add --title "Build an externalized metacognitive learning system" --summary "..." --status active
+aipmc vision update --id <vision-id> --title "New Title"
+aipmc principle add --title "Transparency" --summary "..." --kind governance
+aipmc principle update --id <principle-id> --status archived
+aipmc link add --source-type vision --source-id <vision-id> --relation supports --target-type task --target-id <task-id>
+aipmc link delete --id <link-id>
 aipmc task add --title "Implement xxx" --acceptance "Complete yyy"
 aipmc task update --id <task-id> --status in_progress
 aipmc decision add --title "Choose approach A" --background "..." --decision "..."
 aipmc decision review --id <decision-id> --status accepted
 aipmc commit add --title "Implement task" --summary "..." --auto-git
 aipmc commit update --id <commit-id> --status committed --review-status approved
+aipmc commit update --id <commit-id> --auto-git
 aipmc task update --id <task-id> --status done
 aipmc idea capture --title "Optimization idea" --summary "..."
 aipmc daily close --completed "..." --problems "..." --risks "..." --next "..."
 aipmc daily replace --completed "..." --problems "..." --risks "..." --next "..."
-aipmc feedback add --label bug --content "登录页面验证码不显示"
-aipmc feedback add --label suggestion --content "建议任务列表支持按负责人筛选"
+aipmc feedback add --label bug --content "..."
 ```
 
 Status commands:
 
 ```bash
+aipmc status
+aipmc code status
+aipmc code diff
+aipmc code recent
 aipmc info
 aipmc doctor
 aipmc inbox
@@ -81,6 +118,7 @@ aipmc commit list
 aipmc task list --status done
 aipmc commit list --status committed --task-id <task-id>
 aipmc decision list
+aipmc decision show --id <decision-id>
 aipmc idea list
 aipmc daily show
 aipmc feedback list
@@ -92,7 +130,7 @@ Web:
 aipmv
 ```
 
-`aipmc inbox` is the shortest way to inspect pending review and governance items before opening the web UI.
+`aipmc inbox` is the shortest way to inspect pending review and governance items before opening the web UI.    
 
 Default address:
 - `http://127.0.0.1:8011/`

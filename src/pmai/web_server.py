@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 from http import HTTPStatus
@@ -9,20 +9,37 @@ from urllib.parse import parse_qs, urlparse
 from .store import (
     append_daily_note,
     audit_docs,
+    build_brief,
     create_commit,
     create_decision,
     create_idea,
+    create_link,
+    create_principle,
     create_task,
+    create_vision,
+    delete_link,
     fetch_canon,
+    get_commit,
     get_dashboard_summary,
     get_daily_note,
+    get_decision,
+    get_git_diff,
+    get_git_recent_commits,
+    get_git_worktree_status,
+    get_idea,
     get_inbox_summary,
+    get_principle,
+    get_task,
+    get_vision,
     list_commits,
     list_decisions,
     list_daily_notes,
     list_doc_records,
     list_ideas,
+    list_links,
+    list_principles,
     list_tasks,
+    list_visions,
     replace_daily_note,
     review_idea,
     update_canon,
@@ -51,7 +68,7 @@ class PMAIRequestHandler(SimpleHTTPRequestHandler):
 
     def end_headers(self) -> None:
         self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, OPTIONS')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type')
         super().end_headers()
 
@@ -82,6 +99,11 @@ class PMAIRequestHandler(SimpleHTTPRequestHandler):
             return
         self.send_error(HTTPStatus.NOT_FOUND)
 
+    def do_DELETE(self) -> None:
+        if self._handle_api('DELETE'):
+            return
+        self.send_error(HTTPStatus.NOT_FOUND)
+
     def send_json(self, payload, status: int = 200) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
         self.send_response(status)
@@ -105,12 +127,42 @@ class PMAIRequestHandler(SimpleHTTPRequestHandler):
                 self.send_json(get_dashboard_summary())
             elif method == 'GET' and path == '/pmai/inbox':
                 self.send_json(get_inbox_summary())
+            elif method == 'GET' and path == '/pmai/brief':
+                view = (query.get('view') or ['product'])[0]
+                self.send_json(build_brief(view))
+            elif method == 'GET' and path == '/pmai/code/status':
+                self.send_json(get_git_worktree_status())
+            elif method == 'GET' and path == '/pmai/code/diff':
+                self.send_json({'diff': get_git_diff()})
+            elif method == 'GET' and path == '/pmai/code/recent':
+                limit = int((query.get('limit') or ['10'])[0])
+                self.send_json({'commits': get_git_recent_commits(limit)})
             elif method == 'POST' and path == '/pmai/canon/update':
                 self.send_json(update_canon(self.read_json()))
+            elif method == 'GET' and path == '/pmai/visions':
+                self.send_json({'visions': list_visions()})
+            elif method == 'POST' and path == '/pmai/visions':
+                self.send_json(create_vision(self.read_json()))
+            elif method == 'GET' and path.startswith('/pmai/visions/'):
+                self.send_json(get_vision(path.rsplit('/', 1)[-1]))
+            elif method == 'GET' and path == '/pmai/principles':
+                self.send_json({'principles': list_principles()})
+            elif method == 'POST' and path == '/pmai/principles':
+                self.send_json(create_principle(self.read_json()))
+            elif method == 'GET' and path.startswith('/pmai/principles/'):
+                self.send_json(get_principle(path.rsplit('/', 1)[-1]))
+            elif method == 'GET' and path == '/pmai/links':
+                self.send_json({'links': list_links()})
+            elif method == 'POST' and path == '/pmai/links':
+                self.send_json(create_link(self.read_json()))
+            elif method == 'DELETE' and path.startswith('/pmai/links/'):
+                self.send_json({'ok': delete_link(path.rsplit('/', 1)[-1])})
             elif method == 'GET' and path == '/pmai/tasks':
                 self.send_json({'tasks': list_tasks((query.get('status') or [None])[0])})
             elif method == 'POST' and path == '/pmai/tasks':
                 self.send_json(create_task(self.read_json()))
+            elif method == 'GET' and path.startswith('/pmai/tasks/'):
+                self.send_json(get_task(path.rsplit('/', 1)[-1]))
             elif method == 'PATCH' and path.startswith('/pmai/tasks/'):
                 payload = self.read_json()
                 self.send_json(
@@ -133,18 +185,24 @@ class PMAIRequestHandler(SimpleHTTPRequestHandler):
                 )
             elif method == 'POST' and path == '/pmai/commits':
                 self.send_json(create_commit(self.read_json()))
+            elif method == 'GET' and path.startswith('/pmai/commits/'):
+                self.send_json(get_commit(path.rsplit('/', 1)[-1]))
             elif method == 'PATCH' and path.startswith('/pmai/commits/'):
                 self.send_json(update_commit(path.rsplit('/', 1)[-1], self.read_json()))
             elif method == 'GET' and path == '/pmai/decisions':
                 self.send_json({'decisions': list_decisions()})
             elif method == 'POST' and path == '/pmai/decisions':
                 self.send_json(create_decision(self.read_json()))
+            elif method == 'GET' and path.startswith('/pmai/decisions/'):
+                self.send_json(get_decision(path.rsplit('/', 1)[-1]))
             elif method == 'PATCH' and path.startswith('/pmai/decisions/'):
                 self.send_json(update_decision_status(path.rsplit('/', 1)[-1], self.read_json()['status']))
             elif method == 'GET' and path == '/pmai/ideas':
                 self.send_json({'ideas': list_ideas((query.get('status') or [None])[0])})
             elif method == 'POST' and path == '/pmai/ideas':
                 self.send_json(create_idea(self.read_json()))
+            elif method == 'GET' and path.startswith('/pmai/ideas/'):
+                self.send_json(get_idea(path.rsplit('/', 1)[-1]))
             elif method == 'PATCH' and path.startswith('/pmai/ideas/'):
                 payload = self.read_json(); self.send_json(review_idea(path.rsplit('/', 1)[-1], payload['status'], payload.get('note', '')))
             elif method == 'GET' and path == '/pmai/docs':

@@ -174,6 +174,39 @@ def ensure_runtime_schema(conn: sqlite3.Connection) -> None:
             created_at TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS visions (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            status TEXT NOT NULL,
+            horizon TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+
+        CREATE TABLE IF NOT EXISTS principles (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+
+        CREATE TABLE IF NOT EXISTS links (
+            id TEXT PRIMARY KEY,
+            source_type TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            relation TEXT NOT NULL,
+            target_type TEXT NOT NULL,
+            target_id TEXT NOT NULL,
+            note TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS doc_records (
             path TEXT PRIMARY KEY,
             type TEXT NOT NULL,
@@ -324,6 +357,217 @@ def infer_git_metadata() -> Dict[str, Any]:
     }
 
 
+def _normalize_git_path(value: str) -> str:
+    candidate = value.strip().replace('\\', '/')
+    if candidate.startswith('"') and candidate.endswith('"'):
+        candidate = candidate[1:-1]
+    if ' -> ' in candidate:
+        candidate = candidate.split(' -> ', 1)[1].strip()
+    return candidate
+
+
+
+def _normalize_file_list(values: List[str]) -> List[str]:
+    files: List[str] = []
+    for value in values:
+        candidate = _normalize_git_path(value)
+        if not candidate:
+            continue
+        if candidate not in files:
+            files.append(candidate)
+    return files
+
+def get_git_worktree_status() -> Dict[str, Any]:
+    branch = _run_git(["rev-parse", "--abbrev-ref", "HEAD"]) or ""
+    output = _run_git(["status", "--short"]) or ""
+    files: List[Dict[str, Any]] = []
+    staged: List[str] = []
+    unstaged: List[str] = []
+    untracked: List[str] = []
+
+    for line in output.splitlines():
+        if len(line) < 3:
+            continue
+        index_status = line[0]
+        worktree_status = line[1]
+        path = _normalize_git_path(line[3:])
+        if not path or path.startswith('.pmai/'):
+            continue
+        item = {
+            "path": path,
+            "index_status": index_status,
+            "worktree_status": worktree_status,
+        }
+        files.append(item)
+        if index_status not in (' ', '?') and path not in staged:
+            staged.append(path)
+        if worktree_status not in (' ', '?') and path not in unstaged:
+            unstaged.append(path)
+        if index_status == '?' and worktree_status == '?' and path not in untracked:
+            untracked.append(path)
+
+    return {
+        "branch": branch,
+        "dirty": bool(files),
+        "changed_files_count": len(files),
+        "staged": staged,
+        "unstaged": unstaged,
+        "untracked": untracked,
+        "files": files,
+    }
+
+
+def get_git_diff_summary(*, staged: bool = False) -> Dict[str, Any]:
+    branch = _run_git(["rev-parse", "--abbrev-ref", "HEAD"]) or ""
+    worktree = get_git_worktree_status()
+    diff_args = ["diff", "--stat", "--compact-summary"]
+    name_only_args = ["diff", "--name-only", "--relative"]
+    if staged:
+        diff_args.append("--cached")
+        name_only_args.append("--cached")
+    diff_output = _run_git(diff_args) or ""
+    names_output = _run_git(name_only_args) or ""
+    files = _normalize_file_list(names_output.splitlines())
+    stat_lines = [line.rstrip() for line in diff_output.splitlines() if line.strip()]
+    return {
+        "branch": branch,
+        "scope": "staged" if staged else "worktree",
+        "dirty": worktree.get("dirty", False),
+        "files": files,
+        "stats": stat_lines,
+        "has_diff": bool(files or stat_lines),
+    }
+
+
+def list_recent_git_commits(limit: int = 5) -> List[Dict[str, Any]]:
+    if limit <= 0:
+        return []
+    output = _run_git([
+        "log",
+        f"-n{limit}",
+        "--date=iso-strict",
+        "--name-only",
+        "--pretty=format:%H%x1f%an%x1f%ad%x1f%s",
+    ])
+    if not output:
+        return []
+
+    commits: List[Dict[str, Any]] = []
+    current: Optional[Dict[str, Any]] = None
+    for raw_line in output.splitlines():
+        line = raw_line.rstrip()
+        if not line:
+            continue
+        if "" in line:
+            if current is not None:
+                commits.append(current)
+            meta = line.split("")
+            if len(meta) != 4:
+                current = None
+                continue
+            current = {
+                "commit_hash": meta[0],
+                "author": meta[1],
+                "timestamp": meta[2],
+                "title": meta[3],
+                "files": [],
+            }
+            continue
+        if current is None:
+            continue
+        file_path = _normalize_git_path(line)
+        if not file_path or file_path.startswith('.pmai/'):
+            continue
+        if file_path not in current["files"]:
+            current["files"].append(file_path)
+
+    if current is not None:
+        commits.append(current)
+    return commits
+
+
+def _get_git_commit_snapshot(commit_hash: str) -> Dict[str, Any]:
+    if not commit_hash:
+        return {
+            "found": False,
+            "commit_hash": "",
+            "title": "",
+            "author": "",
+            "timestamp": "",
+            "files": [],
+            "stats": [],
+        }
+
+    meta = _run_git(["show", "-s", "--date=iso-strict", "--format=%H%x1f%an%x1f%ad%x1f%s", commit_hash])
+    if not meta:
+        return {
+            "found": False,
+            "commit_hash": commit_hash,
+            "title": "",
+            "author": "",
+            "timestamp": "",
+            "files": [],
+            "stats": [],
+        }
+
+    meta_parts = meta.split("")
+    files_output = _run_git(["show", "--pretty=format:", "--name-only", commit_hash]) or ""
+    stats_output = _run_git(["show", "--stat", "--oneline", "--format=%h %s", commit_hash]) or ""
+    files: List[str] = []
+    for line in files_output.splitlines():
+        file_path = _normalize_git_path(line)
+        if not file_path or file_path.startswith('.pmai/'):
+            continue
+        if file_path not in files:
+            files.append(file_path)
+    stats = [line.rstrip() for line in stats_output.splitlines() if line.strip()]
+    return {
+        "found": True,
+        "commit_hash": meta_parts[0] if len(meta_parts) > 0 else commit_hash,
+        "author": meta_parts[1] if len(meta_parts) > 1 else "",
+        "timestamp": meta_parts[2] if len(meta_parts) > 2 else "",
+        "title": meta_parts[3] if len(meta_parts) > 3 else "",
+        "files": files,
+        "stats": stats,
+    }
+
+
+def get_status_snapshot() -> Dict[str, Any]:
+    in_progress_tasks = list_tasks("in_progress")
+    daily = get_daily_note()
+    inbox = get_inbox_summary()
+    pmai_commits = list_commits()[:3]
+    git_status = get_git_worktree_status()
+    git_recent = list_recent_git_commits(3)
+    active_vision = get_active_vision()
+    active_principles = list_active_principles()
+    return {
+        "project": describe_runtime(),
+        "vision": active_vision,
+        "principles": active_principles,
+        "entrypoints": {
+            "product": "aipmc brief product",
+            "architecture": "aipmc brief architecture",
+            "modules": "aipmc brief modules",
+            "code": "aipmc code status",
+        },
+        "tasks": {
+            "in_progress_count": len(in_progress_tasks),
+            "in_progress": in_progress_tasks[:5],
+        },
+        "daily": daily,
+        "inbox": {
+            "counts": inbox.get("counts", {}),
+            "recommended_actions": inbox.get("recommended_actions", [])[:5],
+        },
+        "recent_commits": {
+            "pmai": pmai_commits,
+            "git": git_recent,
+        },
+        "git": git_status,
+    }
+
+
 def fetch_canon() -> Dict[str, Any]:
     conn = get_connection()
     try:
@@ -462,6 +706,57 @@ def list_tasks(status: Optional[str] = None) -> List[Dict[str, Any]]:
         conn.close()
 
 
+def get_task(task_id: str) -> Dict[str, Any]:
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if not row:
+            raise KeyError(task_id)
+        linked_commits = list_commits(task_id=task_id)
+        approved_commits = [
+            item
+            for item in linked_commits
+            if item["status"] in ("committed", "merged") and item["review_status"] == "approved"
+        ]
+        blocker_reasons: List[str] = []
+        if not linked_commits:
+            blocker_reasons.append("no_linked_commit")
+        if linked_commits and not approved_commits:
+            blocker_reasons.append("no_approved_commit")
+        if any(item["test_status"] != "passed" for item in linked_commits):
+            blocker_reasons.append("verification_incomplete")
+        changed_files: List[str] = []
+        for commit in linked_commits:
+            for file_path in commit.get("files", []):
+                if file_path not in changed_files:
+                    changed_files.append(file_path)
+        return {
+            "task": {
+                "id": row["id"],
+                "title": row["title"],
+                "status": row["status"],
+                "priority": row["priority"],
+                "phase": row["phase"],
+                "acceptance": loads(row["acceptance_json"], []),
+                "related_docs": loads(row["related_docs_json"], []),
+                "related_decisions": loads(row["related_decisions_json"], []),
+                "last_note": row["last_note"] or "",
+                "updated_at": row["updated_at"],
+            },
+            "linked_commits": linked_commits,
+            "links": list_links_for_entity(task_id),
+            "changed_files": changed_files,
+            "closure": {
+                "linked_commit_count": len(linked_commits),
+                "approved_commit_count": len(approved_commits),
+                "can_mark_done": bool(approved_commits),
+                "blocker_reasons": blocker_reasons,
+            },
+        }
+    finally:
+        conn.close()
+
+
 def create_task(payload: Dict[str, Any]) -> Dict[str, Any]:
     conn = get_connection()
     try:
@@ -590,12 +885,65 @@ def list_commits(
                 "status": row["status"],
                 "test_status": row["test_status"],
                 "review_status": row["review_status"],
-                "files": loads(row["files_json"], []),
+                "files": _normalize_file_list(loads(row["files_json"], [])),
                 "created_at": row["created_at"],
                 "updated_at": row["updated_at"],
             }
             for row in rows
         ]
+    finally:
+        conn.close()
+
+
+def get_commit(commit_id: str) -> Dict[str, Any]:
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT * FROM commits WHERE id = ?", (commit_id,)).fetchone()
+        if not row:
+            raise KeyError(commit_id)
+        task = None
+        decision = None
+        if row["task_id"]:
+            task_row = conn.execute("SELECT id, title, status, priority, phase FROM tasks WHERE id = ?", (row["task_id"],)).fetchone()
+            if task_row:
+                task = {
+                    "id": task_row["id"],
+                    "title": task_row["title"],
+                    "status": task_row["status"],
+                    "priority": task_row["priority"],
+                    "phase": task_row["phase"],
+                }
+        if row["decision_id"]:
+            decision_row = conn.execute("SELECT id, title, status, date FROM decisions WHERE id = ?", (row["decision_id"],)).fetchone()
+            if decision_row:
+                decision = {
+                    "id": decision_row["id"],
+                    "title": decision_row["title"],
+                    "status": decision_row["status"],
+                    "date": decision_row["date"],
+                }
+        commit = {
+            "id": row["id"],
+            "title": row["title"],
+            "summary": row["summary"],
+            "branch": row["branch"],
+            "commit_hash": row["commit_hash"],
+            "task_id": row["task_id"],
+            "decision_id": row["decision_id"],
+            "status": row["status"],
+            "test_status": row["test_status"],
+            "review_status": row["review_status"],
+            "files": _normalize_file_list(loads(row["files_json"], [])),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+        return {
+            "commit": commit,
+            "linked_task": task,
+            "linked_decision": decision,
+            "links": list_links_for_entity(commit_id),
+            "git": _get_git_commit_snapshot(row["commit_hash"]),
+        }
     finally:
         conn.close()
 
@@ -630,7 +978,7 @@ def create_commit(payload: Dict[str, Any]) -> Dict[str, Any]:
             "status": payload.get("status", "draft"),
             "test_status": payload.get("test_status", "not_run"),
             "review_status": payload.get("review_status", "pending"),
-            "files": payload.get("files", []) or git_meta.get("files", []),
+            "files": _normalize_file_list(payload.get("files", []) or git_meta.get("files", [])),
             "created_at": created_at,
             "updated_at": created_at,
         }
@@ -670,6 +1018,8 @@ def update_commit(commit_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         if not row:
             raise KeyError(commit_id)
 
+        git_meta = infer_git_metadata() if payload.get("auto_git") else {}
+
         next_task_id = row["task_id"]
         if payload.get("clear_task_id"):
             next_task_id = None
@@ -688,9 +1038,19 @@ def update_commit(commit_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
                 raise KeyError(payload["decision_id"])
             next_decision_id = payload["decision_id"]
 
-        next_files = loads(row["files_json"], [])
+        next_files = _normalize_file_list(loads(row["files_json"], []))
         if payload.get("files") is not None:
-            next_files = payload.get("files") or []
+            next_files = _normalize_file_list(payload.get("files") or [])
+        elif git_meta.get("files"):
+            next_files = _normalize_file_list(git_meta.get("files") or [])
+
+        next_branch = payload.get("branch") if payload.get("branch") is not None else row["branch"]
+        if git_meta.get("branch") and payload.get("branch") is None:
+            next_branch = git_meta.get("branch", "")
+
+        next_commit_hash = payload.get("commit_hash") if payload.get("commit_hash") is not None else row["commit_hash"]
+        if git_meta.get("commit_hash") and payload.get("commit_hash") is None:
+            next_commit_hash = git_meta.get("commit_hash", "")
 
         conn.execute(
             """
@@ -702,8 +1062,8 @@ def update_commit(commit_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
             (
                 payload.get("title") if payload.get("title") is not None else row["title"],
                 payload.get("summary") if payload.get("summary") is not None else row["summary"],
-                payload.get("branch") if payload.get("branch") is not None else row["branch"],
-                payload.get("commit_hash") if payload.get("commit_hash") is not None else row["commit_hash"],
+                next_branch,
+                next_commit_hash,
                 next_task_id,
                 next_decision_id,
                 payload.get("status") if payload.get("status") is not None else row["status"],
@@ -727,7 +1087,7 @@ def update_commit(commit_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
             "status": updated["status"],
             "test_status": updated["test_status"],
             "review_status": updated["review_status"],
-            "files": loads(updated["files_json"], []),
+            "files": _normalize_file_list(loads(updated["files_json"], [])),
             "created_at": updated["created_at"],
             "updated_at": updated["updated_at"],
         }
@@ -754,6 +1114,51 @@ def list_decisions() -> List[Dict[str, Any]]:
             }
             for row in rows
         ]
+    finally:
+        conn.close()
+
+
+def get_decision(decision_id: str) -> Dict[str, Any]:
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT * FROM decisions WHERE id = ?", (decision_id,)).fetchone()
+        if not row:
+            raise KeyError(decision_id)
+        related_task_ids = loads(row["related_tasks_json"], [])
+        related_tasks: List[Dict[str, Any]] = []
+        for task_id in related_task_ids:
+            task_row = conn.execute(
+                "SELECT id, title, status, priority, phase FROM tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()
+            if task_row:
+                related_tasks.append(
+                    {
+                        "id": task_row["id"],
+                        "title": task_row["title"],
+                        "status": task_row["status"],
+                        "priority": task_row["priority"],
+                        "phase": task_row["phase"],
+                    }
+                )
+        linked_commits = list_commits(decision_id=decision_id)
+        return {
+            "decision": {
+                "id": row["id"],
+                "title": row["title"],
+                "date": row["date"],
+                "status": row["status"],
+                "background": row["background"],
+                "decision": row["decision_text"],
+                "impact": loads(row["impact_json"], []),
+                "alternatives": loads(row["alternatives_json"], []),
+                "related_tasks": related_task_ids,
+                "updates_canon": bool(row["updates_canon"]),
+            },
+            "linked_tasks": related_tasks,
+            "linked_commits": linked_commits,
+            "links": list_links_for_entity(decision_id),
+        }
     finally:
         conn.close()
 
@@ -848,6 +1253,333 @@ def list_ideas(status: Optional[str] = None) -> List[Dict[str, Any]]:
             }
             for row in rows
         ]
+    finally:
+        conn.close()
+
+
+def list_visions(status: Optional[str] = None) -> List[Dict[str, Any]]:
+    conn = get_connection()
+    try:
+        query = "SELECT * FROM visions"
+        params: List[Any] = []
+        if status:
+            query += " WHERE status = ?"
+            params.append(status)
+        query += " ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END, updated_at DESC, id DESC"
+        rows = conn.execute(query, params).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "title": row["title"],
+                "summary": row["summary"],
+                "status": row["status"],
+                "horizon": row["horizon"],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            }
+            for row in rows
+        ]
+    finally:
+        conn.close()
+
+
+def get_vision(vision_id: str) -> Dict[str, Any]:
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT * FROM visions WHERE id = ?", (vision_id,)).fetchone()
+        if not row:
+            raise KeyError(vision_id)
+        return {
+            "id": row["id"],
+            "title": row["title"],
+            "summary": row["summary"],
+            "status": row["status"],
+            "horizon": row["horizon"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "links": list_links_for_entity(vision_id),
+        }
+    finally:
+        conn.close()
+
+
+def create_vision(payload: Dict[str, Any]) -> Dict[str, Any]:
+    conn = get_connection()
+    try:
+        vision_id = slug("vision")
+        created_at = now_iso()
+        status = payload.get("status", "active")
+        if status == "active":
+            conn.execute("UPDATE visions SET status = 'archived', updated_at = ? WHERE status = 'active'", (created_at,))
+        conn.execute(
+            """
+            INSERT INTO visions (id, title, summary, status, horizon, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                vision_id,
+                payload["title"],
+                payload.get("summary", ""),
+                status,
+                payload.get("horizon", "long_term"),
+                created_at,
+                created_at,
+            ),
+        )
+        conn.commit()
+        return get_vision(vision_id)
+    finally:
+        conn.close()
+
+
+def update_vision(vision_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT * FROM visions WHERE id = ?", (vision_id,)).fetchone()
+        if not row:
+            raise KeyError(vision_id)
+        next_status = payload.get("status") if payload.get("status") is not None else row["status"]
+        updated_at = now_iso()
+        if next_status == "active":
+            conn.execute(
+                "UPDATE visions SET status = 'archived', updated_at = ? WHERE status = 'active' AND id != ?",
+                (updated_at, vision_id),
+            )
+        conn.execute(
+            """
+            UPDATE visions
+            SET title = ?, summary = ?, status = ?, horizon = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                payload.get("title") if payload.get("title") is not None else row["title"],
+                payload.get("summary") if payload.get("summary") is not None else row["summary"],
+                next_status,
+                payload.get("horizon") if payload.get("horizon") is not None else row["horizon"],
+                updated_at,
+                vision_id,
+            ),
+        )
+        conn.commit()
+        return get_vision(vision_id)
+    finally:
+        conn.close()
+
+
+def get_active_vision() -> Optional[Dict[str, Any]]:
+    visions = list_visions("active")
+    return visions[0] if visions else None
+
+
+
+def list_principles(status: Optional[str] = None, kind: Optional[str] = None) -> List[Dict[str, Any]]:
+    conn = get_connection()
+    try:
+        query = "SELECT * FROM principles"
+        params: List[Any] = []
+        conditions: List[str] = []
+        if status:
+            conditions.append("status = ?")
+            params.append(status)
+        if kind:
+            conditions.append("kind = ?")
+            params.append(kind)
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        query += " ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END, updated_at DESC, id DESC"
+        rows = conn.execute(query, params).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "title": row["title"],
+                "summary": row["summary"],
+                "kind": row["kind"],
+                "status": row["status"],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            }
+            for row in rows
+        ]
+    finally:
+        conn.close()
+
+
+def get_principle(principle_id: str) -> Dict[str, Any]:
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT * FROM principles WHERE id = ?", (principle_id,)).fetchone()
+        if not row:
+            raise KeyError(principle_id)
+        return {
+            "id": row["id"],
+            "title": row["title"],
+            "summary": row["summary"],
+            "kind": row["kind"],
+            "status": row["status"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "links": list_links_for_entity(principle_id),
+        }
+    finally:
+        conn.close()
+
+
+def create_principle(payload: Dict[str, Any]) -> Dict[str, Any]:
+    conn = get_connection()
+    try:
+        principle_id = slug("principle")
+        created_at = now_iso()
+        conn.execute(
+            """
+            INSERT INTO principles (id, title, summary, kind, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                principle_id,
+                payload["title"],
+                payload.get("summary", ""),
+                payload.get("kind", "governance"),
+                payload.get("status", "active"),
+                created_at,
+                created_at,
+            ),
+        )
+        conn.commit()
+        return get_principle(principle_id)
+    finally:
+        conn.close()
+
+
+def update_principle(principle_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT * FROM principles WHERE id = ?", (principle_id,)).fetchone()
+        if not row:
+            raise KeyError(principle_id)
+        conn.execute(
+            """
+            UPDATE principles
+            SET title = ?, summary = ?, kind = ?, status = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                payload.get("title") if payload.get("title") is not None else row["title"],
+                payload.get("summary") if payload.get("summary") is not None else row["summary"],
+                payload.get("kind") if payload.get("kind") is not None else row["kind"],
+                payload.get("status") if payload.get("status") is not None else row["status"],
+                now_iso(),
+                principle_id,
+            ),
+        )
+        conn.commit()
+        return get_principle(principle_id)
+    finally:
+        conn.close()
+
+
+def list_active_principles(limit: int = 5) -> List[Dict[str, Any]]:
+    return list_principles(status="active")[:limit]
+
+
+
+def _serialize_link(row: sqlite3.Row) -> Dict[str, Any]:
+    return {
+        "id": row["id"],
+        "source_type": row["source_type"],
+        "source_id": row["source_id"],
+        "relation": row["relation"],
+        "target_type": row["target_type"],
+        "target_id": row["target_id"],
+        "note": row["note"],
+        "created_at": row["created_at"],
+    }
+
+
+def list_links(source_id: Optional[str] = None, target_id: Optional[str] = None, relation: Optional[str] = None) -> List[Dict[str, Any]]:
+    conn = get_connection()
+    try:
+        query = "SELECT * FROM links"
+        params: List[Any] = []
+        conditions: List[str] = []
+        if source_id:
+            conditions.append("source_id = ?")
+            params.append(source_id)
+        if target_id:
+            conditions.append("target_id = ?")
+            params.append(target_id)
+        if relation:
+            conditions.append("relation = ?")
+            params.append(relation)
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        query += " ORDER BY created_at DESC, id DESC"
+        rows = conn.execute(query, params).fetchall()
+        return [_serialize_link(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def list_links_for_entity(entity_id: str) -> Dict[str, List[Dict[str, Any]]]:
+    conn = get_connection()
+    try:
+        outgoing = conn.execute(
+            "SELECT * FROM links WHERE source_id = ? ORDER BY created_at DESC, id DESC",
+            (entity_id,),
+        ).fetchall()
+        incoming = conn.execute(
+            "SELECT * FROM links WHERE target_id = ? ORDER BY created_at DESC, id DESC",
+            (entity_id,),
+        ).fetchall()
+        return {
+            "outgoing": [_serialize_link(row) for row in outgoing],
+            "incoming": [_serialize_link(row) for row in incoming],
+        }
+    finally:
+        conn.close()
+
+
+def create_link(payload: Dict[str, Any]) -> Dict[str, Any]:
+    conn = get_connection()
+    try:
+        link_id = slug("link")
+        row = {
+            "id": link_id,
+            "source_type": payload["source_type"],
+            "source_id": payload["source_id"],
+            "relation": payload["relation"],
+            "target_type": payload["target_type"],
+            "target_id": payload["target_id"],
+            "note": payload.get("note", ""),
+            "created_at": now_iso(),
+        }
+        conn.execute(
+            """
+            INSERT INTO links (id, source_type, source_id, relation, target_type, target_id, note, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                row["id"],
+                row["source_type"],
+                row["source_id"],
+                row["relation"],
+                row["target_type"],
+                row["target_id"],
+                row["note"],
+                row["created_at"],
+            ),
+        )
+        conn.commit()
+        return row
+    finally:
+        conn.close()
+
+
+def delete_link(link_id: str) -> bool:
+    conn = get_connection()
+    try:
+        cur = conn.execute("DELETE FROM links WHERE id = ?", (link_id,))
+        conn.commit()
+        return cur.rowcount > 0
     finally:
         conn.close()
 
@@ -1200,6 +1932,168 @@ def get_dashboard_summary() -> Dict[str, Any]:
         "current_risks": current_risks,
         "recent_commits": commits[:5],
     }
+
+
+def _module_guess_from_task(task: Dict[str, Any]) -> str:
+    raw_title = task.get("title") or ""
+    title = raw_title.lower()
+    phase = (task.get("phase") or "").lower()
+    analytics_keywords = ["埋点", "数据", "画像", "智能", "assessment", "feature", "analytics"]
+    ai_keywords = ["AI", "ai", "教练", "对话", "元认知", "coach"]
+    review_keywords = ["复盘", "review", "remediation"]
+    paper_keywords = ["题目", "试卷", "paper", "question"]
+    if any(keyword in raw_title for keyword in analytics_keywords):
+        return "analytics"
+    if any(keyword in raw_title for keyword in ai_keywords):
+        return "ai_core"
+    if any(keyword in raw_title for keyword in review_keywords):
+        return "review"
+    if any(keyword in raw_title for keyword in paper_keywords):
+        return "papers"
+    if phase in {"analytics", "review", "papers", "ai_core"}:
+        return phase
+    if phase:
+        return f"phase:{phase}"
+    return "general"
+
+
+def build_brief(view: str) -> Dict[str, Any]:
+    vision = get_active_vision()
+    principles = list_active_principles(limit=8)
+    canon = fetch_canon()
+    tasks = list_tasks()
+    in_progress = [task for task in tasks if task["status"] == "in_progress"]
+    commits = list_commits()[:5]
+    daily = get_daily_note()
+    links = list_links()
+    docs = list_doc_records(status="active")
+    git_status = get_git_worktree_status()
+    decisions = list_decisions()
+    accepted_decisions = [item for item in decisions if item["status"] == "accepted"][:5]
+
+    if view == "product":
+        return {
+            "view": "product",
+            "goal": vision,
+            "principles": principles,
+            "current_stage": {
+                "engineering_focus": canon.get("engineering_focus", ""),
+                "architecture": canon.get("architecture", ""),
+            },
+            "active_workstreams": [
+                {
+                    "id": task["id"],
+                    "title": task["title"],
+                    "priority": task["priority"],
+                    "phase": task["phase"],
+                }
+                for task in in_progress[:6]
+            ],
+            "accepted_decisions": [
+                {
+                    "id": item["id"],
+                    "title": item["title"],
+                    "date": item["date"],
+                }
+                for item in accepted_decisions
+            ],
+            "today": {
+                "completed": daily.get("completed", [])[:5],
+                "risks": daily.get("risks", [])[:5],
+                "next": daily.get("next", [])[:5],
+            },
+        }
+
+    if view == "architecture":
+        return {
+            "view": "architecture",
+            "goal": vision,
+            "principles": principles,
+            "accepted_decisions": [
+                {
+                    "id": item["id"],
+                    "title": item["title"],
+                    "date": item["date"],
+                    "updates_canon": item["updates_canon"],
+                }
+                for item in accepted_decisions
+            ],
+            "system_layers": [
+                {
+                    "name": "governance",
+                    "objects": ["vision", "principle", "decision", "task", "commit", "link"],
+                },
+                {
+                    "name": "runtime_code",
+                    "objects": ["code status", "code diff", "code recent"],
+                },
+                {
+                    "name": "project_runtime",
+                    "objects": ["daily", "inbox", "canon", "docs"],
+                },
+            ],
+            "current_boundaries": {
+                "canon": canon,
+                "git": {
+                    "branch": git_status.get("branch"),
+                    "dirty": git_status.get("dirty"),
+                    "changed_files_count": git_status.get("changed_files_count"),
+                },
+            },
+            "recent_evidence": {
+                "commits": commits,
+                "links": links[:8],
+                "active_docs": docs[:8],
+            },
+        }
+
+    if view == "modules":
+        grouped: Dict[str, List[Dict[str, Any]]] = {}
+        for task in in_progress:
+            grouped.setdefault(_module_guess_from_task(task), []).append(task)
+        modules = []
+        for name, items in sorted(grouped.items(), key=lambda pair: pair[0]):
+            task_ids = {task["id"] for task in items}
+            module_commits = [commit for commit in commits if commit.get("task_id") in task_ids]
+            modules.append(
+                {
+                    "module": name,
+                    "tasks": [
+                        {
+                            "id": task["id"],
+                            "title": task["title"],
+                            "priority": task["priority"],
+                            "status": task["status"],
+                        }
+                        for task in items
+                    ],
+                    "recent_commits": [
+                        {
+                            "id": commit["id"],
+                            "title": commit["title"],
+                            "task_id": commit.get("task_id"),
+                        }
+                        for commit in module_commits[:3]
+                    ],
+                }
+            )
+        return {
+            "view": "modules",
+            "goal": vision,
+            "accepted_decisions": [
+                {
+                    "id": item["id"],
+                    "title": item["title"],
+                    "date": item["date"],
+                }
+                for item in accepted_decisions
+            ],
+            "modules": modules,
+            "recent_commits": commits,
+            "links": links[:10],
+        }
+
+    raise KeyError(view)
 
 
 def get_inbox_summary() -> Dict[str, Any]:
