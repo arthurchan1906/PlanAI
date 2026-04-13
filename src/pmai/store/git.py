@@ -20,7 +20,7 @@ def _run_git(args: List[str]) -> Optional[str]:
         return None
     if completed.returncode != 0:
         return None
-    return completed.stdout.strip()
+    return completed.stdout.rstrip()
 
 
 def _normalize_git_path(value: str) -> str:

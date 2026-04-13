@@ -12,6 +12,7 @@ from .commands import (
     handle_feedback,
     handle_idea,
     handle_link,
+    handle_plan,
     handle_principle,
     handle_task,
     handle_vision,
@@ -54,6 +55,8 @@ def main() -> None:
         handle_roadmap(args)
     elif args.command == "principle":
         handle_principle(args)
+    elif args.command == "plan":
+        handle_plan(args)
     elif args.command == "link":
         handle_link(args)
     elif args.command == "decision":
@@ -92,6 +95,7 @@ def handle_roadmap(args) -> None:
         from pmai.store import update_roadmap
         run_local_command(lambda: update_roadmap(args.id, {
             "title": args.title,
+            "target_date": args.target_date,
             "status": args.status,
             "priority": args.priority,
         }))

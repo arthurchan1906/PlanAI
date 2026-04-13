@@ -8,6 +8,20 @@ const { TextArea } = Input;
 const TASK_STATUSES = ["todo", "in_progress", "blocked", "done", "dropped"];
 const laneOrder = ["in_progress", "todo", "blocked", "done"];
 
+function getAcceptanceText(item) {
+  if (typeof item === "string") {
+    return item;
+  }
+  if (item && typeof item === "object") {
+    return item.text || item.title || JSON.stringify(item);
+  }
+  return "";
+}
+
+function isAcceptanceDone(item) {
+  return !!(item && typeof item === "object" && item.done);
+}
+
 export default function TasksView({
   tasks,
   taskSearch,
@@ -23,7 +37,8 @@ export default function TasksView({
 }) {
   const filteredTasks = useMemo(() => {
     return tasks.filter((task) => {
-      const query = `${task.title} ${task.id} ${task.phase} ${(task.acceptance || []).join(" ")}`.toLowerCase();
+      const acceptanceText = (task.acceptance || []).map(getAcceptanceText).join(" ");
+      const query = `${task.title} ${task.id} ${task.phase} ${acceptanceText}`.toLowerCase();
       return (!taskStatusFilter || task.status === taskStatusFilter) && (!taskSearch || query.includes(taskSearch.toLowerCase()));
     });
   }, [tasks, taskSearch, taskStatusFilter]);
@@ -142,7 +157,9 @@ export default function TasksView({
                           {!!(task.acceptance || []).length && (
                             <div className="tag-wrap">
                               {(task.acceptance || []).map((item) => (
-                                <Tag key={item}>{item}</Tag>
+                                <Tag key={`${task.id}-${getAcceptanceText(item)}`} color={isAcceptanceDone(item) ? "green" : "default"}>
+                                  {getAcceptanceText(item)}
+                                </Tag>
                               ))}
                             </div>
                           )}

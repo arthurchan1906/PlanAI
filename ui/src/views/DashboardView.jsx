@@ -1,5 +1,6 @@
 import { Badge, Button, Card, Col, Empty, List, Row, Space, Spin, Statistic, Tag, Typography } from "antd";
 import { CompassOutlined, SafetyCertificateOutlined } from "@ant-design/icons";
+import PlanAttentionList from "../components/PlanAttentionList";
 
 const { Title, Paragraph, Text } = Typography;
 
@@ -24,6 +25,7 @@ export default function DashboardView({
   const recommendedActions = inbox?.recommended_actions || [];
   const inboxCounts = inbox?.counts || {};
   const canonMeta = inbox?.canon || {};
+  const planAttention = dashboard?.plan_attention || [];
 
   function handleRecommendedAction(action) {
     if (action.kind === "decision_review") {
@@ -124,6 +126,22 @@ export default function DashboardView({
             hoverable
             onClick={(e) => {
               e.preventDefault();
+              onOpenTasks?.();
+            }}
+          >
+            <Statistic title="Active Plans" value={dashboard?.plan_counts?.active || 0} />
+            <Text type="secondary">
+              Auto {dashboard?.plan_counts?.auto_advance_ready || 0} / Review {dashboard?.plan_counts?.manager_review_required || 0}
+            </Text>
+          </Card>
+        </Col>
+        <Col xs={24} md={12} xl={6}>
+          <Card 
+            className="console-card stat-card clickable-card" 
+            bordered={false}
+            hoverable
+            onClick={(e) => {
+              e.preventDefault();
               onOpenCanon?.();
             }}
           >
@@ -191,6 +209,12 @@ export default function DashboardView({
               <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无活跃原则" />
             )}
           </Card>
+        </Col>
+      </Row>
+
+      <Row gutter={[16, 16]}>
+        <Col xs={24}>
+          <PlanAttentionList items={planAttention} />
         </Col>
       </Row>
 

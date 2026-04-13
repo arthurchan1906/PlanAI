@@ -10,12 +10,14 @@ from urllib.parse import parse_qs, urlparse
 
 from ..store import (
     append_daily_note,
+    advance_plan,
     build_brief,
     create_commit,
     create_decision,
     create_idea,
     create_link,
     create_principle,
+    create_plan,
     create_roadmap,
     create_task,
     create_vision,
@@ -25,6 +27,7 @@ from ..store import (
     get_decision,
     get_idea,
     get_principle,
+    get_plan,
     get_roadmap,
     get_task,
     get_vision,
@@ -33,6 +36,7 @@ from ..store import (
     list_ideas,
     list_links,
     list_principles,
+    list_plans,
     list_roadmaps,
     list_tasks,
     list_visions,
@@ -41,6 +45,7 @@ from ..store import (
     update_commit,
     update_decision_status,
     update_principle,
+    update_plan,
     update_roadmap,
     update_task,
     update_vision,
@@ -178,6 +183,29 @@ class PMAIRequestHandler(SimpleHTTPRequestHandler):
                 self.send_json(get_roadmap(path.rsplit('/', 1)[-1]))
             elif method == 'PATCH' and path.startswith('/pmai/roadmaps/'):
                 self.send_json(update_roadmap(path.rsplit('/', 1)[-1], self.read_json()))
+            elif method == 'GET' and path == '/pmai/plans':
+                self.send_json({'plans': list_plans((query.get('roadmap_id') or [None])[0], (query.get('status') or [None])[0])})
+            elif method == 'POST' and path == '/pmai/plans':
+                self.send_json(create_plan(self.read_json()))
+            elif method == 'POST' and path == '/pmai/plans/generate':
+                payload = self.read_json()
+                from ..store import generate_plan
+                self.send_json(
+                    generate_plan(
+                        roadmap_id=payload.get('roadmap_id'),
+                        vision_id=payload.get('vision_id'),
+                        title=payload.get('title', ''),
+                        create_tasks_for_plan=bool(payload.get('create_tasks', False)),
+                        task_limit=int(payload.get('task_limit', 4)),
+                    )
+                )
+            elif method == 'POST' and path.startswith('/pmai/plans/') and path.endswith('/advance'):
+                plan_id = path.split('/')[-2]
+                self.send_json(advance_plan(plan_id))
+            elif method == 'GET' and path.startswith('/pmai/plans/'):
+                self.send_json(get_plan(path.rsplit('/', 1)[-1]))
+            elif method == 'PATCH' and path.startswith('/pmai/plans/'):
+                self.send_json(update_plan(path.rsplit('/', 1)[-1], self.read_json()))
             elif method == 'GET' and path == '/pmai/principles':
                 self.send_json(handle_list_principles())
             elif method == 'POST' and path == '/pmai/principles':

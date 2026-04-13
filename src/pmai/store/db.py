@@ -50,6 +50,25 @@ def ensure_runtime_schema(conn: sqlite3.Connection) -> None:
             FOREIGN KEY(vision_id) REFERENCES visions(id)
         );
 
+        CREATE TABLE IF NOT EXISTS plans (
+            id TEXT PRIMARY KEY,
+            roadmap_id TEXT,
+            vision_id TEXT,
+            title TEXT NOT NULL,
+            goal TEXT NOT NULL,
+            status TEXT NOT NULL,
+            priority TEXT NOT NULL,
+            scope_json TEXT NOT NULL,
+            risks_json TEXT NOT NULL,
+            assumptions_json TEXT NOT NULL,
+            task_ids_json TEXT NOT NULL,
+            source TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(roadmap_id) REFERENCES roadmap(id),
+            FOREIGN KEY(vision_id) REFERENCES visions(id)
+        );
+
         CREATE TABLE IF NOT EXISTS tasks (
             id TEXT PRIMARY KEY,
             title TEXT NOT NULL,

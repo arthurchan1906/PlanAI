@@ -59,6 +59,8 @@ function ConsoleApp() {
   const [inbox, setInbox] = useState(null);
   const [canon, setCanon] = useState(null);
   const [visions, setVisions] = useState([]);
+  const [roadmaps, setRoadmaps] = useState([]);
+  const [plans, setPlans] = useState([]);
   const [principles, setPrinciples] = useState([]);
   const [codeStatus, setCodeStatus] = useState(null);
   const [recentGitCommits, setRecentGitCommits] = useState([]);
@@ -100,6 +102,8 @@ function ConsoleApp() {
       setInbox(payload.inbox || null);
       setCanon(payload.canon || null);
       setVisions(payload.visions || []);
+      setRoadmaps(payload.roadmaps || []);
+      setPlans(payload.plans || []);
       setPrinciples(payload.principles || []);
       setCodeStatus(payload.code_status || null);
       setRecentGitCommits(payload.recent_git_commits || []);
@@ -212,7 +216,18 @@ function ConsoleApp() {
         </Header>
         <Content className="console-content">
           {view === "dashboard" && <DashboardView visions={visions} principles={principles} dashboard={dashboard} inbox={inbox} canon={canon} loading={loading} onOpenCanon={id => { setCanonForm({...canonForm, decisionId: id || ""}); setView("canon"); }} onOpenDecisions={() => setView("decisions")} onOpenTasks={() => setView("tasks")} onOpenCommits={() => setView("commits")} onOpenIdeas={() => setView("ideas")} onOpenDocs={() => setView("docs")} onOpenDaily={() => setView("daily")} onOpenPrinciples={() => setView("principles")} />}
-          {view === "planning" && <RoadmapView tasks={tasks} decisions={decisions} canon={canon} />}
+          {view === "planning" && (
+            <RoadmapView
+              roadmaps={roadmaps}
+              plans={plans}
+              visions={visions}
+              tasks={tasks}
+              busy={busy}
+              onCreateRoadmap={(payload) => runAction(() => api("/pmai/roadmaps", { method: "POST", body: JSON.stringify(payload) }), "Roadmap created")}
+              onGeneratePlan={(payload) => runAction(() => api("/pmai/plans/generate", { method: "POST", body: JSON.stringify(payload) }), payload.create_tasks ? "Plan and tasks generated" : "Plan generated")}
+              onAdvancePlan={(planId) => runAction(() => api(`/pmai/plans/${planId}/advance`, { method: "POST", body: "{}" }), "Plan advanced")}
+            />
+          )}
           {view === "visions" && <VisionsView visions={visions} visionForm={visionForm} setVisionForm={setVisionForm} busy={busy} onCreateVision={p => runAction(() => api(p.id ? `/pmai/visions/${p.id}` : "/pmai/visions", { method: p.id ? "PATCH" : "POST", body: JSON.stringify(p) }), "Vision updated")} onUpdateVision={(id, p) => runAction(() => api(`/pmai/visions/${id}`, { method: "PATCH", body: JSON.stringify(p) }), "Vision updated")} onOpenVisionDetail={handleOpenVisionDetail} tasks={tasks} decisions={decisions} />}
           {view === "principles" && <PrinciplesView principles={principles} principleForm={principleForm} setPrincipleForm={setPrincipleForm} busy={busy} onCreatePrinciple={p => runAction(() => api(p.id ? `/pmai/principles/${p.id}` : "/pmai/principles", { method: p.id ? "PATCH" : "POST", body: JSON.stringify(p) }), "Principle updated")} onUpdatePrinciple={(id, p) => runAction(() => api(`/pmai/principles/${id}`, { method: "PATCH", body: JSON.stringify(p) }), "Principle updated")} tasks={tasks} decisions={decisions} />}
           {view === "code" && <CodeView codeStatus={codeStatus} recentCommits={recentGitCommits} loading={loading} onCommitFiles={handleCommitFiles} onViewCommit={handleViewCommit} />}

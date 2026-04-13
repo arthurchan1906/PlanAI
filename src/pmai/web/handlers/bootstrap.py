@@ -17,6 +17,7 @@ from ...store import (
     list_doc_records,
     list_ideas,
     list_principles,
+    list_plans,
     list_roadmaps,
     list_tasks,
     list_visions,
@@ -50,6 +51,7 @@ def build_web_bootstrap() -> Dict[str, Any]:
     visions = list_visions()
     principles = list_principles()
     roadmaps = list_roadmaps()
+    plans = list_plans()
     tasks = list_tasks()
     commits = list_commits()
     decisions = list_decisions()
@@ -128,12 +130,33 @@ def build_web_bootstrap() -> Dict[str, Any]:
             issues.append("obsolete_without_replacement")
         web_docs.append({**doc, "issues": issues})
 
+    plans_by_roadmap: Dict[str, List[Dict[str, Any]]] = {}
+    for plan in plans:
+        if plan.get("roadmap_id"):
+            plans_by_roadmap.setdefault(plan["roadmap_id"], []).append(plan)
+
+    web_roadmaps = []
+    for roadmap in roadmaps:
+        roadmap_tasks = [item for item in web_tasks if item.get("roadmap_id") == roadmap["id"]]
+        done_count = len([item for item in roadmap_tasks if item["status"] == "done"])
+        progress = int((done_count / len(roadmap_tasks)) * 100) if roadmap_tasks else 0
+        roadmap_plans = plans_by_roadmap.get(roadmap["id"], [])
+        web_roadmaps.append(
+            {
+                **roadmap,
+                "task_count": len(roadmap_tasks),
+                "plan_count": len(roadmap_plans),
+                "progress": progress,
+            }
+        )
+
     return {
         "dashboard": dashboard,
         "inbox": inbox,
         "canon": canon,
         "visions": visions,
         "principles": principles,
+        "plans": plans,
         "code_status": code_status,
         "recent_git_commits": recent_git_commits,
         "tasks": web_tasks,
@@ -144,5 +167,5 @@ def build_web_bootstrap() -> Dict[str, Any]:
         "decisions": web_decisions,
         "daily": daily,
         "module_progress": module_progress,
-        "roadmaps": roadmaps,
+        "roadmaps": web_roadmaps,
     }

@@ -82,6 +82,16 @@ from .roadmaps import (
     update_roadmap,
 )
 
+# Plan 绠＄悊
+from .plans import (
+    list_plans,
+    get_plan,
+    create_plan,
+    update_plan,
+    generate_plan,
+    advance_plan,
+)
+
 # 提交管理
 from .commits import (
     list_commits,
@@ -220,6 +230,12 @@ __all__ = [
     "get_roadmap",
     "create_roadmap",
     "update_roadmap",
+    "list_plans",
+    "get_plan",
+    "create_plan",
+    "update_plan",
+    "generate_plan",
+    "advance_plan",
     # 提交
     "list_commits",
     "get_commit",

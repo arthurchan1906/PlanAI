@@ -8,6 +8,7 @@ from .doc import handle_doc
 from .feedback import handle_feedback
 from .idea import handle_idea
 from .link import handle_link
+from .plan import handle_plan
 from .principle import handle_principle
 from .project import init_project, run_local_command, run_remote_command, show_doctor, show_help_text, show_info
 from .task import handle_task
@@ -24,6 +25,7 @@ __all__ = [
     "handle_feedback",
     "handle_idea",
     "handle_link",
+    "handle_plan",
     "handle_principle",
     "handle_task",
     "handle_vision",

@@ -11,6 +11,7 @@ from .commits import list_commits
 from .daily import get_daily_note
 from .visions import get_active_vision
 from .principles import list_active_principles
+from .plans import list_plans
 from .links import list_links
 from .git import get_git_worktree_status
 
@@ -22,9 +23,27 @@ def get_dashboard_summary() -> Dict[str, Any]:
     decisions = list_decisions()
     docs = list_doc_records()
     commits = list_commits()
+    plans = list_plans()
     daily = get_daily_note()
     current_recommendations = daily["next"][:4]
     current_risks = daily["risks"][:3]
+    plan_attention = [
+        {
+            "id": plan["id"],
+            "title": plan["title"],
+            "state": plan.get("health", {}).get("state"),
+            "issues": plan.get("health", {}).get("issues", []),
+            "next_manager_checkpoint": plan.get("manager_summary", {}).get("next_manager_checkpoint", ""),
+            "recommendations": plan.get("recommendations", [])[:2],
+            "auto_action_available": bool(plan.get("recommendations") and plan["recommendations"][0].get("auto_supported")),
+            "manager_review_required": bool(
+                plan.get("health", {}).get("needs_manager_attention")
+                and not (plan.get("recommendations") and plan["recommendations"][0].get("auto_supported"))
+            ),
+        }
+        for plan in plans
+        if plan.get("health", {}).get("needs_manager_attention")
+    ][:5]
     return {
         "canon_updated_at": canon["updated_at"],
         "task_counts": {
@@ -55,12 +74,38 @@ def get_dashboard_summary() -> Dict[str, Any]:
             "merged": len([commit for commit in commits if commit["status"] == "merged"]),
             "needs_review": len([commit for commit in commits if commit["review_status"] != "approved"]),
         },
+        "plan_counts": {
+            "total": len(plans),
+            "active": len([plan for plan in plans if plan["status"] == "active"]),
+            "draft": len([plan for plan in plans if plan["status"] == "draft"]),
+            "generated": len([plan for plan in plans if plan.get("source") == "generated"]),
+            "without_tasks": len([plan for plan in plans if not plan.get("task_ids")]),
+            "auto_advance_ready": len(
+                [plan for plan in plans if plan.get("recommendations") and plan["recommendations"][0].get("auto_supported")]
+            ),
+            "manager_review_required": len(
+                [
+                    plan
+                    for plan in plans
+                    if plan.get("health", {}).get("needs_manager_attention")
+                    and not (plan.get("recommendations") and plan["recommendations"][0].get("auto_supported"))
+                ]
+            ),
+            "with_open_tasks": len(
+                [
+                    plan
+                    for plan in plans
+                    if any(task.get("status") != "done" for task in plan.get("linked_tasks", []))
+                ]
+            ),
+        },
         "today_focus": [
             *[task["title"] for task in tasks if task["status"] == "in_progress"][:3],
             *daily["next"][:3],
         ][:5],
         "current_recommendations": current_recommendations,
         "current_risks": current_risks,
+        "plan_attention": plan_attention,
         "recent_commits": commits[:5],
     }
 
