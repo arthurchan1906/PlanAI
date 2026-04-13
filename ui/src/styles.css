@@ -31,6 +31,7 @@ body {
 .console-sider.ant-layout-sider {
   background: linear-gradient(180deg, rgba(18, 44, 82, 0.98) 0%, rgba(23, 61, 118, 0.98) 100%);
   box-shadow: 24px 0 60px rgba(24, 49, 88, 0.14);
+  width: 180px !important;
 }
 
 .brand-block {
@@ -58,11 +59,20 @@ body {
   padding: 6px 6px 14px;
 }
 
+.console-sider .ant-menu-item-group-title {
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 8px 12px 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
 .console-sider .ant-menu-item {
-  height: 40px;
-  margin-block: 4px;
-  border-radius: 10px;
-  padding-inline: 10px !important;
+  height: 38px;
+  margin-block: 2px;
+  border-radius: 8px;
+  padding-inline: 12px !important;
   font-size: 13px;
 }
 
@@ -80,8 +90,9 @@ body {
   align-items: center;
   gap: 16px;
   height: auto;
-  padding: 28px 28px 8px;
+  padding: 16px 28px 12px;
   background: transparent;
+  border-bottom: 1px solid rgba(88, 125, 176, 0.08);
 }
 
 .header-kicker {
@@ -96,6 +107,25 @@ body {
 
 .header-title.ant-typography {
   margin: 0;
+  font-size: 24px;
+}
+
+/* 面包屑样式 */
+.console-header .ant-breadcrumb a {
+  color: #4976bf;
+  transition: color 0.2s;
+}
+
+.console-header .ant-breadcrumb a:hover {
+  color: #2f6fec;
+}
+
+.console-header .ant-breadcrumb-separator {
+  color: #8fa8c8;
+}
+
+.console-header .ant-breadcrumb-link {
+  color: #4976bf;
 }
 
 .console-content {
@@ -111,17 +141,33 @@ body {
 .console-card.ant-card,
 .inner-card.ant-card {
   border: 1px solid rgba(88, 125, 176, 0.12);
-  background: rgba(255, 255, 255, 0.82);
-  box-shadow: 0 20px 48px rgba(35, 71, 123, 0.08);
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 4px 20px rgba(35, 71, 123, 0.06);
   backdrop-filter: blur(12px);
 }
 
 .console-card.ant-card {
-  border-radius: 24px;
+  border-radius: 16px;
+  margin-bottom: 16px;
+}
+
+.console-card .ant-card-head {
+  border-bottom: 2px solid rgba(88, 125, 176, 0.08);
+  padding: 16px 24px;
+}
+
+.console-card .ant-card-head-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1a365d;
+}
+
+.console-card .ant-card-body {
+  padding: 24px;
 }
 
 .inner-card.ant-card {
-  border-radius: 18px;
+  border-radius: 12px;
   background: rgba(247, 251, 255, 0.9);
   box-shadow: none;
 }
@@ -169,6 +215,39 @@ body {
 .stat-card .ant-statistic-content {
   font-weight: 700;
   letter-spacing: -0.05em;
+}
+
+/* 可点击卡片样式 */
+.clickable-card {
+  transition: all 0.3s ease;
+  position: relative;
+}
+
+.clickable-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 24px 52px rgba(35, 71, 23, 0.12);
+}
+
+.clickable-card:active {
+  transform: translateY(0);
+  box-shadow: 0 16px 36px rgba(35, 71, 123, 0.08);
+}
+
+.clickable-card::after {
+  content: '→';
+  position: absolute;
+  top: 50%;
+  right: 20px;
+  transform: translateY(-50%);
+  opacity: 0;
+  font-size: 20px;
+  color: #2f6fec;
+  transition: all 0.3s ease;
+}
+
+.clickable-card:hover::after {
+  opacity: 1;
+  right: 16px;
 }
 
 .canon-grid {
@@ -232,25 +311,32 @@ body {
 .task-lane-stack {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 20px;
 }
 
 .task-lane {
-  border: 1px solid rgba(88, 125, 176, 0.14);
-  border-radius: 18px;
-  background: rgba(244, 249, 255, 0.65);
-  padding: 12px;
+  border: 1px solid rgba(88, 125, 176, 0.12);
+  border-radius: 12px;
+  background: rgba(244, 249, 255, 0.5);
+  padding: 16px;
 }
 
 .task-lane__head {
-  margin-bottom: 8px;
+  margin-bottom: 12px;
+  font-weight: 700;
 }
 
 .task-list__row {
-  border: 1px solid rgba(88, 125, 176, 0.14);
-  border-radius: 16px;
-  background: rgba(244, 249, 255, 0.82);
-  padding: 12px 14px;
+  border: 1px solid rgba(88, 125, 176, 0.1);
+  border-radius: 10px;
+  background: white;
+  padding: 14px 16px;
+  transition: all 0.2s ease;
+}
+
+.task-list__row:hover {
+  box-shadow: 0 4px 12px rgba(35, 71, 123, 0.08);
+  transform: translateY(-1px);
 }
 
 .task-list__row .ant-list-item-meta-title,

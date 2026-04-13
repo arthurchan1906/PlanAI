@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   App as AntdApp,
   Badge,
+  Breadcrumb,
   Button,
   Card,
   Col,
@@ -38,24 +39,55 @@ import {
   CodeOutlined,
   LinkOutlined,
   DeleteOutlined,
+  AppstoreOutlined,
+  ProjectOutlined,
+  TeamOutlined,
 } from "@ant-design/icons";
 
 const { Header, Sider, Content } = Layout;
 const { Title, Paragraph, Text } = Typography;
 const { TextArea } = Input;
 
-const VIEW_ITEMS = [
-  { key: "dashboard", label: "今日工作台", icon: <DashboardOutlined /> },
-  { key: "visions", label: "愿景管理", icon: <CompassOutlined /> },
-  { key: "principles", label: "项目原则", icon: <SafetyCertificateOutlined /> },
-  { key: "canon", label: "规范基线", icon: <SettingOutlined /> },
-  { key: "tasks", label: "执行任务", icon: <ScheduleOutlined /> },
-  { key: "ideas", label: "想法池", icon: <BulbOutlined /> },
-  { key: "docs", label: "文档治理", icon: <BookOutlined /> },
-  { key: "decisions", label: "决策审批", icon: <FundProjectionScreenOutlined /> },
-  { key: "daily", label: "每日记录", icon: <FileTextOutlined /> },
+// 导航菜单分组
+const NAV_GROUPS = [
+  {
+    key: "core",
+    label: "核心工作流",
+    icon: <AppstoreOutlined />,
+    children: [
+      { key: "dashboard", label: "工作台", icon: <DashboardOutlined /> },
+      { key: "tasks", label: "任务", icon: <ScheduleOutlined /> },
+      { key: "decisions", label: "决策", icon: <FundProjectionScreenOutlined /> },
+      { key: "commits", label: "提交", icon: <BranchesOutlined /> },
+    ]
+  },
+  {
+    key: "strategy",
+    label: "战略规划",
+    icon: <ProjectOutlined />,
+    children: [
+      { key: "visions", label: "愿景", icon: <CompassOutlined /> },
+      { key: "principles", label: "原则", icon: <SafetyCertificateOutlined /> },
+      { key: "canon", label: "规范", icon: <SettingOutlined /> },
+    ]
+  },
+  {
+    key: "knowledge",
+    label: "知识管理",
+    icon: <TeamOutlined />,
+    children: [
+      { key: "ideas", label: "想法", icon: <BulbOutlined /> },
+      { key: "docs", label: "文档", icon: <BookOutlined /> },
+      { key: "daily", label: "日报", icon: <FileTextOutlined /> },
+      { key: "code", label: "代码", icon: <CodeOutlined /> },
+    ]
+  },
 ];
 
+// 扁平化用于 Menu 组件
+const NAV_ITEMS = NAV_GROUPS.flatMap(g => g.children);
+
+// 状态常量
 const TASK_STATUSES = ["todo", "in_progress", "blocked", "done", "dropped"];
 const COMMIT_STATUSES = ["draft", "committed", "merged", "released", "dropped"];
 const COMMIT_TEST_STATUSES = ["not_run", "passed", "failed"];
@@ -67,13 +99,6 @@ const DOC_LAYERS = ["baseline", "decision", "task", "exploration", "history", "t
 const VISION_STATUSES = ["active", "archived", "draft"];
 const PRINCIPLE_STATUSES = ["active", "archived", "draft"];
 const PRINCIPLE_KINDS = ["governance", "engineering", "product", "meta"];
-
-const NAV_ITEMS = [
-  ...VIEW_ITEMS.slice(0, 5),
-  { key: "commits", label: "交付提交", icon: <BranchesOutlined /> },
-  { key: "code", label: "代码状态", icon: <CodeOutlined /> },
-  ...VIEW_ITEMS.slice(5),
-];
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -105,6 +130,65 @@ function todayString() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function toTitleMap(items) {
+  return new Map((items || []).map((item) => [item.id, item.title]));
+}
+
+function buildTaskPayload(form) {
+  return {
+    title: form.title,
+    priority: form.priority,
+    phase: form.phase,
+    acceptance: splitValues(form.acceptance),
+  };
+}
+
+function buildCanonPayload(form) {
+  return {
+    decision_id: form.decisionId,
+    product_goal: form.productGoal,
+    engineering_focus: form.engineeringFocus,
+    architecture: form.architecture,
+    add_scope: splitValues(form.addScope),
+    add_avoid: splitValues(form.addAvoid),
+  };
+}
+
+function buildCommitPayload(form) {
+  return {
+    title: form.title,
+    summary: form.summary,
+    branch: form.branch,
+    task_id: form.taskId || null,
+    decision_id: form.decisionId || null,
+    status: form.status,
+    test_status: form.testStatus,
+    review_status: form.reviewStatus,
+    files: splitValues(form.files),
+  };
+}
+
+function buildDocPayload(form) {
+  return {
+    path: form.path,
+    type: form.type,
+    status: form.status,
+    layer: form.layer,
+    create: true,
+    source_of_truth: form.sourceOfTruth,
+    clear_source_of_truth: !form.sourceOfTruth,
+  };
+}
+
+function buildDailyPayload(form) {
+  return {
+    completed: splitValues(form.completed),
+    problems: splitValues(form.problems),
+    risks: splitValues(form.risks),
+    next: splitValues(form.next),
+  };
+}
+
 function LinksDisplay({ links, onDeleteLink }) {
   if (!links) return null;
   const items = [...(links.outgoing || []), ...(links.incoming || [])];
@@ -121,7 +205,7 @@ function LinksDisplay({ links, onDeleteLink }) {
           icon={<LinkOutlined />}
           className="link-tag"
         >
-          {link.relation}: {link.source_id === link.id ? link.target_id : link.source_id}
+          {link.source_id} {link.relation} {link.target_id}
         </Tag>
       ))}
     </div>
@@ -139,6 +223,10 @@ function DashboardView({
   onOpenDecisions,
   onOpenTasks,
   onOpenCommits,
+  onOpenIdeas,
+  onOpenDocs,
+  onOpenDaily,
+  onOpenPrinciples,
 }) {
   const activeVision = visions.find(v => v.status === 'active');
   const activePrinciples = principles.filter(p => p.status === 'active').slice(0, 5);
@@ -179,7 +267,13 @@ function DashboardView({
   return (
     <div className="view-stack">
       {activeVision && (
-        <Card className="console-card vision-banner" bordered={false}>
+        <Card 
+          className="console-card vision-banner" 
+          bordered={false}
+          hoverable
+          onClick={() => onOpenPrinciples?.()}
+          style={{ cursor: 'pointer' }}
+        >
           <Title level={4}><CompassOutlined /> 当前愿景: {activeVision.title}</Title>
           <Paragraph type="secondary">{activeVision.summary}</Paragraph>
           <div className="tag-wrap">
@@ -191,25 +285,57 @@ function DashboardView({
 
       <Row gutter={[16, 16]}>
         <Col xs={24} md={12} xl={6}>
-          <Card className="console-card stat-card" bordered={false}>
+          <Card 
+            className="console-card stat-card clickable-card" 
+            bordered={false}
+            hoverable
+            onClick={(e) => {
+              e.preventDefault();
+              onOpenTasks?.();
+            }}
+          >
             <Statistic title="进行中任务" value={dashboard?.task_counts?.in_progress || 0} />
             <Text type="secondary">总数 {dashboard?.task_counts?.total || 0}</Text>
           </Card>
         </Col>
         <Col xs={24} md={12} xl={6}>
-          <Card className="console-card stat-card" bordered={false}>
+          <Card 
+            className="console-card stat-card clickable-card" 
+            bordered={false}
+            hoverable
+            onClick={(e) => {
+              e.preventDefault();
+              onOpenDecisions?.();
+            }}
+          >
             <Statistic title="待审批事项" value={inboxCounts.total || 0} />
             <Text type="secondary">优先先看 inbox</Text>
           </Card>
         </Col>
         <Col xs={24} md={12} xl={6}>
-          <Card className="console-card stat-card" bordered={false}>
+          <Card 
+            className="console-card stat-card clickable-card" 
+            bordered={false}
+            hoverable
+            onClick={(e) => {
+              e.preventDefault();
+              onOpenDecisions?.();
+            }}
+          >
             <Statistic title="待决策" value={inboxCounts.proposed_decisions || 0} />
             <Text type="secondary">显式 review 后再推进</Text>
           </Card>
         </Col>
         <Col xs={24} md={12} xl={6}>
-          <Card className="console-card stat-card" bordered={false}>
+          <Card 
+            className="console-card stat-card clickable-card" 
+            bordered={false}
+            hoverable
+            onClick={(e) => {
+              e.preventDefault();
+              onOpenCanon?.();
+            }}
+          >
             <Statistic title="规范同步" value={inboxCounts.canon_followups || 0} />
             <Text type="secondary">已关联 {canonMeta.related_decisions_count || 0}</Text>
           </Card>
@@ -248,7 +374,16 @@ function DashboardView({
           </Card>
         </Col>
         <Col xs={24} xl={8}>
-          <Card className="console-card" title="活跃原则" bordered={false}>
+          <Card 
+            className="console-card" 
+            title="活跃原则" 
+            bordered={false}
+            extra={
+              <Button type="link" size="small" onClick={() => onOpenPrinciples?.()}>
+                查看全部
+              </Button>
+            }
+          >
             {activePrinciples.length ? (
               <List
                 dataSource={activePrinciples}
@@ -309,7 +444,7 @@ function DashboardView({
   );
 }
 
-function VisionsView({ visions, visionForm, setVisionForm, onCreateVision, onUpdateVision, busy }) {
+function VisionsView({ visions, visionForm, setVisionForm, onCreateVision, onUpdateVision, onOpenVisionDetail, tasks, decisions, busy }) {
   const columns = [
     { title: "标题", dataIndex: "title", key: "title" },
     {
@@ -321,10 +456,26 @@ function VisionsView({ visions, visionForm, setVisionForm, onCreateVision, onUpd
     { title: "周期", dataIndex: "horizon", key: "horizon" },
     { title: "更新于", dataIndex: "updated_at", key: "updated_at" },
     {
+      title: "关联项",
+      key: "relations",
+      render: (_, record) => {
+        const visionTasks = (tasks || []).filter(t => t.vision_id === record.id);
+        const visionDecisions = (decisions || []).filter(d => d.vision_id === record.id);
+        return (
+          <Space wrap>
+            {visionTasks.length > 0 && <Tag color="blue">{visionTasks.length} 任务</Tag>}
+            {visionDecisions.length > 0 && <Tag color="gold">{visionDecisions.length} 决策</Tag>}
+            {visionTasks.length === 0 && visionDecisions.length === 0 && <Text type="secondary">无</Text>}
+          </Space>
+        );
+      }
+    },
+    {
       title: "操作",
       key: "actions",
       render: (_, record) => (
         <Space>
+          <Button size="small" onClick={() => onOpenVisionDetail?.(record)}>查看关联</Button>
           {record.status !== 'active' && (
             <Button size="small" onClick={() => onUpdateVision(record.id, { status: 'active' })}>设为 Active</Button>
           )}
@@ -370,7 +521,18 @@ function VisionsView({ visions, visionForm, setVisionForm, onCreateVision, onUpd
   );
 }
 
-function PrinciplesView({ principles, principleForm, setPrincipleForm, onCreatePrinciple, onUpdatePrinciple, busy }) {
+function PrinciplesView({ principles, principleForm, setPrincipleForm, onCreatePrinciple, onUpdatePrinciple, tasks, decisions, busy }) {
+  const getRelatedCount = (principle) => {
+    const kindMap = {
+      'governance': decisions,
+      'engineering': tasks,
+      'product': tasks,
+      'meta': []
+    };
+    const related = kindMap[principle.kind] || [];
+    return related.length;
+  };
+
   return (
     <div className="view-stack">
       <Card className="console-card" title="维护项目原则" bordered={false}>
@@ -410,10 +572,13 @@ function PrinciplesView({ principles, principleForm, setPrincipleForm, onCreateP
               </Button>
             ]}>
               <Space direction="vertical">
-                <Tag color={statusColor(p.status)}>{p.status}</Tag>
+                <Space wrap>
+                  <Tag color={statusColor(p.status)}>{p.status}</Tag>
+                  <Tag>{p.kind}</Tag>
+                </Space>
                 <Text strong size="large">{p.title}</Text>
-                <Text type="secondary">{p.kind}</Text>
                 <Paragraph ellipsis={{ rows: 3 }}>{p.summary}</Paragraph>
+                <Text type="secondary" size="small">关联 {getRelatedCount(p)} 项</Text>
               </Space>
             </Card>
           </Col>
@@ -423,32 +588,84 @@ function PrinciplesView({ principles, principleForm, setPrincipleForm, onCreateP
   );
 }
 
-function CodeView({ codeStatus, recentCommits, loading }) {
+function CodeView({ codeStatus, recentCommits, loading, onCommitFiles, onViewCommit }) {
   if (loading && !codeStatus) return <Spin />;
+
+  const handleCommitFiles = (files) => {
+    if (onCommitFiles) {
+      onCommitFiles(files);
+    }
+  };
+
+  const handleViewCommit = (commit) => {
+    if (onViewCommit) {
+      onViewCommit(commit);
+    }
+  };
 
   return (
     <div className="view-stack">
-      <Card className="console-card" title="Git 工作区状态" bordered={false} extra={<Tag color="blue">{codeStatus?.branch}</Tag>}>
+      <Card className="console-card" title="Git 工作区状态" bordered={false} extra={
+        <Space>
+          <Tag color="blue">{codeStatus?.branch}</Tag>
+          {(codeStatus?.staged?.length > 0 || codeStatus?.unstaged?.length > 0) && (
+            <Button size="small" type="primary" onClick={() => {
+              const allFiles = [...(codeStatus?.staged || []), ...(codeStatus?.unstaged || [])];
+              handleCommitFiles(allFiles);
+            }}>登记提交</Button>
+          )}
+        </Space>
+      }>
         <Row gutter={16}>
           <Col span={8}>
             <Statistic title="已暂存 (Staged)" value={codeStatus?.staged?.length || 0} />
-            <List size="small" dataSource={codeStatus?.staged || []} renderItem={f => <List.Item><Text code>{f}</Text></List.Item>} />
+            <List size="small" dataSource={codeStatus?.staged || []} renderItem={f => (
+              <List.Item>
+                <Text code>{f}</Text>
+              </List.Item>
+            )} />
           </Col>
           <Col span={8}>
             <Statistic title="未暂存 (Unstaged)" value={codeStatus?.unstaged?.length || 0} />
-            <List size="small" dataSource={codeStatus?.unstaged || []} renderItem={f => <List.Item><Text code type="warning">{f}</Text></List.Item>} />
+            <List size="small" dataSource={codeStatus?.unstaged || []} renderItem={f => (
+              <List.Item>
+                <Text code type="warning">{f}</Text>
+              </List.Item>
+            )} />
           </Col>
           <Col span={8}>
             <Statistic title="未追踪 (Untracked)" value={codeStatus?.untracked?.length || 0} />
-            <List size="small" dataSource={codeStatus?.untracked || []} renderItem={f => <List.Item><Text code type="secondary">{f}</Text></List.Item>} />
+            <List size="small" dataSource={codeStatus?.untracked || []} renderItem={f => (
+              <List.Item>
+                <Text code type="secondary">{f}</Text>
+              </List.Item>
+            )} />
           </Col>
         </Row>
+        {(codeStatus?.staged?.length > 0 || codeStatus?.unstaged?.length > 0) && (
+          <Divider orientation="left" plain>快速操作</Divider>
+        )}
+        {codeStatus?.staged?.length > 0 && (
+          <Space wrap style={{ marginBottom: 8 }}>
+            <Text type="secondary">已暂存文件:</Text>
+            {codeStatus.staged.slice(0, 5).map(f => (
+              <Tag key={f} closable onClose={() => {}} onClick={() => handleCommitFiles([f])}>{f}</Tag>
+            ))}
+            {codeStatus.staged.length > 5 && <Text type="secondary">等 {codeStatus.staged.length} 个文件</Text>}
+          </Space>
+        )}
       </Card>
       <Card className="console-card" title="Git 近期提交历史" bordered={false}>
         <List
           dataSource={recentCommits}
           renderItem={c => (
-            <List.Item>
+            <List.Item
+              actions={[
+                <Button key="view" size="small" type="link" onClick={() => handleViewCommit(c)}>
+                  查看详情
+                </Button>
+              ]}
+            >
               <List.Item.Meta
                 avatar={<BranchesOutlined />}
                 title={<Text strong>{c.title}</Text>}
@@ -716,8 +933,23 @@ function TasksView({
                             <Text type="secondary">{task.id}</Text>
                           </Space>
                           <Text strong>{task.title}</Text>
-                          <LinksDisplay links={task.links} onDeleteLink={onDeleteLink} />
+                          {!!task.last_note && <Text type="secondary">{task.last_note}</Text>}
+                          {!!(task.acceptance || []).length && (
+                            <div className="tag-wrap">
+                              {(task.acceptance || []).map((item) => (
+                                <Tag key={item}>{item}</Tag>
+                              ))}
+                            </div>
+                          )}
+                          {!!(task.related_decision_titles || []).length && (
+                            <div className="tag-wrap">
+                              {(task.related_decision_titles || []).map((item) => (
+                                <Tag key={item} color="gold">{item}</Tag>
+                              ))}
+                            </div>
+                          )}
                           <Space wrap>
+                            <Tag color={task.status_hint === "ready" ? "green" : "gold"}>{task.status_hint}</Tag>
                             {task.status !== "in_progress" && <Button size="small" onClick={() => onUpdateTask(task.id, "in_progress")}>Start</Button>}
                             {task.status !== "done" && <Button size="small" type="primary" ghost onClick={() => onUpdateTask(task.id, "done")}>Done</Button>}
                           </Space>
@@ -747,6 +979,8 @@ function IdeasView({
   setIdeaForm,
   onCreateIdea,
   onUpdateIdea,
+  onConvertToTask,
+  onConvertToDecision,
   busy,
 }) {
   const filteredIdeas = useMemo(() => {
@@ -823,7 +1057,28 @@ function IdeasView({
                     </Space>
                     <Text strong>{idea.title}</Text>
                     <Paragraph>{idea.summary}</Paragraph>
+                    {!!idea.impact && <Text type="secondary">影响: {idea.impact}</Text>}
+                    {idea.converted_to && (
+                      <Space wrap>
+                        <Tag color="green">已转化</Tag>
+                        {idea.converted_to_type === 'task' && (
+                          <Tag color="blue">任务: {idea.converted_to_title}</Tag>
+                        )}
+                        {idea.converted_to_type === 'decision' && (
+                          <Tag color="gold">决策: {idea.converted_to_title}</Tag>
+                        )}
+                      </Space>
+                    )}
                     <Space wrap>
+                      {idea.status === 'accepted' && !idea.converted_to && (
+                        <>
+                          <Button size="small" type="primary" onClick={() => onConvertToTask?.(idea)}>转化为任务</Button>
+                          <Button size="small" onClick={() => onConvertToDecision?.(idea)}>转化为决策</Button>
+                        </>
+                      )}
+                      {idea.status === 'inbox' && (
+                        <Button size="small" onClick={() => onUpdateIdea(idea.id, "under_review")}>开始评审</Button>
+                      )}
                       <Button size="small" onClick={() => onUpdateIdea(idea.id, "accepted")}>Accept</Button>
                       <Button size="small" danger onClick={() => onUpdateIdea(idea.id, "rejected")}>Reject</Button>
                     </Space>
@@ -840,7 +1095,7 @@ function IdeasView({
   );
 }
 
-function DocsView({ docs, docAudit, docForm, setDocForm, onSubmitDoc, busy }) {
+function DocsView({ docs, docAudit, docForm, setDocForm, onSubmitDoc, busy, decisions }) {
   const columns = [
     { title: "路径", dataIndex: "path", key: "path" },
     { title: "类型", dataIndex: "type", key: "type" },
@@ -856,6 +1111,34 @@ function DocsView({ docs, docAudit, docForm, setDocForm, onSubmitDoc, busy }) {
       dataIndex: "source_of_truth",
       key: "source_of_truth",
       render: (value) => (value ? <CheckCircleOutlined /> : "-"),
+    },
+    {
+      title: "关联决策",
+      key: "related_decision",
+      render: (_, record) => {
+        if (!record.related_decision_id) return <Text type="secondary">无</Text>;
+        const decision = (decisions || []).find(d => d.id === record.related_decision_id);
+        return decision ? (
+          <Tag color="gold">{decision.title}</Tag>
+        ) : (
+          <Text type="secondary">{record.related_decision_id}</Text>
+        );
+      }
+    },
+    {
+      title: "Issues",
+      dataIndex: "issues",
+      key: "issues",
+      render: (value) =>
+        (value || []).length ? (
+          <Space wrap>
+            {(value || []).map((item) => (
+              <Tag key={item} color="red">{item}</Tag>
+            ))}
+          </Space>
+        ) : (
+          <Tag color="green">clean</Tag>
+        ),
     },
   ];
 
@@ -876,6 +1159,17 @@ function DocsView({ docs, docAudit, docForm, setDocForm, onSubmitDoc, busy }) {
                   value={docForm.layer}
                   onChange={(value) => setDocForm((current) => ({ ...current, layer: value }))}
                   options={DOC_LAYERS.map((layer) => ({ value: layer, label: layer }))}
+                />
+              </Form.Item>
+              <Form.Item label="关联决策">
+                <Select
+                  allowClear
+                  value={docForm.relatedDecisionId || undefined}
+                  placeholder="选择关联决策（可选）"
+                  onChange={(value) =>
+                    setDocForm((current) => ({ ...current, relatedDecisionId: value }))
+                  }
+                  options={(decisions || []).map((d) => ({ value: d.id, label: d.title }))}
                 />
               </Form.Item>
               <Form.Item label="真相来源">
@@ -920,6 +1214,7 @@ function DocsView({ docs, docAudit, docForm, setDocForm, onSubmitDoc, busy }) {
                 status: record.status || "draft",
                 layer: record.layer || "exploration",
                 sourceOfTruth: !!record.source_of_truth,
+                relatedDecisionId: record.related_decision_id || undefined,
               }),
           })}
         />
@@ -956,6 +1251,9 @@ function DecisionsView({
           <Form.Item label="标题" required>
             <Input value={decisionForm.title} onChange={e => setDecisionForm({...decisionForm, title: e.target.value})} />
           </Form.Item>
+          <Form.Item label="Background" required>
+            <TextArea rows={3} value={decisionForm.background} onChange={e => setDecisionForm({...decisionForm, background: e.target.value})} />
+          </Form.Item>
           <Form.Item label="决策内容" required>
             <TextArea rows={3} value={decisionForm.decision} onChange={e => setDecisionForm({...decisionForm, decision: e.target.value})} />
           </Form.Item>
@@ -976,8 +1274,13 @@ function DecisionsView({
                     <Text type="secondary">{decision.date} · {decision.id}</Text>
                   </Space>
                   <Text strong size="large">{decision.title}</Text>
+                  {!!decision.background && <Paragraph type="secondary">{decision.background}</Paragraph>}
                   <Paragraph>{decision.decision}</Paragraph>
-                  <LinksDisplay links={decision.links} onDeleteLink={onDeleteLink} />
+                  <Space wrap>
+                    {decision.canon_synced && <Tag color="green">canon synced</Tag>}
+                    {!!decision.linked_commit_count && <Tag color="blue">{decision.linked_commit_count} commits</Tag>}
+                    {(decision.related_task_titles || []).map((item) => <Tag key={item}>{item}</Tag>)}
+                  </Space>
                   <Space wrap>
                     <Button size="small" onClick={() => onUpdateDecision(decision.id, "accepted")}>采纳</Button>
                     {decision.status === "accepted" && <Button size="small" type="primary" ghost onClick={() => onCopyIntoCanon(decision.id)}>同步 Canon</Button>}
@@ -1007,6 +1310,8 @@ function CommitsView({
   onDeleteLink,
   busy,
 }) {
+  const taskTitleMap = useMemo(() => toTitleMap(tasks), [tasks]);
+  const decisionTitleMap = useMemo(() => toTitleMap(decisions), [decisions]);
   const filteredCommits = useMemo(() => {
     return commits.filter((commit) => {
       const query = `${commit.title} ${commit.summary} ${commit.branch} ${commit.commit_hash}`.toLowerCase();
@@ -1021,8 +1326,8 @@ function CommitsView({
       render: (_, record) => (
         <Space direction="vertical" size={2}>
           <Text strong>{record.title}</Text>
-          <Text type="secondary" size="small">{record.commit_hash?.slice(0, 8)}</Text>
-          <LinksDisplay links={record.links} onDeleteLink={onDeleteLink} />
+          <Text type="secondary" size="small">{record.short_hash || record.commit_hash?.slice(0, 8)}</Text>
+          {!!record.summary && <Text type="secondary">{record.summary}</Text>}
         </Space>
       ),
     },
@@ -1031,8 +1336,9 @@ function CommitsView({
       key: "links",
       render: (_, record) => (
         <Space direction="vertical" size={2}>
-          {record.task_id && <Tag color="blue">Task: {record.task_id}</Tag>}
-          {record.decision_id && <Tag color="gold">Decision: {record.decision_id}</Tag>}
+          {record.task_id && <Tag color="blue">Task: {record.task_title || taskTitleMap.get(record.task_id) || record.task_id}</Tag>}
+          {record.decision_id && <Tag color="gold">Decision: {record.decision_title || decisionTitleMap.get(record.decision_id) || record.decision_id}</Tag>}
+          {!!(record.files || []).length && <Text type="secondary">{record.file_count || record.files.length} files</Text>}
         </Space>
       ),
     },
@@ -1043,6 +1349,7 @@ function CommitsView({
         <Space wrap>
           <Tag color={statusColor(record.status)}>{record.status}</Tag>
           <Tag color={record.review_status === "approved" ? "green" : "gold"}>{record.review_status}</Tag>
+          <Tag color={record.status_hint === "ready" ? "green" : "gold"}>{record.status_hint}</Tag>
         </Space>
       ),
     },
@@ -1075,6 +1382,7 @@ function CommitsView({
                 <Select allowClear value={commitForm.decisionId} onChange={v => setCommitForm({...commitForm, decisionId: v})} options={decisions.map(d => ({ value: d.id, label: d.title }))} />
               </Form.Item>
             </Col>
+            <Col span={24}><Form.Item label="Files"><Input value={commitForm.files} placeholder="a.py | b.py" onChange={e => setCommitForm({...commitForm, files: e.target.value})} /></Form.Item></Col>
           </Row>
           <Button type="primary" htmlType="submit" loading={busy}>登记交付</Button>
         </Form>
@@ -1122,6 +1430,99 @@ function DailyView({ daily, dailyHistory, dailyForm, setDailyForm, onAppendDaily
   );
 }
 
+function DailyViewHuman({ daily, dailyForm, setDailyForm, onAppendDaily, onReplaceDaily, tasks, commits, onCreateTaskFromDaily, busy }) {
+  const todayCommits = (commits || []).filter(c => c.created_at && c.created_at.startsWith(dailyForm.noteDate || todayString()));
+  
+  return (
+    <div className="view-stack">
+      <Row gutter={[16, 16]}>
+        <Col xs={24} xl={10}>
+          <Card className="console-card" title="Daily Update" bordered={false}>
+            <Form layout="vertical" onFinish={onAppendDaily}>
+              <Form.Item label="Date">
+                <Input type="date" value={dailyForm.noteDate} onChange={e => setDailyForm({...dailyForm, noteDate: e.target.value})} />
+              </Form.Item>
+              <Form.Item label="Completed">
+                <Input value={dailyForm.completed} placeholder="item 1 | item 2" onChange={e => setDailyForm({...dailyForm, completed: e.target.value})} />
+              </Form.Item>
+              <Form.Item label="Problems">
+                <Input value={dailyForm.problems} placeholder="item 1 | item 2" onChange={e => setDailyForm({...dailyForm, problems: e.target.value})} />
+              </Form.Item>
+              <Form.Item label="Risks">
+                <Input value={dailyForm.risks} placeholder="item 1 | item 2" onChange={e => setDailyForm({...dailyForm, risks: e.target.value})} />
+              </Form.Item>
+              <Form.Item label="Next">
+                <Input value={dailyForm.next} placeholder="item 1 | item 2" onChange={e => setDailyForm({...dailyForm, next: e.target.value})} />
+              </Form.Item>
+              <Space>
+                <Button type="primary" htmlType="submit" loading={busy}>Append</Button>
+                <Button onClick={onReplaceDaily} loading={busy}>Replace</Button>
+              </Space>
+            </Form>
+          </Card>
+          {todayCommits.length > 0 && (
+            <Card className="console-card" title="今日提交" bordered={false} style={{ marginTop: 16 }}>
+              <List
+                size="small"
+                dataSource={todayCommits}
+                renderItem={c => (
+                  <List.Item>
+                    <Space direction="vertical" size={2}>
+                      <Text strong>{c.title}</Text>
+                      <Text type="secondary" size="small">{c.short_hash || c.commit_hash?.slice(0, 8)}</Text>
+                      {c.task_id && <Tag color="blue">关联任务</Tag>}
+                    </Space>
+                  </List.Item>
+                )}
+              />
+            </Card>
+          )}
+        </Col>
+        <Col xs={24} xl={14}>
+          <Card className="console-card" title={`Daily Note (${daily?.note_date || todayString()})`} bordered={false}>
+            {daily ? (
+              <Row gutter={[16, 16]}>
+                <Col span={12}>
+                  <Card size="small" title="Completed" bordered={false}>
+                    <List size="small" dataSource={daily.completed || []} renderItem={i => <List.Item>{i}</List.Item>} />
+                  </Card>
+                </Col>
+                <Col span={12}>
+                  <Card size="small" title="Next" bordered={false}>
+                    <List size="small" dataSource={daily.next || []} renderItem={i => (
+                      <List.Item>
+                        {i}
+                        <Button size="small" type="link" onClick={() => onCreateTaskFromDaily?.(i)}>转任务</Button>
+                      </List.Item>
+                    )} />
+                  </Card>
+                </Col>
+                <Col span={12}>
+                  <Card size="small" title="Problems" bordered={false}>
+                    <List size="small" dataSource={daily.problems || []} renderItem={i => (
+                      <List.Item>
+                        {i}
+                        <Button size="small" type="link" onClick={() => onCreateTaskFromDaily?.(i)}>转任务</Button>
+                      </List.Item>
+                    )} />
+                  </Card>
+                </Col>
+                <Col span={12}>
+                  <Card size="small" title="Risks" bordered={false}>
+                    <List size="small" dataSource={daily.risks || []} renderItem={i => <List.Item>{i}</List.Item>} />
+                  </Card>
+                </Col>
+              </Row>
+            ) : (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />
+            )}
+          </Card>
+        </Col>
+      </Row>
+    </div>
+  );
+}
+
 function ConsoleApp() {
   const { message } = AntdApp.useApp();
   const [loading, setLoading] = useState(true);
@@ -1155,7 +1556,7 @@ function ConsoleApp() {
   const [taskForm, setTaskForm] = useState({ title: "", acceptance: "", priority: "P1", phase: "general" });
   const [commitForm, setCommitForm] = useState({ title: "", summary: "", branch: "", taskId: "", decisionId: "", status: "draft", testStatus: "not_run", reviewStatus: "pending", files: "" });
   const [ideaForm, setIdeaForm] = useState({ title: "", summary: "", impact: "" });
-  const [docForm, setDocForm] = useState({ path: "", type: "", status: "draft", layer: "exploration", sourceOfTruth: false });
+  const [docForm, setDocForm] = useState({ path: "", type: "", status: "draft", layer: "exploration", sourceOfTruth: false, relatedDecisionId: undefined });
   const [decisionForm, setDecisionForm] = useState({ title: "", background: "", decision: "" });
   const [dailyForm, setDailyForm] = useState({ noteDate: todayString(), completed: "", problems: "", risks: "", next: "" });
   const [canonForm, setCanonForm] = useState({ decisionId: "", productGoal: "", engineeringFocus: "", architecture: "", addScope: "", addAvoid: "" });
@@ -1165,37 +1566,22 @@ function ConsoleApp() {
   async function loadAll() {
     setLoading(true);
     try {
-      const [summaryData, inboxData, canonData, visionData, principleData, codeData, recentGitData, taskData, commitData, ideaData, docData, auditData, decisionData, dailyData] = await Promise.all([
-        api("/pmai/dashboard"),
-        api("/pmai/inbox"),
-        api("/pmai/canon"),
-        api("/pmai/visions"),
-        api("/pmai/principles"),
-        api("/pmai/code/status"),
-        api("/pmai/code/recent"),
-        api("/pmai/tasks"),
-        api("/pmai/commits"),
-        api("/pmai/ideas"),
-        api("/pmai/docs"),
-        api("/pmai/docs/audit"),
-        api("/pmai/decisions"),
-        api("/pmai/daily"),
-      ]);
+      const payload = await api("/pmai/web/bootstrap");
 
-      setDashboard(summaryData);
-      setInbox(inboxData);
-      setCanon(canonData);
-      setVisions(visionData.visions || []);
-      setPrinciples(principleData.principles || []);
-      setCodeStatus(codeData);
-      setRecentGitCommits(recentGitData.commits || []);
-      setTasks(taskData.tasks || []);
-      setCommits(commitData.commits || []);
-      setIdeas(ideaData.ideas || []);
-      setDocs(docData.records || []);
-      setDocAudit(auditData);
-      setDecisions(decisionData.decisions || []);
-      setDaily(dailyData);
+      setDashboard(payload.dashboard || null);
+      setInbox(payload.inbox || null);
+      setCanon(payload.canon || null);
+      setVisions(payload.visions || []);
+      setPrinciples(payload.principles || []);
+      setCodeStatus(payload.code_status || null);
+      setRecentGitCommits(payload.recent_git_commits || []);
+      setTasks(payload.tasks || []);
+      setCommits(payload.commits || []);
+      setIdeas(payload.ideas || []);
+      setDocs(payload.docs || []);
+      setDocAudit(payload.doc_audit || null);
+      setDecisions(payload.decisions || []);
+      setDaily(payload.daily || null);
     } catch (error) {
       message.error(error.message || "Load failed");
     } finally {
@@ -1218,32 +1604,117 @@ function ConsoleApp() {
     }
   }
 
+  function runDailyAction(method, successMessage) {
+    const query = dailyForm.noteDate ? `?date=${encodeURIComponent(dailyForm.noteDate)}` : "";
+    return runAction(
+      () => api(`/pmai/daily${query}`, { method, body: JSON.stringify(buildDailyPayload(dailyForm)) }),
+      successMessage,
+    );
+  }
+
+  // Ideas 转化功能
+  function handleConvertIdeaToTask(idea) {
+    setTaskForm({ 
+      title: idea.title, 
+      acceptance: "", 
+      priority: "P1", 
+      phase: "general" 
+    });
+    message.info(`已从想法 "${idea.title}" 创建任务表单`);
+    setView("tasks");
+  }
+
+  function handleConvertIdeaToDecision(idea) {
+    setDecisionForm({ 
+      title: idea.title, 
+      background: idea.summary, 
+      decision: "" 
+    });
+    message.info(`已从想法 "${idea.title}" 创建决策表单`);
+    setView("decisions");
+  }
+
+  // CodeView 交互功能
+  function handleCommitFiles(files) {
+    setCommitForm({ 
+      ...commitForm, 
+      files: files.join(" | "),
+      title: `提交: ${files[0]}${files.length > 1 ? ` 等 ${files.length} 个文件` : ''}`
+    });
+    message.info(`已选择 ${files.length} 个文件`);
+    setView("commits");
+  }
+
+  function handleViewCommit(commit) {
+    message.info(`查看提交详情: ${commit.short_hash || commit.commit_hash?.slice(0, 8)}`);
+    // 可以后续扩展为模态框展示
+  }
+
+  // Daily 创建任务功能
+  function handleCreateTaskFromDaily(item) {
+    setTaskForm({ 
+      title: item, 
+      acceptance: "", 
+      priority: "P1", 
+      phase: "general" 
+    });
+    message.info(`已从日报项创建任务表单: ${item}`);
+    setView("tasks");
+  }
+
+  // Vision 关联查看功能
+  function handleOpenVisionDetail(vision) {
+    message.info(`查看愿景 "${vision.title}" 的关联项`);
+    // 当前显示关联统计，后续可扩展为专门的关联视图
+  }
+
   return (
     <Layout className="console-layout">
-      <Sider width={120} className="console-sider" breakpoint="lg" collapsedWidth="0">
+      <Sider width={180} className="console-sider" breakpoint="lg" collapsedWidth="0">
         <div className="brand-block"><div className="brand-mark">PM</div></div>
-        <Menu theme="dark" mode="inline" selectedKeys={[view]} items={NAV_ITEMS} onClick={({ key }) => setView(key)} />
+        <Menu 
+          theme="dark" 
+          mode="inline" 
+          selectedKeys={[view]} 
+          items={NAV_GROUPS.map(group => ({
+            key: group.key,
+            type: 'group',
+            label: group.label,
+            children: group.children.map(item => ({
+              key: item.key,
+              label: item.label,
+              icon: item.icon,
+            }))
+          }))}
+          onClick={({ key }) => setView(key)} 
+        />
       </Sider>
       <Layout>
         <Header className="console-header">
           <div>
-            <Text className="header-kicker">PMAI Workflow Console</Text>
+            <Breadcrumb
+              items={[
+                { title: "工作台", onClick: () => setView("dashboard") },
+                { title: NAV_ITEMS.find(i => i.key === view)?.label }
+              ]}
+              style={{ marginBottom: 8 }}
+            />
             <Title level={3} className="header-title">{NAV_ITEMS.find(i => i.key === view)?.label}</Title>
           </div>
           <Button icon={<ReloadOutlined />} onClick={loadAll} loading={busy}>刷新</Button>
         </Header>
         <Content className="console-content">
-          {view === "dashboard" && <DashboardView visions={visions} principles={principles} dashboard={dashboard} inbox={inbox} canon={canon} loading={loading} onOpenCanon={id => { setCanonForm({...canonForm, decisionId: id}); setView("canon"); }} onOpenDecisions={() => setView("decisions")} onOpenTasks={() => setView("tasks")} onOpenCommits={() => setView("commits")} />}
-          {view === "visions" && <VisionsView visions={visions} visionForm={visionForm} setVisionForm={setVisionForm} busy={busy} onCreateVision={p => runAction(() => api(p.id ? `/pmai/visions/${p.id}` : "/pmai/visions", { method: p.id ? "PATCH" : "POST", body: JSON.stringify(p) }), "Vision updated")} onUpdateVision={(id, p) => runAction(() => api(`/pmai/visions/${id}`, { method: "PATCH", body: JSON.stringify(p) }), "Vision updated")} />}
-          {view === "principles" && <PrinciplesView principles={principles} principleForm={principleForm} setPrincipleForm={setPrincipleForm} busy={busy} onCreatePrinciple={p => runAction(() => api(p.id ? `/pmai/principles/${p.id}` : "/pmai/principles", { method: p.id ? "PATCH" : "POST", body: JSON.stringify(p) }), "Principle updated")} onUpdatePrinciple={(id, p) => runAction(() => api(`/pmai/principles/${id}`, { method: "PATCH", body: JSON.stringify(p) }), "Principle updated")} />}
-          {view === "code" && <CodeView codeStatus={codeStatus} recentCommits={recentGitCommits} loading={loading} />}
-          {view === "tasks" && <TasksView tasks={tasks} taskSearch={taskSearch} taskStatusFilter={taskStatusFilter} setTaskSearch={setTaskSearch} setTaskStatusFilter={setTaskStatusFilter} taskForm={taskForm} setTaskForm={setTaskForm} busy={busy} onCreateTask={() => runAction(() => api("/pmai/tasks", { method: "POST", body: JSON.stringify(taskForm) }), "Task created")} onUpdateTask={(id, s) => runAction(() => api(`/pmai/tasks/${id}`, { method: "PATCH", body: JSON.stringify({ status: s }) }), "Task updated")} onDeleteLink={id => runAction(() => api(`/pmai/links/${id}`, { method: "DELETE" }), "Link deleted")} />}
-          {view === "canon" && <CanonView canon={canon} decisions={decisions} canonForm={canonForm} setCanonForm={setCanonForm} busy={busy} onSubmitCanon={() => runAction(() => api("/pmai/canon/update", { method: "POST", body: JSON.stringify(canonForm) }), "Canon updated")} />}
-          {view === "commits" && <CommitsView commits={commits} tasks={tasks} decisions={decisions} commitSearch={commitSearch} commitStatusFilter={commitStatusFilter} setCommitSearch={setCommitSearch} setCommitStatusFilter={setCommitStatusFilter} commitForm={commitForm} setCommitForm={setCommitForm} busy={busy} onCreateCommit={() => runAction(() => api("/pmai/commits", { method: "POST", body: JSON.stringify(commitForm) }), "Commit registered")} onUpdateCommit={(id, p) => runAction(() => api(`/pmai/commits/${id}`, { method: "PATCH", body: JSON.stringify(p) }), "Commit updated")} onDeleteLink={id => runAction(() => api(`/pmai/links/${id}`, { method: "DELETE" }), "Link deleted")} />}
-          {view === "ideas" && <IdeasView ideas={ideas} ideaSearch={ideaSearch} ideaStatusFilter={ideaStatusFilter} setIdeaSearch={setIdeaSearch} setIdeaStatusFilter={setIdeaStatusFilter} ideaForm={ideaForm} setIdeaForm={setIdeaForm} busy={busy} onCreateIdea={() => runAction(() => api("/pmai/ideas", { method: "POST", body: JSON.stringify(ideaForm) }), "Idea created")} onUpdateIdea={(id, s) => runAction(() => api(`/pmai/ideas/${id}`, { method: "PATCH", body: JSON.stringify({ status: s }) }), "Idea updated")} />}
-          {view === "docs" && <DocsView docs={docs} docAudit={docAudit} docForm={docForm} setDocForm={setDocForm} busy={busy} onSubmitDoc={() => runAction(() => api("/pmai/docs", { method: "PATCH", body: JSON.stringify(docForm) }), "Doc updated")} />}
+          {view === "dashboard" && <DashboardView visions={visions} principles={principles} dashboard={dashboard} inbox={inbox} canon={canon} loading={loading} onOpenCanon={id => { setCanonForm({...canonForm, decisionId: id || ""}); setView("canon"); }} onOpenDecisions={() => setView("decisions")} onOpenTasks={() => setView("tasks")} onOpenCommits={() => setView("commits")} onOpenIdeas={() => setView("ideas")} onOpenDocs={() => setView("docs")} onOpenDaily={() => setView("daily")} onOpenPrinciples={() => setView("principles")} />}
+          {view === "visions" && <VisionsView visions={visions} visionForm={visionForm} setVisionForm={setVisionForm} busy={busy} onCreateVision={p => runAction(() => api(p.id ? `/pmai/visions/${p.id}` : "/pmai/visions", { method: p.id ? "PATCH" : "POST", body: JSON.stringify(p) }), "Vision updated")} onUpdateVision={(id, p) => runAction(() => api(`/pmai/visions/${id}`, { method: "PATCH", body: JSON.stringify(p) }), "Vision updated")} onOpenVisionDetail={handleOpenVisionDetail} tasks={tasks} decisions={decisions} />}
+          {view === "principles" && <PrinciplesView principles={principles} principleForm={principleForm} setPrincipleForm={setPrincipleForm} busy={busy} onCreatePrinciple={p => runAction(() => api(p.id ? `/pmai/principles/${p.id}` : "/pmai/principles", { method: p.id ? "PATCH" : "POST", body: JSON.stringify(p) }), "Principle updated")} onUpdatePrinciple={(id, p) => runAction(() => api(`/pmai/principles/${id}`, { method: "PATCH", body: JSON.stringify(p) }), "Principle updated")} tasks={tasks} decisions={decisions} />}
+          {view === "code" && <CodeView codeStatus={codeStatus} recentCommits={recentGitCommits} loading={loading} onCommitFiles={handleCommitFiles} onViewCommit={handleViewCommit} />}
+          {view === "tasks" && <TasksView tasks={tasks} taskSearch={taskSearch} taskStatusFilter={taskStatusFilter} setTaskSearch={setTaskSearch} setTaskStatusFilter={setTaskStatusFilter} taskForm={taskForm} setTaskForm={setTaskForm} busy={busy} onCreateTask={() => runAction(() => api("/pmai/tasks", { method: "POST", body: JSON.stringify(buildTaskPayload(taskForm)) }), "Task created")} onUpdateTask={(id, s) => runAction(() => api(`/pmai/tasks/${id}`, { method: "PATCH", body: JSON.stringify({ status: s }) }), "Task updated")} onDeleteLink={id => runAction(() => api(`/pmai/links/${id}`, { method: "DELETE" }), "Link deleted")} />}
+          {view === "canon" && <CanonView canon={canon} decisions={decisions} canonForm={canonForm} setCanonForm={setCanonForm} busy={busy} onSubmitCanon={() => runAction(() => api("/pmai/canon/update", { method: "POST", body: JSON.stringify(buildCanonPayload(canonForm)) }), "Canon updated")} />}
+          {view === "commits" && <CommitsView commits={commits} tasks={tasks} decisions={decisions} commitSearch={commitSearch} commitStatusFilter={commitStatusFilter} setCommitSearch={setCommitSearch} setCommitStatusFilter={setCommitStatusFilter} commitForm={commitForm} setCommitForm={setCommitForm} busy={busy} onCreateCommit={() => runAction(() => api("/pmai/commits", { method: "POST", body: JSON.stringify(buildCommitPayload(commitForm)) }), "Commit registered")} onUpdateCommit={(id, p) => runAction(() => api(`/pmai/commits/${id}`, { method: "PATCH", body: JSON.stringify(p) }), "Commit updated")} onDeleteLink={id => runAction(() => api(`/pmai/links/${id}`, { method: "DELETE" }), "Link deleted")} />}
+          {view === "ideas" && <IdeasView ideas={ideas} ideaSearch={ideaSearch} ideaStatusFilter={ideaStatusFilter} setIdeaSearch={setIdeaSearch} setIdeaStatusFilter={setIdeaStatusFilter} ideaForm={ideaForm} setIdeaForm={setIdeaForm} busy={busy} onCreateIdea={() => runAction(() => api("/pmai/ideas", { method: "POST", body: JSON.stringify(ideaForm) }), "Idea created")} onUpdateIdea={(id, s) => runAction(() => api(`/pmai/ideas/${id}`, { method: "PATCH", body: JSON.stringify({ status: s }) }), "Idea updated")} onConvertToTask={handleConvertIdeaToTask} onConvertToDecision={handleConvertIdeaToDecision} />}
+          {view === "docs" && <DocsView docs={docs} docAudit={docAudit} docForm={docForm} setDocForm={setDocForm} busy={busy} onSubmitDoc={() => runAction(() => api("/pmai/docs", { method: "PATCH", body: JSON.stringify(buildDocPayload(docForm)) }), "Doc updated")} decisions={decisions} />}
           {view === "decisions" && <DecisionsView decisions={decisions} decisionSearch={decisionSearch} decisionStatusFilter={decisionStatusFilter} setDecisionSearch={setDecisionSearch} setDecisionStatusFilter={setDecisionStatusFilter} decisionForm={decisionForm} setDecisionForm={setDecisionForm} busy={busy} onCreateDecision={() => runAction(() => api("/pmai/decisions", { method: "POST", body: JSON.stringify(decisionForm) }), "Decision created")} onUpdateDecision={(id, s) => runAction(() => api(`/pmai/decisions/${id}`, { method: "PATCH", body: JSON.stringify({ status: s }) }), "Decision updated")} onCopyIntoCanon={id => { setCanonForm({...canonForm, decisionId: id}); setView("canon"); }} onDeleteLink={id => runAction(() => api(`/pmai/links/${id}`, { method: "DELETE" }), "Link deleted")} />}
-          {view === "daily" && <DailyView daily={daily} dailyForm={dailyForm} setDailyForm={setDailyForm} busy={busy} onAppendDaily={() => runAction(() => api("/pmai/daily", { method: "POST", body: JSON.stringify(dailyForm) }), "Daily note updated")} onReplaceDaily={() => runAction(() => api("/pmai/daily", { method: "PUT", body: JSON.stringify(dailyForm) }), "Daily note replaced")} />}
+          {view === "daily" && <DailyViewHuman daily={daily} dailyForm={dailyForm} setDailyForm={setDailyForm} busy={busy} onAppendDaily={() => runDailyAction("POST", "Daily note updated")} onReplaceDaily={() => runDailyAction("PUT", "Daily note replaced")} tasks={tasks} commits={commits} onCreateTaskFromDaily={handleCreateTaskFromDaily} />}
         </Content>
       </Layout>
     </Layout>

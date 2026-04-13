@@ -16,14 +16,54 @@ def build_usage_markdown() -> str:
 AIPM is a local project management tool for AI coding workflows. It stores project context, decisions, tasks, and code commits in a local SQLite database (`.pmai/data/pmai.db`).
 
 **Key concepts:**
+- **Idea**: Raw suggestions for future consideration (earliest input)
 - **Vision**: Long-term project goals and direction
-- **Principle**: Governance rules (technical, governance, quality)
-- **Task**: Work items with acceptance criteria
+- **Principle**: Governance rules (engineering, product, quality)
 - **Decision**: Recorded choices with context and rationale
+- **Task**: Work items with acceptance criteria
 - **Commit**: Code changes linked to tasks/decisions
-- **Idea**: Captured suggestions for future consideration
 - **Canon**: Living document of product goals, engineering focus, and architecture
 - **Daily Note**: End-of-day progress summary
+
+---
+
+## Concept Relationships
+
+### Workflow Chain
+
+```
+Idea → Decision → Canon → Commit
+  ↓         ↑
+Task ← Principle
+```
+
+### Concept Evolution
+
+1. **Idea** (raw input) → reviewed → accepted → **convert to Task or Decision**
+   - Small execution detail → **Task**
+   - Big decision affecting scope → **Decision**
+
+2. **Decision** (proposed) → reviewed → accepted → **sync to Canon**
+
+3. **Canon** reflects accepted decisions that change product goals, engineering focus, or architecture.
+
+4. **Principle** distilled from recurring patterns (e.g., "always write tests").
+
+### Quick Decision Tree
+
+```
+I have a new idea
+  ↓
+Does it need approval?
+  ├─ No (execution detail) → Task
+  └─ Yes (affects scope) → Decision
+       ↓
+    Approved?
+       ├─ No → keep proposed
+       └─ Yes → Affects tech stack?
+            ├─ No → done
+            └─ Yes → Update Canon
+```
 
 ---
 
@@ -111,6 +151,82 @@ End of work session:
 # Record daily progress
 aipmc daily close --completed "Implemented user login" --problems "None" --risks "Need to add password reset" --next "Start password reset flow"
 ```
+
+---
+
+## Typical Workflow Examples
+
+### Example 1: From Idea to Code
+
+```bash
+# Step 1: Capture idea
+aipmc idea capture --title "Use PostgreSQL" --summary "Need database for storage"
+
+# Step 2: Review idea
+aipmc idea review --id 1 --status accepted
+
+# Step 3: Convert to decision (manual - copy title/summary from idea)
+aipmc decision add --title "Use PostgreSQL 15" --background "Idea #1: need database" --decision "PostgreSQL 15 + Prisma ORM"
+
+# Step 4: Review decision
+aipmc decision review --id 1 --status accepted
+
+# Step 5: Sync to canon (decision affects tech stack)
+aipmc canon update --decision-id 1 --engineering-focus "Relational DB first" --add-scope "PostgreSQL|Prisma" --add-avoid "MongoDB|Firebase"
+
+# Step 6: Create task
+aipmc task add --title "Install PostgreSQL" --acceptance "DB running" --priority P1
+
+# Step 7: Implement and commit
+aipmc commit add --title "Install PostgreSQL" --auto-git
+
+# Step 8: Approve commit
+aipmc commit update --id 1 --status committed --review-status approved
+
+# Step 9: Complete task
+aipmc task update --id 1 --status done
+```
+
+### Example 2: Direct Task (No Decision Needed)
+
+```bash
+# Small execution detail - skip decision process
+aipmc task add --title "Fix login page layout" --acceptance "Button centered"
+
+# ... write code ...
+
+# Commit
+aipmc commit add --title "Fix layout" --auto-git
+
+# Approve
+aipmc commit update --id 1 --status committed --review-status approved
+
+# Done
+aipmc task update --id 1 --status done
+```
+
+---
+
+## Important Rules for AI Coders
+
+### Task Completion Rule
+- **Must have**: At least one linked commit with `status=committed|merged` AND `review_status=approved`
+- **Emergency override**: Use `--allow-without-commit` only when absolutely necessary
+
+### Decision Review Rule
+- Decisions start as `proposed`
+- Must be reviewed to `accepted` or `rejected`
+- Accepted decisions may imply canon follow-up
+
+### Canon Governance
+- Canon reflects accepted decisions
+- Update canon after decisions that change product goals, engineering focus, or architecture
+- Use `aipmc docs audit` to check for doc-governance issues
+
+### Idea Conversion
+- Ideas don't auto-convert to Tasks/Decisions
+- Manually create Task/Decision from accepted idea content
+- Use idea title and summary as starting point
 
 ---
 
