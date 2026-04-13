@@ -1,0 +1,175 @@
+import { useMemo } from "react";
+import { Badge, Button, Card, Col, Empty, Form, Input, List, Row, Select, Space, Tag, Typography } from "antd";
+import { statusColor } from "../utils/helpers";
+
+const { Text } = Typography;
+const { TextArea } = Input;
+
+const TASK_STATUSES = ["todo", "in_progress", "blocked", "done", "dropped"];
+const laneOrder = ["in_progress", "todo", "blocked", "done"];
+
+export default function TasksView({
+  tasks,
+  taskSearch,
+  taskStatusFilter,
+  setTaskSearch,
+  setTaskStatusFilter,
+  taskForm,
+  setTaskForm,
+  onCreateTask,
+  onUpdateTask,
+  onDeleteLink,
+  busy,
+}) {
+  const filteredTasks = useMemo(() => {
+    return tasks.filter((task) => {
+      const query = `${task.title} ${task.id} ${task.phase} ${(task.acceptance || []).join(" ")}`.toLowerCase();
+      return (!taskStatusFilter || task.status === taskStatusFilter) && (!taskSearch || query.includes(taskSearch.toLowerCase()));
+    });
+  }, [tasks, taskSearch, taskStatusFilter]);
+
+  const groupedTasks = useMemo(() => {
+    const byLane = Object.fromEntries(laneOrder.map((status) => [status, []]));
+    filteredTasks.forEach((task) => {
+      const lane = laneOrder.includes(task.status) ? task.status : "todo";
+      byLane[lane].push(task);
+    });
+    return byLane;
+  }, [filteredTasks]);
+
+  return (
+    <div className="view-stack">
+      <Card className="console-card" title="登记执行任务" bordered={false}>
+        <Form layout="vertical" onFinish={onCreateTask}>
+          <Row gutter={16}>
+            <Col xs={24} xl={12}>
+              <Form.Item label="标题" required>
+                <Input
+                  value={taskForm.title}
+                  onChange={(event) => setTaskForm((current) => ({ ...current, title: event.target.value }))}
+                />
+              </Form.Item>
+            </Col>
+            <Col xs={24} xl={12}>
+              <Form.Item label="验收标准">
+                <Input
+                  value={taskForm.acceptance}
+                  placeholder="用 | 分隔"
+                  onChange={(event) =>
+                    setTaskForm((current) => ({ ...current, acceptance: event.target.value }))
+                  }
+                />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item label="优先级">
+                <Select
+                  value={taskForm.priority}
+                  onChange={(value) => setTaskForm((current) => ({ ...current, priority: value }))}
+                  options={[{ value: "P0" }, { value: "P1" }, { value: "P2" }]}
+                />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item label="阶段">
+                <Select
+                  value={taskForm.phase}
+                  onChange={(value) => setTaskForm((current) => ({ ...current, phase: value }))}
+                  options={[
+                    { value: "general" },
+                    { value: "foundation" },
+                    { value: "implementation" },
+                    { value: "polish" },
+                  ]}
+                />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Button type="primary" htmlType="submit" loading={busy}>
+            登记任务
+          </Button>
+        </Form>
+      </Card>
+
+      <Card
+        className="console-card"
+        title="执行任务看板"
+        bordered={false}
+        extra={
+          <Space wrap>
+            <Input
+              value={taskSearch}
+              onChange={(event) => setTaskSearch(event.target.value)}
+              placeholder="搜索任务"
+              style={{ width: 180 }}
+            />
+            <Select
+              value={taskStatusFilter || undefined}
+              allowClear
+              placeholder="全部状态"
+              style={{ width: 150 }}
+              onChange={(value) => setTaskStatusFilter(value || "")}
+              options={TASK_STATUSES.map((status) => ({ value: status, label: status }))}
+            />
+          </Space>
+        }
+      >
+        <div className="task-lane-stack">
+          {laneOrder.map((status) => {
+            const items = groupedTasks[status] || [];
+            return (
+              <div key={status} className="task-lane">
+                <div className="task-lane__head">
+                  <Space>
+                    <Tag color={statusColor(status)}>{status}</Tag>
+                    <Badge count={items.length} color="#b55e32" />
+                  </Space>
+                </div>
+                {items.length ? (
+                  <List
+                    dataSource={items}
+                    className="task-list"
+                    renderItem={(task) => (
+                      <List.Item key={task.id} className="task-list__row">
+                        <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                          <Space wrap>
+                            <Tag>{task.priority}</Tag>
+                            <Tag>{task.phase}</Tag>
+                            <Text type="secondary">{task.id}</Text>
+                          </Space>
+                          <Text strong>{task.title}</Text>
+                          {!!task.last_note && <Text type="secondary">{task.last_note}</Text>}
+                          {!!(task.acceptance || []).length && (
+                            <div className="tag-wrap">
+                              {(task.acceptance || []).map((item) => (
+                                <Tag key={item}>{item}</Tag>
+                              ))}
+                            </div>
+                          )}
+                          {!!(task.related_decision_titles || []).length && (
+                            <div className="tag-wrap">
+                              {(task.related_decision_titles || []).map((item) => (
+                                <Tag key={item} color="gold">{item}</Tag>
+                              ))}
+                            </div>
+                          )}
+                          <Space wrap>
+                            <Tag color={task.status_hint === "ready" ? "green" : "gold"}>{task.status_hint}</Tag>
+                            {task.status !== "in_progress" && <Button size="small" onClick={() => onUpdateTask(task.id, "in_progress")}>Start</Button>}
+                            {task.status !== "done" && <Button size="small" type="primary" ghost onClick={() => onUpdateTask(task.id, "done")}>Done</Button>}
+                          </Space>
+                        </Space>
+                      </List.Item>
+                    )}
+                  />
+                ) : (
+                  <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="空" />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+    </div>
+  );
+}

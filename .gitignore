@@ -10,7 +10,7 @@ venv/
 env/
 
 # Local runtime data
-.planai/
+.pmai/
 *.db
 *.sqlite
 *.sqlite3
