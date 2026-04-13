@@ -35,6 +35,7 @@ src/aipm_cli.egg-info/
 Thumbs.db
 .idea/
 .vscode/
+.qwen/
 
 # Frontend build output
 ui/dist/

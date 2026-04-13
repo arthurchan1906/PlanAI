@@ -439,6 +439,16 @@ def get_git_diff_summary(*, staged: bool = False) -> Dict[str, Any]:
     }
 
 
+def get_git_diff(*, staged: bool = False) -> Dict[str, Any]:
+    """获取 git diff 信息"""
+    return get_git_diff_summary(staged=staged)
+
+
+def get_git_recent_commits(limit: int = 10) -> List[Dict[str, Any]]:
+    """获取最近的 git commits"""
+    return list_recent_git_commits(limit)
+
+
 def list_recent_git_commits(limit: int = 5) -> List[Dict[str, Any]]:
     if limit <= 0:
         return []
@@ -1225,6 +1235,26 @@ def update_decision_status(decision_id: str, status: str) -> Dict[str, Any]:
             "alternatives": loads(updated["alternatives_json"], []),
             "related_tasks": loads(updated["related_tasks_json"], []),
             "updates_canon": bool(updated["updates_canon"]),
+        }
+    finally:
+        conn.close()
+
+
+def get_idea(idea_id: str) -> Dict[str, Any]:
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT * FROM ideas WHERE id = ?", (idea_id,)).fetchone()
+        if not row:
+            raise KeyError(idea_id)
+        return {
+            "id": row["id"],
+            "title": row["title"],
+            "summary": row["summary"],
+            "impact": row["impact"],
+            "source": row["source"],
+            "status": row["status"],
+            "canon_conflict": bool(row["canon_conflict"]),
+            "created_at": row["created_at"],
         }
     finally:
         conn.close()
