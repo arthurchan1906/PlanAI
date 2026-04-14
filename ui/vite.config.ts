@@ -17,7 +17,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: resolve(__dirname, "dist"),
+    outDir: resolve(__dirname, "../src/pmai/ui/dist"),
     emptyOutDir: true,
   },
 });

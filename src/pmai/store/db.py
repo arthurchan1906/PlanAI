@@ -115,7 +115,22 @@ def ensure_runtime_schema(conn: sqlite3.Connection) -> None:
             source TEXT NOT NULL,
             status TEXT NOT NULL,
             canon_conflict INTEGER NOT NULL DEFAULT 0,
+            current_summary TEXT NOT NULL DEFAULT '',
+            main_question TEXT NOT NULL DEFAULT '',
+            recommended_next_action TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS idea_comments (
+            id TEXT PRIMARY KEY,
+            idea_id TEXT NOT NULL,
+            author_type TEXT NOT NULL,
+            author_name TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(idea_id) REFERENCES ideas(id)
         );
 
         CREATE TABLE IF NOT EXISTS links (
@@ -152,6 +167,8 @@ def ensure_runtime_schema(conn: sqlite3.Connection) -> None:
             id TEXT PRIMARY KEY,
             title TEXT NOT NULL,
             summary TEXT NOT NULL,
+            evidence_summary TEXT NOT NULL DEFAULT '',
+            review_notes TEXT NOT NULL DEFAULT '',
             branch TEXT NOT NULL,
             commit_hash TEXT NOT NULL,
             task_id TEXT,
@@ -213,6 +230,12 @@ def _migrate_database(conn: sqlite3.Connection) -> None:
     migrations = [
         ("tasks", "roadmap_id", "ALTER TABLE tasks ADD COLUMN roadmap_id TEXT"),
         ("tasks", "plan_id", "ALTER TABLE tasks ADD COLUMN plan_id TEXT"),
+        ("ideas", "current_summary", "ALTER TABLE ideas ADD COLUMN current_summary TEXT NOT NULL DEFAULT ''"),
+        ("ideas", "main_question", "ALTER TABLE ideas ADD COLUMN main_question TEXT NOT NULL DEFAULT ''"),
+        ("ideas", "recommended_next_action", "ALTER TABLE ideas ADD COLUMN recommended_next_action TEXT NOT NULL DEFAULT ''"),
+        ("ideas", "updated_at", "ALTER TABLE ideas ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''"),
+        ("commits", "evidence_summary", "ALTER TABLE commits ADD COLUMN evidence_summary TEXT NOT NULL DEFAULT ''"),
+        ("commits", "review_notes", "ALTER TABLE commits ADD COLUMN review_notes TEXT NOT NULL DEFAULT ''"),
     ]
     
     for table_name, column_name, alter_sql in migrations:
@@ -224,12 +247,45 @@ def _migrate_database(conn: sqlite3.Connection) -> None:
         except Exception:
             pass  # 忽略迁移错误
 
+    try:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS idea_comments (
+                id TEXT PRIMARY KEY,
+                idea_id TEXT NOT NULL,
+                author_type TEXT NOT NULL,
+                author_name TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(idea_id) REFERENCES ideas(id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            UPDATE ideas
+            SET current_summary = CASE
+                    WHEN current_summary = '' THEN summary
+                    ELSE current_summary
+                END,
+                updated_at = CASE
+                    WHEN updated_at = '' THEN created_at
+                    ELSE updated_at
+                END
+            """
+        )
+        conn.commit()
+    except Exception:
+        pass
+
 
 def bootstrap_db(start: Optional[Path] = None) -> Path:
     db_path = get_db_path(start, create_parent=True)
     conn = sqlite3.connect(db_path)
     try:
         ensure_runtime_schema(conn)
+        _migrate_database(conn)
         conn.commit()
     finally:
         conn.close()

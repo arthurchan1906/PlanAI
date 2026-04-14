@@ -8,7 +8,15 @@ from .commits import build_web_commit_detail, handle_create_commit, handle_get_c
 from .daily import handle_append_daily_note, handle_get_daily_note, handle_list_daily_notes, handle_replace_daily_note
 from .decisions import build_web_decision_detail, handle_create_decision, handle_get_decision, handle_list_decisions, handle_update_decision_status_handler
 from .docs import handle_audit_docs, handle_list_docs, handle_update_doc
-from .ideas import handle_create_idea, handle_get_idea, handle_list_ideas, handle_review_idea
+from .ideas import (
+    handle_create_idea,
+    handle_create_idea_comment,
+    handle_convert_idea,
+    handle_get_idea,
+    handle_list_ideas,
+    handle_review_idea,
+    handle_update_idea,
+)
 from .inbox import handle_get_inbox
 from .links import handle_create_link, handle_delete_link, handle_list_links
 from .principles import handle_create_principle, handle_get_principle, handle_list_principles, handle_update_principle
@@ -51,6 +59,9 @@ __all__ = [
     "handle_create_idea",
     "handle_get_idea",
     "handle_review_idea",
+    "handle_update_idea",
+    "handle_create_idea_comment",
+    "handle_convert_idea",
     # Inbox
     "handle_get_inbox",
     # Links

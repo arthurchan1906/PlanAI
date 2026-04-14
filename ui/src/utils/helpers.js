@@ -60,6 +60,8 @@ export function buildCommitPayload(form) {
   return {
     title: form.title,
     summary: form.summary,
+    evidence_summary: form.evidenceSummary,
+    review_notes: form.reviewNotes,
     branch: form.branch,
     task_id: form.taskId || null,
     decision_id: form.decisionId || null,

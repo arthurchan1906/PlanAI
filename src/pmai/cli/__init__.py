@@ -43,6 +43,15 @@ def main() -> None:
     elif args.command == "inbox":
         from pmai.store import get_inbox_summary
         run_local_command(get_inbox_summary)
+    elif args.command == "context":
+        from pmai.store import build_context_pack
+        run_local_command(build_context_pack)
+    elif args.command == "next":
+        from pmai.store import build_next_action_packet
+        run_local_command(build_next_action_packet)
+    elif args.command == "handoff":
+        from pmai.store import build_handoff_packet
+        run_local_command(build_handoff_packet)
     elif args.command == "code":
         handle_code(args)
     elif args.command == "brief":

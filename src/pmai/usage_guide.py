@@ -74,25 +74,30 @@ Does it need approval?
 Before writing code, understand the project state:
 
 ```bash
-# 1. Get a full project dashboard (Tasks, Daily, Inbox, Recent Commits)
-# THIS IS THE MOST IMPORTANT COMMAND FOR PROJECT OVERVIEW
+# 1. Load the compressed project context for the coding agent
+aipmc context
+
+# 2. Ask for the next best action on the current mainline
+aipmc next
+
+# 3. Get a full project dashboard (Tasks, Daily, Inbox, Recent Commits)
 aipmc status
 
-# 2. Check project overview and runtime paths
+# 4. Check project overview and runtime paths
 aipmc info
 
-# 3. Read project canon (product goals, engineering focus, architecture)
+# 5. Read project canon (product goals, engineering focus, architecture)
 aipmc canon show
-```
-# 3. Review active tasks and pending decisions
+
+# 6. Review active tasks and pending decisions
 aipmc task list --status todo
 aipmc task list --status in_progress
 aipmc decision list --status proposed
 
-# 4. Check inbox for items needing attention
+# 7. Check inbox for items needing attention
 aipmc inbox
 
-# 5. Review technical principles and constraints
+# 8. Review technical principles and constraints
 aipmc principle list
 aipmc link list
 ```
@@ -246,6 +251,9 @@ aipmc init                    # Create .pmai/ directory with config.json, pmai.d
 ```bash
 # Project overview
 aipmc info                    # Show runtime info, db path, config
+aipmc context                 # Compressed project context for the coding agent
+aipmc next                    # The next recommended action on the current mainline
+aipmc handoff                 # Compact handoff packet for session resume / human takeover
 aipmc status                  # Snapshot of tasks, decisions, commits
 aipmc doctor                  # Check project health
 
@@ -294,6 +302,7 @@ aipmc idea show --id <idea-id>
 
 # Daily notes
 aipmc daily show
+aipmc handoff
 
 # Docs audit
 aipmc docs list

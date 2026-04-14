@@ -30,6 +30,8 @@ def handle_commit(args: argparse.Namespace) -> None:
                 {
                     "title": args.title,
                     "summary": args.summary,
+                    "evidence_summary": args.evidence_summary,
+                    "review_notes": args.review_notes,
                     "branch": args.branch,
                     "commit_hash": args.commit_hash,
                     "task_id": args.task_id or None,
@@ -49,6 +51,8 @@ def handle_commit(args: argparse.Namespace) -> None:
                 {
                     "title": args.title,
                     "summary": args.summary,
+                    "evidence_summary": args.evidence_summary,
+                    "review_notes": args.review_notes,
                     "branch": args.branch,
                     "commit_hash": args.commit_hash,
                     "task_id": args.task_id,

@@ -8,4 +8,4 @@ Build:
 - `cd ui`
 - `npm run build`
 
-The built frontend is served by the Python stdlib web server from `ui/dist/`.
+The built frontend is emitted to `src/pmai/ui/dist/`, which is the directory served by the Python web server.

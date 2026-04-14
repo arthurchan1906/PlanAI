@@ -5,6 +5,9 @@
 AI-first product baseline:
 - `doc/ai-first-product-baseline-v1.md`
 
+Current rebuild status:
+- [docs/rebuild-status.md](docs/rebuild-status.md)
+
 It installs these command-line entry points:
 
 - `aipmc`: CLI management commands
@@ -41,6 +44,9 @@ This is especially useful on macOS when the Python scripts directory is not in `
 aipmc init
 aipmc help
 aipmc info
+aipmc context
+aipmc next
+aipmc handoff
 aipmc doctor
 aipmc inbox
 aipmc canon show
@@ -79,7 +85,7 @@ Optional override:
 - Remote request failures return a JSON error and exit quickly instead of hanging
 
 Task governance rule:
-- Marking a task `done` requires at least one linked approved commit (`status=committed|merged` and `review_status=approved`).
+- Marking a task `done` requires at least one linked verified approved commit (`status=committed|merged`, `review_status=approved`, and `test_status=passed`).
 - Emergency override is available with `aipmc task update --id <task-id> --status done --allow-without-commit`.
 
 ## Runtime files
@@ -96,3 +102,16 @@ Task governance rule:
 - `src/pmai/store.py`
 - `src/pmai/web_server.py`
 - `src/pmai/run_server.py`
+
+## Current Direction
+
+PlanAI is currently being rebuilt toward a local `context engineering + governance shell` for AI software delivery.
+
+The current mainline is:
+
+- compressed AI runtime context via `context / next / handoff`
+- idea threads as pre-mainline convergence objects
+- traceable `idea -> task / decision` conversion
+- evidence / review / closure governance around task completion
+
+See [docs/rebuild-status.md](docs/rebuild-status.md) for completed work, remaining work, and the recommended next continuation point.

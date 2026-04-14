@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 from typing import Any, Dict, List
 from urllib.parse import parse_qs, urlparse
 
@@ -12,6 +11,9 @@ from ..store import (
     append_daily_note,
     advance_plan,
     build_brief,
+    build_context_pack,
+    build_handoff_packet,
+    build_next_action_packet,
     create_commit,
     create_decision,
     create_idea,
@@ -64,6 +66,9 @@ from .handlers import (
     handle_get_inbox,
     handle_list_daily_notes,
     handle_list_docs,
+    handle_create_idea_comment,
+    handle_convert_idea,
+    handle_update_idea,
     handle_list_ideas,
     handle_list_principles,
     handle_list_tasks,
@@ -73,8 +78,9 @@ from .handlers import (
     handle_update_doc,
     handle_update_task,
 )
+from .assets import resolve_web_dir
 
-WEB_DIR = Path(__file__).resolve().parent.parent / 'ui' / 'dist'
+WEB_DIR = resolve_web_dir()
 
 
 class PMAIRequestHandler(SimpleHTTPRequestHandler):
@@ -159,6 +165,12 @@ class PMAIRequestHandler(SimpleHTTPRequestHandler):
             elif method == 'GET' and path == '/pmai/brief':
                 view = (query.get('view') or ['product'])[0]
                 self.send_json(build_brief(view))
+            elif method == 'GET' and path == '/pmai/context':
+                self.send_json(build_context_pack())
+            elif method == 'GET' and path == '/pmai/next':
+                self.send_json(build_next_action_packet())
+            elif method == 'GET' and path == '/pmai/handoff':
+                self.send_json(build_handoff_packet())
             elif method == 'GET' and path == '/pmai/code/status':
                 self.send_json(handle_code_status())
             elif method == 'GET' and path == '/pmai/code/diff':
@@ -283,11 +295,21 @@ class PMAIRequestHandler(SimpleHTTPRequestHandler):
                 self.send_json({'ideas': list_ideas((query.get('status') or [None])[0])})
             elif method == 'POST' and path == '/pmai/ideas':
                 self.send_json(create_idea(self.read_json()))
+            elif method == 'POST' and path.startswith('/pmai/ideas/') and path.endswith('/comments'):
+                idea_id = path.split('/')[-2]
+                self.send_json(handle_create_idea_comment(idea_id, self.read_json()))
+            elif method == 'POST' and path.startswith('/pmai/ideas/') and path.endswith('/convert'):
+                idea_id = path.split('/')[-2]
+                self.send_json(handle_convert_idea(idea_id, self.read_json()))
             elif method == 'GET' and path.startswith('/pmai/ideas/'):
                 self.send_json(get_idea(path.rsplit('/', 1)[-1]))
             elif method == 'PATCH' and path.startswith('/pmai/ideas/'):
                 payload = self.read_json()
-                self.send_json(review_idea(path.rsplit('/', 1)[-1], payload['status'], payload.get('note', '')))
+                idea_id = path.rsplit('/', 1)[-1]
+                if "note" in payload and "status" in payload and len(payload.keys()) <= 2:
+                    self.send_json(review_idea(idea_id, payload['status'], payload.get('note', '')))
+                else:
+                    self.send_json(handle_update_idea(idea_id, payload))
             elif method == 'GET' and path == '/pmai/docs':
                 self.send_json({'records': list_doc_records((query.get('status') or [None])[0], (query.get('layer') or [None])[0])})
             elif method == 'PATCH' and path == '/pmai/docs':

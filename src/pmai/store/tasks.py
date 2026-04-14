@@ -137,12 +137,17 @@ def get_task(task_id: str) -> Dict[str, Any]:
             for item in linked_commits
             if item["status"] in ("committed", "merged") and item["review_status"] == "approved"
         ]
+        verified_approved_commits = [
+            item
+            for item in approved_commits
+            if item["test_status"] == "passed"
+        ]
         blocker_reasons: List[str] = []
         if not linked_commits:
             blocker_reasons.append("no_linked_commit")
         if linked_commits and not approved_commits:
             blocker_reasons.append("no_approved_commit")
-        if any(item["test_status"] != "passed" for item in linked_commits):
+        if linked_commits and not verified_approved_commits:
             blocker_reasons.append("verification_incomplete")
         changed_files: List[str] = []
         for commit in linked_commits:
@@ -171,7 +176,8 @@ def get_task(task_id: str) -> Dict[str, Any]:
             "closure": {
                 "linked_commit_count": len(linked_commits),
                 "approved_commit_count": len(approved_commits),
-                "can_mark_done": bool(approved_commits),
+                "verified_approved_commit_count": len(verified_approved_commits),
+                "can_mark_done": bool(verified_approved_commits),
                 "blocker_reasons": blocker_reasons,
             },
         }
@@ -232,6 +238,7 @@ def update_task(
                 WHERE task_id = ?
                   AND status IN ('committed', 'merged')
                   AND review_status = 'approved'
+                  AND test_status = 'passed'
                 ORDER BY updated_at DESC, created_at DESC, id DESC
                 LIMIT 1
                 """,
@@ -239,8 +246,8 @@ def update_task(
             ).fetchone()
             if not ready_commit:
                 raise ValueError(
-                    "task cannot be marked done without at least one approved commit "
-                    "(status=committed|merged, review_status=approved) linked by --task-id"
+                    "task cannot be marked done without at least one verified approved commit "
+                    "(status=committed|merged, review_status=approved, test_status=passed) linked by --task-id"
                 )
 
         updates: List[Any] = [status, note, today()]

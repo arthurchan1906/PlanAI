@@ -34,6 +34,8 @@ export default function TasksView({
   setTaskForm,
   onCreateTask,
   onUpdateTask,
+  onOpenIdea,
+  onOpenCommitsForTask,
   onDeleteLink,
   busy,
 }) {
@@ -178,6 +180,19 @@ export default function TasksView({
                           </Space>
                           <Text strong>{task.title}</Text>
                           {!!task.last_note && <Text type="secondary">{task.last_note}</Text>}
+                          <Space wrap>
+                            {!!task.linked_commit_count && <Tag color="blue">{task.linked_commit_count} evidence</Tag>}
+                            {!!task.approved_commit_count && <Tag color="green">{task.approved_commit_count} reviewed</Tag>}
+                            {!!task.verified_commit_count && <Tag color="cyan">{task.verified_commit_count} verified</Tag>}
+                          </Space>
+                          {!!task.latest_evidence_summary && <Text type="secondary">Evidence: {task.latest_evidence_summary}</Text>}
+                          {!!(task.closure_reasons || []).length && (
+                            <div className="tag-wrap">
+                              {(task.closure_reasons || []).map((reason) => (
+                                <Tag key={`${task.id}-${reason}`} color="red">{reason}</Tag>
+                              ))}
+                            </div>
+                          )}
                           {!!(task.acceptance || []).length && (
                             <div className="tag-wrap">
                               {(task.acceptance || []).map((item) => (
@@ -194,8 +209,17 @@ export default function TasksView({
                               ))}
                             </div>
                           )}
+                          {!!task.source_idea && (
+                            <div className="tag-wrap">
+                              <Tag color="purple">idea: {task.source_idea.title || task.source_idea.id}</Tag>
+                              <Button size="small" type="link" onClick={() => onOpenIdea?.(task.source_idea.id)}>
+                                查看来源想法
+                              </Button>
+                            </div>
+                          )}
                           <Space wrap>
                             <Tag color={task.status_hint === "ready" ? "green" : "gold"}>{task.status_hint}</Tag>
+                            <Button size="small" type="link" onClick={() => onOpenCommitsForTask?.(task)}>查看证据</Button>
                             {task.status !== "in_progress" && <Button size="small" onClick={() => onUpdateTask(task.id, "in_progress")}>Start</Button>}
                             {task.status !== "done" && <Button size="small" type="primary" ghost onClick={() => onUpdateTask(task.id, "done")}>Done</Button>}
                           </Space>

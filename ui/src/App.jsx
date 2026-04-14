@@ -56,6 +56,9 @@ function ConsoleApp() {
 
   // 数据状态
   const [dashboard, setDashboard] = useState(null);
+  const [aiContext, setAiContext] = useState(null);
+  const [nextPacket, setNextPacket] = useState(null);
+  const [handoff, setHandoff] = useState(null);
   const [inbox, setInbox] = useState(null);
   const [canon, setCanon] = useState(null);
   const [visions, setVisions] = useState([]);
@@ -77,15 +80,25 @@ function ConsoleApp() {
   const [taskStatusFilter, setTaskStatusFilter] = useState("");
   const [commitSearch, setCommitSearch] = useState("");
   const [commitStatusFilter, setCommitStatusFilter] = useState("");
+  const [commitAttentionFilter, setCommitAttentionFilter] = useState("");
+  const [focusedTaskId, setFocusedTaskId] = useState("");
   const [ideaSearch, setIdeaSearch] = useState("");
   const [ideaStatusFilter, setIdeaStatusFilter] = useState("");
+  const [focusedIdeaId, setFocusedIdeaId] = useState("");
   const [decisionSearch, setDecisionSearch] = useState("");
   const [decisionStatusFilter, setDecisionStatusFilter] = useState("");
 
   // 表单状态
   const [taskForm, setTaskForm] = useState({ title: "", acceptance: "", priority: "P1", phase: "general", roadmapId: "", planId: "" });
-  const [commitForm, setCommitForm] = useState({ title: "", summary: "", branch: "", taskId: "", decisionId: "", status: "draft", testStatus: "not_run", reviewStatus: "pending", files: "" });
-  const [ideaForm, setIdeaForm] = useState({ title: "", summary: "", impact: "" });
+  const [commitForm, setCommitForm] = useState({ title: "", summary: "", evidenceSummary: "", reviewNotes: "", branch: "", taskId: "", decisionId: "", status: "draft", testStatus: "not_run", reviewStatus: "pending", files: "" });
+  const [ideaForm, setIdeaForm] = useState({
+    title: "",
+    summary: "",
+    impact: "",
+    current_summary: "",
+    main_question: "",
+    recommended_next_action: "continue_discussion",
+  });
   const [docForm, setDocForm] = useState({ path: "", type: "", status: "draft", layer: "exploration", sourceOfTruth: false, relatedDecisionId: undefined });
   const [decisionForm, setDecisionForm] = useState({ title: "", background: "", decision: "" });
   const [dailyForm, setDailyForm] = useState({ noteDate: todayString(), completed: "", problems: "", risks: "", next: "" });
@@ -99,6 +112,9 @@ function ConsoleApp() {
     try {
       const payload = await api("/pmai/web/bootstrap");
       setDashboard(payload.dashboard || null);
+      setAiContext(payload.ai_context || null);
+      setNextPacket(payload.next_packet || null);
+      setHandoff(payload.handoff || null);
       setInbox(payload.inbox || null);
       setCanon(payload.canon || null);
       setVisions(payload.visions || []);
@@ -147,15 +163,17 @@ function ConsoleApp() {
 
   // 模块间交互回调
   function handleConvertIdeaToTask(idea) {
-    setTaskForm({ title: idea.title, acceptance: "", priority: "P1", phase: "general" });
-    message.info(`已从想法 "${idea.title}" 创建任务表单`);
-    setView("tasks");
+    return runAction(
+      () => api(`/pmai/ideas/${idea.id}/convert`, { method: "POST", body: JSON.stringify({ target_type: "task" }) }),
+      "Idea converted to task",
+    );
   }
 
   function handleConvertIdeaToDecision(idea) {
-    setDecisionForm({ title: idea.title, background: idea.summary, decision: "" });
-    message.info(`已从想法 "${idea.title}" 创建决策表单`);
-    setView("decisions");
+    return runAction(
+      () => api(`/pmai/ideas/${idea.id}/convert`, { method: "POST", body: JSON.stringify({ target_type: "decision" }) }),
+      "Idea converted to decision",
+    );
   }
 
   function handleCommitFiles(files) {
@@ -176,6 +194,34 @@ function ConsoleApp() {
 
   function handleOpenVisionDetail(vision) {
     message.info(`查看愿景 "${vision.title}" 的关联项`);
+  }
+
+  function handleOpenIdea(ideaId) {
+    setFocusedIdeaId(ideaId || "");
+    setIdeaSearch(ideaId || "");
+    setIdeaStatusFilter("");
+    setView("ideas");
+  }
+
+  function handleOpenCommitsForTask(task) {
+    setFocusedTaskId(task?.id || "");
+    setCommitForm((current) => ({
+      ...current,
+      taskId: task?.id || current.taskId,
+      title: task?.title ? `Evidence for ${task.title}` : current.title,
+    }));
+    setCommitSearch("");
+    setCommitStatusFilter("");
+    setCommitAttentionFilter("");
+    setView("commits");
+  }
+
+  function handleOpenCommitAttention(attention) {
+    setFocusedTaskId("");
+    setCommitSearch("");
+    setCommitStatusFilter("");
+    setCommitAttentionFilter(attention || "");
+    setView("commits");
   }
 
   // 渲染视图
@@ -215,7 +261,7 @@ function ConsoleApp() {
           <Button icon={<ReloadOutlined />} onClick={loadAll} loading={busy}>刷新</Button>
         </Header>
         <Content className="console-content">
-          {view === "dashboard" && <DashboardView visions={visions} principles={principles} dashboard={dashboard} inbox={inbox} canon={canon} loading={loading} onOpenCanon={id => { setCanonForm({...canonForm, decisionId: id || ""}); setView("canon"); }} onOpenDecisions={() => setView("decisions")} onOpenTasks={() => setView("tasks")} onOpenCommits={() => setView("commits")} onOpenIdeas={() => setView("ideas")} onOpenDocs={() => setView("docs")} onOpenDaily={() => setView("daily")} onOpenPrinciples={() => setView("principles")} />}
+          {view === "dashboard" && <DashboardView visions={visions} principles={principles} ideas={ideas} dashboard={dashboard} aiContext={aiContext} nextPacket={nextPacket} handoff={handoff} inbox={inbox} canon={canon} loading={loading} onOpenCanon={id => { setCanonForm({...canonForm, decisionId: id || ""}); setView("canon"); }} onOpenDecisions={() => setView("decisions")} onOpenTasks={() => setView("tasks")} onOpenCommits={() => setView("commits")} onOpenCommitAttention={handleOpenCommitAttention} onOpenIdeas={() => setView("ideas")} onOpenDocs={() => setView("docs")} onOpenDaily={() => setView("daily")} onOpenPrinciples={() => setView("principles")} />}
           {view === "planning" && (
             <RoadmapView
               roadmaps={roadmaps}
@@ -243,15 +289,34 @@ function ConsoleApp() {
               taskForm={taskForm}
               setTaskForm={setTaskForm}
               busy={busy}
+              onOpenIdea={handleOpenIdea}
+              onOpenCommitsForTask={handleOpenCommitsForTask}
               onCreateTask={() => runAction(() => api("/pmai/tasks", { method: "POST", body: JSON.stringify(buildTaskPayload(taskForm)) }), "Task created")}
               onUpdateTask={(id, s) => runAction(() => api(`/pmai/tasks/${id}`, { method: "PATCH", body: JSON.stringify({ status: s }) }), "Task updated")}
             />
           )}
           {view === "canon" && <CanonView canon={canon} decisions={decisions} canonForm={canonForm} setCanonForm={setCanonForm} busy={busy} onSubmitCanon={() => runAction(() => api("/pmai/canon/update", { method: "POST", body: JSON.stringify(buildCanonPayload(canonForm)) }), "Canon updated")} />}
-          {view === "commits" && <CommitsView commits={commits} tasks={tasks} decisions={decisions} commitSearch={commitSearch} commitStatusFilter={commitStatusFilter} setCommitSearch={setCommitSearch} setCommitStatusFilter={setCommitStatusFilter} commitForm={commitForm} setCommitForm={setCommitForm} busy={busy} onCreateCommit={() => runAction(() => api("/pmai/commits", { method: "POST", body: JSON.stringify(buildCommitPayload(commitForm)) }), "Commit registered")} onUpdateCommit={(id, p) => runAction(() => api(`/pmai/commits/${id}`, { method: "PATCH", body: JSON.stringify(p) }), "Commit updated")} />}
-          {view === "ideas" && <IdeasView ideas={ideas} ideaSearch={ideaSearch} ideaStatusFilter={ideaStatusFilter} setIdeaSearch={setIdeaSearch} setIdeaStatusFilter={setIdeaStatusFilter} ideaForm={ideaForm} setIdeaForm={setIdeaForm} busy={busy} onCreateIdea={() => runAction(() => api("/pmai/ideas", { method: "POST", body: JSON.stringify(ideaForm) }), "Idea created")} onUpdateIdea={(id, s) => runAction(() => api(`/pmai/ideas/${id}`, { method: "PATCH", body: JSON.stringify({ status: s }) }), "Idea updated")} onConvertToTask={handleConvertIdeaToTask} onConvertToDecision={handleConvertIdeaToDecision} />}
+          {view === "commits" && <CommitsView commits={commits} tasks={tasks} decisions={decisions} commitSearch={commitSearch} commitStatusFilter={commitStatusFilter} commitAttentionFilter={commitAttentionFilter} setCommitSearch={setCommitSearch} setCommitStatusFilter={setCommitStatusFilter} setCommitAttentionFilter={setCommitAttentionFilter} commitForm={commitForm} setCommitForm={setCommitForm} focusedTaskId={focusedTaskId} busy={busy} onCreateCommit={() => runAction(() => api("/pmai/commits", { method: "POST", body: JSON.stringify(buildCommitPayload(commitForm)) }), "Commit registered")} onUpdateCommit={(id, p) => runAction(() => api(`/pmai/commits/${id}`, { method: "PATCH", body: JSON.stringify(p) }), "Commit updated")} />}
+          {view === "ideas" && (
+            <IdeasView
+              ideas={ideas}
+              ideaSearch={ideaSearch}
+              ideaStatusFilter={ideaStatusFilter}
+              setIdeaSearch={setIdeaSearch}
+              setIdeaStatusFilter={setIdeaStatusFilter}
+              ideaForm={ideaForm}
+              setIdeaForm={setIdeaForm}
+              busy={busy}
+              onCreateIdea={() => runAction(() => api("/pmai/ideas", { method: "POST", body: JSON.stringify(ideaForm) }), "Idea created")}
+              onUpdateIdea={(id, payload) => runAction(() => api(`/pmai/ideas/${id}`, { method: "PATCH", body: JSON.stringify(payload) }), "Idea updated")}
+              onCommentIdea={(id, payload) => runAction(() => api(`/pmai/ideas/${id}/comments`, { method: "POST", body: JSON.stringify(payload) }), "Comment added")}
+              onConvertToTask={handleConvertIdeaToTask}
+              onConvertToDecision={handleConvertIdeaToDecision}
+              focusedIdeaId={focusedIdeaId}
+            />
+          )}
           {view === "docs" && <DocsView docs={docs} docAudit={docAudit} docForm={docForm} setDocForm={setDocForm} busy={busy} onSubmitDoc={() => runAction(() => api("/pmai/docs", { method: "PATCH", body: JSON.stringify(buildDocPayload(docForm)) }), "Doc updated")} decisions={decisions} />}
-          {view === "decisions" && <DecisionsView decisions={decisions} decisionSearch={decisionSearch} decisionStatusFilter={decisionStatusFilter} setDecisionSearch={setDecisionSearch} setDecisionStatusFilter={setDecisionStatusFilter} decisionForm={decisionForm} setDecisionForm={setDecisionForm} busy={busy} onCreateDecision={() => runAction(() => api("/pmai/decisions", { method: "POST", body: JSON.stringify(decisionForm) }), "Decision created")} onUpdateDecision={(id, s) => runAction(() => api(`/pmai/decisions/${id}`, { method: "PATCH", body: JSON.stringify({ status: s }) }), "Decision updated")} onCopyIntoCanon={id => { setCanonForm({...canonForm, decisionId: id}); setView("canon"); }} />}
+          {view === "decisions" && <DecisionsView decisions={decisions} decisionSearch={decisionSearch} decisionStatusFilter={decisionStatusFilter} setDecisionSearch={setDecisionSearch} setDecisionStatusFilter={setDecisionStatusFilter} decisionForm={decisionForm} setDecisionForm={setDecisionForm} busy={busy} onOpenIdea={handleOpenIdea} onCreateDecision={() => runAction(() => api("/pmai/decisions", { method: "POST", body: JSON.stringify(decisionForm) }), "Decision created")} onUpdateDecision={(id, s) => runAction(() => api(`/pmai/decisions/${id}`, { method: "PATCH", body: JSON.stringify({ status: s }) }), "Decision updated")} onCopyIntoCanon={id => { setCanonForm({...canonForm, decisionId: id}); setView("canon"); }} />}
           {view === "daily" && <DailyViewHuman daily={daily} dailyForm={dailyForm} setDailyForm={setDailyForm} busy={busy} onAppendDaily={() => runDailyAction("POST", "Daily note updated")} onReplaceDaily={() => runDailyAction("PUT", "Daily note replaced")} tasks={tasks} commits={commits} onCreateTaskFromDaily={handleCreateTaskFromDaily} />}
         </Content>
       </Layout>

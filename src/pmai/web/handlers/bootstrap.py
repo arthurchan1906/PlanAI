@@ -6,6 +6,9 @@ from typing import Any, Dict, List
 from ...store import (
     audit_docs,
     fetch_canon,
+    build_context_pack,
+    build_handoff_packet,
+    build_next_action_packet,
     get_daily_note,
     get_dashboard_summary,
     get_git_recent_commits,
@@ -16,6 +19,7 @@ from ...store import (
     list_decisions,
     list_doc_records,
     list_ideas,
+    list_links,
     list_principles,
     list_plans,
     list_roadmaps,
@@ -64,10 +68,23 @@ def build_web_bootstrap() -> Dict[str, Any]:
     recent_git_commits = get_git_recent_commits(10)
     daily = get_daily_note()
     module_progress = get_module_progress()
+    ai_context = build_context_pack()
+    next_packet = build_next_action_packet()
+    handoff = build_handoff_packet()
 
     task_titles = {item["id"]: item["title"] for item in tasks}
     decision_titles = {item["id"]: item["title"] for item in decisions}
+    idea_titles = {item["id"]: item["title"] for item in ideas}
     canon_related_decisions = set(canon.get("related_decisions", []))
+    converted_links = list_links(relation="converted_to")
+    source_ideas_by_target: Dict[str, Dict[str, str]] = {}
+    for link in converted_links:
+        if link.get("source_type") != "idea":
+            continue
+        source_ideas_by_target[link["target_id"]] = {
+            "id": link["source_id"],
+            "title": idea_titles.get(link["source_id"], link["source_id"]),
+        }
 
     commits_by_task: Dict[str, List[Dict[str, Any]]] = {}
     for commit in commits:
@@ -77,16 +94,30 @@ def build_web_bootstrap() -> Dict[str, Any]:
     web_tasks = []
     for task in tasks:
         linked_commits = commits_by_task.get(task["id"], [])
+        approved_commits = [item for item in linked_commits if item["review_status"] == "approved"]
+        verified_commits = [item for item in linked_commits if item["test_status"] == "passed"]
+        latest_evidence = next((item for item in linked_commits if item.get("evidence_summary")), None)
+        closure_reasons: List[str] = []
+        if not linked_commits:
+            closure_reasons.append("no_linked_commit")
+        if linked_commits and not approved_commits:
+            closure_reasons.append("no_approved_commit")
+        if linked_commits and not verified_commits:
+            closure_reasons.append("verification_incomplete")
         web_tasks.append(
             {
                 **task,
                 "linked_commit_count": len(linked_commits),
-                "approved_commit_count": len([item for item in linked_commits if item["review_status"] == "approved"]),
+                "approved_commit_count": len(approved_commits),
+                "verified_commit_count": len(verified_commits),
                 "related_decision_titles": [
                     decision_titles[item]
                     for item in task.get("related_decisions", [])
                     if item in decision_titles
                 ],
+                "source_idea": source_ideas_by_target.get(task["id"]),
+                "latest_evidence_summary": latest_evidence.get("evidence_summary", "") if latest_evidence else "",
+                "closure_reasons": closure_reasons,
                 "status_hint": _task_status_hint(task, linked_commits),
             }
         )
@@ -114,6 +145,7 @@ def build_web_bootstrap() -> Dict[str, Any]:
                     for item in decision.get("related_tasks", [])
                     if item in task_titles
                 ],
+                "source_idea": source_ideas_by_target.get(decision["id"]),
                 "canon_synced": decision["id"] in canon_related_decisions,
                 "linked_commit_count": len([item for item in commits if item.get("decision_id") == decision["id"]]),
             }
@@ -152,6 +184,9 @@ def build_web_bootstrap() -> Dict[str, Any]:
 
     return {
         "dashboard": dashboard,
+        "ai_context": ai_context,
+        "next_packet": next_packet,
+        "handoff": handoff,
         "inbox": inbox,
         "canon": canon,
         "visions": visions,

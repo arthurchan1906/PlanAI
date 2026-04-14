@@ -16,6 +16,7 @@ export default function DecisionsView({
   onCreateDecision,
   onUpdateDecision,
   onCopyIntoCanon,
+  onOpenIdea,
   onDeleteLink,
   busy,
 }) {
@@ -61,9 +62,17 @@ export default function DecisionsView({
                   <Space wrap>
                     {decision.canon_synced && <Tag color="green">canon synced</Tag>}
                     {!!decision.linked_commit_count && <Tag color="blue">{decision.linked_commit_count} commits</Tag>}
+                    {!!decision.source_idea && (
+                      <Tag color="purple">idea: {decision.source_idea.title || decision.source_idea.id}</Tag>
+                    )}
                     {(decision.related_task_titles || []).map((item) => <Tag key={item}>{item}</Tag>)}
                   </Space>
                   <Space wrap>
+                    {!!decision.source_idea && (
+                      <Button size="small" type="link" onClick={() => onOpenIdea?.(decision.source_idea.id)}>
+                        查看来源想法
+                      </Button>
+                    )}
                     <Button size="small" onClick={() => onUpdateDecision(decision.id, "accepted")}>采纳</Button>
                     {decision.status === "accepted" && <Button size="small" type="primary" ghost onClick={() => onCopyIntoCanon(decision.id)}>同步 Canon</Button>}
                   </Space>

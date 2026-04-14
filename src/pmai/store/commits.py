@@ -64,6 +64,8 @@ def list_commits(
                 "id": row["id"],
                 "title": row["title"],
                 "summary": row["summary"],
+                "evidence_summary": row["evidence_summary"] or "",
+                "review_notes": row["review_notes"] or "",
                 "branch": row["branch"],
                 "commit_hash": row["commit_hash"],
                 "task_id": row["task_id"],
@@ -112,6 +114,8 @@ def get_commit(commit_id: str) -> Dict[str, Any]:
             "id": row["id"],
             "title": row["title"],
             "summary": row["summary"],
+            "evidence_summary": row["evidence_summary"] or "",
+            "review_notes": row["review_notes"] or "",
             "branch": row["branch"],
             "commit_hash": row["commit_hash"],
             "task_id": row["task_id"],
@@ -157,6 +161,8 @@ def create_commit(payload: Dict[str, Any]) -> Dict[str, Any]:
             "id": commit_id,
             "title": payload["title"],
             "summary": payload.get("summary", ""),
+            "evidence_summary": payload.get("evidence_summary", ""),
+            "review_notes": payload.get("review_notes", ""),
             "branch": payload.get("branch") or git_meta.get("branch", ""),
             "commit_hash": payload.get("commit_hash") or git_meta.get("commit_hash", ""),
             "task_id": payload.get("task_id"),
@@ -172,8 +178,8 @@ def create_commit(payload: Dict[str, Any]) -> Dict[str, Any]:
             """
             INSERT INTO commits (
                 id, title, summary, branch, commit_hash, task_id, decision_id,
-                status, test_status, review_status, files_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                evidence_summary, review_notes, status, test_status, review_status, files_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 row["id"],
@@ -183,6 +189,8 @@ def create_commit(payload: Dict[str, Any]) -> Dict[str, Any]:
                 row["commit_hash"],
                 row["task_id"],
                 row["decision_id"],
+                row["evidence_summary"],
+                row["review_notes"],
                 row["status"],
                 row["test_status"],
                 row["review_status"],
@@ -242,7 +250,7 @@ def update_commit(commit_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
             """
             UPDATE commits
             SET title = ?, summary = ?, branch = ?, commit_hash = ?, task_id = ?, decision_id = ?,
-                status = ?, test_status = ?, review_status = ?, files_json = ?, updated_at = ?
+                evidence_summary = ?, review_notes = ?, status = ?, test_status = ?, review_status = ?, files_json = ?, updated_at = ?
             WHERE id = ?
             """,
             (
@@ -252,6 +260,8 @@ def update_commit(commit_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
                 next_commit_hash,
                 next_task_id,
                 next_decision_id,
+                payload.get("evidence_summary") if payload.get("evidence_summary") is not None else row["evidence_summary"],
+                payload.get("review_notes") if payload.get("review_notes") is not None else row["review_notes"],
                 payload.get("status") if payload.get("status") is not None else row["status"],
                 payload.get("test_status") if payload.get("test_status") is not None else row["test_status"],
                 payload.get("review_status") if payload.get("review_status") is not None else row["review_status"],
@@ -266,6 +276,8 @@ def update_commit(commit_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
             "id": updated["id"],
             "title": updated["title"],
             "summary": updated["summary"],
+            "evidence_summary": updated["evidence_summary"] or "",
+            "review_notes": updated["review_notes"] or "",
             "branch": updated["branch"],
             "commit_hash": updated["commit_hash"],
             "task_id": updated["task_id"],

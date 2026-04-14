@@ -114,6 +114,18 @@ from .ideas import (
     get_idea,
     create_idea,
     review_idea,
+    update_idea,
+)
+
+from .idea_comments import (
+    list_idea_comments,
+    create_idea_comment,
+)
+
+from .idea_conversion import (
+    convert_idea,
+    get_idea_conversion,
+    enrich_idea_with_conversion,
 )
 
 # 愿景管理
@@ -172,6 +184,13 @@ from .summary import (
     build_brief,
     get_status_snapshot,
     _module_guess_from_task,
+)
+
+# Context runtime
+from .context_runtime import (
+    build_context_pack,
+    build_next_action_packet,
+    build_handoff_packet,
 )
 
 # 辅助函数
@@ -251,6 +270,12 @@ __all__ = [
     "get_idea",
     "create_idea",
     "review_idea",
+    "update_idea",
+    "list_idea_comments",
+    "create_idea_comment",
+    "convert_idea",
+    "get_idea_conversion",
+    "enrich_idea_with_conversion",
     # 愿景
     "list_visions",
     "get_vision",
@@ -288,6 +313,10 @@ __all__ = [
     "build_brief",
     "get_status_snapshot",
     "_module_guess_from_task",
+    # Context runtime
+    "build_context_pack",
+    "build_next_action_packet",
+    "build_handoff_packet",
     # 辅助
     "now_iso",
     "today",

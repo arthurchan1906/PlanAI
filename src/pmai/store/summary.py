@@ -16,6 +16,16 @@ from .links import list_links
 from .git import get_git_worktree_status
 
 
+def _commit_attention_status(commit: Dict[str, Any]) -> str:
+    if commit["review_status"] != "approved":
+        return "needs_review"
+    if commit["test_status"] != "passed":
+        return "needs_verification"
+    if commit["status"] == "draft":
+        return "draft"
+    return "ready"
+
+
 def get_dashboard_summary() -> Dict[str, Any]:
     canon = fetch_canon()
     tasks = list_tasks()
@@ -27,6 +37,10 @@ def get_dashboard_summary() -> Dict[str, Any]:
     daily = get_daily_note()
     current_recommendations = daily["next"][:4]
     current_risks = daily["risks"][:3]
+    commits_by_task: Dict[str, List[Dict[str, Any]]] = {}
+    for commit in commits:
+        if commit.get("task_id"):
+            commits_by_task.setdefault(commit["task_id"], []).append(commit)
     plan_attention = [
         {
             "id": plan["id"],
@@ -44,6 +58,42 @@ def get_dashboard_summary() -> Dict[str, Any]:
         for plan in plans
         if plan.get("health", {}).get("needs_manager_attention")
     ][:5]
+    review_queue = [
+        {
+            "id": commit["id"],
+            "title": commit["title"],
+            "task_id": commit.get("task_id"),
+            "review_status": commit["review_status"],
+            "test_status": commit["test_status"],
+            "attention": _commit_attention_status(commit),
+        }
+        for commit in commits
+        if _commit_attention_status(commit) in {"needs_review", "needs_verification"}
+    ][:5]
+    closure_blockers = []
+    for task in tasks:
+        if task["status"] == "done":
+            continue
+        linked = commits_by_task.get(task["id"], [])
+        approved = [item for item in linked if item["review_status"] == "approved"]
+        verified = [item for item in approved if item["test_status"] == "passed"]
+        reasons: List[str] = []
+        if not linked:
+            reasons.append("no_linked_commit")
+        if linked and not approved:
+            reasons.append("no_approved_commit")
+        if linked and not verified:
+            reasons.append("verification_incomplete")
+        if reasons:
+            closure_blockers.append(
+                {
+                    "id": task["id"],
+                    "title": task["title"],
+                    "status": task["status"],
+                    "reasons": reasons,
+                }
+            )
+    closure_blockers = closure_blockers[:5]
     return {
         "canon_updated_at": canon["updated_at"],
         "task_counts": {
@@ -106,6 +156,8 @@ def get_dashboard_summary() -> Dict[str, Any]:
         "current_recommendations": current_recommendations,
         "current_risks": current_risks,
         "plan_attention": plan_attention,
+        "review_queue": review_queue,
+        "closure_blockers": closure_blockers,
         "recent_commits": commits[:5],
     }
 
