@@ -15,8 +15,8 @@ PHASE_ORDER = {
 
 
 def enrich_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
-    linked_tasks = list_linked_tasks(plan.get("task_ids", []))
-    health = build_plan_health(linked_tasks)
+    linked_tasks = list_linked_tasks(plan)
+    health = build_plan_health(plan, linked_tasks)
     return {
         **plan,
         "task_count": len(linked_tasks),
@@ -28,11 +28,27 @@ def enrich_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def list_linked_tasks(task_ids: List[str]) -> List[Dict[str, Any]]:
-    if not task_ids:
-        return []
-    tasks_by_id = {task["id"]: task for task in list_tasks()}
-    return [tasks_by_id[task_id] for task_id in task_ids if task_id in tasks_by_id]
+def list_linked_tasks(plan: Dict[str, Any]) -> List[Dict[str, Any]]:
+    plan_id = plan["id"]
+    task_ids = plan.get("task_ids", [])
+    
+    all_tasks = list_tasks()
+    tasks_by_id = {task["id"]: task for task in all_tasks}
+    
+    # 1. Tasks explicitly in task_ids_json
+    linked = [tasks_by_id[tid] for tid in task_ids if tid in tasks_by_id]
+    
+    # 2. Tasks with plan_id matching this plan
+    back_linked = [task for task in all_tasks if task.get("plan_id") == plan_id]
+    
+    # Merge and deduplicate
+    seen_ids = {t["id"] for t in linked}
+    for t in back_linked:
+        if t["id"] not in seen_ids:
+            linked.append(t)
+            seen_ids.add(t["id"])
+            
+    return linked
 
 
 def build_manager_summary(
@@ -114,7 +130,7 @@ def next_manager_checkpoint(linked_tasks: List[Dict[str, Any]]) -> str:
     return "Generate tasks for this plan so execution can start."
 
 
-def build_plan_health(linked_tasks: List[Dict[str, Any]]) -> Dict[str, Any]:
+def build_plan_health(plan: Dict[str, Any], linked_tasks: List[Dict[str, Any]]) -> Dict[str, Any]:
     task_count = len(linked_tasks)
     done_count = len([task for task in linked_tasks if task["status"] == "done"])
     blocked_count = len([task for task in linked_tasks if task["status"] == "blocked"])
@@ -149,6 +165,7 @@ def build_plan_health(linked_tasks: List[Dict[str, Any]]) -> Dict[str, Any]:
     if verification_gaps:
         issues.append("verification_pending")
 
+    # Determine state, respecting plan's manual status if it's 'active'
     if done_count == task_count and task_count:
         state = "completed"
     elif blocked_count:
@@ -159,6 +176,8 @@ def build_plan_health(linked_tasks: List[Dict[str, Any]]) -> Dict[str, Any]:
         state = "active"
     elif task_count:
         state = "waiting"
+    elif plan.get("status") == "active":
+        state = "active"  # Force active if manually set, even without tasks
     else:
         state = "draft"
 

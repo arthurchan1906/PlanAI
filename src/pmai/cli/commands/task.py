@@ -25,6 +25,7 @@ def handle_task(args: argparse.Namespace) -> None:
                     "status": args.status,
                     "phase": args.phase,
                     "roadmap_id": args.roadmap_id,
+                    "plan_id": args.plan_id,
                     "acceptance": args.acceptance,
                 }
             )
@@ -36,6 +37,8 @@ def handle_task(args: argparse.Namespace) -> None:
                     args.status,
                     args.note,
                     allow_without_commit=args.allow_without_commit,
+                    roadmap_id=args.roadmap_id,
+                    plan_id=args.plan_id,
                 )
         )
     elif args.task_command == "plan":

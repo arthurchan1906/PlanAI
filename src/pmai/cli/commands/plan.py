@@ -34,6 +34,7 @@ def handle_plan(args: argparse.Namespace) -> None:
                     "scope": args.scope,
                     "risks": args.risks,
                     "assumptions": args.assumptions,
+                    "task_ids": args.task_ids,
                 }
             )
         )
@@ -53,4 +54,6 @@ def handle_plan(args: argparse.Namespace) -> None:
             value = getattr(args, field)
             if value is not None:
                 payload[field] = value
+        if args.task_ids is not None:
+            payload["task_ids"] = args.task_ids
         run_local_command(lambda: update_plan(args.id, payload))

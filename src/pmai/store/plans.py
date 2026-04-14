@@ -213,6 +213,10 @@ def generate_plan(
 
     created_task_ids: List[str] = []
     created_tasks: List[Dict[str, Any]] = []
+    
+    # We need the plan_id to link tasks to it
+    plan_id = slug("plan")
+    
     if create_tasks_for_plan:
         for suggestion in suggestions:
             task = create_task(
@@ -222,13 +226,15 @@ def generate_plan(
                     "status": "todo",
                     "phase": suggestion["phase"],
                     "roadmap_id": roadmap_id,
+                    "plan_id": plan_id,
                     "acceptance": suggestion["acceptance"],
                 }
             )
             created_task_ids.append(task["id"])
             created_tasks.append(task)
 
-    plan = create_plan(
+    plan = _create_plan_with_id(
+        plan_id,
         {
             "roadmap_id": roadmap_id,
             "vision_id": vision.get("id") if vision else None,
@@ -253,6 +259,41 @@ def generate_plan(
             "accepted_decisions": decisions,
         },
     }
+
+
+def _create_plan_with_id(plan_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    conn = get_connection()
+    try:
+        now = now_iso()
+        conn.execute(
+            """
+            INSERT INTO plans (
+                id, roadmap_id, vision_id, title, goal, status, priority,
+                scope_json, risks_json, assumptions_json, task_ids_json,
+                source, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                plan_id,
+                payload.get("roadmap_id"),
+                payload.get("vision_id"),
+                payload["title"],
+                payload.get("goal", ""),
+                payload.get("status", "draft"),
+                payload.get("priority", "P1"),
+                _dumps(payload.get("scope", [])),
+                _dumps(payload.get("risks", [])),
+                _dumps(payload.get("assumptions", [])),
+                _dumps(payload.get("task_ids", [])),
+                payload.get("source", "manual"),
+                now,
+                now,
+            ),
+        )
+        conn.commit()
+        return get_plan(plan_id)
+    finally:
+        conn.close()
 
 
 def _pick_vision(vision_id: Optional[str], roadmap: Optional[Dict[str, Any]]) -> Dict[str, Any]:

@@ -39,6 +39,8 @@ export function buildTaskPayload(form) {
     title: form.title,
     priority: form.priority,
     phase: form.phase,
+    roadmap_id: form.roadmapId || null,
+    plan_id: form.planId || null,
     acceptance: splitValues(form.acceptance),
   };
 }

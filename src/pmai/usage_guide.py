@@ -69,18 +69,21 @@ Does it need approval?
 
 ## For AI Coders: Workflow Guide
 
-### Phase 1: Understand Context (Read-Only)
+# Phase 1: Understand Context (Read-Only)
 
 Before writing code, understand the project state:
 
 ```bash
-# 1. Check project overview and runtime status
-aipmc info
+# 1. Get a full project dashboard (Tasks, Daily, Inbox, Recent Commits)
+# THIS IS THE MOST IMPORTANT COMMAND FOR PROJECT OVERVIEW
 aipmc status
 
-# 2. Read project canon (product goals, engineering focus, architecture)
-aipmc canon show
+# 2. Check project overview and runtime paths
+aipmc info
 
+# 3. Read project canon (product goals, engineering focus, architecture)
+aipmc canon show
+```
 # 3. Review active tasks and pending decisions
 aipmc task list --status todo
 aipmc task list --status in_progress

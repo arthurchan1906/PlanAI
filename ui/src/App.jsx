@@ -83,7 +83,7 @@ function ConsoleApp() {
   const [decisionStatusFilter, setDecisionStatusFilter] = useState("");
 
   // 表单状态
-  const [taskForm, setTaskForm] = useState({ title: "", acceptance: "", priority: "P1", phase: "general" });
+  const [taskForm, setTaskForm] = useState({ title: "", acceptance: "", priority: "P1", phase: "general", roadmapId: "", planId: "" });
   const [commitForm, setCommitForm] = useState({ title: "", summary: "", branch: "", taskId: "", decisionId: "", status: "draft", testStatus: "not_run", reviewStatus: "pending", files: "" });
   const [ideaForm, setIdeaForm] = useState({ title: "", summary: "", impact: "" });
   const [docForm, setDocForm] = useState({ path: "", type: "", status: "draft", layer: "exploration", sourceOfTruth: false, relatedDecisionId: undefined });
@@ -231,7 +231,22 @@ function ConsoleApp() {
           {view === "visions" && <VisionsView visions={visions} visionForm={visionForm} setVisionForm={setVisionForm} busy={busy} onCreateVision={p => runAction(() => api(p.id ? `/pmai/visions/${p.id}` : "/pmai/visions", { method: p.id ? "PATCH" : "POST", body: JSON.stringify(p) }), "Vision updated")} onUpdateVision={(id, p) => runAction(() => api(`/pmai/visions/${id}`, { method: "PATCH", body: JSON.stringify(p) }), "Vision updated")} onOpenVisionDetail={handleOpenVisionDetail} tasks={tasks} decisions={decisions} />}
           {view === "principles" && <PrinciplesView principles={principles} principleForm={principleForm} setPrincipleForm={setPrincipleForm} busy={busy} onCreatePrinciple={p => runAction(() => api(p.id ? `/pmai/principles/${p.id}` : "/pmai/principles", { method: p.id ? "PATCH" : "POST", body: JSON.stringify(p) }), "Principle updated")} onUpdatePrinciple={(id, p) => runAction(() => api(`/pmai/principles/${id}`, { method: "PATCH", body: JSON.stringify(p) }), "Principle updated")} tasks={tasks} decisions={decisions} />}
           {view === "code" && <CodeView codeStatus={codeStatus} recentCommits={recentGitCommits} loading={loading} onCommitFiles={handleCommitFiles} onViewCommit={handleViewCommit} />}
-          {view === "tasks" && <TasksView tasks={tasks} taskSearch={taskSearch} taskStatusFilter={taskStatusFilter} setTaskSearch={setTaskSearch} setTaskStatusFilter={setTaskStatusFilter} taskForm={taskForm} setTaskForm={setTaskForm} busy={busy} onCreateTask={() => runAction(() => api("/pmai/tasks", { method: "POST", body: JSON.stringify(buildTaskPayload(taskForm)) }), "Task created")} onUpdateTask={(id, s) => runAction(() => api(`/pmai/tasks/${id}`, { method: "PATCH", body: JSON.stringify({ status: s }) }), "Task updated")} />}
+          {view === "tasks" && (
+            <TasksView
+              tasks={tasks}
+              roadmaps={roadmaps}
+              plans={plans}
+              taskSearch={taskSearch}
+              taskStatusFilter={taskStatusFilter}
+              setTaskSearch={setTaskSearch}
+              setTaskStatusFilter={setTaskStatusFilter}
+              taskForm={taskForm}
+              setTaskForm={setTaskForm}
+              busy={busy}
+              onCreateTask={() => runAction(() => api("/pmai/tasks", { method: "POST", body: JSON.stringify(buildTaskPayload(taskForm)) }), "Task created")}
+              onUpdateTask={(id, s) => runAction(() => api(`/pmai/tasks/${id}`, { method: "PATCH", body: JSON.stringify({ status: s }) }), "Task updated")}
+            />
+          )}
           {view === "canon" && <CanonView canon={canon} decisions={decisions} canonForm={canonForm} setCanonForm={setCanonForm} busy={busy} onSubmitCanon={() => runAction(() => api("/pmai/canon/update", { method: "POST", body: JSON.stringify(buildCanonPayload(canonForm)) }), "Canon updated")} />}
           {view === "commits" && <CommitsView commits={commits} tasks={tasks} decisions={decisions} commitSearch={commitSearch} commitStatusFilter={commitStatusFilter} setCommitSearch={setCommitSearch} setCommitStatusFilter={setCommitStatusFilter} commitForm={commitForm} setCommitForm={setCommitForm} busy={busy} onCreateCommit={() => runAction(() => api("/pmai/commits", { method: "POST", body: JSON.stringify(buildCommitPayload(commitForm)) }), "Commit registered")} onUpdateCommit={(id, p) => runAction(() => api(`/pmai/commits/${id}`, { method: "PATCH", body: JSON.stringify(p) }), "Commit updated")} />}
           {view === "ideas" && <IdeasView ideas={ideas} ideaSearch={ideaSearch} ideaStatusFilter={ideaStatusFilter} setIdeaSearch={setIdeaSearch} setIdeaStatusFilter={setIdeaStatusFilter} ideaForm={ideaForm} setIdeaForm={setIdeaForm} busy={busy} onCreateIdea={() => runAction(() => api("/pmai/ideas", { method: "POST", body: JSON.stringify(ideaForm) }), "Idea created")} onUpdateIdea={(id, s) => runAction(() => api(`/pmai/ideas/${id}`, { method: "PATCH", body: JSON.stringify({ status: s }) }), "Idea updated")} onConvertToTask={handleConvertIdeaToTask} onConvertToDecision={handleConvertIdeaToDecision} />}

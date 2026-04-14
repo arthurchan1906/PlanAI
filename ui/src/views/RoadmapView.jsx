@@ -11,8 +11,13 @@ export default function RoadmapView({ roadmaps, plans, tasks, visions, busy, onC
 
   const roadmapTree = useMemo(() => {
     return (roadmaps || []).map((roadmap) => {
-      const roadmapTasks = (tasks || []).filter((task) => task.roadmap_id === roadmap.id);
       const roadmapPlans = (plans || []).filter((plan) => plan.roadmap_id === roadmap.id);
+      const planIds = new Set(roadmapPlans.map(p => p.id));
+      
+      const roadmapTasks = (tasks || []).filter((task) => 
+        task.roadmap_id === roadmap.id || (task.plan_id && planIds.has(task.plan_id))
+      );
+      
       const doneTasks = roadmapTasks.filter((task) => task.status === "done").length;
       const progress = roadmapTasks.length ? Math.round((doneTasks / roadmapTasks.length) * 100) : 0;
       return { ...roadmap, tasks: roadmapTasks, plans: roadmapPlans, progress };

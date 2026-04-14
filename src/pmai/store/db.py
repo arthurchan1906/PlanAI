@@ -79,7 +79,9 @@ def ensure_runtime_schema(conn: sqlite3.Connection) -> None:
             related_docs_json TEXT NOT NULL,
             related_decisions_json TEXT NOT NULL,
             last_note TEXT NOT NULL,
-            updated_at TEXT NOT NULL
+            updated_at TEXT NOT NULL,
+            roadmap_id TEXT,
+            plan_id TEXT
         );
 
         CREATE TABLE IF NOT EXISTS principles (
@@ -210,6 +212,7 @@ def _migrate_database(conn: sqlite3.Connection) -> None:
     """数据库迁移：为旧表添加缺失的列"""
     migrations = [
         ("tasks", "roadmap_id", "ALTER TABLE tasks ADD COLUMN roadmap_id TEXT"),
+        ("tasks", "plan_id", "ALTER TABLE tasks ADD COLUMN plan_id TEXT"),
     ]
     
     for table_name, column_name, alter_sql in migrations:

@@ -28,8 +28,12 @@ def _commit_status_hint(commit: Dict[str, Any]) -> str:
     return "ready"
 
 
-def handle_list_tasks(status: str | None = None) -> Dict[str, Any]:
-    return {"tasks": list_tasks(status)}
+def handle_list_tasks(
+    status: str | None = None,
+    roadmap_id: str | None = None,
+    plan_id: str | None = None,
+) -> Dict[str, Any]:
+    return {"tasks": list_tasks(status, roadmap_id=roadmap_id, plan_id=plan_id)}
 
 
 def handle_create_task(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -40,8 +44,22 @@ def handle_get_task(task_id: str) -> Dict[str, Any]:
     return get_task(task_id)
 
 
-def handle_update_task(task_id: str, status: str, note: str, allow_without_commit: bool) -> Dict[str, Any]:
-    return update_task(task_id, status, note, allow_without_commit)
+def handle_update_task(
+    task_id: str,
+    status: str,
+    note: str,
+    allow_without_commit: bool,
+    roadmap_id: str | None = None,
+    plan_id: str | None = None,
+) -> Dict[str, Any]:
+    return update_task(
+        task_id,
+        status,
+        note,
+        allow_without_commit,
+        roadmap_id=roadmap_id,
+        plan_id=plan_id,
+    )
 
 
 def handle_update_checkpoint(task_id: str, index: int | None, done: bool) -> Dict[str, Any]:

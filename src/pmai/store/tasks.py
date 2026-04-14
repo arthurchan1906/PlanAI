@@ -36,7 +36,11 @@ def loads(value: Optional[str], default: Any) -> Any:
         return default
 
 
-def list_tasks(status: Optional[str] = None, roadmap_id: Optional[str] = None) -> List[Dict[str, Any]]:
+def list_tasks(
+    status: Optional[str] = None,
+    roadmap_id: Optional[str] = None,
+    plan_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     conn = get_connection()
     try:
         query = "SELECT * FROM tasks"
@@ -48,6 +52,9 @@ def list_tasks(status: Optional[str] = None, roadmap_id: Optional[str] = None) -
         if roadmap_id:
             where_clauses.append("roadmap_id = ?")
             params.append(roadmap_id)
+        if plan_id:
+            where_clauses.append("plan_id = ?")
+            params.append(plan_id)
 
         if where_clauses:
             query += " WHERE " + " AND ".join(where_clauses)
@@ -87,6 +94,7 @@ def list_tasks(status: Optional[str] = None, roadmap_id: Optional[str] = None) -
                 "priority": row["priority"],
                 "phase": row["phase"],
                 "roadmap_id": row["roadmap_id"],
+                "plan_id": row["plan_id"],
                 "acceptance": structured_acceptance,
                 "progress": progress,
                 "related_docs": loads(row["related_docs_json"], []),
@@ -149,6 +157,7 @@ def get_task(task_id: str) -> Dict[str, Any]:
                 "priority": row["priority"],
                 "phase": row["phase"],
                 "roadmap_id": row["roadmap_id"],
+                "plan_id": row["plan_id"],
                 "acceptance": structured_acceptance,
                 "progress": progress,
                 "related_docs": loads(row["related_docs_json"], []),
@@ -177,9 +186,9 @@ def create_task(payload: Dict[str, Any]) -> Dict[str, Any]:
         conn.execute(
             """
             INSERT INTO tasks (
-                id, title, status, priority, phase, roadmap_id,
+                id, title, status, priority, phase, roadmap_id, plan_id,
                 acceptance_json, related_docs_json, related_decisions_json, last_note, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task_id,
@@ -188,6 +197,7 @@ def create_task(payload: Dict[str, Any]) -> Dict[str, Any]:
                 payload.get("priority", "P1"),
                 payload.get("phase", "general"),
                 payload.get("roadmap_id"),
+                payload.get("plan_id"),
                 dumps(payload.get("acceptance", [])),
                 dumps([]),
                 dumps([]),
@@ -206,6 +216,8 @@ def update_task(
     status: str,
     note: str = "",
     allow_without_commit: bool = False,
+    roadmap_id: Optional[str] = None,
+    plan_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     conn = get_connection()
     try:
@@ -230,9 +242,21 @@ def update_task(
                     "task cannot be marked done without at least one approved commit "
                     "(status=committed|merged, review_status=approved) linked by --task-id"
                 )
+
+        updates: List[Any] = [status, note, today()]
+        set_clauses = ["status = ?", "last_note = ?", "updated_at = ?"]
+
+        if roadmap_id is not None:
+            set_clauses.append("roadmap_id = ?")
+            updates.append(roadmap_id)
+        if plan_id is not None:
+            set_clauses.append("plan_id = ?")
+            updates.append(plan_id)
+
+        updates.append(task_id)
         conn.execute(
-            "UPDATE tasks SET status = ?, last_note = ?, updated_at = ? WHERE id = ?",
-            (status, note, today(), task_id),
+            f"UPDATE tasks SET {', '.join(set_clauses)} WHERE id = ?",
+            updates,
         )
         conn.commit()
         return get_task(task_id)["task"]

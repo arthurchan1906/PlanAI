@@ -24,6 +24,8 @@ function isAcceptanceDone(item) {
 
 export default function TasksView({
   tasks,
+  roadmaps,
+  plans,
   taskSearch,
   taskStatusFilter,
   setTaskSearch,
@@ -76,7 +78,7 @@ export default function TasksView({
                 />
               </Form.Item>
             </Col>
-            <Col xs={24} md={12}>
+            <Col xs={24} md={6}>
               <Form.Item label="优先级">
                 <Select
                   value={taskForm.priority}
@@ -85,7 +87,7 @@ export default function TasksView({
                 />
               </Form.Item>
             </Col>
-            <Col xs={24} md={12}>
+            <Col xs={24} md={6}>
               <Form.Item label="阶段">
                 <Select
                   value={taskForm.phase}
@@ -96,6 +98,28 @@ export default function TasksView({
                     { value: "implementation" },
                     { value: "polish" },
                   ]}
+                />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={6}>
+              <Form.Item label="Roadmap ID (可选)">
+                <Select
+                  value={taskForm.roadmapId || undefined}
+                  allowClear
+                  placeholder="关联路线图"
+                  onChange={(value) => setTaskForm((current) => ({ ...current, roadmapId: value || "" }))}
+                  options={(roadmaps || []).map(r => ({ value: r.id, label: r.title }))}
+                />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={6}>
+              <Form.Item label="Plan ID (可选)">
+                <Select
+                  value={taskForm.planId || undefined}
+                  allowClear
+                  placeholder="关联计划"
+                  onChange={(value) => setTaskForm((current) => ({ ...current, planId: value || "" }))}
+                  options={(plans || []).map(p => ({ value: p.id, label: p.title }))}
                 />
               </Form.Item>
             </Col>

@@ -66,6 +66,7 @@ from .handlers import (
     handle_list_docs,
     handle_list_ideas,
     handle_list_principles,
+    handle_list_tasks,
     handle_list_visions,
     handle_update_canon,
     handle_update_checkpoint,
@@ -221,7 +222,13 @@ class PMAIRequestHandler(SimpleHTTPRequestHandler):
             elif method == 'DELETE' and path.startswith('/pmai/links/'):
                 self.send_json({'ok': delete_link(path.rsplit('/', 1)[-1])})
             elif method == 'GET' and path == '/pmai/tasks':
-                self.send_json({'tasks': list_tasks((query.get('status') or [None])[0])})
+                self.send_json(
+                    handle_list_tasks(
+                        (query.get('status') or [None])[0],
+                        (query.get('roadmap_id') or [None])[0],
+                        (query.get('plan_id') or [None])[0],
+                    )
+                )
             elif method == 'POST' and path == '/pmai/tasks':
                 self.send_json(create_task(self.read_json()))
             elif method == 'GET' and path.startswith('/pmai/web/tasks/'):
@@ -240,6 +247,8 @@ class PMAIRequestHandler(SimpleHTTPRequestHandler):
                         payload['status'],
                         payload.get('note', ''),
                         bool(payload.get('allow_without_commit', False)),
+                        roadmap_id=payload.get('roadmap_id'),
+                        plan_id=payload.get('plan_id'),
                     )
                 )
             elif method == 'GET' and path == '/pmai/commits':
