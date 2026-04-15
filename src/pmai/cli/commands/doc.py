@@ -7,7 +7,8 @@ from ...store import (
     list_doc_records,
     update_doc_record,
 )
-from ...store.doc_governance import sync_docs_with_fs, prune_archived_docs
+from ...store.doc_governance import prune_archived_docs, repair_doc_records, sync_docs_with_fs
+from .project import run_local_command
 
 
 def handle_doc(args: argparse.Namespace) -> None:
@@ -15,6 +16,8 @@ def handle_doc(args: argparse.Namespace) -> None:
         run_local_command(lambda: {"records": list_doc_records(args.status or None, args.layer or None)})
     elif args.docs_command == "sync":
         run_local_command(sync_docs_with_fs)
+    elif args.docs_command == "repair":
+        run_local_command(repair_doc_records)
     elif args.docs_command == "prune":
         run_local_command(prune_archived_docs)
     elif args.docs_command == "update":

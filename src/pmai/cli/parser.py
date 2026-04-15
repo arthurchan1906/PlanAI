@@ -269,6 +269,7 @@ def build_parser() -> argparse.ArgumentParser:
     daily_replace.add_argument("--next", nargs="*", default=[])
     docs = subparsers.add_parser("docs").add_subparsers(dest="docs_command", required=True)
     docs.add_parser("sync")
+    docs.add_parser("repair")
     docs.add_parser("prune")
     docs_list = docs.add_parser("list")
     docs_list.add_argument("--status", default="")

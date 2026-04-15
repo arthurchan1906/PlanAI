@@ -7,7 +7,7 @@ from .code import handle_code_diff, handle_code_status, handle_code_recent
 from .commits import build_web_commit_detail, handle_create_commit, handle_get_commit, handle_list_commits, handle_update_commit
 from .daily import handle_append_daily_note, handle_get_daily_note, handle_list_daily_notes, handle_replace_daily_note
 from .decisions import build_web_decision_detail, handle_create_decision, handle_get_decision, handle_list_decisions, handle_update_decision_status_handler
-from .docs import handle_audit_docs, handle_list_docs, handle_update_doc, handle_sync_docs, handle_prune_docs, handle_get_doc_content
+from .docs import handle_audit_docs, handle_list_docs, handle_update_doc, handle_sync_docs, handle_repair_docs, handle_prune_docs, handle_get_doc_content
 from .ideas import (
     handle_create_idea,
     handle_create_idea_comment,
@@ -55,6 +55,7 @@ __all__ = [
     "handle_update_doc",
     "handle_audit_docs",
     "handle_sync_docs",
+    "handle_repair_docs",
     "handle_prune_docs",
     "handle_get_doc_content",
     # Ideas

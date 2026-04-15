@@ -67,6 +67,7 @@ from .handlers import (
     handle_list_daily_notes,
     handle_list_docs,
     handle_sync_docs,
+    handle_repair_docs,
     handle_prune_docs,
     handle_get_doc_content,
     handle_create_idea_comment,
@@ -320,6 +321,8 @@ class PMAIRequestHandler(SimpleHTTPRequestHandler):
                 self.send_json(handle_get_doc_content(doc_path))
             elif method == 'POST' and path == '/pmai/docs/sync':
                 self.send_json(handle_sync_docs())
+            elif method == 'POST' and path == '/pmai/docs/repair':
+                self.send_json(handle_repair_docs())
             elif method == 'POST' and path == '/pmai/docs/prune':
                 self.send_json(handle_prune_docs())
             elif method == 'PATCH' and path == '/pmai/docs':
