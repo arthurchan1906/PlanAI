@@ -32,7 +32,7 @@ def main() -> int:
     parser.add_argument(
         "--skip-ui-build",
         action="store_true",
-        help="Skip UI build step (use existing ui/dist)",
+        help="Skip UI build step (use existing src/pmai/ui/dist)",
     )
     parser.add_argument(
         "--skip-python-build",
@@ -48,13 +48,12 @@ def main() -> int:
 
     repo_root = Path(__file__).resolve().parent.parent
     ui_dir = repo_root / "ui"
-    ui_dist = ui_dir / "dist"
     pmai_ui_dir = repo_root / "src" / "pmai" / "ui"
     pmai_ui_dist = pmai_ui_dir / "dist"
 
     step("Starting build and publish process")
 
-    # Step 1: Build frontend
+    # Step 1: Build frontend (outputs directly to src/pmai/ui/dist)
     if not args.skip_ui_build:
         step("Building frontend (npm run build)")
         try:
@@ -63,36 +62,26 @@ def main() -> int:
                 run(["npm.cmd", "run", "build"], cwd=ui_dir)
             else:
                 run(["npm", "run", "build"], cwd=ui_dir)
-            
+
             # 验证前端构建成功
-            if not ui_dist.exists():
-                raise SystemExit(f"UI build failed: {ui_dist} not found")
-            
-            ui_files = list(ui_dist.rglob("*"))
+            if not pmai_ui_dist.exists():
+                raise SystemExit(f"UI build failed: {pmai_ui_dist} not found")
+
+            ui_files = list(pmai_ui_dist.rglob("*"))
             if not ui_files:
-                raise SystemExit(f"UI build failed: {ui_dist} is empty")
-            
+                raise SystemExit(f"UI build failed: {pmai_ui_dist} is empty")
+
             print(f"    ✓ Frontend built successfully ({len(ui_files)} files)")
         except FileNotFoundError:
             raise SystemExit("npm not found. Please install Node.js and npm first.")
         except subprocess.CalledProcessError as e:
             raise SystemExit(f"UI build failed: {e}")
     else:
-        step("Skipping frontend build (using existing ui/dist)")
-        if not ui_dist.exists():
-            raise SystemExit(f"ui/dist not found. Build frontend first or remove --skip-ui-build flag.")
+        step("Skipping frontend build (using existing src/pmai/ui/dist)")
+        if not pmai_ui_dist.exists():
+            raise SystemExit(f"src/pmai/ui/dist not found. Build frontend first or remove --skip-ui-build flag.")
 
-    # Step 2: Copy frontend to Python package
-    step("Copying frontend dist to Python package (src/pmai/ui/dist)")
-    if pmai_ui_dist.exists():
-        shutil.rmtree(pmai_ui_dist)
-        print(f"    ✓ Cleaned old {pmai_ui_dist}")
-    
-    shutil.copytree(ui_dist, pmai_ui_dist)
-    pmai_ui_files = list(pmai_ui_dist.rglob("*"))
-    print(f"    ✓ Copied {len(pmai_ui_files)} files to {pmai_ui_dist.relative_to(repo_root)}")
-
-    # Step 3: Build Python package
+    # Step 2: Build Python package
     if not args.skip_python_build:
         step("Cleaning old build artifacts")
         shutil.rmtree(repo_root / "dist", ignore_errors=True)
@@ -119,7 +108,7 @@ def main() -> int:
         if not dist_files:
             raise SystemExit("No build artifacts found in dist/. Build first or remove --skip-python-build flag.")
 
-    # Step 4: Check distributions
+    # Step 3: Check distributions
     step("Checking distributions with twine")
     try:
         dist_files = sorted((repo_root / "dist").glob("*"))
@@ -128,7 +117,7 @@ def main() -> int:
     except subprocess.CalledProcessError as e:
         raise SystemExit(f"Twine check failed: {e}")
 
-    # Step 5: Upload
+    # Step 4: Upload
     if args.skip_upload:
         step("Build completed (skipping upload)")
         print(f"\n✓ Artifacts are in {repo_root / 'dist'}")
