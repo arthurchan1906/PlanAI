@@ -66,6 +66,9 @@ from .handlers import (
     handle_get_inbox,
     handle_list_daily_notes,
     handle_list_docs,
+    handle_sync_docs,
+    handle_prune_docs,
+    handle_get_doc_content,
     handle_create_idea_comment,
     handle_convert_idea,
     handle_update_idea,
@@ -312,6 +315,13 @@ class PMAIRequestHandler(SimpleHTTPRequestHandler):
                     self.send_json(handle_update_idea(idea_id, payload))
             elif method == 'GET' and path == '/pmai/docs':
                 self.send_json({'records': list_doc_records((query.get('status') or [None])[0], (query.get('layer') or [None])[0])})
+            elif method == 'GET' and path == '/pmai/docs/content':
+                doc_path = (query.get('path') or [None])[0]
+                self.send_json(handle_get_doc_content(doc_path))
+            elif method == 'POST' and path == '/pmai/docs/sync':
+                self.send_json(handle_sync_docs())
+            elif method == 'POST' and path == '/pmai/docs/prune':
+                self.send_json(handle_prune_docs())
             elif method == 'PATCH' and path == '/pmai/docs':
                 self.send_json(handle_update_doc(self.read_json()))
             elif method == 'GET' and path == '/pmai/docs/audit':

@@ -5,8 +5,8 @@ export const COMMIT_TEST_STATUSES = ["not_run", "passed", "failed"];
 export const COMMIT_REVIEW_STATUSES = ["pending", "approved", "changes_requested"];
 export const IDEA_STATUSES = ["inbox", "under_review", "accepted", "rejected", "obsolete"];
 export const DECISION_STATUSES = ["proposed", "accepted", "rejected", "superseded"];
-export const DOC_STATUSES = ["draft", "active", "archived", "obsolete"];
-export const DOC_LAYERS = ["baseline", "decision", "task", "exploration", "history", "topic"];
+export const DOC_STATUSES = ["draft", "active", "stale", "archived", "obsolete"];
+export const DOC_LAYERS = ["blueprint", "research", "baseline", "decision", "task", "exploration", "history", "topic"];
 export const VISION_STATUSES = ["active", "archived", "draft"];
 export const PRINCIPLE_STATUSES = ["active", "archived", "draft"];
 export const PRINCIPLE_KINDS = ["governance", "engineering", "product", "meta"];
@@ -81,6 +81,7 @@ export function buildDocPayload(form) {
     create: true,
     source_of_truth: form.sourceOfTruth,
     clear_source_of_truth: !form.sourceOfTruth,
+    related_decision_id: form.relatedDecisionId || null,
   };
 }
 

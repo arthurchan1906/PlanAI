@@ -160,6 +160,7 @@ from .docs import (
     list_doc_records,
     update_doc_record,
     audit_docs,
+    read_doc_content,
 )
 
 # 日报管理
@@ -298,6 +299,7 @@ __all__ = [
     "list_doc_records",
     "update_doc_record",
     "audit_docs",
+    "read_doc_content",
     # 日报
     "get_daily_note",
     "list_daily_notes",

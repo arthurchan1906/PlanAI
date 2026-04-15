@@ -13,9 +13,11 @@ function getAcceptanceText(item) {
     return item;
   }
   if (item && typeof item === "object") {
-    return item.text || item.title || JSON.stringify(item);
+    const text = item.text || item.title || "";
+    if (typeof text === "string") return text;
+    return JSON.stringify(text);
   }
-  return "";
+  return String(item || "");
 }
 
 function isAcceptanceDone(item) {

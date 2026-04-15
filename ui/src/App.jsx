@@ -315,7 +315,19 @@ function ConsoleApp() {
               focusedIdeaId={focusedIdeaId}
             />
           )}
-          {view === "docs" && <DocsView docs={docs} docAudit={docAudit} docForm={docForm} setDocForm={setDocForm} busy={busy} onSubmitDoc={() => runAction(() => api("/pmai/docs", { method: "PATCH", body: JSON.stringify(buildDocPayload(docForm)) }), "Doc updated")} decisions={decisions} />}
+          {view === "docs" && (
+            <DocsView 
+              docs={docs} 
+              docAudit={docAudit} 
+              docForm={docForm} 
+              setDocForm={setDocForm} 
+              busy={busy} 
+              onSubmitDoc={() => runAction(() => api("/pmai/docs", { method: "PATCH", body: JSON.stringify(buildDocPayload(docForm)) }), "Doc updated")} 
+              onSyncDocs={() => runAction(() => api("/pmai/docs/sync", { method: "POST" }), "Directory synced")}
+              onPruneDocs={() => runAction(() => api("/pmai/docs/prune", { method: "POST" }), "Archive pruned")}
+              decisions={decisions} 
+            />
+          )}
           {view === "decisions" && <DecisionsView decisions={decisions} decisionSearch={decisionSearch} decisionStatusFilter={decisionStatusFilter} setDecisionSearch={setDecisionSearch} setDecisionStatusFilter={setDecisionStatusFilter} decisionForm={decisionForm} setDecisionForm={setDecisionForm} busy={busy} onOpenIdea={handleOpenIdea} onCreateDecision={() => runAction(() => api("/pmai/decisions", { method: "POST", body: JSON.stringify(decisionForm) }), "Decision created")} onUpdateDecision={(id, s) => runAction(() => api(`/pmai/decisions/${id}`, { method: "PATCH", body: JSON.stringify({ status: s }) }), "Decision updated")} onCopyIntoCanon={id => { setCanonForm({...canonForm, decisionId: id}); setView("canon"); }} />}
           {view === "daily" && <DailyViewHuman daily={daily} dailyForm={dailyForm} setDailyForm={setDailyForm} busy={busy} onAppendDaily={() => runDailyAction("POST", "Daily note updated")} onReplaceDaily={() => runDailyAction("PUT", "Daily note replaced")} tasks={tasks} commits={commits} onCreateTaskFromDaily={handleCreateTaskFromDaily} />}
         </Content>

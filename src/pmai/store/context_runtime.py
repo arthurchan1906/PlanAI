@@ -13,6 +13,7 @@ from .roadmaps import list_roadmaps
 from .summary import get_inbox_summary
 from .tasks import list_tasks
 from .visions import get_active_vision
+from .docs import list_doc_records
 
 
 def build_context_pack() -> Dict[str, Any]:
@@ -25,6 +26,7 @@ def build_context_pack() -> Dict[str, Any]:
     ideas = list_ideas()
     inbox = get_inbox_summary()
     daily = get_daily_note()
+    all_docs = list_doc_records()
 
     active_roadmap = next(
         (item for item in roadmaps if item.get("status") in ("active", "planned")),
@@ -37,6 +39,14 @@ def build_context_pack() -> Dict[str, Any]:
         None,
     )
     accepted_decisions = [item for item in decisions if item["status"] == "accepted"][:5]
+    
+    # Filter active source of truth docs
+    sot_docs = [
+        {"path": doc["path"], "layer": doc["layer"]}
+        for doc in all_docs
+        if doc["status"] == "active" and doc["source_of_truth"]
+    ]
+
     pending_questions = [item for item in decisions if item["status"] == "proposed"][:5]
     ready_ideas = [
         {
@@ -71,6 +81,7 @@ def build_context_pack() -> Dict[str, Any]:
                 "engineering_focus": canon.get("engineering_focus", ""),
                 "architecture": canon.get("architecture", ""),
             },
+            "source_of_truth_docs": sot_docs,
         },
         "mainline": {
             "roadmap": _roadmap_summary(active_roadmap),

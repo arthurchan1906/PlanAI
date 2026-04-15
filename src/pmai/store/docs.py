@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from .db import get_connection
-from .config import get_db_path
+from .config import get_db_path, get_project_root
 
 
 def today() -> str:
@@ -113,22 +113,13 @@ def update_doc_record(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def audit_docs() -> Dict[str, Any]:
-    rows = list_doc_records()
-    active_records = [row for row in rows if row["status"] == "active"]
-    source_of_truth_records = [row for row in rows if row["source_of_truth"]]
-    obsolete_without_replacement = [
-        row["path"] for row in rows if row["status"] == "obsolete" and not row["superseded_by"]
-    ]
-    invalid_truth_records = [
-        row["path"]
-        for row in rows
-        if row["status"] in {"archived", "obsolete"} and row["source_of_truth"]
-    ]
-    return {
-        "database": str(get_db_path()),
-        "total_records": len(rows),
-        "active_records": len(active_records),
-        "source_of_truth_records": len(source_of_truth_records),
-        "obsolete_without_replacement": obsolete_without_replacement,
-        "invalid_truth_records": invalid_truth_records,
-    }
+    from .doc_governance import audit_docs_comprehensive
+    return audit_docs_comprehensive()
+
+
+def read_doc_content(path: str) -> str:
+    project_root = get_project_root()
+    file_path = (project_root / path).resolve()
+    if not file_path.exists() or not file_path.is_file():
+        raise FileNotFoundError(f"Document not found: {path} (Project Root: {project_root}, Full Path: {file_path})")
+    return file_path.read_text(encoding="utf-8")

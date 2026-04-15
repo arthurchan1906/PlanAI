@@ -26,6 +26,11 @@ def find_runtime_dir(start: Optional[Path] = None) -> Optional[Path]:
 
 
 def get_project_root(start: Optional[Path] = None) -> Path:
+    # 增加环境变量优先级，方便开发调试
+    override = os.getenv("PMAI_PROJECT_ROOT")
+    if override:
+        return Path(override).expanduser().resolve()
+        
     runtime_dir = find_runtime_dir(start)
     if runtime_dir:
         return runtime_dir.parent
