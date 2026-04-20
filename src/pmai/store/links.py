@@ -1,11 +1,23 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from .db import get_connection
+from .docs import normalize_doc_path
+
+SUPPORTED_ENTITY_TYPES = {
+    "commit": "commits",
+    "decision": "decisions",
+    "doc": "doc_records",
+    "idea": "ideas",
+    "plan": "plans",
+    "principle": "principles",
+    "roadmap": "roadmap",
+    "task": "tasks",
+    "vision": "visions",
+}
 
 
 def now_iso() -> str:
@@ -17,14 +29,66 @@ def slug(prefix: str) -> str:
     return f"{prefix}-{stamp}-{uuid4().hex[:6]}"
 
 
+def _normalize_entity_ref(entity_type: str, entity_id: str) -> str:
+    if entity_type not in SUPPORTED_ENTITY_TYPES:
+        raise ValueError(f"unsupported entity type: {entity_type}")
+    value = str(entity_id or "").strip()
+    if not value:
+        raise ValueError(f"{entity_type} id is required")
+    if entity_type == "doc":
+        return normalize_doc_path(value)
+    return value
+
+
+def _entity_exists(conn, entity_type: str, entity_id: str) -> bool:
+    table_name = SUPPORTED_ENTITY_TYPES[entity_type]
+    if entity_type == "doc":
+        aliases = [entity_id]
+        windows_variant = entity_id.replace("/", "\\")
+        if windows_variant != entity_id:
+            aliases.append(windows_variant)
+        placeholders = ", ".join("?" for _ in aliases)
+        row = conn.execute(
+            f"SELECT path FROM {table_name} WHERE path IN ({placeholders}) LIMIT 1",
+            aliases,
+        ).fetchone()
+        return row is not None
+    row = conn.execute(f"SELECT id FROM {table_name} WHERE id = ? LIMIT 1", (entity_id,)).fetchone()
+    return row is not None
+
+
+def _normalize_link_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    source_type = str(payload["source_type"] or "").strip()
+    target_type = str(payload["target_type"] or "").strip()
+    source_id = _normalize_entity_ref(source_type, payload["source_id"])
+    target_id = _normalize_entity_ref(target_type, payload["target_id"])
+    relation = str(payload.get("relation") or "").strip()
+    if source_type == target_type and source_id == target_id and relation != "references":
+        raise ValueError("self-links are not allowed for this relation")
+    return {
+        "source_type": source_type,
+        "source_id": source_id,
+        "relation": relation,
+        "target_type": target_type,
+        "target_id": target_id,
+        "note": payload.get("note", ""),
+    }
+
+
 def _serialize_link(row: Any) -> Dict[str, Any]:
+    source_id = row["source_id"]
+    target_id = row["target_id"]
+    if row["source_type"] == "doc":
+        source_id = normalize_doc_path(source_id)
+    if row["target_type"] == "doc":
+        target_id = normalize_doc_path(target_id)
     return {
         "id": row["id"],
         "source_type": row["source_type"],
-        "source_id": row["source_id"],
+        "source_id": source_id,
         "relation": row["relation"],
         "target_type": row["target_type"],
-        "target_id": row["target_id"],
+        "target_id": target_id,
         "note": row["note"],
         "created_at": row["created_at"],
     }
@@ -76,15 +140,32 @@ def list_links_for_entity(entity_id: str) -> Dict[str, List[Dict[str, Any]]]:
 def create_link(payload: Dict[str, Any]) -> Dict[str, Any]:
     conn = get_connection()
     try:
-        link_id = slug("link")
+        normalized = _normalize_link_payload(payload)
+        if not normalized["relation"]:
+            raise ValueError("relation is required")
+        if not _entity_exists(conn, normalized["source_type"], normalized["source_id"]):
+            raise KeyError(f"missing {normalized['source_type']}: {normalized['source_id']}")
+        if not _entity_exists(conn, normalized["target_type"], normalized["target_id"]):
+            raise KeyError(f"missing {normalized['target_type']}: {normalized['target_id']}")
+        duplicate = conn.execute(
+            """
+            SELECT id FROM links
+            WHERE source_type = ? AND source_id = ? AND relation = ? AND target_type = ? AND target_id = ?
+            LIMIT 1
+            """,
+            (
+                normalized["source_type"],
+                normalized["source_id"],
+                normalized["relation"],
+                normalized["target_type"],
+                normalized["target_id"],
+            ),
+        ).fetchone()
+        if duplicate:
+            raise ValueError("duplicate link already exists")
         row = {
-            "id": link_id,
-            "source_type": payload["source_type"],
-            "source_id": payload["source_id"],
-            "relation": payload["relation"],
-            "target_type": payload["target_type"],
-            "target_id": payload["target_id"],
-            "note": payload.get("note", ""),
+            "id": slug("link"),
+            **normalized,
             "created_at": now_iso(),
         }
         conn.execute(

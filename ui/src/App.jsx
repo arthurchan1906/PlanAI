@@ -99,7 +99,7 @@ function ConsoleApp() {
     main_question: "",
     recommended_next_action: "continue_discussion",
   });
-  const [docForm, setDocForm] = useState({ path: "", type: "", status: "draft", layer: "exploration", sourceOfTruth: false, relatedDecisionId: undefined });
+  const [docForm, setDocForm] = useState({ path: "", type: "", status: "draft", layer: "exploration", sourceOfTruth: false });
   const [decisionForm, setDecisionForm] = useState({ title: "", background: "", decision: "" });
   const [dailyForm, setDailyForm] = useState({ noteDate: todayString(), completed: "", problems: "", risks: "", next: "" });
   const [canonForm, setCanonForm] = useState({ decisionId: "", productGoal: "", engineeringFocus: "", architecture: "", addScope: "", addAvoid: "" });
@@ -325,7 +325,6 @@ function ConsoleApp() {
               onSubmitDoc={() => runAction(() => api("/pmai/docs", { method: "PATCH", body: JSON.stringify(buildDocPayload(docForm)) }), "Doc updated")} 
               onSyncDocs={() => runAction(() => api("/pmai/docs/sync", { method: "POST" }), "Directory synced")}
               onPruneDocs={() => runAction(() => api("/pmai/docs/prune", { method: "POST" }), "Archive pruned")}
-              decisions={decisions} 
             />
           )}
           {view === "decisions" && <DecisionsView decisions={decisions} decisionSearch={decisionSearch} decisionStatusFilter={decisionStatusFilter} setDecisionSearch={setDecisionSearch} setDecisionStatusFilter={setDecisionStatusFilter} decisionForm={decisionForm} setDecisionForm={setDecisionForm} busy={busy} onOpenIdea={handleOpenIdea} onCreateDecision={() => runAction(() => api("/pmai/decisions", { method: "POST", body: JSON.stringify(decisionForm) }), "Decision created")} onUpdateDecision={(id, s) => runAction(() => api(`/pmai/decisions/${id}`, { method: "PATCH", body: JSON.stringify({ status: s }) }), "Decision updated")} onCopyIntoCanon={id => { setCanonForm({...canonForm, decisionId: id}); setView("canon"); }} />}

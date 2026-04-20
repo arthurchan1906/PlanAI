@@ -5,10 +5,10 @@ from typing import Any, Dict, List
 
 from ...store import (
     audit_docs,
-    fetch_canon,
     build_context_pack,
     build_handoff_packet,
     build_next_action_packet,
+    fetch_canon,
     get_daily_note,
     get_dashboard_summary,
     get_git_recent_commits,
@@ -20,8 +20,8 @@ from ...store import (
     list_doc_records,
     list_ideas,
     list_links,
-    list_principles,
     list_plans,
+    list_principles,
     list_roadmaps,
     list_tasks,
     list_visions,
@@ -50,6 +50,12 @@ def _task_status_hint(task: Dict[str, Any], linked_commits: List[Dict[str, Any]]
     return "ready"
 
 
+def _doc_links_for_path(links: List[Dict[str, Any]], path: str) -> Dict[str, List[Dict[str, Any]]]:
+    outgoing = [item for item in links if item["source_type"] == "doc" and item["source_id"] == path]
+    incoming = [item for item in links if item["target_type"] == "doc" and item["target_id"] == path]
+    return {"outgoing": outgoing, "incoming": incoming}
+
+
 def build_web_bootstrap() -> Dict[str, Any]:
     canon = fetch_canon()
     visions = list_visions()
@@ -76,7 +82,8 @@ def build_web_bootstrap() -> Dict[str, Any]:
     decision_titles = {item["id"]: item["title"] for item in decisions}
     idea_titles = {item["id"]: item["title"] for item in ideas}
     canon_related_decisions = set(canon.get("related_decisions", []))
-    converted_links = list_links(relation="converted_to")
+    all_links = list_links()
+    converted_links = [item for item in all_links if item["relation"] == "converted_to"]
     source_ideas_by_target: Dict[str, Dict[str, str]] = {}
     for link in converted_links:
         if link.get("source_type") != "idea":
@@ -154,13 +161,19 @@ def build_web_bootstrap() -> Dict[str, Any]:
     web_docs = []
     invalid_truth_records = set(doc_audit.get("invalid_truth_records", []))
     obsolete_without_replacement = set(doc_audit.get("obsolete_without_replacement", []))
+    missing_from_fs = set(doc_audit.get("missing_from_fs", []))
+    path_not_normalized = set(doc_audit.get("path_not_normalized", []))
     for doc in docs:
         issues: List[str] = []
         if doc["path"] in invalid_truth_records:
             issues.append("invalid_truth_record")
         if doc["path"] in obsolete_without_replacement:
             issues.append("obsolete_without_replacement")
-        web_docs.append({**doc, "issues": issues})
+        if doc["path"] in missing_from_fs:
+            issues.append("missing_from_fs")
+        if doc["path"] in path_not_normalized:
+            issues.append("path_not_normalized")
+        web_docs.append({**doc, "issues": issues, "links": _doc_links_for_path(all_links, doc["path"])})
 
     plans_by_roadmap: Dict[str, List[Dict[str, Any]]] = {}
     for plan in plans:
