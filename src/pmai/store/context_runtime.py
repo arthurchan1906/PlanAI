@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Dict, List
 
 from .canon import fetch_canon
@@ -10,7 +11,7 @@ from .ideas import list_ideas
 from .plans import list_plans
 from .principles import list_active_principles
 from .roadmaps import list_roadmaps
-from .summary import get_inbox_summary
+from .summary import get_inbox_summary, get_status_snapshot
 from .tasks import list_tasks
 from .visions import get_active_vision
 from .docs import list_doc_records
@@ -165,6 +166,65 @@ def build_handoff_packet() -> Dict[str, Any]:
             for item in commits
         ],
         "recommended_actions": context.get("recommended_actions", [])[:5],
+    }
+
+
+def build_progress_packet() -> Dict[str, Any]:
+    status = get_status_snapshot()
+    next_packet = build_next_action_packet()
+    inbox = status.get("inbox", {}).get("counts", {})
+    mainline = next_packet.get("mainline", {})
+    active_task = mainline.get("task") or {}
+    active_plan = mainline.get("plan") or {}
+    in_progress_tasks = status.get("tasks", {}).get("in_progress", [])
+    recent_commits = status.get("recent_commits", {}).get("pmai", [])
+    recommended_actions = status.get("inbox", {}).get("recommended_actions", [])
+    git_status = status.get("git", {})
+
+    quick_commands: List[str] = []
+    if active_task.get("id"):
+        quick_commands.append(f"aipmc task show --id {active_task['id']}")
+    next_action = next_packet.get("next_action") or {}
+    if next_action.get("command"):
+        quick_commands.append(next_action["command"])
+    quick_commands.extend(
+        [
+            "aipmc status",
+            "aipmc next",
+            "aipmc inbox",
+        ]
+    )
+
+    return {
+        "as_of": datetime.now().isoformat(timespec="seconds"),
+        "health": {
+            "inbox_total": inbox.get("total", 0),
+            "git_dirty": bool(git_status.get("dirty")),
+            "in_progress_count": len(in_progress_tasks),
+            "has_next_action": bool(next_action),
+        },
+        "current_focus": {
+            "roadmap": mainline.get("roadmap"),
+            "plan": {
+                "id": active_plan.get("id"),
+                "title": active_plan.get("title"),
+                "status": active_plan.get("status"),
+                "next_manager_checkpoint": active_plan.get("next_manager_checkpoint", ""),
+            }
+            if active_plan
+            else None,
+            "task": active_task or None,
+            "next_action": next_action or None,
+        },
+        "execution": {
+            "in_progress_tasks": in_progress_tasks[:5],
+            "recent_commits": recent_commits[:5],
+        },
+        "manager_review": {
+            "counts": inbox,
+            "recommended_actions": recommended_actions[:5],
+        },
+        "quick_commands": list(dict.fromkeys(quick_commands)),
     }
 
 

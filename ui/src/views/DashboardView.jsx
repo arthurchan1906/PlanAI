@@ -1,4 +1,4 @@
-import { Badge, Button, Card, Col, Empty, List, Row, Space, Spin, Statistic, Tag, Typography } from "antd";
+import { Button, Card, Col, Empty, List, Row, Space, Spin, Statistic, Tag, Typography } from "antd";
 import { CompassOutlined, SafetyCertificateOutlined } from "@ant-design/icons";
 import PlanAttentionList from "../components/PlanAttentionList";
 
@@ -25,8 +25,8 @@ export default function DashboardView({
   onOpenDaily,
   onOpenPrinciples,
 }) {
-  const activeVision = visions.find(v => v.status === 'active');
-  const activePrinciples = principles.filter(p => p.status === 'active').slice(0, 5);
+  const activeVision = visions.find((vision) => vision.status === "active");
+  const activePrinciples = principles.filter((item) => item.status === "active").slice(0, 5);
   const recommendedActions = inbox?.recommended_actions || [];
   const inboxCounts = inbox?.counts || {};
   const canonMeta = inbox?.canon || {};
@@ -38,9 +38,17 @@ export default function DashboardView({
   const nextAction = nextPacket?.next_action || null;
   const handoffNext = handoff?.next || [];
   const handoffRisks = handoff?.risks || [];
-  const readyIdeas = (ideas || []).filter((idea) =>
-    ["ready_for_decision", "ready_for_task"].includes(idea.recommended_next_action)
-  ).slice(0, 5);
+  const readyIdeas = (ideas || [])
+    .filter((idea) => ["ready_for_decision", "ready_for_task"].includes(idea.recommended_next_action))
+    .slice(0, 5);
+  const managerPriorityTitle = recommendedActions[0]?.title || closureBlockers[0]?.title || nextAction?.title || "No active checkpoint";
+  const managerPriorityReason = recommendedActions[0]?.reason || nextAction?.reason || "No review blocker is currently highlighted.";
+  const managerFocusTags = [
+    inboxCounts.canon_followups ? `${inboxCounts.canon_followups} canon followups` : "",
+    closureBlockers.length ? `${closureBlockers.length} closure blockers` : "",
+    reviewQueue.length ? `${reviewQueue.length} evidence reviews` : "",
+    planAttention.length ? `${planAttention.length} plan checkpoints` : "",
+  ].filter(Boolean);
 
   function handleRecommendedAction(action) {
     if (action.kind === "decision_review") {
@@ -61,7 +69,9 @@ export default function DashboardView({
     }
     if (action.kind === "task_closure_blocker") {
       onOpenTasks?.();
+      return;
     }
+    onOpenTasks?.();
   }
 
   if (loading && !dashboard) {
@@ -75,75 +85,54 @@ export default function DashboardView({
   return (
     <div className="view-stack">
       {activeVision && (
-        <Card 
-          className="console-card vision-banner" 
+        <Card
+          className="console-card vision-banner"
           bordered={false}
           hoverable
           onClick={() => onOpenPrinciples?.()}
-          style={{ cursor: 'pointer' }}
+          style={{ cursor: "pointer" }}
         >
-          <Title level={4}><CompassOutlined /> 当前愿景: {activeVision.title}</Title>
+          <Title level={4}>
+            <CompassOutlined /> Active Vision: {activeVision.title}
+          </Title>
           <Paragraph type="secondary">{activeVision.summary}</Paragraph>
           <div className="tag-wrap">
             <Tag color="blue">{activeVision.horizon}</Tag>
-            <Text type="secondary">更新于 {activeVision.updated_at}</Text>
+            <Text type="secondary">Updated {activeVision.updated_at}</Text>
           </div>
         </Card>
       )}
 
+      <Card className="console-card" bordered={false}>
+        <Space direction="vertical" size={4}>
+          <Text strong>Human Review Workspace</Text>
+          <Text type="secondary">
+            This web UI is for human review and project management. AI coders should use `aipmc` in the terminal.
+          </Text>
+        </Space>
+      </Card>
+
       <Row gutter={[16, 16]}>
         <Col xs={24} md={12} xl={6}>
-          <Card 
-            className="console-card stat-card clickable-card" 
-            bordered={false}
-            hoverable
-            onClick={(e) => {
-              e.preventDefault();
-              onOpenTasks?.();
-            }}
-          >
-            <Statistic title="进行中任务" value={dashboard?.task_counts?.in_progress || 0} />
-            <Text type="secondary">总数 {dashboard?.task_counts?.total || 0}</Text>
+          <Card className="console-card stat-card clickable-card" bordered={false} hoverable onClick={() => onOpenTasks?.()}>
+            <Statistic title="In Progress Tasks" value={dashboard?.task_counts?.in_progress || 0} />
+            <Text type="secondary">Total {dashboard?.task_counts?.total || 0}</Text>
           </Card>
         </Col>
         <Col xs={24} md={12} xl={6}>
-          <Card 
-            className="console-card stat-card clickable-card" 
-            bordered={false}
-            hoverable
-            onClick={(e) => {
-              e.preventDefault();
-              onOpenDecisions?.();
-            }}
-          >
-            <Statistic title="待审批事项" value={inboxCounts.total || 0} />
-            <Text type="secondary">优先先看 inbox</Text>
+          <Card className="console-card stat-card clickable-card" bordered={false} hoverable onClick={() => onOpenDecisions?.()}>
+            <Statistic title="Inbox Items" value={inboxCounts.total || 0} />
+            <Text type="secondary">Use inbox as the review queue</Text>
           </Card>
         </Col>
         <Col xs={24} md={12} xl={6}>
-          <Card 
-            className="console-card stat-card clickable-card" 
-            bordered={false}
-            hoverable
-            onClick={(e) => {
-              e.preventDefault();
-              onOpenDecisions?.();
-            }}
-          >
-            <Statistic title="待决策" value={inboxCounts.proposed_decisions || 0} />
-            <Text type="secondary">显式 review 后再推进</Text>
+          <Card className="console-card stat-card clickable-card" bordered={false} hoverable onClick={() => onOpenDecisions?.()}>
+            <Statistic title="Proposed Decisions" value={inboxCounts.proposed_decisions || 0} />
+            <Text type="secondary">Review before execution continues</Text>
           </Card>
         </Col>
         <Col xs={24} md={12} xl={6}>
-          <Card 
-            className="console-card stat-card clickable-card" 
-            bordered={false}
-            hoverable
-            onClick={(e) => {
-              e.preventDefault();
-              onOpenTasks?.();
-            }}
-          >
+          <Card className="console-card stat-card clickable-card" bordered={false} hoverable onClick={() => onOpenTasks?.()}>
             <Statistic title="Active Plans" value={dashboard?.plan_counts?.active || 0} />
             <Text type="secondary">
               Auto {dashboard?.plan_counts?.auto_advance_ready || 0} / Review {dashboard?.plan_counts?.manager_review_required || 0}
@@ -151,42 +140,41 @@ export default function DashboardView({
           </Card>
         </Col>
         <Col xs={24} md={12} xl={6}>
-          <Card 
-            className="console-card stat-card clickable-card" 
-            bordered={false}
-            hoverable
-            onClick={(e) => {
-              e.preventDefault();
-              onOpenCanon?.();
-            }}
-          >
-            <Statistic title="规范同步" value={inboxCounts.canon_followups || 0} />
-            <Text type="secondary">已关联 {canonMeta.related_decisions_count || 0}</Text>
+          <Card className="console-card stat-card clickable-card" bordered={false} hoverable onClick={() => onOpenCanon?.()}>
+            <Statistic title="Canon Followups" value={inboxCounts.canon_followups || 0} />
+            <Text type="secondary">Linked decisions {canonMeta.related_decisions_count || 0}</Text>
           </Card>
         </Col>
       </Row>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={12}>
-          <Card className="console-card" title="AI Context" bordered={false}>
+          <Card className="console-card" title="Execution Focus" bordered={false}>
             <Space direction="vertical" size={8} style={{ width: "100%" }}>
-              <Text strong>{mainline?.roadmap?.title || "暂无主线 Roadmap"}</Text>
-              <Text type="secondary">{mainline?.plan?.title || "暂无激活 Plan"}</Text>
-              <Text>{mainline?.task?.title || "暂无当前任务"}</Text>
+              <Text strong>{mainline?.roadmap?.title || "No active roadmap"}</Text>
+              <Text type="secondary">{mainline?.plan?.title || "No active plan"}</Text>
+              <Text>{mainline?.task?.title || "No active task"}</Text>
               {!!mainline?.task?.last_note && <Text type="secondary">{mainline.task.last_note}</Text>}
               {!!narrative?.why_now && <Paragraph type="secondary" style={{ marginBottom: 0 }}>{narrative.why_now}</Paragraph>}
-              {!!narrative?.constraints_summary && <Text type="secondary">约束: {narrative.constraints_summary}</Text>}
-              {!!narrative?.governance_focus && <Text type="secondary">治理焦点: {narrative.governance_focus}</Text>}
+              {!!narrative?.constraints_summary && <Text type="secondary">Constraints: {narrative.constraints_summary}</Text>}
+              {!!narrative?.governance_focus && <Text type="secondary">Governance: {narrative.governance_focus}</Text>}
             </Space>
           </Card>
         </Col>
         <Col xs={24} xl={12}>
-          <Card className="console-card" title="Next / Handoff" bordered={false}>
+          <Card className="console-card" title="Manager Checkpoint" bordered={false}>
             <Space direction="vertical" size={8} style={{ width: "100%" }}>
-              <Text strong>{nextAction?.title || "暂无明确下一步"}</Text>
-              <Text type="secondary">{nextAction?.reason || "当前没有生成推荐动作。"}</Text>
+              <Text strong>{managerPriorityTitle}</Text>
+              <Text type="secondary">{managerPriorityReason}</Text>
+              {!!managerFocusTags.length && (
+                <div className="tag-wrap">
+                  {managerFocusTags.map((item) => (
+                    <Tag key={item} color="blue">{item}</Tag>
+                  ))}
+                </div>
+              )}
               {!!nextAction?.command && <Text code>{nextAction.command}</Text>}
-              {!!handoffNext.length && <Text type="secondary">交接建议：{handoffNext.join(" / ")}</Text>}
+              {!!handoffNext.length && <Text type="secondary">Handoff: {handoffNext.join(" / ")}</Text>}
             </Space>
           </Card>
         </Col>
@@ -194,7 +182,7 @@ export default function DashboardView({
 
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={16}>
-          <Card className="console-card" title="推荐动作" bordered={false}>
+          <Card className="console-card" title="Recommended Actions" bordered={false}>
             {recommendedActions.length ? (
               <List
                 dataSource={recommendedActions}
@@ -202,7 +190,7 @@ export default function DashboardView({
                   <List.Item
                     actions={[
                       <Button key="open" type="link" onClick={() => handleRecommendedAction(action)}>
-                        打开处理
+                        Open
                       </Button>,
                     ]}
                   >
@@ -219,7 +207,7 @@ export default function DashboardView({
                 )}
               />
             ) : (
-              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无推荐动作" />
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No recommended actions" />
             )}
           </Card>
         </Col>
@@ -229,11 +217,7 @@ export default function DashboardView({
               className="console-card"
               title="Ready Ideas"
               bordered={false}
-              extra={
-                <Button type="link" size="small" onClick={() => onOpenIdeas?.()}>
-                  打开想法池
-                </Button>
-              }
+              extra={<Button type="link" size="small" onClick={() => onOpenIdeas?.()}>Open ideas</Button>}
             >
               {readyIdeas.length ? (
                 <List
@@ -251,44 +235,36 @@ export default function DashboardView({
                   )}
                 />
               ) : (
-                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无 ready ideas" />
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No ready ideas" />
               )}
             </Card>
             <Card
               className="console-card"
-              title="活跃原则"
+              title="Active Principles"
               bordered={false}
-              extra={
-                <Button type="link" size="small" onClick={() => onOpenPrinciples?.()}>
-                  查看全部
-                </Button>
-              }
+              extra={<Button type="link" size="small" onClick={() => onOpenPrinciples?.()}>View all</Button>}
             >
               {activePrinciples.length ? (
                 <List
                   dataSource={activePrinciples}
-                  renderItem={(p) => (
+                  renderItem={(item) => (
                     <List.Item>
                       <Space direction="vertical" size={2}>
-                        <Text strong><SafetyCertificateOutlined /> {p.title}</Text>
-                        <Tag size="small">{p.kind}</Tag>
+                        <Text strong><SafetyCertificateOutlined /> {item.title}</Text>
+                        <Tag size="small">{item.kind}</Tag>
                       </Space>
                     </List.Item>
                   )}
                 />
               ) : (
-                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无活跃原则" />
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No active principles" />
               )}
             </Card>
             <Card
               className="console-card"
               title="Evidence Review"
               bordered={false}
-              extra={
-                <Button type="link" size="small" onClick={() => onOpenCommitAttention?.("needs_review")}>
-                  打开待审
-                </Button>
-              }
+              extra={<Button type="link" size="small" onClick={() => onOpenCommitAttention?.("needs_review")}>Open queue</Button>}
             >
               {reviewQueue.length ? (
                 <List
@@ -307,18 +283,14 @@ export default function DashboardView({
                   )}
                 />
               ) : (
-                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无待审 evidence" />
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No review evidence" />
               )}
             </Card>
             <Card
               className="console-card"
               title="Closure Blockers"
               bordered={false}
-              extra={
-                <Button type="link" size="small" onClick={() => onOpenTasks?.()}>
-                  打开任务
-                </Button>
-              }
+              extra={<Button type="link" size="small" onClick={() => onOpenTasks?.()}>Open tasks</Button>}
             >
               {closureBlockers.length ? (
                 <List
@@ -337,7 +309,7 @@ export default function DashboardView({
                   )}
                 />
               ) : (
-                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无收口阻塞" />
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No closure blockers" />
               )}
             </Card>
           </Space>
@@ -352,15 +324,15 @@ export default function DashboardView({
 
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={12}>
-          <Card className="console-card" title="基线快照" bordered={false}>
+          <Card className="console-card" title="Canon Snapshot" bordered={false}>
             {canon ? (
               <div className="canon-grid">
                 <div>
-                  <Text type="secondary">工程重点</Text>
-                  <Paragraph ellipsis={{ rows: 2 }}>{canon.engineering_focus || '未定义'}</Paragraph>
+                  <Text type="secondary">Engineering focus</Text>
+                  <Paragraph ellipsis={{ rows: 2 }}>{canon.engineering_focus || "Not set"}</Paragraph>
                 </div>
                 <div>
-                  <Text type="secondary">版本范围</Text>
+                  <Text type="secondary">Version scope</Text>
                   <div className="tag-wrap">
                     {(canon.version_scope || []).map((item) => (
                       <Tag key={item}>{item}</Tag>
@@ -369,13 +341,13 @@ export default function DashboardView({
                 </div>
               </div>
             ) : (
-              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无规范数据" />
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No canon data" />
             )}
           </Card>
         </Col>
         <Col xs={24} xl={12}>
           <Space direction="vertical" size={16} style={{ width: "100%" }}>
-            <Card className="console-card" title="今日关注" bordered={false}>
+            <Card className="console-card" title="Today Focus" bordered={false}>
               <List
                 dataSource={dashboard?.today_focus || []}
                 renderItem={(item) => (
@@ -383,7 +355,7 @@ export default function DashboardView({
                     <Text strong>{item}</Text>
                   </List.Item>
                 )}
-                locale={{ emptyText: "暂无关注项" }}
+                locale={{ emptyText: "No focus items" }}
               />
             </Card>
             <Card className="console-card" title="Handoff Risks" bordered={false}>
@@ -394,7 +366,7 @@ export default function DashboardView({
                     <Text type="secondary">{item}</Text>
                   </List.Item>
                 )}
-                locale={{ emptyText: "暂无交接风险" }}
+                locale={{ emptyText: "No handoff risks" }}
               />
             </Card>
           </Space>

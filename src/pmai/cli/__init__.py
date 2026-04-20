@@ -40,6 +40,9 @@ def main() -> None:
     elif args.command == "status":
         from pmai.store import get_status_snapshot
         run_local_command(get_status_snapshot)
+    elif args.command == "progress":
+        from pmai.store import build_progress_packet
+        run_local_command(build_progress_packet)
     elif args.command == "inbox":
         from pmai.store import get_inbox_summary
         run_local_command(get_inbox_summary)

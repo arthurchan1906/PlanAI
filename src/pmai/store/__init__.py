@@ -192,6 +192,7 @@ from .context_runtime import (
     build_context_pack,
     build_next_action_packet,
     build_handoff_packet,
+    build_progress_packet,
 )
 
 # 辅助函数
@@ -319,6 +320,7 @@ __all__ = [
     "build_context_pack",
     "build_next_action_packet",
     "build_handoff_packet",
+    "build_progress_packet",
     # 辅助
     "now_iso",
     "today",

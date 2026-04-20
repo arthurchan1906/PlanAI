@@ -372,8 +372,12 @@ export default function DocsView({ docs, docAudit, docForm, setDocForm, onSubmit
               remarkPlugins={[remarkGfm]}
               rehypePlugins={[rehypeHighlight]}
               components={{
-                code({ className, children, ...props }) {
-                  return <CodeBlock className={className}>{children}</CodeBlock>;
+                code({ className, children, inline, ...props }) {
+                  return (
+                    <CodeBlock className={className} inline={inline} {...props}>
+                      {children}
+                    </CodeBlock>
+                  );
                 },
                 a({ href, children, ...props }) {
                   return (

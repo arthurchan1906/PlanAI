@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Spin } from "antd";
 import mermaid from "mermaid";
 
@@ -11,7 +11,6 @@ mermaid.initialize({
 });
 
 export default function MermaidRenderer({ chart }) {
-  const containerRef = useRef(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [svg, setSvg] = useState(null);
@@ -20,7 +19,14 @@ export default function MermaidRenderer({ chart }) {
     let mounted = true;
 
     async function renderMermaid() {
-      if (!chart || !containerRef.current) return;
+      if (!chart || !String(chart).trim()) {
+        if (mounted) {
+          setSvg(null);
+          setError(null);
+          setLoading(false);
+        }
+        return;
+      }
 
       setLoading(true);
       setError(null);
@@ -86,7 +92,6 @@ export default function MermaidRenderer({ chart }) {
 
   return (
     <div
-      ref={containerRef}
       className="mermaid-diagram"
       style={{
         margin: "1.5em 0",

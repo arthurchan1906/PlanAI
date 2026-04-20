@@ -13,6 +13,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("info")
     subparsers.add_parser("doctor")
     subparsers.add_parser("status")
+    subparsers.add_parser("progress")
     subparsers.add_parser("inbox")
     subparsers.add_parser("context")
     subparsers.add_parser("next")

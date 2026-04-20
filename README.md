@@ -8,10 +8,10 @@ AI-first product baseline:
 Current rebuild status:
 - [docs/rebuild-status.md](docs/rebuild-status.md)
 
-It installs these command-line entry points:
+It installs these entry points:
 
-- `aipmc`: CLI management commands
-- `aipmv`: local web viewer
+- `aipmc`: CLI for AI coders and automation
+- `aipmv`: local web UI for human review and project management
 
 ## Install
 
@@ -38,7 +38,13 @@ python -m pmai.run
 
 This is especially useful on macOS when the Python scripts directory is not in `PATH`.
 
-## Common commands
+## Role split
+
+- `aipmc` is for AI coders. Use it inside agent workflows, scripts, and terminal-driven implementation.
+- `aipmv` is for humans. Use it for review, inspection, and project-manager-facing decisions.
+- Do not treat `aipmc` and `aipmv` as interchangeable entry points. They serve different users on purpose.
+
+## Common AI coder commands
 
 ```bash
 aipmc init
@@ -61,10 +67,20 @@ aipmc commit add --title "Implement task" --summary "..." --auto-git
 aipmc commit update --id <commit-id> --status committed --review-status approved
 aipmc task update --id <task-id> --status done
 aipmc daily replace --completed "..." --problems "..." --risks "..." --next "..."
+```
+
+## Human review entry
+
+```bash
 aipmv
 ```
 
-`aipmc inbox` aggregates the current items that usually still need human attention:
+Use `aipmv` when a human needs to:
+- inspect the current mainline
+- review decisions, commits, and blockers
+- manage canon, docs, and daily notes through the web UI
+
+`aipmc inbox` is still a CLI aggregation for the coding agent, not the primary PM interface:
 - proposed decisions
 - accepted decisions that still imply canon follow-up
 - committed changes waiting for review
