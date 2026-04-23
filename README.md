@@ -43,11 +43,15 @@ This is especially useful on macOS when the Python scripts directory is not in `
 - `aipmc` is for AI coders. Use it inside agent workflows, scripts, and terminal-driven implementation.
 - `aipmv` is for humans. Use it for review, inspection, and project-manager-facing decisions.
 - Do not treat `aipmc` and `aipmv` as interchangeable entry points. They serve different users on purpose.
+- AI coders should run `aipmc start` before implementation.
 
 ## Common AI coder commands
 
 ```bash
 aipmc init
+aipmc start
+aipmc agent guide
+aipmc search "topic or feature name"
 aipmc help
 aipmc info
 aipmc context
@@ -63,10 +67,15 @@ aipmc decision review --id <decision-id> --status accepted
 aipmc feedback add --label bug --content "登录页面验证码不显示"
 aipmc task list --status in_progress
 aipmc commit list --task-id <task-id>
+aipmc commit list --since today --limit 10 --compact
 aipmc commit add --title "Implement task" --summary "..." --auto-git
 aipmc commit update --id <commit-id> --status committed --review-status approved
 aipmc task update --id <task-id> --status done
+aipmc task note --id <task-id> --content "Design note"
+aipmc task notes --id <task-id>
 aipmc daily replace --completed "..." --problems "..." --risks "..." --next "..."
+aipmc daily close --from-commits --from-tasks
+aipmc session close --completed "..." --from-commits --from-tasks
 ```
 
 ## Human review entry

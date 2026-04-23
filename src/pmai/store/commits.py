@@ -40,6 +40,8 @@ def list_commits(
     status: Optional[str] = None,
     task_id: Optional[str] = None,
     decision_id: Optional[str] = None,
+    since: Optional[str] = None,
+    limit: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     conn = get_connection()
     try:
@@ -55,9 +57,17 @@ def list_commits(
         if decision_id:
             where_clauses.append("decision_id = ?")
             params.append(decision_id)
+        if since:
+            if since == "today":
+                since = today()
+            where_clauses.append("created_at >= ?")
+            params.append(since)
         if where_clauses:
             query += " WHERE " + " AND ".join(where_clauses)
         query += " ORDER BY created_at DESC, id DESC"
+        if limit is not None and limit > 0:
+            query += " LIMIT ?"
+            params.append(limit)
         rows = conn.execute(query, params).fetchall()
         return [
             {

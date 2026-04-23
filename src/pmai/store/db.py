@@ -180,6 +180,15 @@ def ensure_runtime_schema(conn: sqlite3.Connection) -> None:
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS task_notes (
+            id TEXT PRIMARY KEY,
+            task_id TEXT NOT NULL,
+            content TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(task_id) REFERENCES tasks(id)
+        );
         """
     )
 
@@ -273,6 +282,23 @@ def _migrate_database(conn: sqlite3.Connection) -> None:
                     WHEN updated_at = '' THEN created_at
                     ELSE updated_at
                 END
+            """
+        )
+        conn.commit()
+    except Exception:
+        pass
+
+    try:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS task_notes (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                content TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(task_id) REFERENCES tasks(id)
+            )
             """
         )
         conn.commit()

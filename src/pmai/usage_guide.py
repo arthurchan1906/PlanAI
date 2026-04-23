@@ -76,36 +76,37 @@ Does it need approval?
 
 # Phase 1: Understand Context (Read-Only)
 
-Before writing code, understand the project state:
+Before writing code, run one command:
 
 ```bash
-# 1. Load the compressed project context for the coding agent
+aipmc start
+```
+
+`aipmc init` writes a short root `AGENTS.md` reminder for AI CLIs. If it is missing, restore it with:
+
+```bash
+aipmc agent guide
+```
+
+If you are about to create a task or document, search first:
+
+```bash
+aipmc search "topic or feature name"
+```
+
+Optional deeper checks:
+
+```bash
 aipmc context
-
-# 2. Ask for the next best action on the current mainline
 aipmc next
-
-# 3. Get a concise progress packet for the coding agent
 aipmc progress
-
-# 4. Get a full project dashboard (Tasks, Daily, Inbox, Recent Commits)
 aipmc status
-
-# 5. Check project overview and runtime paths
 aipmc info
-
-# 6. Read project canon (product goals, engineering focus, architecture)
 aipmc canon show
-
-# 7. Review active tasks and pending decisions
 aipmc task list --status todo
 aipmc task list --status in_progress
 aipmc decision list --status proposed
-
-# 8. Check inbox for items needing attention
 aipmc inbox
-
-# 9. Review technical principles and constraints
 aipmc principle list
 aipmc link list
 ```
@@ -115,17 +116,23 @@ aipmc link list
 When starting a new task:
 
 ```bash
-# 1. Create a task with clear acceptance criteria
+# 1. Search first. Prefer continuing existing work.
+aipmc search "Implement user authentication"
+
+# 2. Create a task only if no existing task/doc/decision fits
 aipmc task add --title "Implement user authentication" --acceptance "User can login with email/password"
 
-# 2. Record any decisions needed
+# 3. Record any decisions needed
 aipmc decision add --title "Use JWT for auth tokens" --background "Need stateless auth" --decision "JWT with 24h expiry"
 
-# 3. Link task to relevant decision
+# 4. Link task to relevant decision
 aipmc link add --source-type decision --source-id <decision-id> --relation implies --target-type task --target-id <task-id>
 
-# 4. Update task status to in_progress
+# 5. Update task status to in_progress
 aipmc task update --id <task-id> --status in_progress
+aipmc task update --id <task-id> --status in_progress --note "..." --append-note
+aipmc task note --id <task-id> --content "Design note"
+aipmc task notes --id <task-id>
 ```
 
 ### Phase 3: Implement Code (Write)
@@ -166,6 +173,9 @@ End of work session:
 ```bash
 # Record daily progress
 aipmc daily close --completed "Implemented user login" --problems "None" --risks "Need to add password reset" --next "Start password reset flow"
+aipmc daily close --completed "Implemented API" --completed "Updated tests"
+aipmc daily close --from-commits --from-tasks
+aipmc session close --completed "Finished current slice" --from-commits --from-tasks
 ```
 
 ---
@@ -302,6 +312,7 @@ aipmc decision show --id <decision-id>
 aipmc commit list
 aipmc commit list --task-id <task-id>
 aipmc commit list --status committed
+aipmc commit list --since today --limit 10 --compact
 aipmc commit show --id <commit-id>
 
 # Ideas (suggestions for future)
@@ -366,6 +377,8 @@ aipmc idea review --id <idea-id> --status accepted
 # Daily notes
 aipmc daily close --completed "Done today" --problems "Issues" --risks "Risks" --next "Next steps"
 aipmc daily replace --completed "..." --problems "..." --risks "..." --next "..."
+aipmc daily close --from-commits --from-tasks
+aipmc session close --task-id <task-id> --note "Session summary" --from-commits --from-tasks
 
 # Canon update
 aipmc canon update --decision-id <decision-id> --product-goal "..." --engineering-focus "..." --architecture "..."

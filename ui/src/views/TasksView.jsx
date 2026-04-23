@@ -58,6 +58,15 @@ export default function TasksView({
     return byLane;
   }, [filteredTasks]);
 
+  const roadmapTitleById = useMemo(
+    () => new Map((roadmaps || []).map((roadmap) => [roadmap.id, roadmap.title])),
+    [roadmaps],
+  );
+  const planTitleById = useMemo(
+    () => new Map((plans || []).map((plan) => [plan.id, plan.title])),
+    [plans],
+  );
+
   return (
     <div className="view-stack">
       <Card className="console-card" title="登记执行任务" bordered={false}>
@@ -178,6 +187,8 @@ export default function TasksView({
                           <Space wrap>
                             <Tag>{task.priority}</Tag>
                             <Tag>{task.phase}</Tag>
+                            {!!task.roadmap_id && <Tag color="blue">roadmap: {roadmapTitleById.get(task.roadmap_id) || task.roadmap_id}</Tag>}
+                            {!!task.plan_id && <Tag color="cyan">plan: {planTitleById.get(task.plan_id) || task.plan_id}</Tag>}
                             <Text type="secondary">{task.id}</Text>
                           </Space>
                           <Text strong>{task.title}</Text>

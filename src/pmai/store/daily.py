@@ -137,3 +137,45 @@ def replace_daily_note(payload: Dict[str, Any], note_date: Optional[str] = None)
         return get_daily_note(target_date)
     finally:
         conn.close()
+
+
+def build_daily_summary_from_activity(
+    *,
+    include_commits: bool = False,
+    include_tasks: bool = False,
+    note_date: Optional[str] = None,
+) -> Dict[str, List[str]]:
+    target_date = note_date or today()
+    payload: Dict[str, List[str]] = {
+        "completed": [],
+        "problems": [],
+        "risks": [],
+        "next": [],
+    }
+
+    if include_commits:
+        from .commits import list_commits
+
+        commits = list_commits(since=target_date)
+        for commit in commits:
+            title = commit["title"]
+            status = commit["status"]
+            review = commit["review_status"]
+            tests = commit["test_status"]
+            payload["completed"].append(f"Commit: {title} ({status}, review={review}, tests={tests})")
+            if tests not in ("passed", "not_applicable"):
+                payload["risks"].append(f"Verification pending for commit {commit['id']}: test_status={tests}")
+            if review != "approved":
+                payload["risks"].append(f"Review pending for commit {commit['id']}: review_status={review}")
+
+    if include_tasks:
+        from .tasks import list_tasks
+
+        in_progress = list_tasks(status="in_progress")
+        blocked = list_tasks(status="blocked")
+        for task in in_progress[:5]:
+            payload["next"].append(f"Continue task {task['id']}: {task['title']}")
+        for task in blocked[:5]:
+            payload["problems"].append(f"Blocked task {task['id']}: {task['title']}")
+
+    return payload

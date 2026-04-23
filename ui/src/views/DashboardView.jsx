@@ -151,9 +151,25 @@ export default function DashboardView({
         <Col xs={24} xl={12}>
           <Card className="console-card" title="Execution Focus" bordered={false}>
             <Space direction="vertical" size={8} style={{ width: "100%" }}>
-              <Text strong>{mainline?.roadmap?.title || "No active roadmap"}</Text>
-              <Text type="secondary">{mainline?.plan?.title || "No active plan"}</Text>
-              <Text>{mainline?.task?.title || "No active task"}</Text>
+              <div className="mainline-flow">
+                <div className="mainline-step">
+                  <Text type="secondary">Roadmap</Text>
+                  <Text strong>{mainline?.roadmap?.title || "No active roadmap"}</Text>
+                  {!!mainline?.roadmap?.status && <Tag color="blue">{mainline.roadmap.status}</Tag>}
+                </div>
+                <div className="mainline-flow__arrow">→</div>
+                <div className="mainline-step">
+                  <Text type="secondary">Plan</Text>
+                  <Text strong>{mainline?.plan?.title || "No active plan"}</Text>
+                  {!!mainline?.plan?.status && <Tag color="gold">{mainline.plan.status}</Tag>}
+                </div>
+                <div className="mainline-flow__arrow">→</div>
+                <div className="mainline-step mainline-step--task">
+                  <Text type="secondary">Task</Text>
+                  <Text strong>{mainline?.task?.title || "No active task"}</Text>
+                  {!!mainline?.task?.status && <Tag color="green">{mainline.task.status}</Tag>}
+                </div>
+              </div>
               {!!mainline?.task?.last_note && <Text type="secondary">{mainline.task.last_note}</Text>}
               {!!narrative?.why_now && <Paragraph type="secondary" style={{ marginBottom: 0 }}>{narrative.why_now}</Paragraph>}
               {!!narrative?.constraints_summary && <Text type="secondary">Constraints: {narrative.constraints_summary}</Text>}

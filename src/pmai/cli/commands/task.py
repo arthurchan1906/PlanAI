@@ -3,8 +3,10 @@ from __future__ import annotations
 import argparse
 
 from ...store import (
+    append_task_note,
     create_task,
     get_task,
+    list_task_notes,
     list_tasks,
     update_task,
 )
@@ -39,8 +41,13 @@ def handle_task(args: argparse.Namespace) -> None:
                     allow_without_commit=args.allow_without_commit,
                     roadmap_id=args.roadmap_id,
                     plan_id=args.plan_id,
+                    append_note=args.append_note,
                 )
         )
+    elif args.task_command == "note":
+        run_local_command(lambda: append_task_note(args.id, args.content))
+    elif args.task_command == "notes":
+        run_local_command(lambda: list_task_notes(args.id, args.limit))
     elif args.task_command == "plan":
         from ...store import plan_task
         run_local_command(lambda: plan_task(args.id, args.steps))

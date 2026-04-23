@@ -69,6 +69,8 @@ from .tasks import (
     get_task,
     create_task,
     update_task,
+    append_task_note,
+    list_task_notes,
     plan_task,
     update_task_checkpoint,
     get_module_progress,
@@ -169,6 +171,7 @@ from .daily import (
     list_daily_notes,
     append_daily_note,
     replace_daily_note,
+    build_daily_summary_from_activity,
 )
 
 # Canon 管理
@@ -193,6 +196,11 @@ from .context_runtime import (
     build_next_action_packet,
     build_handoff_packet,
     build_progress_packet,
+)
+
+from .agent_runtime import (
+    build_agent_start_packet,
+    search_project_context,
 )
 
 # 辅助函数
@@ -243,6 +251,8 @@ __all__ = [
     "get_task",
     "create_task",
     "update_task",
+    "append_task_note",
+    "list_task_notes",
     "plan_task",
     "update_task_checkpoint",
     "get_module_progress",
@@ -306,6 +316,7 @@ __all__ = [
     "list_daily_notes",
     "append_daily_note",
     "replace_daily_note",
+    "build_daily_summary_from_activity",
     # Canon
     "fetch_canon",
     "update_canon",
@@ -321,6 +332,8 @@ __all__ = [
     "build_next_action_packet",
     "build_handoff_packet",
     "build_progress_packet",
+    "build_agent_start_packet",
+    "search_project_context",
     # 辅助
     "now_iso",
     "today",

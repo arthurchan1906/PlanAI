@@ -9,6 +9,7 @@ import sys
 from typing import Any
 
 from ...bootstrap import bootstrap_project_db
+from ...agent_guide import write_agent_guide
 from ...feedback_api import get_feedback_base_url
 from ...store import (
     describe_runtime,
@@ -34,7 +35,18 @@ def init_project(args: argparse.Namespace) -> None:
         save_runtime_config({})
     bootstrap_project_db()
     write_usage_file()
-    print("Initialized .pmai")
+    agent_guide = write_agent_guide(force=args.force_agent_guide)
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "message": "Initialized .pmai",
+                "agent_guide": agent_guide,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
 
 
 def show_info() -> None:

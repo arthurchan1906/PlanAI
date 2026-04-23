@@ -11,6 +11,7 @@ from .link import handle_link
 from .plan import handle_plan
 from .principle import handle_principle
 from .project import init_project, run_local_command, run_remote_command, show_doctor, show_help_text, show_info
+from .session import handle_session
 from .task import handle_task
 from .vision import handle_vision
 
@@ -27,6 +28,7 @@ __all__ = [
     "handle_link",
     "handle_plan",
     "handle_principle",
+    "handle_session",
     "handle_task",
     "handle_vision",
     "init_project",

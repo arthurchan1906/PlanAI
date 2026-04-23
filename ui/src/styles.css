@@ -261,6 +261,308 @@ body {
   gap: 8px;
 }
 
+.mainline-flow,
+.roadmap-evolution {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: stretch;
+  gap: 12px;
+  width: 100%;
+}
+
+.mainline-step,
+.evolution-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid rgba(88, 125, 176, 0.14);
+  border-radius: 16px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(239, 247, 255, 0.92));
+}
+
+.mainline-step--task,
+.evolution-stage--roadmap {
+  border-color: rgba(47, 111, 236, 0.28);
+  background:
+    radial-gradient(circle at top right, rgba(47, 111, 236, 0.14), transparent 34%),
+    linear-gradient(145deg, #ffffff, #eef6ff);
+}
+
+.mainline-flow__arrow,
+.evolution-arrow {
+  display: grid;
+  place-items: center;
+  color: #4976bf;
+  font-size: 24px;
+  font-weight: 800;
+}
+
+.roadmap-evolution {
+  margin-bottom: 18px;
+}
+
+.roadmap-tree-section {
+  margin-top: 18px;
+}
+
+.roadmap-tree-collapse,
+.plan-stack-collapse,
+.plan-tree-collapse,
+.task-tree-collapse {
+  border: none;
+  background: transparent;
+}
+
+.roadmap-tree-collapse .ant-collapse-item,
+.plan-stack-collapse .ant-collapse-item,
+.plan-tree-collapse .ant-collapse-item,
+.task-tree-collapse .ant-collapse-item {
+  margin-bottom: 4px;
+  overflow: visible;
+  border: none;
+  border-radius: 0 !important;
+  background: transparent;
+}
+
+.roadmap-tree-collapse > .ant-collapse-item {
+  border: none;
+  background: transparent;
+}
+
+.roadmap-tree-collapse .ant-collapse-header {
+  align-items: center !important;
+  border-radius: 12px !important;
+  background: linear-gradient(90deg, rgba(47, 111, 236, 0.08), rgba(255, 255, 255, 0));
+}
+
+.roadmap-tree-collapse .ant-collapse-content,
+.plan-stack-collapse .ant-collapse-content,
+.task-tree-collapse .ant-collapse-content {
+  border-top: none;
+  background: transparent;
+}
+
+.plan-stack-collapse {
+  position: relative;
+  padding-left: 30px;
+}
+
+.plan-stack-collapse::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 12px;
+  width: 1px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(47, 111, 236, 0.48), rgba(47, 111, 236, 0.04));
+}
+
+.task-tree-collapse {
+  position: relative;
+  padding-left: 30px;
+}
+
+.task-tree-collapse::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 12px;
+  width: 1px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(39, 174, 96, 0.36), rgba(39, 174, 96, 0.04));
+}
+
+.tree-node-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  padding: 5px 4px;
+  border-radius: 10px;
+  transition: background 0.16s ease;
+}
+
+.tree-node-row:hover {
+  background: rgba(47, 111, 236, 0.05);
+}
+
+.tree-node-row--roadmap {
+  padding-block: 2px;
+}
+
+.tree-node-row--plan {
+  position: relative;
+  padding-left: 16px;
+}
+
+.tree-node-row--plan::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: -22px;
+  width: 20px;
+  height: 1px;
+  transform: translateY(-50%);
+  background: rgba(47, 111, 236, 0.45);
+}
+
+.tree-node-row--task {
+  position: relative;
+  padding-left: 16px;
+}
+
+.tree-node-row--task::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: -22px;
+  width: 20px;
+  height: 1px;
+  transform: translateY(-50%);
+  background: rgba(39, 174, 96, 0.38);
+}
+
+.tree-node-row .ant-typography {
+  word-break: break-word;
+}
+
+.tree-node-meta {
+  justify-content: flex-end;
+}
+
+.tree-related-context {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border-left: 3px solid rgba(47, 111, 236, 0.16);
+  background: rgba(247, 250, 255, 0.68);
+}
+
+.tree-artifact-row {
+  display: grid;
+  grid-template-columns: 76px 1fr;
+  align-items: start;
+  gap: 10px;
+}
+
+.tree-doc-tag {
+  cursor: pointer;
+}
+
+.plan-breakdown-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+.plan-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border: 1px solid rgba(88, 125, 176, 0.14);
+  border-radius: 18px;
+  padding: 14px;
+  background:
+    radial-gradient(circle at top left, rgba(73, 118, 191, 0.12), transparent 34%),
+    rgba(255, 255, 255, 0.96);
+}
+
+.plan-breakdown__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.plan-breakdown__checkpoint {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 247, 230, 0.9);
+}
+
+.decomposition-lane {
+  display: grid;
+  grid-template-columns: 56px 18px minmax(0, 1fr);
+  gap: 10px;
+  align-items: stretch;
+}
+
+.decomposition-node {
+  display: grid;
+  place-items: center;
+  min-height: 72px;
+  border-radius: 14px;
+  background: #173d76;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  writing-mode: vertical-rl;
+}
+
+.decomposition-branch {
+  position: relative;
+}
+
+.decomposition-branch::before {
+  content: "";
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: linear-gradient(180deg, #2f6fec, rgba(47, 111, 236, 0.16));
+}
+
+.decomposition-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.decomposition-task {
+  position: relative;
+  padding: 12px;
+  border: 1px solid rgba(88, 125, 176, 0.12);
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.decomposition-task::before {
+  content: "";
+  position: absolute;
+  top: 20px;
+  left: -20px;
+  width: 20px;
+  height: 2px;
+  background: rgba(47, 111, 236, 0.45);
+}
+
+.plan-summary-compact {
+  border-top: 1px dashed rgba(88, 125, 176, 0.22);
+  padding-top: 10px;
+}
+
+.unplanned-task-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(255, 251, 230, 0.78);
+}
+
 .board-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -420,6 +722,20 @@ body {
 
   .board-grid {
     grid-template-columns: 1fr;
+  }
+
+  .mainline-flow,
+  .roadmap-evolution {
+    grid-template-columns: 1fr;
+  }
+
+  .mainline-flow__arrow,
+  .evolution-arrow {
+    transform: rotate(90deg);
+  }
+
+  .plan-breakdown__head {
+    flex-direction: column;
   }
 }
 
@@ -783,5 +1099,3 @@ body {
     color: #e2e8f0;
   }
 }
-
-

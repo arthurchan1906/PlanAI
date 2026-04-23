@@ -268,6 +268,9 @@ function ConsoleApp() {
               plans={plans}
               visions={visions}
               tasks={tasks}
+              commits={commits}
+              docs={docs}
+              ideas={ideas}
               busy={busy}
               onCreateRoadmap={(payload) => runAction(() => api("/pmai/roadmaps", { method: "POST", body: JSON.stringify(payload) }), "Roadmap created")}
               onGeneratePlan={(payload) => runAction(() => api("/pmai/plans/generate", { method: "POST", body: JSON.stringify(payload) }), payload.create_tasks ? "Plan and tasks generated" : "Plan generated")}
@@ -316,14 +319,15 @@ function ConsoleApp() {
             />
           )}
           {view === "docs" && (
-            <DocsView 
-              docs={docs} 
-              docAudit={docAudit} 
-              docForm={docForm} 
-              setDocForm={setDocForm} 
-              busy={busy} 
-              onSubmitDoc={() => runAction(() => api("/pmai/docs", { method: "PATCH", body: JSON.stringify(buildDocPayload(docForm)) }), "Doc updated")} 
+            <DocsView
+              docs={docs}
+              docAudit={docAudit}
+              docForm={docForm}
+              setDocForm={setDocForm}
+              busy={busy}
+              onSubmitDoc={() => runAction(() => api("/pmai/docs", { method: "PATCH", body: JSON.stringify(buildDocPayload(docForm)) }), "Doc updated")}
               onSyncDocs={() => runAction(() => api("/pmai/docs/sync", { method: "POST" }), "Directory synced")}
+              onRepairDocs={() => runAction(() => api("/pmai/docs/repair", { method: "POST" }), "Doc records repaired")}
               onPruneDocs={() => runAction(() => api("/pmai/docs/prune", { method: "POST" }), "Archive pruned")}
             />
           )}

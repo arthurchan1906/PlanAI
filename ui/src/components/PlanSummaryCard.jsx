@@ -4,9 +4,8 @@ import { statusColor } from "../lib/planView";
 
 const { Text } = Typography;
 
-export default function PlanSummaryCard({ plan, busy, onAdvancePlan }) {
-  return (
-    <List.Item>
+export default function PlanSummaryCard({ plan, busy, onAdvancePlan, compact = false }) {
+  const content = (
       <Space direction="vertical" size={2} style={{ width: "100%" }}>
         <Space wrap>
           <Tag color={statusColor(plan.status)}>{plan.status}</Tag>
@@ -40,6 +39,13 @@ export default function PlanSummaryCard({ plan, busy, onAdvancePlan }) {
           </details>
         )}
       </Space>
+  );
+  if (compact) {
+    return <div className="plan-summary-compact">{content}</div>;
+  }
+  return (
+    <List.Item>
+      {content}
     </List.Item>
   );
 }

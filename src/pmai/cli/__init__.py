@@ -14,6 +14,7 @@ from .commands import (
     handle_link,
     handle_plan,
     handle_principle,
+    handle_session,
     handle_task,
     handle_vision,
     init_project,
@@ -30,6 +31,10 @@ def main() -> None:
     args = parser.parse_args()
     if args.command == "init":
         init_project(args)
+    elif args.command == "agent":
+        if args.agent_command == "guide":
+            from pmai.agent_guide import write_agent_guide
+            run_local_command(lambda: write_agent_guide(force=args.force))
     elif args.command == "help":
         show_help_text()
     elif args.command == "info":
@@ -40,6 +45,12 @@ def main() -> None:
     elif args.command == "status":
         from pmai.store import get_status_snapshot
         run_local_command(get_status_snapshot)
+    elif args.command == "start":
+        from pmai.store import build_agent_start_packet
+        run_local_command(build_agent_start_packet)
+    elif args.command == "search":
+        from pmai.store import search_project_context
+        run_local_command(lambda: search_project_context(args.query, args.limit))
     elif args.command == "progress":
         from pmai.store import build_progress_packet
         run_local_command(build_progress_packet)
@@ -81,6 +92,8 @@ def main() -> None:
         handle_commit(args)
     elif args.command == "daily":
         handle_daily(args)
+    elif args.command == "session":
+        handle_session(args)
     elif args.command == "docs":
         handle_doc(args)
     elif args.command == "feedback":

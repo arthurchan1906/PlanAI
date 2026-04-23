@@ -154,6 +154,16 @@ def get_task(task_id: str) -> Dict[str, Any]:
             for file_path in commit.get("files", []):
                 if file_path not in changed_files:
                     changed_files.append(file_path)
+        note_rows = conn.execute(
+            """
+            SELECT id, content, mode, created_at
+            FROM task_notes
+            WHERE task_id = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT 10
+            """,
+            (task_id,),
+        ).fetchall()
         return {
             "task": {
                 "id": row["id"],
@@ -170,6 +180,15 @@ def get_task(task_id: str) -> Dict[str, Any]:
                 "last_note": row["last_note"] or "",
                 "updated_at": row["updated_at"],
             },
+            "note_history": [
+                {
+                    "id": note["id"],
+                    "content": note["content"],
+                    "mode": note["mode"],
+                    "created_at": note["created_at"],
+                }
+                for note in note_rows
+            ],
             "linked_commits": linked_commits,
             "links": list_links_for_entity(task_id),
             "changed_files": changed_files,
@@ -217,6 +236,77 @@ def create_task(payload: Dict[str, Any]) -> Dict[str, Any]:
         conn.close()
 
 
+def _insert_task_note(conn, task_id: str, content: str, mode: str) -> None:
+    if not content.strip():
+        return
+    conn.execute(
+        """
+        INSERT INTO task_notes (id, task_id, content, mode, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (slug("task-note"), task_id, content.strip(), mode, now_iso()),
+    )
+
+
+def append_task_note(task_id: str, content: str) -> Dict[str, Any]:
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if not row:
+            raise KeyError(task_id)
+        content = content.strip()
+        if not content:
+            raise ValueError("note content cannot be empty")
+        next_note = f"{row['last_note'].rstrip()}\n\n{content}" if row["last_note"] else content
+        _insert_task_note(conn, task_id, content, "append")
+        conn.execute(
+            "UPDATE tasks SET last_note = ?, updated_at = ? WHERE id = ?",
+            (next_note, today(), task_id),
+        )
+        conn.commit()
+        return get_task(task_id)
+    finally:
+        conn.close()
+
+
+def list_task_notes(task_id: str, limit: int = 20) -> Dict[str, Any]:
+    conn = get_connection()
+    try:
+        task = conn.execute("SELECT id, title, status, last_note FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if not task:
+            raise KeyError(task_id)
+        rows = conn.execute(
+            """
+            SELECT id, task_id, content, mode, created_at
+            FROM task_notes
+            WHERE task_id = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (task_id, max(limit, 1)),
+        ).fetchall()
+        return {
+            "task": {
+                "id": task["id"],
+                "title": task["title"],
+                "status": task["status"],
+                "last_note": task["last_note"] or "",
+            },
+            "notes": [
+                {
+                    "id": row["id"],
+                    "task_id": row["task_id"],
+                    "content": row["content"],
+                    "mode": row["mode"],
+                    "created_at": row["created_at"],
+                }
+                for row in rows
+            ],
+        }
+    finally:
+        conn.close()
+
+
 def update_task(
     task_id: str,
     status: str,
@@ -224,6 +314,7 @@ def update_task(
     allow_without_commit: bool = False,
     roadmap_id: Optional[str] = None,
     plan_id: Optional[str] = None,
+    append_note: bool = False,
 ) -> Dict[str, Any]:
     conn = get_connection()
     try:
@@ -250,7 +341,11 @@ def update_task(
                     "(status=committed|merged, review_status=approved, test_status=passed) linked by --task-id"
                 )
 
-        updates: List[Any] = [status, note, today()]
+        next_note = note
+        if append_note and note:
+            next_note = f"{row['last_note'].rstrip()}\n\n{note.strip()}" if row["last_note"] else note.strip()
+
+        updates: List[Any] = [status, next_note, today()]
         set_clauses = ["status = ?", "last_note = ?", "updated_at = ?"]
 
         if roadmap_id is not None:
@@ -265,6 +360,8 @@ def update_task(
             f"UPDATE tasks SET {', '.join(set_clauses)} WHERE id = ?",
             updates,
         )
+        if note:
+            _insert_task_note(conn, task_id, note, "append" if append_note else "replace")
         conn.commit()
         return get_task(task_id)["task"]
     finally:

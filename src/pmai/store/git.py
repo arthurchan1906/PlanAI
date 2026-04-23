@@ -35,11 +35,12 @@ def _normalize_git_path(value: str) -> str:
 def _normalize_file_list(values: List[str]) -> List[str]:
     files: List[str] = []
     for value in values:
-        candidate = _normalize_git_path(value)
-        if not candidate:
-            continue
-        if candidate not in files:
-            files.append(candidate)
+        for part in str(value).replace("\n", ",").split(","):
+            candidate = _normalize_git_path(part)
+            if not candidate:
+                continue
+            if candidate not in files:
+                files.append(candidate)
     return files
 
 
