@@ -261,6 +261,15 @@ body {
   gap: 8px;
 }
 
+.tag-wrap .ant-tag {
+  white-space: normal;
+  height: auto;
+  line-height: 1.5;
+  padding: 4px 10px;
+  max-width: 100%;
+  word-break: break-all;
+}
+
 .mainline-flow,
 .roadmap-evolution {
   display: grid;
@@ -1094,8 +1103,205 @@ body {
 }
 
 /* 深色模式支持 */
-@media (prefers-color-scheme: dark) {
-  .markdown-reader pre .hljs {
-    color: #e2e8f0;
-  }
+/* Roadmap Tree Enhancements */
+.roadmap-tree-collapse > .ant-collapse-item {
+  background: rgba(47, 111, 236, 0.03) !important;
+  border: 1px solid rgba(47, 111, 236, 0.1) !important;
+  border-radius: 12px !important;
+  margin-bottom: 16px !important;
+}
+
+.plan-stack-collapse > .ant-collapse-item {
+  background: rgba(255, 255, 255, 0.5) !important;
+  border: 1px solid rgba(88, 125, 176, 0.08) !important;
+  border-radius: 10px !important;
+  margin-bottom: 12px !important;
+}
+
+.task-tree-collapse > .ant-collapse-item {
+  background: #ffffff !important;
+  border: 1px solid rgba(39, 174, 96, 0.12) !important;
+  border-radius: 8px !important;
+  margin-bottom: 8px !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
+}
+
+.roadmap-label-tag {
+  background: #2f6fec !important;
+  color: white !important;
+  border: none !important;
+  font-weight: 600;
+}
+
+.plan-label-tag {
+  background: #722ed1 !important;
+  color: white !important;
+  border: none !important;
+  font-weight: 600;
+}
+
+.task-label-tag {
+  background: #27ae60 !important;
+  color: white !important;
+  border: none !important;
+  font-weight: 600;
+}
+
+/* Date Grouping in Task Logs */
+.task-log-group {
+  margin-bottom: 16px;
+}
+
+.task-log-date-divider {
+  display: flex;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.task-log-date-text {
+  font-size: 12px;
+  font-weight: 700;
+  color: #8fa8c8;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: #f0f4f8;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.task-log-item {
+  padding: 8px 12px;
+  border-left: 2px solid #eef2f7;
+  margin-left: 10px;
+  margin-bottom: 4px;
+  transition: all 0.2s;
+}
+
+.task-log-item:hover {
+  border-left-color: #2f6fec;
+  background: rgba(47, 111, 236, 0.02);
+}
+
+.task-log-item-time {
+  font-size: 11px;
+  color: #a0aec0;
+  margin-right: 8px;
+}
+
+.task-log-item-content {
+  font-size: 13px;
+  color: #2d3748;
+}
+
+.task-log-item-type {
+  font-size: 10px;
+  text-transform: uppercase;
+  padding: 0 4px;
+  border-radius: 3px;
+  margin-right: 6px;
+}
+
+.task-log-item-type--note {
+  background: #e6f7ff;
+  color: #1890ff;
+}
+
+.task-log-item-type--commit {
+  background: #f6ffed;
+  color: #52c41a;
+}
+
+.task-log-item-type--system {
+  background: #fff7e6;
+  color: #fa8c16;
+}
+
+/* Vertical Timeline UI */
+.task-timeline {
+  position: relative;
+  padding-left: 20px;
+  margin-top: 10px;
+}
+
+.task-timeline::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 5px;
+  bottom: 5px;
+  width: 2px;
+  background: #eef2f7;
+}
+
+.timeline-entry {
+  position: relative;
+  margin-bottom: 16px;
+}
+
+.timeline-dot {
+  position: absolute;
+  left: -20px;
+  top: 4px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #cbd5e0;
+  border: 2px solid white;
+  z-index: 1;
+}
+
+.timeline-dot--commit { background: #52c41a; }
+.timeline-dot--note { background: #1890ff; }
+.timeline-dot--system { background: #fa8c16; }
+
+.timeline-content {
+  background: white;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid #edf2f7;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+}
+
+.timeline-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.timeline-time {
+  font-size: 11px;
+  color: #a0aec0;
+}
+
+.timeline-body {
+  font-size: 13px;
+  color: #2d3748;
+}
+
+/* Animations and Focus Styles */
+@keyframes statusPulse {
+  0% { box-shadow: 0 0 0 0 rgba(47, 111, 236, 0.1); }
+  70% { box-shadow: 0 0 0 6px rgba(47, 111, 236, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(47, 111, 236, 0); }
+}
+
+.status-pulse {
+  animation: statusPulse 2s infinite;
+  border-left: 3px solid #2f6fec !important;
+}
+
+.task-breadcrumb {
+  margin-bottom: 2px;
+  line-height: 1;
+}
+
+.task-breadcrumb .ant-typography {
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  opacity: 0.8;
+}
+
+/* Roadmap/Plan visual focus */
+.roadmap-tree-collapse .ant-collapse-item-active {
+  border-color: rgba(47, 111, 236, 0.3) !important;
 }

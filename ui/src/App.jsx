@@ -68,6 +68,7 @@ function ConsoleApp() {
   const [codeStatus, setCodeStatus] = useState(null);
   const [recentGitCommits, setRecentGitCommits] = useState([]);
   const [tasks, setTasks] = useState([]);
+  const [taskNotes, setTaskNotes] = useState([]);
   const [commits, setCommits] = useState([]);
   const [ideas, setIdeas] = useState([]);
   const [docs, setDocs] = useState([]);
@@ -124,6 +125,7 @@ function ConsoleApp() {
       setCodeStatus(payload.code_status || null);
       setRecentGitCommits(payload.recent_git_commits || []);
       setTasks(payload.tasks || []);
+      setTaskNotes(payload.task_notes || []);
       setCommits(payload.commits || []);
       setIdeas(payload.ideas || []);
       setDocs(payload.docs || []);
@@ -268,6 +270,7 @@ function ConsoleApp() {
               plans={plans}
               visions={visions}
               tasks={tasks}
+              taskNotes={taskNotes}
               commits={commits}
               docs={docs}
               ideas={ideas}
@@ -283,8 +286,11 @@ function ConsoleApp() {
           {view === "tasks" && (
             <TasksView
               tasks={tasks}
+              taskNotes={taskNotes}
+              commits={commits}
               roadmaps={roadmaps}
               plans={plans}
+              docs={docs}
               taskSearch={taskSearch}
               taskStatusFilter={taskStatusFilter}
               setTaskSearch={setTaskSearch}

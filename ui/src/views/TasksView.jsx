@@ -1,9 +1,9 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Badge, Button, Card, Col, Empty, Form, Input, List, Row, Select, Space, Tag, Typography } from "antd";
 import { statusColor } from "../utils/helpers";
+import DocumentDrawer from "../components/DocumentDrawer";
 
-const { Text } = Typography;
-const { TextArea } = Input;
+const { Text, Paragraph } = Typography;
 
 const TASK_STATUSES = ["todo", "in_progress", "blocked", "done", "dropped"];
 const laneOrder = ["in_progress", "todo", "blocked", "done"];
@@ -24,10 +24,104 @@ function isAcceptanceDone(item) {
   return !!(item && typeof item === "object" && item.done);
 }
 
+function TaskTimeline({ taskId, taskNotes = [], commits = [] }) {
+  const allLogs = useMemo(() => {
+    const combined = [
+      ...(commits || []).filter(c => c.task_id === taskId).map(c => ({
+        type: "commit",
+        date: c.created_at || c.updated_at,
+        content: c.title,
+        id: c.id,
+        hash: c.short_hash || (c.commit_hash ? c.commit_hash.slice(0, 7) : "")
+      })),
+      ...(taskNotes || []).filter(n => n.task_id === taskId).map(n => ({
+        type: "note",
+        date: n.created_at,
+        content: n.content,
+        id: n.id,
+        mode: n.mode
+      }))
+    ];
+    
+    // Group by date
+    const groups = {};
+    combined.sort((a, b) => new Date(b.date) - new Date(a.date)).forEach(item => {
+      const dateStr = item.date ? item.date.split("T")[0] : "unknown";
+      if (!groups[dateStr]) groups[dateStr] = [];
+      groups[dateStr].push(item);
+    });
+    
+    return Object.entries(groups).sort((a, b) => b[0].localeCompare(a[0]));
+  }, [taskId, taskNotes, commits]);
+
+  if (!allLogs.length) return null;
+
+  return (
+    <div className="task-timeline" style={{ marginTop: 16, borderTop: "1px dashed #eee", paddingTop: 16 }}>
+      <Text type="secondary" style={{ marginBottom: 12, display: "block", fontSize: 12, fontWeight: 600 }}>演进时间轴</Text>
+      {allLogs.map(([date, items]) => (
+        <div key={date} className="task-log-group">
+          <div className="task-log-date-divider" style={{ marginBottom: 12 }}>
+            <span className="task-log-date-text" style={{ fontSize: 10 }}>{date}</span>
+          </div>
+          {items.map(item => (
+            <div key={item.id} className="timeline-entry" style={{ marginBottom: 12 }}>
+              <div className={`timeline-dot timeline-dot--${item.mode === 'system' ? 'system' : item.type}`} />
+              <div className="timeline-content" style={{ padding: "8px 12px", background: "#fcfcfc" }}>
+                <div className="timeline-header">
+                  <Tag className={`task-log-item-type task-log-item-type--${item.mode === 'system' ? 'system' : item.type}`} style={{ fontSize: 9 }}>
+                    {item.mode === 'system' ? 'EVENT' : item.type.toUpperCase()}
+                  </Tag>
+                  <span className="timeline-time" style={{ fontSize: 10 }}>
+                    {item.date?.includes("T") ? item.date.split("T")[1].substring(0, 5) : ""}
+                  </span>
+                </div>
+                <div className="timeline-body" style={{ fontSize: 12 }}>
+                  {item.hash && <Text type="secondary" style={{ marginRight: 4, fontFamily: "monospace" }}>[{item.hash}]</Text>}
+                  {item.content}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function RelatedArtifacts({ task, onOpenDoc, onOpenIdea }) {
+  const hasArtifacts = task.source_idea || (task.related_decision_titles || []).length || (task.related_docs || []).length;
+  if (!hasArtifacts) return null;
+
+  return (
+    <div style={{ marginTop: 12, background: "rgba(0,0,0,0.01)", padding: "8px 12px", borderRadius: 8 }}>
+      <Text type="secondary" style={{ fontSize: 11, display: "block", marginBottom: 8, fontWeight: 600 }}>关联资产</Text>
+      <Space wrap>
+        {!!task.source_idea && (
+          <Tag color="purple" style={{ cursor: "pointer" }} onClick={() => onOpenIdea?.(task.source_idea.id)}>
+            Idea: {task.source_idea.title || task.source_idea.id}
+          </Tag>
+        )}
+        {(task.related_decision_titles || []).map((item) => (
+          <Tag key={item} color="gold">Decision: {item}</Tag>
+        ))}
+        {(task.related_docs || []).map((docPath) => (
+          <Tag key={docPath} color="processing" style={{ cursor: "pointer" }} onClick={() => onOpenDoc?.(docPath)}>
+            Doc: {docPath}
+          </Tag>
+        ))}
+      </Space>
+    </div>
+  );
+}
+
 export default function TasksView({
   tasks,
+  taskNotes,
+  commits,
   roadmaps,
   plans,
+  docs,
   taskSearch,
   taskStatusFilter,
   setTaskSearch,
@@ -38,9 +132,18 @@ export default function TasksView({
   onUpdateTask,
   onOpenIdea,
   onOpenCommitsForTask,
-  onDeleteLink,
   busy,
 }) {
+  const [readingDoc, setReadingDoc] = useState(null);
+  const [expandedTasks, setExpandedTasks] = useState(new Set());
+
+  const toggleExpand = (taskId) => {
+    const next = new Set(expandedTasks);
+    if (next.has(taskId)) next.delete(taskId);
+    else next.add(taskId);
+    setExpandedTasks(next);
+  };
+
   const filteredTasks = useMemo(() => {
     return tasks.filter((task) => {
       const acceptanceText = (task.acceptance || []).map(getAcceptanceText).join(" ");
@@ -173,7 +276,7 @@ export default function TasksView({
               <div key={status} className="task-lane">
                 <div className="task-lane__head">
                   <Space>
-                    <Tag color={statusColor(status)}>{status}</Tag>
+                    <Tag color={statusColor(status)}>{status.toUpperCase()}</Tag>
                     <Badge count={items.length} color="#b55e32" />
                   </Space>
                 </div>
@@ -181,64 +284,84 @@ export default function TasksView({
                   <List
                     dataSource={items}
                     className="task-list"
-                    renderItem={(task) => (
-                      <List.Item key={task.id} className="task-list__row">
-                        <Space direction="vertical" size={8} style={{ width: "100%" }}>
-                          <Space wrap>
-                            <Tag>{task.priority}</Tag>
-                            <Tag>{task.phase}</Tag>
-                            {!!task.roadmap_id && <Tag color="blue">roadmap: {roadmapTitleById.get(task.roadmap_id) || task.roadmap_id}</Tag>}
-                            {!!task.plan_id && <Tag color="cyan">plan: {planTitleById.get(task.plan_id) || task.plan_id}</Tag>}
-                            <Text type="secondary">{task.id}</Text>
-                          </Space>
-                          <Text strong>{task.title}</Text>
-                          {!!task.last_note && <Text type="secondary">{task.last_note}</Text>}
-                          <Space wrap>
-                            {!!task.linked_commit_count && <Tag color="blue">{task.linked_commit_count} evidence</Tag>}
-                            {!!task.approved_commit_count && <Tag color="green">{task.approved_commit_count} reviewed</Tag>}
-                            {!!task.verified_commit_count && <Tag color="cyan">{task.verified_commit_count} verified</Tag>}
-                          </Space>
-                          {!!task.latest_evidence_summary && <Text type="secondary">Evidence: {task.latest_evidence_summary}</Text>}
-                          {!!(task.closure_reasons || []).length && (
-                            <div className="tag-wrap">
-                              {(task.closure_reasons || []).map((reason) => (
-                                <Tag key={`${task.id}-${reason}`} color="red">{reason}</Tag>
-                              ))}
-                            </div>
-                          )}
-                          {!!(task.acceptance || []).length && (
-                            <div className="tag-wrap">
-                              {(task.acceptance || []).map((item) => (
-                                <Tag key={`${task.id}-${getAcceptanceText(item)}`} color={isAcceptanceDone(item) ? "green" : "default"}>
-                                  {getAcceptanceText(item)}
-                                </Tag>
-                              ))}
-                            </div>
-                          )}
-                          {!!(task.related_decision_titles || []).length && (
-                            <div className="tag-wrap">
-                              {(task.related_decision_titles || []).map((item) => (
-                                <Tag key={item} color="gold">{item}</Tag>
-                              ))}
-                            </div>
-                          )}
-                          {!!task.source_idea && (
-                            <div className="tag-wrap">
-                              <Tag color="purple">idea: {task.source_idea.title || task.source_idea.id}</Tag>
-                              <Button size="small" type="link" onClick={() => onOpenIdea?.(task.source_idea.id)}>
-                                查看来源想法
+                    renderItem={(task) => {
+                      const isExpanded = expandedTasks.has(task.id);
+                      return (
+                        <List.Item 
+                          key={task.id} 
+                          className={`task-list__row ${task.status === "in_progress" ? "status-pulse" : ""}`}
+                          style={{ padding: "16px 20px", marginBottom: 12, cursor: "pointer", userSelect: "none" }}
+                          onDoubleClick={() => toggleExpand(task.id)}
+                        >
+                          <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                              <Space direction="vertical" size={4} style={{ flex: 1 }}>
+                                <Space wrap>
+                                  <Tag color={task.priority === "P0" ? "red" : "default"}>{task.priority}</Tag>
+                                  <Tag>{task.phase}</Tag>
+                                  {!!task.roadmap_id && <Text type="secondary" style={{ fontSize: 11 }}>[{roadmapTitleById.get(task.roadmap_id) || task.roadmap_id}]</Text>}
+                                  <Text type="secondary" style={{ fontSize: 10 }}>#{task.id.split("-").pop()}</Text>
+                                </Space>
+                                <Text strong style={{ fontSize: 15 }}>{task.title}</Text>
+                              </Space>
+                              <Button 
+                                type="link" 
+                                size="small" 
+                                onClick={() => toggleExpand(task.id)}
+                                style={{ fontSize: 12 }}
+                              >
+                                {isExpanded ? "收起详情" : "查看详情"}
                               </Button>
                             </div>
-                          )}
-                          <Space wrap>
-                            <Tag color={task.status_hint === "ready" ? "green" : "gold"}>{task.status_hint}</Tag>
-                            <Button size="small" type="link" onClick={() => onOpenCommitsForTask?.(task)}>查看证据</Button>
-                            {task.status !== "in_progress" && <Button size="small" onClick={() => onUpdateTask(task.id, "in_progress")}>Start</Button>}
-                            {task.status !== "done" && <Button size="small" type="primary" ghost onClick={() => onUpdateTask(task.id, "done")}>Done</Button>}
+
+                            <Space wrap style={{ marginTop: 4 }}>
+                              {!!task.linked_commit_count && <Tag color="blue">{task.linked_commit_count} 提交</Tag>}
+                              {!!task.verified_commit_count && <Tag color="cyan">已验证</Tag>}
+                              {!!(task.acceptance || []).length && (
+                                <Text type="secondary" style={{ fontSize: 12 }}>
+                                  进度: {task.acceptance.filter(isAcceptanceDone).length}/{task.acceptance.length}
+                                </Text>
+                              )}
+                            </Space>
+
+                            {isExpanded && (
+                              <div style={{ marginTop: 8, animation: "fadeIn 0.3s" }}>
+                                {!!(task.acceptance || []).length && (
+                                  <div className="tag-wrap" style={{ marginBottom: 12 }}>
+                                    {(task.acceptance || []).map((item) => (
+                                      <Tag key={`${task.id}-${getAcceptanceText(item)}`} color={isAcceptanceDone(item) ? "green" : "default"}>
+                                        {getAcceptanceText(item)}
+                                      </Tag>
+                                    ))}
+                                  </div>
+                                )}
+                                
+                                <RelatedArtifacts task={task} onOpenDoc={setReadingDoc} onOpenIdea={onOpenIdea} />
+                                
+                                {!!(task.closure_reasons || []).length && (
+                                  <div style={{ marginTop: 8 }}>
+                                    {(task.closure_reasons || []).map((reason) => (
+                                      <Tag key={`${task.id}-${reason}`} color="red">{reason}</Tag>
+                                    ))}
+                                  </div>
+                                )}
+
+                                <TaskTimeline taskId={task.id} taskNotes={taskNotes} commits={commits} />
+                              </div>
+                            )}
+
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8, borderTop: "1px solid #f0f0f0", paddingTop: 10 }}>
+                              <Space wrap>
+                                <Button size="small" type="link" onClick={() => onOpenCommitsForTask?.(task)}>查看证据</Button>
+                                {task.status !== "in_progress" && <Button size="small" onClick={() => onUpdateTask(task.id, "in_progress")}>Start</Button>}
+                                {task.status !== "done" && <Button size="small" type="primary" ghost onClick={() => onUpdateTask(task.id, "done")}>Done</Button>}
+                              </Space>
+                              <Text type="secondary" style={{ fontSize: 10 }}>更新于: {task.updated_at}</Text>
+                            </div>
                           </Space>
-                        </Space>
-                      </List.Item>
-                    )}
+                        </List.Item>
+                      );
+                    }}
                   />
                 ) : (
                   <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="空" />
@@ -248,6 +371,7 @@ export default function TasksView({
           })}
         </div>
       </Card>
+      <DocumentDrawer docs={docs} path={readingDoc} open={!!readingDoc} onClose={() => setReadingDoc(null)} />
     </div>
   );
 }

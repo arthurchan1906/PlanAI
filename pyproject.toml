@@ -4,11 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aipm-cli"
-<<<<<<< HEAD
 version = "0.1.13"
-=======
-version = "0.1.12"
->>>>>>> 0f339d91c61bc3a4b0a9ea4cfe778c49ebf843cc
 description = "Local project management tool for AI coding workflows"
 readme = "README.md"
 requires-python = ">=3.8"

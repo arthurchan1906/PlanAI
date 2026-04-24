@@ -74,6 +74,7 @@ from .tasks import (
     plan_task,
     update_task_checkpoint,
     get_module_progress,
+    list_all_task_notes,
 )
 
 # Roadmap 管理
@@ -84,7 +85,7 @@ from .roadmaps import (
     update_roadmap,
 )
 
-# Plan 绠＄悊
+# Plan 方案
 from .plans import (
     list_plans,
     get_plan,
@@ -256,6 +257,7 @@ __all__ = [
     "plan_task",
     "update_task_checkpoint",
     "get_module_progress",
+    "list_all_task_notes",
     # Roadmap
     "list_roadmaps",
     "get_roadmap",

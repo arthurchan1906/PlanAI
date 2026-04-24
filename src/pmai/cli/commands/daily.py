@@ -16,7 +16,9 @@ def _normalize_items(value: list) -> list[str]:
     for group in value or []:
         values = group if isinstance(group, list) else [group]
         for raw in values:
-            for part in str(raw).splitlines():
+            # Handle split by newline, semicolon, or comma
+            content = str(raw).replace("\n", ";").replace(",", ";")
+            for part in content.split(";"):
                 item = part.strip()
                 if item:
                     items.append(item)

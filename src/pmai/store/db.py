@@ -81,7 +81,8 @@ def ensure_runtime_schema(conn: sqlite3.Connection) -> None:
             last_note TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             roadmap_id TEXT,
-            plan_id TEXT
+            plan_id TEXT,
+            created_at TEXT NOT NULL DEFAULT ''
         );
 
         CREATE TABLE IF NOT EXISTS principles (
@@ -239,6 +240,7 @@ def _migrate_database(conn: sqlite3.Connection) -> None:
     migrations = [
         ("tasks", "roadmap_id", "ALTER TABLE tasks ADD COLUMN roadmap_id TEXT"),
         ("tasks", "plan_id", "ALTER TABLE tasks ADD COLUMN plan_id TEXT"),
+        ("tasks", "created_at", "ALTER TABLE tasks ADD COLUMN created_at TEXT NOT NULL DEFAULT ''"),
         ("ideas", "current_summary", "ALTER TABLE ideas ADD COLUMN current_summary TEXT NOT NULL DEFAULT ''"),
         ("ideas", "main_question", "ALTER TABLE ideas ADD COLUMN main_question TEXT NOT NULL DEFAULT ''"),
         ("ideas", "recommended_next_action", "ALTER TABLE ideas ADD COLUMN recommended_next_action TEXT NOT NULL DEFAULT ''"),

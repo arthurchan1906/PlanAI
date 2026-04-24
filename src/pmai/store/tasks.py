@@ -101,6 +101,7 @@ def list_tasks(
                 "related_decisions": loads(row["related_decisions_json"], []),
                 "last_note": row["last_note"] or "",
                 "updated_at": row["updated_at"],
+                "created_at": row["created_at"] or row["updated_at"],
             })
         return tasks
     finally:
@@ -160,7 +161,7 @@ def get_task(task_id: str) -> Dict[str, Any]:
             FROM task_notes
             WHERE task_id = ?
             ORDER BY created_at DESC, id DESC
-            LIMIT 10
+            LIMIT 20
             """,
             (task_id,),
         ).fetchall()
@@ -179,6 +180,7 @@ def get_task(task_id: str) -> Dict[str, Any]:
                 "related_decisions": loads(row["related_decisions_json"], []),
                 "last_note": row["last_note"] or "",
                 "updated_at": row["updated_at"],
+                "created_at": row["created_at"] or row["updated_at"],
             },
             "note_history": [
                 {
@@ -212,8 +214,8 @@ def create_task(payload: Dict[str, Any]) -> Dict[str, Any]:
             """
             INSERT INTO tasks (
                 id, title, status, priority, phase, roadmap_id, plan_id,
-                acceptance_json, related_docs_json, related_decisions_json, last_note, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                acceptance_json, related_docs_json, related_decisions_json, last_note, updated_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task_id,
@@ -228,6 +230,7 @@ def create_task(payload: Dict[str, Any]) -> Dict[str, Any]:
                 dumps([]),
                 "",
                 today(),
+                now_iso(),
             ),
         )
         conn.commit()
@@ -307,6 +310,30 @@ def list_task_notes(task_id: str, limit: int = 20) -> Dict[str, Any]:
         conn.close()
 
 
+def list_all_task_notes() -> List[Dict[str, Any]]:
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, task_id, content, mode, created_at
+            FROM task_notes
+            ORDER BY created_at DESC, id DESC
+            """
+        ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "task_id": row["task_id"],
+                "content": row["content"],
+                "mode": row["mode"],
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+    finally:
+        conn.close()
+
+
 def update_task(
     task_id: str,
     status: str,
@@ -321,7 +348,16 @@ def update_task(
         row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
         if not row:
             raise KeyError(task_id)
-        if status == "done" and row["status"] != "done" and not allow_without_commit:
+
+        if status is None:
+            status = row["status"]
+
+        old_status = row["status"]
+        if status != old_status:
+            system_note = f"Status changed from {old_status} to {status}"
+            _insert_task_note(conn, task_id, system_note, "system")
+
+        if status == "done" and old_status != "done" and not allow_without_commit:
             ready_commit = conn.execute(
                 """
                 SELECT id
@@ -341,7 +377,7 @@ def update_task(
                     "(status=committed|merged, review_status=approved, test_status=passed) linked by --task-id"
                 )
 
-        next_note = note
+        next_note = note if note else row["last_note"]
         if append_note and note:
             next_note = f"{row['last_note'].rstrip()}\n\n{note.strip()}" if row["last_note"] else note.strip()
 

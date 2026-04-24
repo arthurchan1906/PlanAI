@@ -118,20 +118,53 @@ def list_links(source_id: Optional[str] = None, target_id: Optional[str] = None,
         conn.close()
 
 
+def _fetch_entity_title(conn, entity_type: str, entity_id: str) -> str:
+    if entity_type == "doc":
+        return entity_id
+    table_name = SUPPORTED_ENTITY_TYPES.get(entity_type)
+    if not table_name:
+        return ""
+    try:
+        # Most tables have 'title', some might have 'name' or just 'id'
+        row = conn.execute(f"SELECT * FROM {table_name} WHERE id = ? LIMIT 1", (entity_id,)).fetchone()
+        if not row:
+            return ""
+        for col in ["title", "name", "content", "summary"]:
+            if col in row.keys() and row[col]:
+                val = str(row[col])
+                return (val[:50] + "...") if len(val) > 53 else val
+        return entity_id
+    except Exception:
+        return entity_id
+
+
 def list_links_for_entity(entity_id: str) -> Dict[str, List[Dict[str, Any]]]:
     conn = get_connection()
     try:
-        outgoing = conn.execute(
+        outgoing_rows = conn.execute(
             "SELECT * FROM links WHERE source_id = ? ORDER BY created_at DESC, id DESC",
             (entity_id,),
         ).fetchall()
-        incoming = conn.execute(
+        incoming_rows = conn.execute(
             "SELECT * FROM links WHERE target_id = ? ORDER BY created_at DESC, id DESC",
             (entity_id,),
         ).fetchall()
+        
+        outgoing = []
+        for row in outgoing_rows:
+            link = _serialize_link(row)
+            link["target_title"] = _fetch_entity_title(conn, row["target_type"], row["target_id"])
+            outgoing.append(link)
+            
+        incoming = []
+        for row in incoming_rows:
+            link = _serialize_link(row)
+            link["source_title"] = _fetch_entity_title(conn, row["source_type"], row["source_id"])
+            incoming.append(link)
+
         return {
-            "outgoing": [_serialize_link(row) for row in outgoing],
-            "incoming": [_serialize_link(row) for row in incoming],
+            "outgoing": outgoing,
+            "incoming": incoming,
         }
     finally:
         conn.close()

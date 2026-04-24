@@ -211,7 +211,7 @@ def build_parser() -> argparse.ArgumentParser:
     task_add.add_argument("--acceptance", nargs="*", default=[])
     task_update = task.add_parser("update")
     task_update.add_argument("--id", required=True)
-    task_update.add_argument("--status", required=True)
+    task_update.add_argument("--status", default=None)
     task_update.add_argument("--note", default="")
     task_update.add_argument("--append-note", action="store_true", dest="append_note")
     task_update.add_argument("--allow-without-commit", action="store_true", dest="allow_without_commit")

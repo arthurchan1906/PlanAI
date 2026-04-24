@@ -38,8 +38,36 @@ function docPathFromFile(filePath) {
   return /\.(md|mdx|rst|txt)$/i.test(path) ? path : "";
 }
 
-function RelatedContext({ context, onOpenDoc }) {
-  if (!context?.idea && !context?.commits?.length && !context?.docs?.length) {
+function RelatedContext({ context, onOpenDoc, taskNotes = [] }) {
+  const allLogs = useMemo(() => {
+    const combined = [
+      ...(context?.commits || []).map(c => ({
+        type: "commit",
+        date: c.created_at || c.updated_at,
+        content: c.title,
+        id: c.id,
+        hash: c.short_hash
+      })),
+      ...taskNotes.map(n => ({
+        type: "note",
+        date: n.created_at,
+        content: n.content,
+        id: n.id
+      }))
+    ];
+    
+    // Group by date
+    const groups = {};
+    combined.sort((a, b) => new Date(b.date) - new Date(a.date)).forEach(item => {
+      const dateStr = item.date ? item.date.split("T")[0] : "unknown";
+      if (!groups[dateStr]) groups[dateStr] = [];
+      groups[dateStr].push(item);
+    });
+    
+    return Object.entries(groups).sort((a, b) => b[0].localeCompare(a[0]));
+  }, [context, taskNotes]);
+
+  if (!context?.idea && !allLogs.length && !context?.docs?.length) {
     return null;
   }
 
@@ -69,63 +97,112 @@ function RelatedContext({ context, onOpenDoc }) {
           </div>
         </div>
       )}
-      {!!context.commits?.length && (
-        <div className="tree-artifact-row">
-          <Text type="secondary">Commits</Text>
-          <Space direction="vertical" size={4}>
-            {context.commits.slice(0, 3).map((commit) => (
-              <Text key={commit.id} type="secondary">
-                {commit.short_hash ? `${commit.short_hash} | ` : ""}{commit.title}
-              </Text>
+      
+      {allLogs.length > 0 && (
+        <div className="tree-artifact-row" style={{ gridTemplateColumns: "1fr" }}>
+          <Text type="secondary" style={{ marginBottom: 12, display: "block", fontWeight: 600 }}>演进时间轴</Text>
+          <div className="task-timeline">
+            {allLogs.map(([date, items]) => (
+              <div key={date} className="task-log-group">
+                <div className="task-log-date-divider">
+                  <span className="task-log-date-text">{date}</span>
+                </div>
+                {items.map(item => (
+                  <div key={item.id} className="timeline-entry">
+                    <div className={`timeline-dot timeline-dot--${item.type}`} />
+                    <div className="timeline-content">
+                      <div className="timeline-header">
+                        <Tag className={`task-log-item-type task-log-item-type--${item.type}`}>
+                          {item.type}
+                        </Tag>
+                        <span className="timeline-time">
+                          {item.date?.includes("T") ? item.date.split("T")[1].substring(0, 5) : ""}
+                        </span>
+                      </div>
+                      <div className="timeline-body">
+                        {item.hash && <Text type="secondary" style={{ marginRight: 4, fontFamily: "monospace" }}>[{item.hash}]</Text>}
+                        {item.content}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             ))}
-            {context.commits.length > 3 && <Text type="secondary">+{context.commits.length - 3} more commits</Text>}
-          </Space>
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-function taskItems(tasks, artifactsByTask, onOpenDoc) {
-  return tasks.map((task) => ({
-    key: task.id,
-    label: (
-      <div className="tree-node-row tree-node-row--task">
-        <Space direction="vertical" size={2}>
-          <Space wrap>
-            <Tag color={statusColor(task.status)}>Task</Tag>
-            <Text strong>{task.title}</Text>
-          </Space>
-          <Text type="secondary">{dateText(task)} | {task.priority} | {task.phase}</Text>
-        </Space>
-        <Space wrap className="tree-node-meta">
-          {!!artifactsByTask?.get(task.id)?.idea && <Tag color="gold">idea</Tag>}
-          {!!artifactsByTask?.get(task.id)?.docs?.length && <Tag>{artifactsByTask.get(task.id).docs.length} docs</Tag>}
-          {!!artifactsByTask?.get(task.id)?.commits?.length && <Tag color="cyan">{artifactsByTask.get(task.id).commits.length} commits</Tag>}
-          <Tag color={statusColor(task.status)}>{task.status}</Tag>
-        </Space>
-      </div>
-    ),
-    children: (
-      <Space direction="vertical" size={8} style={{ width: "100%" }}>
-        {!!task.last_note && <Text type="secondary">{task.last_note}</Text>}
-        {!!(task.acceptance || []).length && (
-          <div className="tag-wrap">
-            {task.acceptance.map((item) => (
-              <Tag key={`${task.id}-${acceptanceText(item)}`} color={item?.done ? "green" : "default"}>
-                {acceptanceText(item)}
+function taskItems(tasks, artifactsByTask, onOpenDoc, taskNotesMap, planTitle, roadmapTitle) {
+  return tasks.map((task) => {
+    const isStale = useMemo(() => {
+      if (task.status === "done") return false;
+      const lastActive = new Date(task.updated_at);
+      const diffDays = (new Date() - lastActive) / (1000 * 60 * 60 * 24);
+      return diffDays > 2;
+    }, [task.updated_at, task.status]);
+
+    const durationDays = useMemo(() => {
+      const start = new Date(task.created_at || task.updated_at);
+      return Math.max(1, Math.ceil((new Date() - start) / (1000 * 60 * 60 * 24)));
+    }, [task.created_at, task.updated_at]);
+
+    return {
+      key: task.id,
+      label: (
+        <div className={`tree-node-row tree-node-row--task ${task.status === "in_progress" ? "status-pulse" : ""}`}>
+          <Space direction="vertical" size={2} style={{ flex: 1 }}>
+            <div className="task-breadcrumb">
+              <Text type="secondary" style={{ fontSize: 10 }}>{roadmapTitle} / {planTitle}</Text>
+            </div>
+            <Space wrap>
+              <Tag className="task-label-tag">Task</Tag>
+              <Text strong>{task.title}</Text>
+              <Tag color={isStale ? "warning" : "default"} style={{ fontSize: 10 }}>
+                {isStale ? "2天未更新" : `进行中 ${durationDays}天`}
               </Tag>
-            ))}
+            </Space>
+            <Text type="secondary" style={{ fontSize: 11 }}>
+              {task.phase} | 优先级 {task.priority}
+            </Text>
+          </Space>
+          <Space wrap className="tree-node-meta">
+            {!!artifactsByTask?.get(task.id)?.idea && <Tag color="gold">idea</Tag>}
+            {!!artifactsByTask?.get(task.id)?.docs?.length && <Tag>{artifactsByTask.get(task.id).docs.length} docs</Tag>}
+            {!!artifactsByTask?.get(task.id)?.commits?.length && <Tag color="cyan">{artifactsByTask.get(task.id).commits.length} commits</Tag>}
+            <Tag color={statusColor(task.status)}>{task.status}</Tag>
+          </Space>
+        </div>
+      ),
+      children: (
+        <Space direction="vertical" size={8} style={{ width: "100%" }}>
+          {!!(task.acceptance || []).length && (
+            <div className="tag-wrap">
+              {task.acceptance.map((item) => (
+                <Tag key={`${task.id}-${acceptanceText(item)}`} color={item?.done ? "green" : "default"}>
+                  {acceptanceText(item)}
+                </Tag>
+              ))}
+            </div>
+          )}
+          <RelatedContext 
+            context={artifactsByTask?.get(task.id)} 
+            onOpenDoc={onOpenDoc} 
+            taskNotes={taskNotesMap?.get(task.id) || []}
+          />
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <Text type="secondary" style={{ fontSize: 10 }}>ID: {task.id}</Text>
+            <Text type="secondary" style={{ fontSize: 10 }}>创建于: {task.created_at || task.updated_at}</Text>
           </div>
-        )}
-        <RelatedContext context={artifactsByTask?.get(task.id)} onOpenDoc={onOpenDoc} />
-        <Text type="secondary">{task.id}</Text>
-      </Space>
-    ),
-  }));
+        </Space>
+      ),
+    };
+  });
 }
 
-function PlanDetails({ plan, tasks, artifactsByTask, busy, onAdvancePlan, onOpenDoc }) {
+function PlanDetails({ plan, tasks, artifactsByTask, busy, onAdvancePlan, onOpenDoc, taskNotesMap, roadmapTitle }) {
   return (
     <Space direction="vertical" size={12} style={{ width: "100%" }}>
       <Paragraph type="secondary" style={{ marginBottom: 0 }}>{shortGoal(plan)}</Paragraph>
@@ -138,7 +215,7 @@ function PlanDetails({ plan, tasks, artifactsByTask, busy, onAdvancePlan, onOpen
         <Collapse
           className="task-tree-collapse"
           defaultActiveKey={tasks.filter((task) => task.status === "in_progress").map((task) => task.id)}
-          items={taskItems(tasks, artifactsByTask, onOpenDoc)}
+          items={taskItems(tasks, artifactsByTask, onOpenDoc, taskNotesMap, plan.title, roadmapTitle)}
         />
       ) : (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No tasks decomposed from this plan yet" />
@@ -148,7 +225,7 @@ function PlanDetails({ plan, tasks, artifactsByTask, busy, onAdvancePlan, onOpen
   );
 }
 
-function RoadmapTree({ roadmap, artifactsByTask, busy, onAdvancePlan, onOpenDoc }) {
+function RoadmapTree({ roadmap, artifactsByTask, busy, onAdvancePlan, onOpenDoc, taskNotesMap }) {
   const activePlanIds = roadmap.plans
     .filter((plan) => plan.status === "active" || (roadmap.tasksByPlan[plan.id] || []).some((task) => task.status === "in_progress"))
     .map((plan) => plan.id);
@@ -163,7 +240,7 @@ function RoadmapTree({ roadmap, artifactsByTask, busy, onAdvancePlan, onOpenDoc 
             <div className="tree-node-row tree-node-row--roadmap">
               <Space direction="vertical" size={2}>
                 <Space wrap>
-                  <Tag color={statusColor(roadmap.status)}>Roadmap</Tag>
+                  <Tag className="roadmap-label-tag">Roadmap</Tag>
                   <Text strong>{roadmap.title}</Text>
                 </Space>
                 <Text type="secondary">
@@ -185,7 +262,7 @@ function RoadmapTree({ roadmap, artifactsByTask, busy, onAdvancePlan, onOpenDoc 
                       <div className="tree-node-row tree-node-row--plan">
                         <Space direction="vertical" size={2}>
                           <Space wrap>
-                            <Tag color={statusColor(plan.status)}>Plan</Tag>
+                            <Tag className="plan-label-tag">Plan</Tag>
                             <Text strong>{plan.title}</Text>
                           </Space>
                           <Text type="secondary">{dateText(plan)} | {(roadmap.tasksByPlan[plan.id] || []).length} tasks</Text>
@@ -196,7 +273,7 @@ function RoadmapTree({ roadmap, artifactsByTask, busy, onAdvancePlan, onOpenDoc 
                         </Space>
                       </div>
                     ),
-                    children: <PlanDetails plan={plan} tasks={roadmap.tasksByPlan[plan.id] || []} artifactsByTask={artifactsByTask} busy={busy} onAdvancePlan={onAdvancePlan} onOpenDoc={onOpenDoc} />,
+                    children: <PlanDetails plan={plan} tasks={roadmap.tasksByPlan[plan.id] || []} artifactsByTask={artifactsByTask} busy={busy} onAdvancePlan={onAdvancePlan} onOpenDoc={onOpenDoc} taskNotesMap={taskNotesMap} />,
                   }))}
                 />
               ) : (
@@ -214,7 +291,7 @@ function RoadmapTree({ roadmap, artifactsByTask, busy, onAdvancePlan, onOpenDoc 
                           <Tag>{roadmap.unplannedTasks.length}</Tag>
                         </div>
                       ),
-                      children: <Collapse className="task-tree-collapse" items={taskItems(roadmap.unplannedTasks, artifactsByTask, onOpenDoc)} />,
+                      children: <Collapse className="task-tree-collapse" items={taskItems(roadmap.unplannedTasks, artifactsByTask, onOpenDoc, taskNotesMap)} />,
                     },
                   ]}
                 />
@@ -227,10 +304,19 @@ function RoadmapTree({ roadmap, artifactsByTask, busy, onAdvancePlan, onOpenDoc 
   );
 }
 
-export default function RoadmapView({ roadmaps, plans, tasks, visions, commits = [], docs = [], ideas = [], busy, onCreateRoadmap, onGeneratePlan, onAdvancePlan }) {
+export default function RoadmapView({ roadmaps, plans, tasks, taskNotes = [], visions, commits = [], docs = [], ideas = [], busy, onCreateRoadmap, onGeneratePlan, onAdvancePlan }) {
   const [roadmapForm, setRoadmapForm] = useState({ title: "", target_date: "", vision_id: "", priority: "P1", status: "planned" });
   const [planOptions, setPlanOptions] = useState({});
   const [readingDoc, setReadingDoc] = useState(null);
+
+  const taskNotesMap = useMemo(() => {
+    const map = new Map();
+    (taskNotes || []).forEach(note => {
+      if (!map.has(note.task_id)) map.set(note.task_id, []);
+      map.get(note.task_id).push(note);
+    });
+    return map;
+  }, [taskNotes]);
   const artifactsByTask = useMemo(() => {
     const docsByPath = new Map((docs || []).map((doc) => [normalizePath(doc.path), doc]));
     const ideasById = new Map((ideas || []).map((idea) => [idea.id, idea]));
@@ -408,7 +494,7 @@ export default function RoadmapView({ roadmaps, plans, tasks, visions, commits =
                     <Text strong>Roadmap to Plan to Task tree</Text>
                     <Text type="secondary">Details are collapsed by default. Dates show when each item entered or last moved in the flow.</Text>
                   </Space>
-                  <RoadmapTree roadmap={roadmap} artifactsByTask={artifactsByTask} busy={busy} onAdvancePlan={onAdvancePlan} onOpenDoc={setReadingDoc} />
+                  <RoadmapTree roadmap={roadmap} artifactsByTask={artifactsByTask} busy={busy} onAdvancePlan={onAdvancePlan} onOpenDoc={setReadingDoc} taskNotesMap={taskNotesMap} />
                 </Space>
               </div>
             </Card>

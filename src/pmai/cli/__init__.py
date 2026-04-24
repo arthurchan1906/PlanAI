@@ -1,4 +1,5 @@
-from __future__ import annotations
+import sys
+import io
 
 from .parser import build_parser
 from .commands import (
@@ -27,6 +28,15 @@ from .commands import (
 
 
 def main() -> None:
+    # Ensure UTF-8 output regardless of locale
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    elif isinstance(sys.stdout, io.TextIOWrapper):
+        # Fallback for older python or wrapped streams
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
+
     parser = build_parser()
     args = parser.parse_args()
     if args.command == "init":

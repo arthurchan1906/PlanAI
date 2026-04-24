@@ -24,6 +24,7 @@ from ...store import (
     list_principles,
     list_roadmaps,
     list_tasks,
+    list_all_task_notes,
     list_visions,
 )
 
@@ -77,6 +78,7 @@ def build_web_bootstrap() -> Dict[str, Any]:
     ai_context = build_context_pack()
     next_packet = build_next_action_packet()
     handoff = build_handoff_packet()
+    task_notes = list_all_task_notes()
 
     task_titles = {item["id"]: item["title"] for item in tasks}
     decision_titles = {item["id"]: item["title"] for item in decisions}
@@ -208,6 +210,7 @@ def build_web_bootstrap() -> Dict[str, Any]:
         "code_status": code_status,
         "recent_git_commits": recent_git_commits,
         "tasks": web_tasks,
+        "task_notes": task_notes,
         "commits": web_commits,
         "ideas": ideas,
         "docs": web_docs,
