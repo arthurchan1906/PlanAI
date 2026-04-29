@@ -9,6 +9,7 @@ from .decisions import list_decisions
 from .db import get_connection
 from .plan_runtime import enrich_plan, extract_id_from_command
 from .principles import list_active_principles
+from .relationship_sync import sync_plan_task_ids
 from .roadmaps import get_roadmap, list_roadmaps
 from .tasks import create_task, list_tasks
 from .visions import get_active_vision, get_vision
@@ -77,6 +78,8 @@ def create_plan(payload: Dict[str, Any]) -> Dict[str, Any]:
     try:
         plan_id = slug("plan")
         now = now_iso()
+        roadmap_id = payload.get("roadmap_id")
+        task_ids = payload.get("task_ids", [])
         conn.execute(
             """
             INSERT INTO plans (
@@ -87,7 +90,7 @@ def create_plan(payload: Dict[str, Any]) -> Dict[str, Any]:
             """,
             (
                 plan_id,
-                payload.get("roadmap_id"),
+                roadmap_id,
                 payload.get("vision_id"),
                 payload["title"],
                 payload.get("goal", ""),
@@ -96,12 +99,14 @@ def create_plan(payload: Dict[str, Any]) -> Dict[str, Any]:
                 _dumps(payload.get("scope", [])),
                 _dumps(payload.get("risks", [])),
                 _dumps(payload.get("assumptions", [])),
-                _dumps(payload.get("task_ids", [])),
+                _dumps(task_ids),
                 payload.get("source", "manual"),
                 now,
                 now,
             ),
         )
+        if task_ids:
+            sync_plan_task_ids(conn, plan_id=plan_id, task_ids=task_ids, roadmap_id=roadmap_id)
         conn.commit()
         return get_plan(plan_id)
     finally:
@@ -137,6 +142,17 @@ def update_plan(plan_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
             params.append(now_iso())
             params.append(plan_id)
             conn.execute(f"UPDATE plans SET {', '.join(updates)} WHERE id = ?", params)
+            if "task_ids" in payload or "roadmap_id" in payload:
+                refreshed_row = conn.execute(
+                    "SELECT roadmap_id, task_ids_json FROM plans WHERE id = ?",
+                    (plan_id,),
+                ).fetchone()
+                sync_plan_task_ids(
+                    conn,
+                    plan_id=plan_id,
+                    task_ids=_loads(refreshed_row["task_ids_json"], []),
+                    roadmap_id=refreshed_row["roadmap_id"],
+                )
             conn.commit()
         return get_plan(plan_id)
     finally:
@@ -213,10 +229,25 @@ def generate_plan(
 
     created_task_ids: List[str] = []
     created_tasks: List[Dict[str, Any]] = []
-    
-    # We need the plan_id to link tasks to it
+
     plan_id = slug("plan")
-    
+    plan = _create_plan_with_id(
+        plan_id,
+        {
+            "roadmap_id": roadmap_id,
+            "vision_id": vision.get("id") if vision else None,
+            "title": f"{focus} plan",
+            "goal": _build_goal(focus, roadmap, vision, canon),
+            "status": "active" if create_tasks_for_plan else "draft",
+            "priority": roadmap["priority"] if roadmap else "P1",
+            "scope": scope,
+            "risks": risks,
+            "assumptions": assumptions,
+            "task_ids": [],
+            "source": "generated",
+        }
+    )
+
     if create_tasks_for_plan:
         for suggestion in suggestions:
             task = create_task(
@@ -232,23 +263,8 @@ def generate_plan(
             )
             created_task_ids.append(task["id"])
             created_tasks.append(task)
+        plan = update_plan(plan_id, {"task_ids": created_task_ids})
 
-    plan = _create_plan_with_id(
-        plan_id,
-        {
-            "roadmap_id": roadmap_id,
-            "vision_id": vision.get("id") if vision else None,
-            "title": f"{focus} plan",
-            "goal": _build_goal(focus, roadmap, vision, canon),
-            "status": "active" if create_tasks_for_plan else "draft",
-            "priority": roadmap["priority"] if roadmap else "P1",
-            "scope": scope,
-            "risks": risks,
-            "assumptions": assumptions,
-            "task_ids": created_task_ids,
-            "source": "generated",
-        }
-    )
     return {
         "plan": enrich_plan(plan),
         "task_suggestions": suggestions,
@@ -450,4 +466,3 @@ def _row_to_plan(row: Any) -> Dict[str, Any]:
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
-

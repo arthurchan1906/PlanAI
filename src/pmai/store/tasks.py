@@ -8,6 +8,7 @@ from uuid import uuid4
 from .db import get_connection
 from .commits import list_commits
 from .links import list_links_for_entity
+from .relationship_sync import sync_task_membership
 
 
 def now_iso() -> str:
@@ -210,6 +211,8 @@ def create_task(payload: Dict[str, Any]) -> Dict[str, Any]:
     conn = get_connection()
     try:
         task_id = slug("task")
+        roadmap_id = payload.get("roadmap_id")
+        plan_id = payload.get("plan_id")
         conn.execute(
             """
             INSERT INTO tasks (
@@ -223,8 +226,8 @@ def create_task(payload: Dict[str, Any]) -> Dict[str, Any]:
                 payload.get("status", "todo"),
                 payload.get("priority", "P1"),
                 payload.get("phase", "general"),
-                payload.get("roadmap_id"),
-                payload.get("plan_id"),
+                roadmap_id,
+                plan_id,
                 dumps(payload.get("acceptance", [])),
                 dumps([]),
                 dumps([]),
@@ -233,6 +236,8 @@ def create_task(payload: Dict[str, Any]) -> Dict[str, Any]:
                 now_iso(),
             ),
         )
+        if plan_id is not None or roadmap_id is not None:
+            sync_task_membership(conn, task_id=task_id, plan_id=plan_id, roadmap_id=roadmap_id)
         conn.commit()
         return get_task(task_id)["task"]
     finally:
@@ -384,18 +389,13 @@ def update_task(
         updates: List[Any] = [status, next_note, today()]
         set_clauses = ["status = ?", "last_note = ?", "updated_at = ?"]
 
-        if roadmap_id is not None:
-            set_clauses.append("roadmap_id = ?")
-            updates.append(roadmap_id)
-        if plan_id is not None:
-            set_clauses.append("plan_id = ?")
-            updates.append(plan_id)
-
         updates.append(task_id)
         conn.execute(
             f"UPDATE tasks SET {', '.join(set_clauses)} WHERE id = ?",
             updates,
         )
+        if roadmap_id is not None or plan_id is not None:
+            sync_task_membership(conn, task_id=task_id, plan_id=plan_id, roadmap_id=roadmap_id)
         if note:
             _insert_task_note(conn, task_id, note, "append" if append_note else "replace")
         conn.commit()

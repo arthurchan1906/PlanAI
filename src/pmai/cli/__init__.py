@@ -45,6 +45,9 @@ def main() -> None:
         if args.agent_command == "guide":
             from pmai.agent_guide import write_agent_guide
             run_local_command(lambda: write_agent_guide(force=args.force))
+        elif args.agent_command == "instructions":
+            from pmai.agent_guide import build_agent_instruction_packet
+            run_local_command(build_agent_instruction_packet)
     elif args.command == "help":
         show_help_text()
     elif args.command == "info":

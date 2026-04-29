@@ -37,18 +37,18 @@ AIPM is a local project management tool for AI coding workflows. It stores proje
 ### Workflow Chain
 
 ```
-Idea → Decision → Canon → Commit
-  ↓         ↑
-Task ← Principle
+Idea -> Decision -> Canon -> Commit
+  ->        ->
+Task -> Principle
 ```
 
 ### Concept Evolution
 
-1. **Idea** (raw input) → reviewed → accepted → **convert to Task or Decision**
-   - Small execution detail → **Task**
-   - Big decision affecting scope → **Decision**
+1. **Idea** (raw input) -> reviewed -> accepted -> **convert to Task or Decision**
+   - Small execution detail -> **Task**
+   - Big decision affecting scope -> **Decision**
 
-2. **Decision** (proposed) → reviewed → accepted → **sync to Canon**
+2. **Decision** (proposed) -> reviewed -> accepted -> **sync to Canon**
 
 3. **Canon** reflects accepted decisions that change product goals, engineering focus, or architecture.
 
@@ -58,23 +58,41 @@ Task ← Principle
 
 ```
 I have a new idea
-  ↓
+  |
 Does it need approval?
-  ├─ No (execution detail) → Task
-  └─ Yes (affects scope) → Decision
-       ↓
+  |- No (execution detail) -> Task
+  |- Yes (affects scope) -> Decision
+       |
     Approved?
-       ├─ No → keep proposed
-       └─ Yes → Affects tech stack?
-            ├─ No → done
-            └─ Yes → Update Canon
+       |- No -> keep proposed
+       |- Yes -> Affects tech stack?
+            |- No -> done
+            |- Yes -> Update Canon
 ```
 
 ---
 
 ## For AI Coders: Workflow Guide
 
-# Phase 1: Understand Context (Read-Only)
+### Fast Start
+
+Use this short startup routine every time:
+
+```bash
+aipmc agent instructions
+aipmc start
+aipmc search "<topic>"
+aipmc next
+```
+
+Rules:
+- Reuse existing task/plan/decision/doc context before creating anything new.
+- If search finds a match, prefer `show`, `update`, or `task note`.
+- Only use `add` when the existing context clearly does not fit.
+- End the session with `aipmc session close --from-commits --from-tasks`.
+- Use `aipmc agent instructions` whenever you need the current built-in AI workflow guide for this installed version.
+
+### Phase 1: Understand Context (Read-Only)
 
 Before writing code, run one command:
 
@@ -82,7 +100,13 @@ Before writing code, run one command:
 aipmc start
 ```
 
-`aipmc init` writes a short root `AGENTS.md` reminder for AI CLIs. If it is missing, restore it with:
+`AGENTS.md` is only an optional helper for local AI tooling. Installed users should prefer the live command below because it always reflects the current version:
+
+```bash
+aipmc agent instructions
+```
+
+If you still want a root helper file for local tooling, restore it with:
 
 ```bash
 aipmc agent guide

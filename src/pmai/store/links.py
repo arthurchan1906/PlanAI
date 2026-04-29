@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from .db import get_connection
 from .docs import normalize_doc_path
+from .relationship_sync import _loads, sync_plan_task_ids, sync_task_membership
 
 SUPPORTED_ENTITY_TYPES = {
     "commit": "commits",
@@ -217,6 +218,7 @@ def create_link(payload: Dict[str, Any]) -> Dict[str, Any]:
                 row["created_at"],
             ),
         )
+        _apply_link_backfill(conn, normalized)
         conn.commit()
         return row
     finally:
@@ -231,3 +233,39 @@ def delete_link(link_id: str) -> bool:
         return cur.rowcount > 0
     finally:
         conn.close()
+
+
+def _apply_link_backfill(conn, normalized: Dict[str, Any]) -> None:
+    relation = normalized.get("relation")
+    if relation == "references":
+        return
+
+    source_type = normalized["source_type"]
+    source_id = normalized["source_id"]
+    target_type = normalized["target_type"]
+    target_id = normalized["target_id"]
+    pair = {source_type, target_type}
+
+    if pair == {"plan", "task"}:
+        plan_id = source_id if source_type == "plan" else target_id
+        task_id = source_id if source_type == "task" else target_id
+        sync_task_membership(conn, task_id=task_id, plan_id=plan_id)
+        return
+
+    if pair == {"roadmap", "task"}:
+        roadmap_id = source_id if source_type == "roadmap" else target_id
+        task_id = source_id if source_type == "task" else target_id
+        sync_task_membership(conn, task_id=task_id, roadmap_id=roadmap_id)
+        return
+
+    if pair == {"roadmap", "plan"}:
+        roadmap_id = source_id if source_type == "roadmap" else target_id
+        plan_id = source_id if source_type == "plan" else target_id
+        conn.execute("UPDATE plans SET roadmap_id = ? WHERE id = ?", (roadmap_id, plan_id))
+        plan_row = conn.execute("SELECT task_ids_json FROM plans WHERE id = ?", (plan_id,)).fetchone()
+        sync_plan_task_ids(
+            conn,
+            plan_id=plan_id,
+            task_ids=_loads(plan_row["task_ids_json"], []),
+            roadmap_id=roadmap_id,
+        )

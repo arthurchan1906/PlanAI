@@ -54,15 +54,36 @@ export default function CommitsView({
       ),
     },
     {
+      title: "时间",
+      key: "time",
+      width: 140,
+      render: (_, record) => {
+        const dt = record.created_at || record.updated_at;
+        return (
+          <Space direction="vertical" size={0}>
+            <Text style={{ fontSize: 13 }}>{dt ? dt.split("T")[0] : "-"}</Text>
+            <Text type="secondary" style={{ fontSize: 11 }}>{dt ? dt.split("T")[1]?.substring(0, 5) : ""}</Text>
+          </Space>
+        );
+      },
+    },
+    {
       title: "关联项",
       key: "links",
-      render: (_, record) => (
-        <Space direction="vertical" size={2}>
-          {record.task_id && <Tag color="blue">Task: {record.task_title || taskTitleMap.get(record.task_id) || record.task_id}</Tag>}
-          {record.decision_id && <Tag color="gold">Decision: {record.decision_title || decisionTitleMap.get(record.decision_id) || record.decision_id}</Tag>}
-          {!!(record.files || []).length && <Text type="secondary">{record.file_count || record.files.length} files</Text>}
-        </Space>
-      ),
+      render: (_, record) => {
+        const taskTitle = record.task_title || taskTitleMap.get(record.task_id);
+        return (
+          <Space direction="vertical" size={2}>
+            {record.task_id ? (
+              <Tag color="blue">Task: {taskTitle || record.task_id}</Tag>
+            ) : (
+              <Text type="secondary" style={{ fontSize: 11 }}>未关联任务</Text>
+            )}
+            {record.decision_id && <Tag color="gold">Decision: {record.decision_title || decisionTitleMap.get(record.decision_id) || record.decision_id}</Tag>}
+            {!!(record.files || []).length && <Text type="secondary">{record.file_count || record.files.length} files</Text>}
+          </Space>
+        );
+      },
     },
     {
       title: "审查状态",

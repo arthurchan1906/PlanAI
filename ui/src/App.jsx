@@ -48,11 +48,22 @@ import DailyViewHuman from "./views/DailyViewHuman";
 const { Header, Sider, Content } = Layout;
 const { Title, Text } = Typography;
 
+function getViewFromHash() {
+  const raw = window.location.hash.replace(/^#/, "");
+  if (raw && NAV_ITEMS.some(i => i.key === raw)) return raw;
+  return "dashboard";
+}
+
 function ConsoleApp() {
   const { message } = AntdApp.useApp();
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [view, setView] = useState("dashboard");
+  const [view, setViewState] = useState(getViewFromHash);
+
+  function setView(key) {
+    setViewState(key);
+    window.location.hash = key;
+  }
 
   // 数据状态
   const [dashboard, setDashboard] = useState(null);
@@ -140,6 +151,12 @@ function ConsoleApp() {
   }
 
   useEffect(() => { loadAll(); }, []);
+
+  useEffect(() => {
+    function onHashChange() { setViewState(getViewFromHash()); }
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
 
   // 通用操作执行
   async function runAction(action, successMessage) {

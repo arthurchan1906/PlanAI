@@ -35,13 +35,16 @@ def init_project(args: argparse.Namespace) -> None:
         save_runtime_config({})
     bootstrap_project_db()
     write_usage_file()
-    agent_guide = write_agent_guide(force=args.force_agent_guide)
+    agent_guide = {"written": [], "skipped": []}
+    if args.write_agent_guide or args.force_agent_guide:
+        agent_guide = write_agent_guide(force=args.force_agent_guide)
     print(
         json.dumps(
             {
                 "ok": True,
                 "message": "Initialized .pmai",
                 "agent_guide": agent_guide,
+                "agent_instructions_command": "aipmc agent instructions",
             },
             ensure_ascii=False,
             indent=2,

@@ -214,7 +214,7 @@ function PlanDetails({ plan, tasks, artifactsByTask, busy, onAdvancePlan, onOpen
       {tasks.length ? (
         <Collapse
           className="task-tree-collapse"
-          defaultActiveKey={tasks.filter((task) => task.status === "in_progress").map((task) => task.id)}
+          defaultActiveKey={[]}
           items={taskItems(tasks, artifactsByTask, onOpenDoc, taskNotesMap, plan.title, roadmapTitle)}
         />
       ) : (
@@ -226,9 +226,6 @@ function PlanDetails({ plan, tasks, artifactsByTask, busy, onAdvancePlan, onOpen
 }
 
 function RoadmapTree({ roadmap, artifactsByTask, busy, onAdvancePlan, onOpenDoc, taskNotesMap }) {
-  const activePlanIds = roadmap.plans
-    .filter((plan) => plan.status === "active" || (roadmap.tasksByPlan[plan.id] || []).some((task) => task.status === "in_progress"))
-    .map((plan) => plan.id);
   return (
     <Collapse
       className="roadmap-tree-collapse"
@@ -255,7 +252,7 @@ function RoadmapTree({ roadmap, artifactsByTask, busy, onAdvancePlan, onOpenDoc,
               {roadmap.plans.length ? (
                 <Collapse
                   className="plan-stack-collapse"
-                  defaultActiveKey={activePlanIds}
+                  defaultActiveKey={[]}
                   items={roadmap.plans.map((plan) => ({
                     key: plan.id,
                     label: (

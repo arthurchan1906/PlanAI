@@ -16,20 +16,23 @@ def build_agent_start_packet() -> Dict[str, Any]:
     progress = build_progress_packet()
     next_packet = build_next_action_packet()
     mainline = context.get("mainline", {})
+    next_action = next_packet.get("next_action") or {}
+    active_task = mainline.get("task") or {}
+    active_plan = mainline.get("plan") or {}
 
     return {
         "role": "ai_start",
-        "message": "Use this before coding. Do not create duplicate PMAI tasks/docs.",
+        "message": "Use this before coding. Reuse existing PMAI tasks/plans/decisions/docs before creating new ones.",
         "rules": [
             "Use the current task/doc context before coding.",
-            "Before adding a task or doc: `aipmc search \"<topic>\"`.",
-            "If work already exists: `aipmc task note --id <task-id> --content \"...\"`.",
+            "Before adding a task, plan, decision, or doc: `aipmc search \"<topic>\"`.",
+            "If related work already exists: prefer `show`, `update`, or `task note` instead of creating a new record.",
         ],
         "current_focus": {
             "roadmap": _compact_named(mainline.get("roadmap")),
             "plan": _compact_named(mainline.get("plan")),
             "task": _compact_task(mainline.get("task")),
-            "next_command": (next_packet.get("next_action") or {}).get("command"),
+            "next_command": next_action.get("command"),
         },
         "existing_context": {
             "source_of_truth_docs": context.get("project", {}).get("source_of_truth_docs", [])[:3],
@@ -39,6 +42,24 @@ def build_agent_start_packet() -> Dict[str, Any]:
             "git_dirty": progress.get("health", {}).get("git_dirty"),
             "in_progress_count": progress.get("health", {}).get("in_progress_count"),
         },
+        "recommended_flow": [
+            {
+                "when": "Before coding or creating anything new",
+                "command": "aipmc start",
+            },
+            {
+                "when": "If the current work topic is not obvious",
+                "command": "aipmc search \"<topic>\"",
+            },
+            {
+                "when": "If matching work already exists",
+                "command": active_task and f"aipmc task show --id {active_task['id']}" or active_plan and f"aipmc plan show --id {active_plan['id']}" or "aipmc next",
+            },
+            {
+                "when": "Only after reuse checks fail",
+                "command": "aipmc task add ...  or  aipmc plan add ...",
+            },
+        ],
     }
 
 
@@ -62,9 +83,11 @@ def search_project_context(query: str, limit: int = 8) -> Dict[str, Any]:
         "results": results[: max(limit, 1)],
         "next_actions": [
             "If a result matches, inspect it before creating anything new.",
+            "Prefer `task show`, `plan show`, or `decision show` before using any `add` command.",
             "Use `aipmc task note --id <task-id> --content \"...\"` to continue existing work.",
-            "Only use `task add` or docs creation when these results do not fit.",
+            "Only create a new record when the existing search results clearly do not fit.",
         ],
+        "recommended_commands": _build_search_recommended_commands(results[: max(limit, 1)]),
     }
 
 
@@ -131,3 +154,36 @@ def _serialize_search_hit(item_type: str, item: Dict[str, Any], score: int) -> D
     elif item_type == "roadmap":
         hit["command"] = f"aipmc roadmap show --id {item['id']}"
     return hit
+
+
+def _build_search_recommended_commands(results: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+    if not results:
+        return [
+            {
+                "command": "aipmc next",
+                "reason": "No clear existing match was found; refresh the mainline recommendation before creating anything.",
+            }
+        ]
+
+    primary = results[0]
+    commands = [
+        {
+            "command": primary.get("command") or "aipmc next",
+            "reason": "Inspect the strongest existing match first.",
+        }
+    ]
+    if primary.get("type") == "task":
+        commands.append(
+            {
+                "command": f"aipmc task note --id {primary['id']} --content \"continue current work\"",
+                "reason": "Use the existing task as the working thread if it already matches.",
+            }
+        )
+    else:
+        commands.append(
+            {
+                "command": "aipmc next",
+                "reason": "Refresh the recommended mainline action after reviewing the match.",
+            }
+        )
+    return commands
