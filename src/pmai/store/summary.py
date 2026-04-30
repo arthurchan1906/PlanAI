@@ -7,6 +7,7 @@ from .tasks import list_tasks
 from .ideas import list_ideas
 from .decisions import list_decisions
 from .docs import list_doc_records, audit_docs
+from .bugs import list_bugs
 from .commits import list_commits
 from .daily import get_daily_note
 from .visions import get_active_vision
@@ -32,6 +33,7 @@ def get_dashboard_summary() -> Dict[str, Any]:
     ideas = list_ideas()
     decisions = list_decisions()
     docs = list_doc_records()
+    bugs = list_bugs()
     commits = list_commits()
     plans = list_plans()
     daily = get_daily_note()
@@ -123,6 +125,15 @@ def get_dashboard_summary() -> Dict[str, Any]:
             "committed": len([commit for commit in commits if commit["status"] == "committed"]),
             "merged": len([commit for commit in commits if commit["status"] == "merged"]),
             "needs_review": len([commit for commit in commits if commit["review_status"] != "approved"]),
+        },
+        "bug_counts": {
+            "total": len(bugs),
+            "critical": len([b for b in bugs if b["severity"] == "critical"]),
+            "major": len([b for b in bugs if b["severity"] == "major"]),
+            "minor": len([b for b in bugs if b["severity"] == "minor"]),
+            "trivial": len([b for b in bugs if b["severity"] == "trivial"]),
+            "open": len([b for b in bugs if b["status"] == "open"]),
+            "resolved": len([b for b in bugs if b["status"] == "resolved"]),
         },
         "plan_counts": {
             "total": len(plans),

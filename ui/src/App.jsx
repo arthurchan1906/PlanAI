@@ -6,10 +6,13 @@ import {
   ConfigProvider,
   Layout,
   Menu,
+  Space,
   Typography,
 } from "antd";
+import useBootstrap from "./hooks/useBootstrap";
 import {
   BookOutlined,
+  BugOutlined,
   BulbOutlined,
   DashboardOutlined,
   FileTextOutlined,
@@ -28,7 +31,7 @@ import {
 
 // 导入工具和常量
 import { api } from "./utils/api";
-import { todayString, buildTaskPayload, buildCanonPayload, buildCommitPayload, buildDocPayload, buildDailyPayload } from "./utils/helpers";
+import { todayString, buildCanonPayload, buildCommitPayload, buildBugPayload, buildDocPayload, buildDailyPayload } from "./utils/helpers";
 import { NAV_GROUPS, NAV_ITEMS } from "./constants";
 
 // 导入视图组件
@@ -38,11 +41,12 @@ import VisionsView from "./views/VisionsView";
 import PrinciplesView from "./views/PrinciplesView";
 import CodeView from "./views/CodeView";
 import CanonView from "./views/CanonView";
-import TasksView from "./views/TasksView";
 import IdeasView from "./views/IdeasView";
 import DocsView from "./views/DocsView";
 import DecisionsView from "./views/DecisionsView";
 import CommitsView from "./views/CommitsView";
+import BugsView from "./views/BugsView";
+import GlobalSearch from "./components/GlobalSearch";
 import DailyViewHuman from "./views/DailyViewHuman";
 
 const { Header, Sider, Content } = Layout;
@@ -56,8 +60,6 @@ function getViewFromHash() {
 
 function ConsoleApp() {
   const { message } = AntdApp.useApp();
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
   const [view, setViewState] = useState(getViewFromHash);
 
   function setView(key) {
@@ -65,34 +67,22 @@ function ConsoleApp() {
     window.location.hash = key;
   }
 
-  // 数据状态
-  const [dashboard, setDashboard] = useState(null);
-  const [aiContext, setAiContext] = useState(null);
-  const [nextPacket, setNextPacket] = useState(null);
-  const [handoff, setHandoff] = useState(null);
-  const [inbox, setInbox] = useState(null);
-  const [canon, setCanon] = useState(null);
-  const [visions, setVisions] = useState([]);
-  const [roadmaps, setRoadmaps] = useState([]);
-  const [plans, setPlans] = useState([]);
-  const [principles, setPrinciples] = useState([]);
-  const [codeStatus, setCodeStatus] = useState(null);
-  const [recentGitCommits, setRecentGitCommits] = useState([]);
-  const [tasks, setTasks] = useState([]);
-  const [taskNotes, setTaskNotes] = useState([]);
-  const [commits, setCommits] = useState([]);
-  const [ideas, setIdeas] = useState([]);
-  const [docs, setDocs] = useState([]);
-  const [docAudit, setDocAudit] = useState(null);
-  const [decisions, setDecisions] = useState([]);
-  const [daily, setDaily] = useState(null);
+  const {
+    loading, busy,
+    dashboard, aiContext, nextPacket, handoff, inbox,
+    canon, visions, roadmaps, plans, principles,
+    codeStatus, recentGitCommits,
+    tasks, taskNotes, commits, bugs, ideas, docs, docAudit, decisions, daily,
+    loadAll, runAction,
+  } = useBootstrap(api, message);
 
   // 搜索/过滤状态
-  const [taskSearch, setTaskSearch] = useState("");
-  const [taskStatusFilter, setTaskStatusFilter] = useState("");
   const [commitSearch, setCommitSearch] = useState("");
   const [commitStatusFilter, setCommitStatusFilter] = useState("");
   const [commitAttentionFilter, setCommitAttentionFilter] = useState("");
+  const [bugSearch, setBugSearch] = useState("");
+  const [bugStatusFilter, setBugStatusFilter] = useState("");
+  const [bugSeverityFilter, setBugSeverityFilter] = useState("");
   const [focusedTaskId, setFocusedTaskId] = useState("");
   const [ideaSearch, setIdeaSearch] = useState("");
   const [ideaStatusFilter, setIdeaStatusFilter] = useState("");
@@ -101,8 +91,8 @@ function ConsoleApp() {
   const [decisionStatusFilter, setDecisionStatusFilter] = useState("");
 
   // 表单状态
-  const [taskForm, setTaskForm] = useState({ title: "", acceptance: "", priority: "P1", phase: "general", roadmapId: "", planId: "" });
   const [commitForm, setCommitForm] = useState({ title: "", summary: "", evidenceSummary: "", reviewNotes: "", branch: "", taskId: "", decisionId: "", status: "draft", testStatus: "not_run", reviewStatus: "pending", files: "" });
+  const [bugForm, setBugForm] = useState({ title: "", description: "", severity: "minor", status: "open", commitId: "" });
   const [ideaForm, setIdeaForm] = useState({
     title: "",
     summary: "",
@@ -118,59 +108,11 @@ function ConsoleApp() {
   const [visionForm, setVisionForm] = useState({ id: null, title: "", summary: "", status: "active", horizon: "long_term" });
   const [principleForm, setPrincipleForm] = useState({ id: null, title: "", summary: "", kind: "governance", status: "active" });
 
-  // 数据加载
-  async function loadAll() {
-    setLoading(true);
-    try {
-      const payload = await api("/pmai/web/bootstrap");
-      setDashboard(payload.dashboard || null);
-      setAiContext(payload.ai_context || null);
-      setNextPacket(payload.next_packet || null);
-      setHandoff(payload.handoff || null);
-      setInbox(payload.inbox || null);
-      setCanon(payload.canon || null);
-      setVisions(payload.visions || []);
-      setRoadmaps(payload.roadmaps || []);
-      setPlans(payload.plans || []);
-      setPrinciples(payload.principles || []);
-      setCodeStatus(payload.code_status || null);
-      setRecentGitCommits(payload.recent_git_commits || []);
-      setTasks(payload.tasks || []);
-      setTaskNotes(payload.task_notes || []);
-      setCommits(payload.commits || []);
-      setIdeas(payload.ideas || []);
-      setDocs(payload.docs || []);
-      setDocAudit(payload.doc_audit || null);
-      setDecisions(payload.decisions || []);
-      setDaily(payload.daily || null);
-    } catch (error) {
-      message.error(error.message || "Load failed");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => { loadAll(); }, []);
-
   useEffect(() => {
     function onHashChange() { setViewState(getViewFromHash()); }
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
-
-  // 通用操作执行
-  async function runAction(action, successMessage) {
-    setBusy(true);
-    try {
-      await action();
-      await loadAll();
-      message.success(successMessage);
-    } catch (error) {
-      message.error(error.message || "Action failed");
-    } finally {
-      setBusy(false);
-    }
-  }
 
   function runDailyAction(method, successMessage) {
     const query = dailyForm.noteDate ? `?date=${encodeURIComponent(dailyForm.noteDate)}` : "";
@@ -201,14 +143,67 @@ function ConsoleApp() {
     setView("commits");
   }
 
+  function handleOpenBugCommit(bug) {
+    setCommitSearch(bug.commit_title || bug.commit_id || "");
+    setCommitStatusFilter("");
+    setCommitAttentionFilter("");
+    setFocusedTaskId("");
+    setView("commits");
+  }
+
+  function handleOpenTaskCommit(commitId, commitTitle) {
+    setCommitSearch(commitTitle || commitId || "");
+    setCommitStatusFilter("");
+    setCommitAttentionFilter("");
+    setFocusedTaskId("");
+    setView("commits");
+  }
+
+  function handleUpdateTaskFromPlan(taskId, status) {
+    return runAction(() => api(`/pmai/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify({ status }) }), "Task status updated");
+  }
+
+  function handleSubmitReview(taskId, content) {
+    return runAction(
+      () => api(`/pmai/tasks/${taskId}/notes`, { method: "POST", body: JSON.stringify({ content, mode: "review" }) }),
+      "审核意见已提交"
+    );
+  }
+
+  function handleDeleteNote(noteId) {
+    return runAction(
+      () => api(`/pmai/task-notes/${noteId}`, { method: "DELETE" }),
+      "审核意见已删除"
+    );
+  }
+
+  function handleSearchNavigate(item) {
+    if (item.type === "task") {
+      setView("planning");
+    } else if (item.type === "commit") {
+      setCommitSearch(item.title || "");
+      setCommitStatusFilter("");
+      setCommitAttentionFilter("");
+      setFocusedTaskId("");
+      setView("commits");
+    } else if (item.type === "bug") {
+      setBugSearch(item.title || "");
+      setView("bugs");
+    } else if (item.type === "decision") {
+      setDecisionSearch(item.title || "");
+      setView("decisions");
+    } else if (item.type === "idea") {
+      setIdeaSearch(item.title || "");
+      setView("ideas");
+    }
+  }
+
   function handleViewCommit(commit) {
     message.info(`查看提交详情: ${commit.short_hash || commit.commit_hash?.slice(0, 8)}`);
   }
 
   function handleCreateTaskFromDaily(item) {
-    setTaskForm({ title: item, acceptance: "", priority: "P1", phase: "general" });
-    message.info(`已从日报项创建任务表单: ${item}`);
-    setView("tasks");
+    message.info(`日报项: ${item} — 请通过 aipmc 创建任务`);
   }
 
   function handleOpenVisionDetail(vision) {
@@ -259,7 +254,7 @@ function ConsoleApp() {
             children: group.children.map(item => ({
               key: item.key,
               label: item.label,
-              icon: item.icon,
+              icon: ({ dashboard: <DashboardOutlined />, tasks: <ScheduleOutlined />, decisions: <FundProjectionScreenOutlined />, commits: <BranchesOutlined />, bugs: <BugOutlined />, planning: <AppstoreOutlined />, visions: <CompassOutlined />, principles: <SafetyCertificateOutlined />, canon: <BookOutlined />, ideas: <BulbOutlined />, docs: <FileTextOutlined />, daily: <ProjectOutlined />, code: <CodeOutlined /> })[item.key] || null,
             }))
           }))}
           onClick={({ key }) => setView(key)} 
@@ -277,10 +272,13 @@ function ConsoleApp() {
             />
             <Title level={3} className="header-title">{NAV_ITEMS.find(i => i.key === view)?.label}</Title>
           </div>
-          <Button icon={<ReloadOutlined />} onClick={loadAll} loading={busy}>刷新</Button>
+          <Space>
+            <GlobalSearch onNavigate={handleSearchNavigate} />
+            <Button icon={<ReloadOutlined />} onClick={loadAll} loading={busy}>刷新</Button>
+          </Space>
         </Header>
         <Content className="console-content">
-          {view === "dashboard" && <DashboardView visions={visions} principles={principles} ideas={ideas} dashboard={dashboard} aiContext={aiContext} nextPacket={nextPacket} handoff={handoff} inbox={inbox} canon={canon} loading={loading} onOpenCanon={id => { setCanonForm({...canonForm, decisionId: id || ""}); setView("canon"); }} onOpenDecisions={() => setView("decisions")} onOpenTasks={() => setView("tasks")} onOpenCommits={() => setView("commits")} onOpenCommitAttention={handleOpenCommitAttention} onOpenIdeas={() => setView("ideas")} onOpenDocs={() => setView("docs")} onOpenDaily={() => setView("daily")} onOpenPrinciples={() => setView("principles")} />}
+          {view === "dashboard" && <DashboardView visions={visions} principles={principles} ideas={ideas} bugs={bugs} dashboard={dashboard} aiContext={aiContext} nextPacket={nextPacket} handoff={handoff} inbox={inbox} canon={canon} loading={loading} onOpenCanon={id => { setCanonForm({...canonForm, decisionId: id || ""}); setView("canon"); }} onOpenDecisions={() => setView("decisions")} onOpenPlans={() => setView("planning")} onOpenCommits={() => setView("commits")} onOpenCommitAttention={handleOpenCommitAttention} onOpenIdeas={() => setView("ideas")} onOpenDocs={() => setView("docs")} onOpenDaily={() => setView("daily")} onOpenPrinciples={() => setView("principles")} />}
           {view === "planning" && (
             <RoadmapView
               roadmaps={roadmaps}
@@ -293,36 +291,19 @@ function ConsoleApp() {
               ideas={ideas}
               busy={busy}
               onCreateRoadmap={(payload) => runAction(() => api("/pmai/roadmaps", { method: "POST", body: JSON.stringify(payload) }), "Roadmap created")}
-              onGeneratePlan={(payload) => runAction(() => api("/pmai/plans/generate", { method: "POST", body: JSON.stringify(payload) }), payload.create_tasks ? "Plan and tasks generated" : "Plan generated")}
               onAdvancePlan={(planId) => runAction(() => api(`/pmai/plans/${planId}/advance`, { method: "POST", body: "{}" }), "Plan advanced")}
+              onUpdateTask={handleUpdateTaskFromPlan}
+              onSubmitReview={handleSubmitReview}
+              onDeleteNote={handleDeleteNote}
+              onOpenCommit={handleOpenTaskCommit}
             />
           )}
           {view === "visions" && <VisionsView visions={visions} visionForm={visionForm} setVisionForm={setVisionForm} busy={busy} onCreateVision={p => runAction(() => api(p.id ? `/pmai/visions/${p.id}` : "/pmai/visions", { method: p.id ? "PATCH" : "POST", body: JSON.stringify(p) }), "Vision updated")} onUpdateVision={(id, p) => runAction(() => api(`/pmai/visions/${id}`, { method: "PATCH", body: JSON.stringify(p) }), "Vision updated")} onOpenVisionDetail={handleOpenVisionDetail} tasks={tasks} decisions={decisions} />}
           {view === "principles" && <PrinciplesView principles={principles} principleForm={principleForm} setPrincipleForm={setPrincipleForm} busy={busy} onCreatePrinciple={p => runAction(() => api(p.id ? `/pmai/principles/${p.id}` : "/pmai/principles", { method: p.id ? "PATCH" : "POST", body: JSON.stringify(p) }), "Principle updated")} onUpdatePrinciple={(id, p) => runAction(() => api(`/pmai/principles/${id}`, { method: "PATCH", body: JSON.stringify(p) }), "Principle updated")} tasks={tasks} decisions={decisions} />}
           {view === "code" && <CodeView codeStatus={codeStatus} recentCommits={recentGitCommits} loading={loading} onCommitFiles={handleCommitFiles} onViewCommit={handleViewCommit} />}
-          {view === "tasks" && (
-            <TasksView
-              tasks={tasks}
-              taskNotes={taskNotes}
-              commits={commits}
-              roadmaps={roadmaps}
-              plans={plans}
-              docs={docs}
-              taskSearch={taskSearch}
-              taskStatusFilter={taskStatusFilter}
-              setTaskSearch={setTaskSearch}
-              setTaskStatusFilter={setTaskStatusFilter}
-              taskForm={taskForm}
-              setTaskForm={setTaskForm}
-              busy={busy}
-              onOpenIdea={handleOpenIdea}
-              onOpenCommitsForTask={handleOpenCommitsForTask}
-              onCreateTask={() => runAction(() => api("/pmai/tasks", { method: "POST", body: JSON.stringify(buildTaskPayload(taskForm)) }), "Task created")}
-              onUpdateTask={(id, s) => runAction(() => api(`/pmai/tasks/${id}`, { method: "PATCH", body: JSON.stringify({ status: s }) }), "Task updated")}
-            />
-          )}
           {view === "canon" && <CanonView canon={canon} decisions={decisions} canonForm={canonForm} setCanonForm={setCanonForm} busy={busy} onSubmitCanon={() => runAction(() => api("/pmai/canon/update", { method: "POST", body: JSON.stringify(buildCanonPayload(canonForm)) }), "Canon updated")} />}
           {view === "commits" && <CommitsView commits={commits} tasks={tasks} decisions={decisions} commitSearch={commitSearch} commitStatusFilter={commitStatusFilter} commitAttentionFilter={commitAttentionFilter} setCommitSearch={setCommitSearch} setCommitStatusFilter={setCommitStatusFilter} setCommitAttentionFilter={setCommitAttentionFilter} commitForm={commitForm} setCommitForm={setCommitForm} focusedTaskId={focusedTaskId} busy={busy} onCreateCommit={() => runAction(() => api("/pmai/commits", { method: "POST", body: JSON.stringify(buildCommitPayload(commitForm)) }), "Commit registered")} onUpdateCommit={(id, p) => runAction(() => api(`/pmai/commits/${id}`, { method: "PATCH", body: JSON.stringify(p) }), "Commit updated")} />}
+          {view === "bugs" && <BugsView bugs={bugs} commits={commits} bugSearch={bugSearch} bugStatusFilter={bugStatusFilter} bugSeverityFilter={bugSeverityFilter} setBugSearch={setBugSearch} setBugStatusFilter={setBugStatusFilter} setBugSeverityFilter={setBugSeverityFilter} bugForm={bugForm} setBugForm={setBugForm} busy={busy} onCreateBug={() => runAction(() => api("/pmai/bugs", { method: "POST", body: JSON.stringify(buildBugPayload(bugForm)) }), "Bug created")} onUpdateBug={(id, p) => runAction(() => api(`/pmai/bugs/${id}`, { method: "PATCH", body: JSON.stringify(p) }), "Bug updated")} onOpenCommit={handleOpenBugCommit} />}
           {view === "ideas" && (
             <IdeasView
               ideas={ideas}

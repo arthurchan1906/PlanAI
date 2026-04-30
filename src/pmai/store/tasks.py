@@ -166,6 +166,14 @@ def get_task(task_id: str) -> Dict[str, Any]:
             """,
             (task_id,),
         ).fetchall()
+        review_notes = [
+            {"id": n["id"], "content": n["content"], "created_at": n["created_at"]}
+            for n in note_rows if n["mode"] == "review"
+        ]
+        ai_notes = [
+            {"id": n["id"], "content": n["content"], "created_at": n["created_at"]}
+            for n in note_rows if n["mode"] != "review"
+        ]
         return {
             "task": {
                 "id": row["id"],
@@ -192,6 +200,8 @@ def get_task(task_id: str) -> Dict[str, Any]:
                 }
                 for note in note_rows
             ],
+            "reviewer_feedback": review_notes,
+            "ai_notes": ai_notes,
             "linked_commits": linked_commits,
             "links": list_links_for_entity(task_id),
             "changed_files": changed_files,
@@ -244,6 +254,19 @@ def create_task(payload: Dict[str, Any]) -> Dict[str, Any]:
         conn.close()
 
 
+def delete_task_note(note_id: str) -> bool:
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT id FROM task_notes WHERE id = ?", (note_id,)).fetchone()
+        if not row:
+            raise KeyError(note_id)
+        conn.execute("DELETE FROM task_notes WHERE id = ?", (note_id,))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
 def _insert_task_note(conn, task_id: str, content: str, mode: str) -> None:
     if not content.strip():
         return
@@ -256,7 +279,7 @@ def _insert_task_note(conn, task_id: str, content: str, mode: str) -> None:
     )
 
 
-def append_task_note(task_id: str, content: str) -> Dict[str, Any]:
+def append_task_note(task_id: str, content: str, mode: str = "append") -> Dict[str, Any]:
     conn = get_connection()
     try:
         row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
@@ -266,7 +289,7 @@ def append_task_note(task_id: str, content: str) -> Dict[str, Any]:
         if not content:
             raise ValueError("note content cannot be empty")
         next_note = f"{row['last_note'].rstrip()}\n\n{content}" if row["last_note"] else content
-        _insert_task_note(conn, task_id, content, "append")
+        _insert_task_note(conn, task_id, content, mode)
         conn.execute(
             "UPDATE tasks SET last_note = ?, updated_at = ? WHERE id = ?",
             (next_note, today(), task_id),

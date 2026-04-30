@@ -4,6 +4,7 @@ import io
 from .parser import build_parser
 from .commands import (
     handle_brief,
+    handle_bug,
     handle_canon,
     handle_code,
     handle_commit,
@@ -103,6 +104,8 @@ def main() -> None:
         handle_task(args)
     elif args.command == "commit":
         handle_commit(args)
+    elif args.command == "bug":
+        handle_bug(args)
     elif args.command == "daily":
         handle_daily(args)
     elif args.command == "session":

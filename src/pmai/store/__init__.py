@@ -70,6 +70,7 @@ from .tasks import (
     create_task,
     update_task,
     append_task_note,
+    delete_task_note,
     list_task_notes,
     plan_task,
     update_task_checkpoint,
@@ -101,6 +102,14 @@ from .commits import (
     get_commit,
     create_commit,
     update_commit,
+)
+
+# Bug 管理
+from .bugs import (
+    list_bugs,
+    get_bug,
+    create_bug,
+    update_bug,
 )
 
 # 决策管理
@@ -253,6 +262,7 @@ __all__ = [
     "create_task",
     "update_task",
     "append_task_note",
+    "delete_task_note",
     "list_task_notes",
     "plan_task",
     "update_task_checkpoint",
@@ -269,6 +279,11 @@ __all__ = [
     "update_plan",
     "generate_plan",
     "advance_plan",
+    # Bug
+    "list_bugs",
+    "get_bug",
+    "create_bug",
+    "update_bug",
     # 提交
     "list_commits",
     "get_commit",

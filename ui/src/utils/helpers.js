@@ -19,9 +19,9 @@ export function splitValues(raw) {
 }
 
 export function statusColor(status) {
-  if (["accepted", "active", "done", "in_progress"].includes(status)) return "green";
+  if (["accepted", "active", "done", "in_progress", "resolved"].includes(status)) return "green";
   if (["rejected", "obsolete", "dropped", "blocked"].includes(status)) return "red";
-  if (["superseded", "archived"].includes(status)) return "default";
+  if (["superseded", "archived", "closed", "wont_fix"].includes(status)) return "default";
   return "gold";
 }
 
@@ -80,6 +80,16 @@ export function buildDocPayload(form) {
     create: true,
     source_of_truth: form.sourceOfTruth,
     clear_source_of_truth: !form.sourceOfTruth,
+  };
+}
+
+export function buildBugPayload(form) {
+  return {
+    title: form.title,
+    description: form.description,
+    severity: form.severity,
+    status: form.status,
+    commit_id: form.commitId || null,
   };
 }
 

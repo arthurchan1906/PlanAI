@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add *)",
+      "Bash(python -c ' *)",
+      "Bash(npx vite *)",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('src/pmai/store/summary.py', doraise=True\\); print\\('OK summary.py'\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('src/pmai/web/server.py', doraise=True\\); print\\('OK server.py'\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('src/pmai/web/server.py', doraise=True\\); print\\('OK'\\)\")",
+      "Bash(xxd)",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('src/pmai/store/tasks.py', doraise=True\\); py_compile.compile\\('src/pmai/web/server.py', doraise=True\\); print\\('OK'\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('src/pmai/store/tasks.py', doraise=True\\); py_compile.compile\\('src/pmai/web/server.py', doraise=True\\); py_compile.compile\\('src/pmai/store/__init__.py', doraise=True\\); print\\('OK'\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('src/pmai/store/tasks.py', doraise=True\\); print\\('OK'\\)\")"
+    ]
+  }
+}

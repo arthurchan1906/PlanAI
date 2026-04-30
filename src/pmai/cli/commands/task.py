@@ -125,6 +125,10 @@ def _build_created_payload(task: Dict[str, Any]) -> Dict[str, Any]:
                 "reason": "Inspect the created task and confirm acceptance/progress context.",
             },
             {
+                "command": f"aipmc link create --source task --source-id {task['id']} --target doc --target-id <doc-path> --relation references",
+                "reason": "If this task follows a design doc, link it for traceability.",
+            },
+            {
                 "command": f"aipmc task update --id {task['id']} --status in_progress",
                 "reason": "Move it to active work when you start implementing.",
             },

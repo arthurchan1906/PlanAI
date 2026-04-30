@@ -9,6 +9,7 @@ from .docs import normalize_doc_path
 from .relationship_sync import _loads, sync_plan_task_ids, sync_task_membership
 
 SUPPORTED_ENTITY_TYPES = {
+    "bug": "bugs",
     "commit": "commits",
     "decision": "decisions",
     "doc": "doc_records",

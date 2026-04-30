@@ -65,7 +65,11 @@ def _build_commit_payload(commit: dict, *, message: str) -> dict:
         {
             "command": f"aipmc commit show --id {commit_id}",
             "reason": "Inspect the tracked commit and confirm linked task/decision context.",
-        }
+        },
+        {
+            "command": f"aipmc link create --source commit --source-id {commit_id} --target doc --target-id <doc-path> --relation references",
+            "reason": "If this commit implements a documented design, link the design doc.",
+        },
     ]
     if commit.get("status") == "draft":
         next_steps.append(

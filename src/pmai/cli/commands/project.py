@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 import os
 import platform
@@ -116,10 +117,80 @@ def run_remote_command(fn) -> None:
         raise SystemExit(2) from None
 
 
+def _infer_meta() -> dict[str, Any] | None:
+    for frame_info in inspect.stack():
+        func_name = frame_info.function
+        args = frame_info.frame.f_locals.get("args")
+        if args is None:
+            continue
+        if func_name.startswith("handle_"):
+            entity = func_name[len("handle_"):]
+            command_attr = f"{entity}_command"
+            action = getattr(args, command_attr, None)
+            if action is None:
+                continue
+            return {
+                "command": f"{entity}.{action}",
+                "entity_type": entity,
+                "details": {k: str(v) for k, v in vars(args).items() if not k.endswith("_command")},
+            }
+        if func_name == "main":
+            entity = getattr(args, "command", None)
+            if entity is None:
+                continue
+            sub_attr = f"{entity}_command"
+            action = getattr(args, sub_attr, None)
+            if action is None:
+                action = "execute"
+            return {
+                "command": f"{entity}.{action}",
+                "entity_type": entity,
+                "details": {k: str(v) for k, v in vars(args).items() if k not in ("command", sub_attr)},
+            }
+    return None
+
+
+def _get_log_path():
+    from ...store import get_runtime_dir
+    return get_runtime_dir() / "operation.log"
+
+
+def _record_log(result: Any, success: bool) -> None:
+    try:
+        meta = _infer_meta()
+        if meta is None:
+            return
+
+        from datetime import datetime
+
+        entity_id = None
+        if isinstance(result, dict):
+            entity_id = result.get("id")
+
+        entry = {
+            "timestamp": datetime.now().isoformat(timespec="seconds"),
+            "command": meta["command"],
+            "entity_type": meta["entity_type"],
+            "entity_id": entity_id,
+            "success": success,
+            "args": meta.get("details", {}),
+        }
+
+        log_path = _get_log_path()
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
 def run_local_command(fn, *, init_hint: str = "Run `aipmc init` in the project root first.") -> None:
     try:
-        print(json.dumps(fn(), ensure_ascii=False, indent=2))
+        result = fn()
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        _record_log(result, success=True)
     except FileNotFoundError as exc:
+        _record_log(None, success=False)
         print(
             json.dumps(
                 {
@@ -135,6 +206,7 @@ def run_local_command(fn, *, init_hint: str = "Run `aipmc init` in the project r
         )
         raise SystemExit(2) from None
     except KeyError as exc:
+        _record_log(None, success=False)
         print(
             json.dumps(
                 {
@@ -149,6 +221,7 @@ def run_local_command(fn, *, init_hint: str = "Run `aipmc init` in the project r
         )
         raise SystemExit(2) from None
     except Exception as exc:
+        _record_log(None, success=False)
         print(
             json.dumps(
                 {

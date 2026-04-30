@@ -120,6 +120,10 @@ def _build_created_payload(plan: Dict[str, Any]) -> Dict[str, Any]:
                 "reason": "Inspect the created plan and confirm scope, risks, and linked tasks.",
             },
             {
+                "command": f"aipmc link create --source plan --source-id {plan['id']} --target doc --target-id <doc-path> --relation references",
+                "reason": "If this plan is driven by a design doc, link it for traceability.",
+            },
+            {
                 "command": f"aipmc plan update --id {plan['id']} --status active",
                 "reason": "Promote it to active when it becomes the current mainline plan.",
             },

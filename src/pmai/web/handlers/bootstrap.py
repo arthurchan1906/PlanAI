@@ -15,6 +15,7 @@ from ...store import (
     get_git_worktree_status,
     get_inbox_summary,
     get_module_progress,
+    list_bugs,
     list_commits,
     list_decisions,
     list_doc_records,
@@ -65,6 +66,7 @@ def build_web_bootstrap() -> Dict[str, Any]:
     plans = list_plans()
     tasks = list_tasks()
     commits = list_commits()
+    bugs = list_bugs()
     decisions = list_decisions()
     ideas = list_ideas()
     docs = list_doc_records()
@@ -144,6 +146,16 @@ def build_web_bootstrap() -> Dict[str, Any]:
             }
         )
 
+    commit_titles = {item["id"]: item["title"] for item in commits}
+    web_bugs = []
+    for bug in bugs:
+        web_bugs.append(
+            {
+                **bug,
+                "commit_title": commit_titles.get(bug.get("commit_id") or "", ""),
+            }
+        )
+
     web_decisions = []
     for decision in decisions:
         web_decisions.append(
@@ -212,6 +224,7 @@ def build_web_bootstrap() -> Dict[str, Any]:
         "tasks": web_tasks,
         "task_notes": task_notes,
         "commits": web_commits,
+        "bugs": web_bugs,
         "ideas": ideas,
         "docs": web_docs,
         "doc_audit": doc_audit,

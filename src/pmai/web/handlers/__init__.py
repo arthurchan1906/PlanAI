@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from .bootstrap import build_web_bootstrap
+from .bugs import build_web_bug_detail
 from .canon import handle_get_canon, handle_update_canon
 from .code import handle_code_diff, handle_code_status, handle_code_recent
 from .commits import build_web_commit_detail, handle_create_commit, handle_get_commit, handle_list_commits, handle_update_commit
@@ -26,6 +27,8 @@ from .visions import handle_create_vision, handle_get_vision, handle_list_vision
 __all__ = [
     # Bootstrap
     "build_web_bootstrap",
+    # Bugs
+    "build_web_bug_detail",
     # Canon
     "handle_get_canon",
     "handle_update_canon",

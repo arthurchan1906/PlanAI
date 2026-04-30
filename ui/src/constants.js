@@ -9,6 +9,8 @@ export const DOC_LAYERS = ["baseline", "decision", "task", "exploration", "histo
 export const VISION_STATUSES = ["active", "archived", "draft"];
 export const PRINCIPLE_STATUSES = ["active", "archived", "draft"];
 export const PRINCIPLE_KINDS = ["governance", "engineering", "product", "meta"];
+export const BUG_STATUSES = ["open", "in_progress", "resolved", "closed", "wont_fix"];
+export const BUG_SEVERITIES = ["critical", "major", "minor", "trivial"];
 
 export const NAV_GROUPS = [
   {
@@ -16,9 +18,9 @@ export const NAV_GROUPS = [
     label: "Core",
     children: [
       { key: "dashboard", label: "Dashboard" },
-      { key: "tasks", label: "Tasks" },
       { key: "decisions", label: "Decisions" },
       { key: "commits", label: "Commits" },
+      { key: "bugs", label: "Bugs" },
     ],
   },
   {

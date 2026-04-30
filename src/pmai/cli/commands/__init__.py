@@ -1,4 +1,5 @@
 from .brief import handle_brief
+from .bug import handle_bug
 from .canon import handle_canon
 from .code import handle_code
 from .commit import handle_commit
@@ -17,6 +18,7 @@ from .vision import handle_vision
 
 __all__ = [
     "handle_brief",
+    "handle_bug",
     "handle_canon",
     "handle_code",
     "handle_commit",

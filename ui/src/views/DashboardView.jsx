@@ -14,10 +14,11 @@ export default function DashboardView({
   visions,
   principles,
   ideas,
+  bugs,
   loading,
   onOpenCanon,
   onOpenDecisions,
-  onOpenTasks,
+  onOpenPlans,
   onOpenCommits,
   onOpenCommitAttention,
   onOpenIdeas,
@@ -68,7 +69,7 @@ export default function DashboardView({
       return;
     }
     if (action.kind === "task_closure_blocker") {
-      onOpenTasks?.();
+      onOpenPlans?.();
       return;
     }
     onOpenTasks?.();
@@ -114,7 +115,7 @@ export default function DashboardView({
 
       <Row gutter={[16, 16]}>
         <Col xs={24} md={12} xl={6}>
-          <Card className="console-card stat-card clickable-card" bordered={false} hoverable onClick={() => onOpenTasks?.()}>
+          <Card className="console-card stat-card clickable-card" bordered={false} hoverable onClick={() => onOpenPlans?.()}>
             <Statistic title="In Progress Tasks" value={dashboard?.task_counts?.in_progress || 0} />
             <Text type="secondary">Total {dashboard?.task_counts?.total || 0}</Text>
           </Card>
@@ -132,7 +133,7 @@ export default function DashboardView({
           </Card>
         </Col>
         <Col xs={24} md={12} xl={6}>
-          <Card className="console-card stat-card clickable-card" bordered={false} hoverable onClick={() => onOpenTasks?.()}>
+          <Card className="console-card stat-card clickable-card" bordered={false} hoverable onClick={() => onOpenPlans?.()}>
             <Statistic title="Active Plans" value={dashboard?.plan_counts?.active || 0} />
             <Text type="secondary">
               Auto {dashboard?.plan_counts?.auto_advance_ready || 0} / Review {dashboard?.plan_counts?.manager_review_required || 0}
@@ -143,6 +144,88 @@ export default function DashboardView({
           <Card className="console-card stat-card clickable-card" bordered={false} hoverable onClick={() => onOpenCanon?.()}>
             <Statistic title="Canon Followups" value={inboxCounts.canon_followups || 0} />
             <Text type="secondary">Linked decisions {canonMeta.related_decisions_count || 0}</Text>
+          </Card>
+        </Col>
+      </Row>
+
+      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+        <Col xs={24} xl={12}>
+          <Card className="console-card" title="Bug Severity" bordered={false}>
+            {(() => {
+              const bugCounts = dashboard?.bug_counts || {};
+              const severities = [
+                { key: "critical", label: "Critical", color: "#e84749" },
+                { key: "major", label: "Major", color: "#f28c3e" },
+                { key: "minor", label: "Minor", color: "#2f6fec" },
+                { key: "trivial", label: "Trivial", color: "#94a3b8" },
+              ];
+              const total = bugCounts.total || 0;
+              if (!total) return <Text type="secondary">No bugs recorded</Text>;
+              return (
+                <>
+                  <div className="distribution-bar">
+                    {severities.map((s) => {
+                      const count = bugCounts[s.key] || 0;
+                      if (!count) return null;
+                      return (
+                        <div key={s.key} className="distribution-bar__segment"
+                          style={{ flex: count, backgroundColor: s.color }}>
+                          {count > 0 ? count : ""}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="distribution-legend">
+                    {severities.map((s) => (
+                      <div key={s.key} className="distribution-legend__item">
+                        <div className="distribution-legend__dot" style={{ backgroundColor: s.color }} />
+                        <Text>{s.label} {bugCounts[s.key] || 0}</Text>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              );
+            })()}
+          </Card>
+        </Col>
+        <Col xs={24} xl={12}>
+          <Card className="console-card" title="Task Status" bordered={false}>
+            {(() => {
+              const taskCounts = dashboard?.task_counts || {};
+              const statuses = [
+                { key: "todo", label: "Todo", color: "#e8b339" },
+                { key: "in_progress", label: "In Progress", color: "#46a758" },
+                { key: "blocked", label: "Blocked", color: "#e84749" },
+              ];
+              const doneCount = (taskCounts.total || 0) - (taskCounts.todo || 0) - (taskCounts.in_progress || 0) - (taskCounts.blocked || 0);
+              const all = [...statuses, { key: "done", label: "Done", color: "#6366f1" }];
+              const total = taskCounts.total || 0;
+              if (!total) return <Text type="secondary">No tasks</Text>;
+              return (
+                <>
+                  <div className="distribution-bar">
+                    {all.map((s) => {
+                      const count = s.key === "done" ? Math.max(0, doneCount) : (taskCounts[s.key] || 0);
+                      if (!count) return null;
+                      return (
+                        <div key={s.key} className="distribution-bar__segment"
+                          style={{ flex: count, backgroundColor: s.color }}>
+                          {count > 0 ? count : ""}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="distribution-legend">
+                    {all.map((s) => (
+                      <div key={s.key} className="distribution-legend__item">
+                        <div className="distribution-legend__dot" style={{ backgroundColor: s.color }} />
+                        <Text>{s.label} {s.key === "done" ? Math.max(0, doneCount) : (taskCounts[s.key] || 0)}</Text>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              );
+            })()}
           </Card>
         </Col>
       </Row>
@@ -306,7 +389,7 @@ export default function DashboardView({
               className="console-card"
               title="Closure Blockers"
               bordered={false}
-              extra={<Button type="link" size="small" onClick={() => onOpenTasks?.()}>Open tasks</Button>}
+              extra={<Button type="link" size="small" onClick={() => onOpenPlans?.()}>Open plans</Button>}
             >
               {closureBlockers.length ? (
                 <List

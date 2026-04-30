@@ -182,6 +182,18 @@ def ensure_runtime_schema(conn: sqlite3.Connection) -> None:
             updated_at TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS bugs (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            status TEXT NOT NULL,
+            commit_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(commit_id) REFERENCES commits(id)
+        );
+
         CREATE TABLE IF NOT EXISTS task_notes (
             id TEXT PRIMARY KEY,
             task_id TEXT NOT NULL,
