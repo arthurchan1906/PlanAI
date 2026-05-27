@@ -1335,7 +1335,8 @@ func scanTasks(rows *sql.Rows, err error) ([]Task, error) {
 }
 
 func scanTaskRow(row *sql.Row, m map[string]any) error {
-	var id, title, status, priority, phase, accJSON, docsJSON, decsJSON, lastNote, updatedAt, roadmapID, planID, createdAt string
+	var id, title, status, priority, phase, accJSON, docsJSON, decsJSON, lastNote, updatedAt, createdAt string
+	var roadmapID, planID sql.NullString
 	if err := row.Scan(&id, &title, &status, &priority, &phase, &accJSON, &docsJSON, &decsJSON, &lastNote, &updatedAt, &roadmapID, &planID, &createdAt); err != nil {
 		return err
 	}
@@ -1349,8 +1350,8 @@ func scanTaskRow(row *sql.Row, m map[string]any) error {
 	m["related_decisions_json"] = decsJSON
 	m["last_note"] = lastNote
 	m["updated_at"] = updatedAt
-	m["roadmap_id"] = roadmapID
-	m["plan_id"] = planID
+	m["roadmap_id"] = roadmapID.String
+	m["plan_id"] = planID.String
 	m["created_at"] = createdAt
 	return nil
 }
@@ -1372,8 +1373,9 @@ func scanCommitRows(rows *sql.Rows) ([]map[string]any, error) {
 }
 
 func scanCommitRow(scanner interface{ Scan(...any) error }, m map[string]any) error {
-	var id, title, summary, evSum, revNotes, branch, chash, taskID, decID, status, testStatus, reviewStatus, filesJSON, createdAt, updatedAt string
-	if err := scanner.Scan(&id, &title, &summary, &evSum, &revNotes, &branch, &chash, &taskID, &decID, &status, &testStatus, &reviewStatus, &filesJSON, &createdAt, &updatedAt); err != nil {
+	var id, title, summary, evSum, revNotes, branch, chash, status, testStatus, reviewStatus, filesJSON, createdAt, updatedAt string
+	var taskID, decID sql.NullString
+	if err := scanner.Scan(&id, &title, &summary, &branch, &chash, &taskID, &decID, &status, &testStatus, &reviewStatus, &filesJSON, &createdAt, &updatedAt, &evSum, &revNotes); err != nil {
 		return err
 	}
 	m["id"] = id
@@ -1383,8 +1385,8 @@ func scanCommitRow(scanner interface{ Scan(...any) error }, m map[string]any) er
 	m["review_notes"] = revNotes
 	m["branch"] = branch
 	m["commit_hash"] = chash
-	m["task_id"] = taskID
-	m["decision_id"] = decID
+	m["task_id"] = taskID.String
+	m["decision_id"] = decID.String
 	m["status"] = status
 	m["test_status"] = testStatus
 	m["review_status"] = reviewStatus
@@ -1412,13 +1414,14 @@ func scanPlanRows(rows *sql.Rows) ([]map[string]any, error) {
 }
 
 func scanPlanRow(scanner interface{ Scan(...any) error }, m map[string]any) error {
-	var id, roadmapID, visionID, title, goal, status, priority, scopeJSON, risksJSON, assumptionsJSON, taskIDsJSON, source, createdAt, updatedAt string
+	var id, title, goal, status, priority, scopeJSON, risksJSON, assumptionsJSON, taskIDsJSON, source, createdAt, updatedAt string
+	var roadmapID, visionID sql.NullString
 	if err := scanner.Scan(&id, &roadmapID, &visionID, &title, &goal, &status, &priority, &scopeJSON, &risksJSON, &assumptionsJSON, &taskIDsJSON, &source, &createdAt, &updatedAt); err != nil {
 		return err
 	}
 	m["id"] = id
-	m["roadmap_id"] = roadmapID
-	m["vision_id"] = visionID
+	m["roadmap_id"] = roadmapID.String
+	m["vision_id"] = visionID.String
 	m["title"] = title
 	m["goal"] = goal
 	m["status"] = status
@@ -1450,8 +1453,9 @@ func scanBugRows(rows *sql.Rows) ([]map[string]any, error) {
 }
 
 func scanBugRow(scanner interface{ Scan(...any) error }, m map[string]any) error {
-	var id, title, desc, severity, status, commitID, errMsg, files, rootCause, fix, tags, createdAt, updatedAt string
-	if err := scanner.Scan(&id, &title, &desc, &severity, &status, &commitID, &errMsg, &files, &rootCause, &fix, &tags, &createdAt, &updatedAt); err != nil {
+	var id, title, desc, severity, status, createdAt, updatedAt, errMsg, files, rootCause, fix, tags string
+	var commitID sql.NullString
+	if err := scanner.Scan(&id, &title, &desc, &severity, &status, &commitID, &createdAt, &updatedAt, &errMsg, &files, &rootCause, &fix, &tags); err != nil {
 		return err
 	}
 	m["id"] = id
@@ -1559,12 +1563,13 @@ func scanRoadmapRows(rows *sql.Rows) ([]map[string]any, error) {
 }
 
 func scanRoadmapRow(scanner interface{ Scan(...any) error }, m map[string]any) error {
-	var id, visionID, title, targetDate, status, priority, createdAt, updatedAt string
+	var id, title, targetDate, status, priority, createdAt, updatedAt string
+	var visionID sql.NullString
 	if err := scanner.Scan(&id, &visionID, &title, &targetDate, &status, &priority, &createdAt, &updatedAt); err != nil {
 		return err
 	}
 	m["id"] = id
-	m["vision_id"] = visionID
+	m["vision_id"] = visionID.String
 	m["title"] = title
 	m["target_date"] = targetDate
 	m["status"] = status

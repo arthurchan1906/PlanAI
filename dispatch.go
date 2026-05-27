@@ -48,7 +48,10 @@ func dispatchTask(subcmd string, args *cli.Args) {
 func dispatchCommit(subcmd string, args *cli.Args) {
 	switch subcmd {
 	case "list":
-		commits, _ := listCommits(args.Str("status", ""), args.Str("task_id", ""), args.Str("decision_id", ""), args.Str("since", ""), args.Int("limit", 0))
+		commits, err := listCommits(args.Str("status", ""), args.Str("task_id", ""), args.Str("decision_id", ""), args.Str("since", ""), args.Int("limit", 0))
+			if err != nil {
+				cli.Fail(err)
+			}
 		if args.Bool("compact") {
 			type compact struct {
 				ID, Title, Status, TaskID string
@@ -120,7 +123,10 @@ func dispatchCommit(subcmd string, args *cli.Args) {
 func dispatchPlan(subcmd string, args *cli.Args) {
 	switch subcmd {
 	case "list":
-		p, _ := listPlans(args.Str("roadmap_id", ""), args.Str("status", ""))
+		p, err := listPlans(args.Str("roadmap_id", ""), args.Str("status", ""))
+			if err != nil {
+				cli.Fail(err)
+			}
 		cli.PrintJSON(map[string]any{"plans": p})
 	case "show":
 		p, _ := getPlan(args.Get("id"))
