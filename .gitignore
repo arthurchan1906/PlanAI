@@ -40,3 +40,4 @@ Thumbs.db
 # Frontend build output
 ui/dist/
 ui/node_modules/
+frontend/node_modules/
