@@ -210,7 +210,7 @@ func dispatchDecision(subcmd string, args *cli.Args) {
 func dispatchIdea(subcmd string, args *cli.Args) {
 	switch subcmd {
 	case "list":
-		i, _ := listIdeas(args.Str("status", ""))
+		i, err := listIdeas(args.Str("status", "")); if err != nil { cli.Fail(err) }
 		cli.PrintJSON(map[string]any{"ideas": i})
 	case "show":
 		i, _ := getIdea(args.Get("id"))

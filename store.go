@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"os"
+	"path/filepath"
 )
 
 // ============================================================
@@ -643,7 +645,7 @@ func listIdeas(status string) ([]map[string]any, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	return scanIdeaRows(rows)
+		ideas, err := scanIdeaRows(rows); if err != nil { return nil, err }; for _, idea := range ideas { var cc int; db.QueryRow("SELECT COUNT(*) FROM idea_comments WHERE idea_id = ?", idea["id"]).Scan(&cc); idea["comment_count"] = cc; idea["converted_to"] = nil }; return ideas, nil
 }
 
 func getIdea(id string) (map[string]any, error) {
@@ -1089,6 +1091,21 @@ func updateDocRecord(path string, payload map[string]any) (map[string]any, error
 	return map[string]any{"ok": true}, nil
 }
 
+
+func readDocContent(path string) (string, error) {
+	dir, err := findRuntimeDir()
+	if err != nil {
+		return "", err
+	}
+	projectRoot := filepath.Dir(filepath.Dir(dir))
+	fullPath := filepath.Join(projectRoot, path)
+	data, err := os.ReadFile(fullPath)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
 // ============================================================
 // Daily Notes
 // ============================================================
@@ -1262,9 +1279,33 @@ func getCanon() (map[string]any, error) {
 	var id int
 	var updatedAt, productGoal, engFocus, arch string
 	if err := row.Scan(&id, &updatedAt, &productGoal, &engFocus, &arch); err != nil {
-		return map[string]any{"product_goal": "", "engineering_focus": "", "architecture": ""}, nil
+		return map[string]any{"id":"canon-current","product_goal":"","engineering_focus":"","architecture":"","updated_at":"","version_scope":[]any{},"avoid_now":[]any{},"top_tasks":[]any{},"source_docs":[]any{},"related_decisions":[]any{}}, nil
 	}
-	return map[string]any{"product_goal": productGoal, "engineering_focus": engFocus, "architecture": arch, "updated_at": updatedAt}, nil
+	items := map[string][]string{}
+	itemRows, _ := db.Query("SELECT item_type, value FROM canon_items ORDER BY item_type, position")
+	if itemRows != nil {
+		defer itemRows.Close()
+		for itemRows.Next() {
+			var it, val string
+			itemRows.Scan(&it, &val)
+			items[it] = append(items[it], val)
+		}
+	}
+	gi := func(k string) []any {
+		if vals, ok := items[k]; ok {
+			r := make([]any, len(vals))
+			for i, v := range vals { r[i] = v }
+			return r
+		}
+		return []any{}
+	}
+	return map[string]any{
+		"id":"canon-current","product_goal":productGoal,"engineering_focus":engFocus,
+		"architecture":arch,"updated_at":updatedAt,
+		"version_scope":gi("version_scope"),"avoid_now":gi("avoid_now"),
+		"top_tasks":gi("top_tasks"),"source_docs":gi("source_docs"),
+		"related_decisions":gi("related_decisions"),
+	}, nil
 }
 
 func updateCanon(decisionID, productGoal, engFocus, arch string, addScope, addAvoid []string) (map[string]any, error) {
@@ -1463,7 +1504,7 @@ func scanBugRow(scanner interface{ Scan(...any) error }, m map[string]any) error
 	m["description"] = desc
 	m["severity"] = severity
 	m["status"] = status
-	m["commit_id"] = commitID
+	m["commit_id"] = commitID.String
 	m["error"] = errMsg
 	m["files"] = files
 	m["root_cause"] = rootCause
@@ -1528,7 +1569,7 @@ func scanIdeaRows(rows *sql.Rows) ([]map[string]any, error) {
 func scanIdeaRow(scanner interface{ Scan(...any) error }, m map[string]any) error {
 	var id, title, summary, impact, source, status, currentSummary, mainQuestion, recommendedNextAction, updatedAt, createdAt string
 	var canonConflict int
-	if err := scanner.Scan(&id, &title, &summary, &impact, &source, &status, &canonConflict, &currentSummary, &mainQuestion, &recommendedNextAction, &updatedAt, &createdAt); err != nil {
+	if err := scanner.Scan(&id, &title, &summary, &impact, &source, &status, &canonConflict, &createdAt, &currentSummary, &mainQuestion, &recommendedNextAction, &updatedAt); err != nil {
 		return err
 	}
 	m["id"] = id
