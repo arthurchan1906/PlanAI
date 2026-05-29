@@ -1372,7 +1372,10 @@ func scanTasks(rows *sql.Rows, err error) ([]Task, error) {
 	for rows.Next() {
 		var t Task
 		var acceptanceJSON, docsJSON, decsJSON string
-		rows.Scan(&t.ID, &t.Title, &t.Status, &t.Priority, &t.Phase, &acceptanceJSON, &docsJSON, &decsJSON, &t.LastNote, &t.UpdatedAt, &t.RoadmapID, &t.PlanID, &t.CreatedAt)
+		var roadmapID, planID sql.NullString
+		rows.Scan(&t.ID, &t.Title, &t.Status, &t.Priority, &t.Phase, &acceptanceJSON, &docsJSON, &decsJSON, &t.LastNote, &t.UpdatedAt, &roadmapID, &planID, &t.CreatedAt)
+		t.RoadmapID = roadmapID.String
+		t.PlanID = planID.String
 		t.Acceptance = parseJSONList(acceptanceJSON)
 		t.RelatedDocs = parseJSONList(docsJSON)
 		t.RelatedDecisions = parseJSONList(decsJSON)
