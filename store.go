@@ -87,6 +87,14 @@ func createTask(title, priority, status, phase, planID string, acceptance []stri
 	if err != nil {
 		return nil, err
 	}
+	var taskIDsJSON string
+	if err := db.QueryRow("SELECT task_ids_json FROM plans WHERE id = ?", planID).Scan(&taskIDsJSON); err == nil {
+		var ids []string
+		json.Unmarshal([]byte(taskIDsJSON), &ids)
+		ids = append(ids, id)
+		newJSON, _ := json.Marshal(ids)
+		db.Exec("UPDATE plans SET task_ids_json = ?, updated_at = ? WHERE id = ?", string(newJSON), nowISO(), planID)
+	}
 	return getTaskSimple(id)
 }
 
@@ -1341,6 +1349,7 @@ func mapKeyToColumn(k string) string {
 		"kind": "kind", "source": "source", "impact": "impact",
 		"current_summary": "current_summary", "main_question": "main_question",
 		"recommended_next_action": "recommended_next_action",
+		"task_ids": "task_ids_json",
 		"target_date":             "target_date", "horizon": "horizon",
 		"note": "note", "content": "content",
 	}

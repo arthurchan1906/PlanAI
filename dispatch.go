@@ -139,7 +139,7 @@ func dispatchPlan(subcmd string, args *cli.Args) {
 		cli.PrintJSON(map[string]any{"plan": p})
 	case "update":
 		payload := map[string]any{}
-		for _, k := range []string{"title", "goal", "status", "priority", "roadmap_id"} {
+		for _, k := range []string{"title", "goal", "status", "priority", "roadmap_id", "task_ids"} {
 			if v := args.Str(k, ""); v != "" {
 				payload[k] = v
 			}
