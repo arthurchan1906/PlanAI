@@ -321,7 +321,7 @@ func createCommit(title, summary, evidenceSummary, reviewNotes, branch, commitHa
 		return nil, err
 	}
 	c, _ := getCommit(id)
-	return c["commit"].(map[string]any), nil
+	return c, nil
 }
 
 func updateCommit(id string, payload map[string]any) (map[string]any, error) {
