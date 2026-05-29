@@ -169,7 +169,7 @@ function TaskCard({ task, context, onOpenDoc, onOpenCommit, onDeleteNote, onUpda
               {statusLabel}
             </Tag>
           </Space>
-          <Text type="secondary" style={{ fontSize: 11 }}>{task.phase} | 优先级 {task.priority}</Text>
+          <Text type="secondary" style={{ fontSize: 11 }}>{task.phase} | 优先级 {task.priority} | 更新于 {task.updated_at || task.created_at || "-"}</Text>
         </Space>
         <Space wrap className="tree-node-meta">
           {!!context?.idea && <Tag color="gold">idea</Tag>}
@@ -383,8 +383,15 @@ export default function RoadmapView({ roadmaps, plans, tasks, taskNotes = [], vi
   }, [commits, docs, ideas, tasks]);
 
   const roadmapTree = useMemo(() => {
+    const sortByUpdated = (a, b) => {
+      const da = new Date(a.updated_at || a.created_at || 0);
+      const db = new Date(b.updated_at || b.created_at || 0);
+      return db - da;
+    };
     return (roadmaps || []).map((roadmap) => {
-      const roadmapPlans = (plans || []).filter((plan) => plan.roadmap_id === roadmap.id);
+      const roadmapPlans = (plans || [])
+        .filter((plan) => plan.roadmap_id === roadmap.id)
+        .sort(sortByUpdated);
       const planIds = new Set(roadmapPlans.map((plan) => plan.id));
       const roadmapTasks = (tasks || []).filter((task) =>
         task.roadmap_id === roadmap.id || (task.plan_id && planIds.has(task.plan_id))
@@ -394,6 +401,9 @@ export default function RoadmapView({ roadmaps, plans, tasks, taskNotes = [], vi
       roadmapTasks.forEach((task) => {
         if (task.plan_id && tasksByPlan[task.plan_id]) tasksByPlan[task.plan_id].push(task);
         else unplannedTasks.push(task);
+      });
+      Object.keys(tasksByPlan).forEach((pid) => {
+        tasksByPlan[pid].sort(sortByUpdated);
       });
       const doneTasks = roadmapTasks.filter((task) => task.status === "done").length;
       const progress = roadmapTasks.length ? Math.round((doneTasks / roadmapTasks.length) * 100) : 0;
