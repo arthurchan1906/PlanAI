@@ -430,3 +430,38 @@ func dispatchCode(subcmd string, args *cli.Args) {
 func dispatchBrief(subcmd string, args *cli.Args) {
 	cli.PrintJSON(map[string]any{"message": fmt.Sprintf("brief %s: run aipmc search <topic>", subcmd)})
 }
+
+func dispatchEvent(subcmd string, args *cli.Args) {
+	switch subcmd {
+	case "list":
+		events, _ := listEvents(args.Str("filter", ""))
+		cli.PrintJSON(map[string]any{"events": events})
+	case "create":
+		evt, _ := createEvent(args.Get("type"), args.Get("entity_type"), args.Get("entity_id"), args.Get("summary"))
+		cli.PrintJSON(evt)
+	default:
+		fmt.Fprintf(os.Stderr, "unknown event subcommand: %s\n", subcmd)
+		os.Exit(1)
+	}
+}
+
+func dispatchFeedback(subcmd string, args *cli.Args) {
+	switch subcmd {
+	case "list":
+		fbs, _ := listFeedbacks(args.Str("label", ""))
+		cli.PrintJSON(fbs)
+	case "add":
+		fb, err := addFeedback(args.Str("label", "suggestion"), args.Get("content"))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "feedback server unreachable, saved locally: %v\n", err)
+			// Fallback: store as idea in local DB
+			idea, _ := createIdea("[Feedback] "+args.Get("content")[:min(80, len(args.Get("content")))], args.Get("content"), "", "feedback", false, "", "", "continue_discussion")
+			cli.PrintJSON(map[string]any{"status": "stored_locally", "idea": idea})
+			return
+		}
+		cli.PrintJSON(fb)
+	default:
+		fmt.Fprintf(os.Stderr, "unknown feedback subcommand: %s\n", subcmd)
+		os.Exit(1)
+	}
+}

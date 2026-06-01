@@ -1,16 +1,33 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git add *)",
-      "Bash(python -c ' *)",
-      "Bash(npx vite *)",
-      "Bash(python -c \"import py_compile; py_compile.compile\\('src/pmai/store/summary.py', doraise=True\\); print\\('OK summary.py'\\)\")",
-      "Bash(python -c \"import py_compile; py_compile.compile\\('src/pmai/web/server.py', doraise=True\\); print\\('OK server.py'\\)\")",
-      "Bash(python -c \"import py_compile; py_compile.compile\\('src/pmai/web/server.py', doraise=True\\); print\\('OK'\\)\")",
-      "Bash(xxd)",
-      "Bash(python -c \"import py_compile; py_compile.compile\\('src/pmai/store/tasks.py', doraise=True\\); py_compile.compile\\('src/pmai/web/server.py', doraise=True\\); print\\('OK'\\)\")",
-      "Bash(python -c \"import py_compile; py_compile.compile\\('src/pmai/store/tasks.py', doraise=True\\); py_compile.compile\\('src/pmai/web/server.py', doraise=True\\); py_compile.compile\\('src/pmai/store/__init__.py', doraise=True\\); print\\('OK'\\)\")",
-      "Bash(python -c \"import py_compile; py_compile.compile\\('src/pmai/store/tasks.py', doraise=True\\); print\\('OK'\\)\")"
+      "Bash(git log *)",
+      "Bash(git diff *)",
+      "Bash(go build *)",
+      "Bash(./dist/aipmc.exe mcp *)",
+      "Bash(./dist/aipmc.exe bug *)",
+      "Bash(./dist/aipmc.exe status *)",
+      "Bash(./dist/aipmc.exe analyze *)",
+      "Bash(./dist/aipmc.exe feedback *)",
+      "Bash(/c/Users/chenz/.aipm/aipmc feedback *)",
+      "Bash(aipmc feedback *)",
+      "Read(//c/Users/chenz/**)",
+      "Read(//d/code/**)",
+      "Read(//d/code/AI/**)",
+      "Bash(xargs grep -l \"pmai\\\\|aipm\")",
+      "Bash(conda run *)",
+      "Bash(PYTHONIOENCODING=utf-8 conda run *)",
+      "Bash(sqlite3 *)",
+      "Bash(./dist/aipmc.exe setup *)",
+      "WebSearch"
     ]
+  },
+  "mcpServers": {
+    "aipm": {
+      "command": "D:/code/AI/PlanAI/dist/aipmc.exe",
+      "args": [
+        "mcp"
+      ]
+    }
   }
 }

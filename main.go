@@ -27,9 +27,30 @@ func main() {
 		}
 		writeSkillFile()
 		fmt.Printf("Initialized .pmai at %s\n", filepath.Dir(filepath.Dir(path)))
+		// Auto-configure MCP if Claude Code project exists
+		if err := setupMCP(""); err != nil {
+			fmt.Fprintf(os.Stderr, "MCP setup skipped: %v (run 'aipmc setup' manually)\n", err)
+		}
 		return
 	case "help":
 		cli.PrintHelp()
+		return
+	case "setup":
+		target := ""
+		if len(os.Args) > 2 {
+			target = os.Args[2]
+		}
+		if err := setupMCP(target); err != nil {
+			fmt.Fprintf(os.Stderr, "setup failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	case "mcp":
+		server := newMCPServer()
+		if err := server.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "MCP server error: %v\n", err)
+			os.Exit(1)
+		}
 		return
 	case "web":
 		runWebServer()
@@ -57,6 +78,10 @@ func main() {
 		cli.PrintJSON(buildNextActionPacket())
 	case "context":
 		cli.PrintJSON(buildContextPack())
+	case "analyze":
+		cli.PrintJSON(runFullAnalysis())
+	case "briefing":
+		fmt.Println(BuildBriefing())
 	case "inbox":
 		cli.PrintJSON(getInboxSummary())
 	case "doctor":
@@ -95,6 +120,10 @@ func main() {
 		dispatchCanon(subcmd, args)
 	case "code":
 		dispatchCode(subcmd, args)
+	case "event":
+		dispatchEvent(subcmd, args)
+	case "feedback":
+		dispatchFeedback(subcmd, args)
 	case "brief":
 		dispatchBrief(subcmd, args)
 	default:

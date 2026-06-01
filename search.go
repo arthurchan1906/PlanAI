@@ -184,6 +184,17 @@ func buildAgentStartPacket() map[string]any {
 	tasks, _ := listTasks("in_progress", "")
 	plans, _ := listPlans("", "active")
 
+	// Fetch unconsumed PM events to inject into Agent's context
+	events, _ := getUnconsumedEvents()
+	alerts := []map[string]any{}
+	for _, e := range events {
+		alerts = append(alerts, map[string]any{
+			"type":    e["type"],
+			"summary": e["summary"],
+			"entity":  e["entity_type"],
+		})
+	}
+
 	return map[string]any{
 		"role":    "ai_start",
 		"message": "Use this before coding. Reuse existing PMAI tasks/plans/decisions/docs before creating new ones.",
@@ -196,6 +207,8 @@ func buildAgentStartPacket() map[string]any {
 			"in_progress_tasks": tasks[:min(3, len(tasks))],
 			"active_plans":      plans[:min(3, len(plans))],
 		},
+		"briefing": BuildBriefing(), // Markdown briefing for Agent consumption
+		"pm_alerts": alerts,          // Unconsumed PM intent changes
 		"recommended_flow": []map[string]any{
 			{"when": "Before coding or creating anything new", "command": "aipmc start"},
 			{"when": "If the current work topic is not obvious", "command": "aipmc search \"<topic>\""},
@@ -239,6 +252,18 @@ func buildContextPack() map[string]any {
 		}
 	}
 
+	// Include analysis results for Agent awareness
+	report := runFullAnalysis()
+	events, _ := getUnconsumedEvents()
+	alerts := []map[string]any{}
+	for _, e := range events {
+		alerts = append(alerts, map[string]any{
+			"type":    e["type"],
+			"summary": e["summary"],
+			"entity":  e["entity_type"],
+		})
+	}
+
 	return map[string]any{
 		"project": map[string]any{
 			"source_of_truth_docs": sotDocs[:min(3, len(sotDocs))],
@@ -247,6 +272,13 @@ func buildContextPack() map[string]any {
 			"in_progress_tasks": tasks[:min(3, len(tasks))],
 			"active_plans":      plans[:min(3, len(plans))],
 		},
+		"analysis": map[string]any{
+			"summary":    report.Summary,
+			"orphans":    report.Orphans,
+			"duplicates": report.Duplicates,
+			"at_risk":    report.Progress,
+		},
+		"pm_alerts": alerts,
 	}
 }
 

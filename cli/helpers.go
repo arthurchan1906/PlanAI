@@ -39,24 +39,24 @@ func RunInfo(dbPath string) {
 func PrintHelp() {
 	fmt.Println(`AIPM CLI — AI Project Manager
 
-COMMANDS:
-  aipmc init                     Initialize .pmai in current project
-  aipmc search <query>           Search across all types
-  aipmc start / next / status    Agent runtime
-  aipmc doctor / info            Diagnostics
-  aipmc web                      Start web UI server
+PRIMARY (infrastructure):
+  aipmc init                     Initialize project + auto-configure MCP
+  aipmc setup [platform]         Configure MCP: Claude/Cursor/Windsurf/Cline/Roo/all
+  aipmc web                      Start web UI server (PM dashboard)
+  aipmc mcp                      Start MCP server (Agent interface)
 
-  aipmc task list|show|add|update|note|notes|plan|checkpoint
-  aipmc commit list|show|add|update
-  aipmc plan list|show|add|update
-  aipmc bug list|show|add|update
-  aipmc decision list|show|add|review
-  aipmc idea list|show|capture|review|update|comment|convert
-  aipmc roadmap list|show|add|update
-  aipmc principle list|show|add|update
-  aipmc link list|add|delete
-  aipmc daily show|close|replace
-  aipmc docs list|update
+MCP TOOLS (Agent primary — always visible in tool list):
+  aipm_get_briefing              Project briefing + PM alerts + analysis
+  aipm_search_context            Search all entities with related context
+  aipm_record_commit             Record commit + scope drift detection
+  aipm_create_task               Create task + duplicate detection
+  aipm_analyze                   Full project health analysis
+  aipm_mark_consumed             Confirm Agent has read PM events
+
+CLI (legacy / debug):
+  aipmc search|start|next|status|context|inbox|analyze|briefing
+  aipmc task|commit|plan|bug|decision|idea|roadmap|principle [CRUD]
+  aipmc doctor|info|event|link|daily|docs|canon
 
 HIERARCHY: commit → task → plan → roadmap (no orphans, no back-fill)`)
 }

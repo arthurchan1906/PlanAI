@@ -382,6 +382,24 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		sendJSON(w, buildContextPack())
 	case method == "GET" && path == "next":
 		sendJSON(w, buildNextActionPacket())
+	case method == "GET" && path == "events":
+		events, _ := listEvents(q.Get("filter"))
+		sendJSON(w, map[string]any{"events": events})
+	case method == "GET" && path == "feedbacks":
+		fbs, _ := listFeedbacks(q.Get("label"))
+		sendJSON(w, map[string]any{"feedbacks": fbs})
+	case method == "POST" && path == "feedbacks":
+		body := readBody()
+		fb, err := addFeedback(str(body["label"]), str(body["content"]))
+		if err != nil {
+			sendJSON(w, map[string]any{"status": "stored_locally", "detail": err.Error()})
+			return
+		}
+		sendJSON(w, fb)
+	case method == "POST" && path == "events":
+		body := readBody()
+		evt, _ := createEvent(str(body["type"]), str(body["entity_type"]), str(body["entity_id"]), str(body["summary"]))
+		sendJSON(w, evt)
 	case method == "GET" && path == "inbox":
 		sendJSON(w, getInboxSummary())
 	case method == "GET" && path == "canon":
@@ -542,6 +560,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 			"bugs":webBugs,"ideas":ideas,"docs":webDocs,
 			"doc_audit":docAudit,"decisions":webDecisions,
 			"daily":daily,"module_progress":map[string]any{},
+			"analysis":runFullAnalysis(),"briefing":BuildBriefing(),
 		})
 
 	case method == "POST" && path == "tasks":
@@ -684,6 +703,27 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimPrefix(path, "links/")
 		err := deleteLink(id)
 		if err != nil {
+			sendError(w, 500, err.Error())
+			return
+		}
+		sendJSON(w, map[string]any{"ok": true})
+	case method == "DELETE" && strings.HasPrefix(path, "tasks/"):
+		id := strings.TrimPrefix(path, "tasks/")
+		if err := deleteTask(id); err != nil {
+			sendError(w, 500, err.Error())
+			return
+		}
+		sendJSON(w, map[string]any{"ok": true})
+	case method == "DELETE" && strings.HasPrefix(path, "plans/"):
+		id := strings.TrimPrefix(path, "plans/")
+		if err := deletePlan(id); err != nil {
+			sendError(w, 500, err.Error())
+			return
+		}
+		sendJSON(w, map[string]any{"ok": true})
+	case method == "DELETE" && strings.HasPrefix(path, "bugs/"):
+		id := strings.TrimPrefix(path, "bugs/")
+		if err := deleteBug(id); err != nil {
 			sendError(w, 500, err.Error())
 			return
 		}

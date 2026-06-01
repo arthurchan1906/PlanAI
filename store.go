@@ -83,10 +83,17 @@ func createTask(title, priority, status, phase, planID string, acceptance []stri
 	if len(acceptance) > 0 {
 		accJSON = jsonStr(acceptance)
 	}
-	_, err = db.Exec("INSERT INTO tasks (id, title, status, priority, phase, plan_id, acceptance_json, related_docs_json, related_decisions_json, last_note, updated_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, title, status, priority, phase, planID, accJSON, "[]", "[]", "", today(), now)
+	// Backfill roadmap_id from the plan
+	var roadmapID string
+	if err := db.QueryRow("SELECT roadmap_id FROM plans WHERE id = ?", planID).Scan(&roadmapID); err != nil {
+		roadmapID = ""
+	}
+	_, err = db.Exec("INSERT INTO tasks (id, title, status, priority, phase, plan_id, acceptance_json, related_docs_json, related_decisions_json, last_note, updated_at, roadmap_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, title, status, priority, phase, planID, accJSON, "[]", "[]", "", today(), roadmapID, now)
 	if err != nil {
 		return nil, err
 	}
+	// Auto-create event
+	createEvent("task_created", "task", id, fmt.Sprintf("New task: %s", title))
 	var taskIDsJSON string
 	if err := db.QueryRow("SELECT task_ids_json FROM plans WHERE id = ?", planID).Scan(&taskIDsJSON); err == nil {
 		var ids []string
@@ -428,6 +435,8 @@ func createPlan(title, goal, roadmapID, visionID, priority, status string, scope
 	if err != nil {
 		return nil, err
 	}
+	// Auto-create event for PM tracking
+	createEvent("plan_created", "plan", id, fmt.Sprintf("New plan created: %s", title))
 	return getPlan(id)
 }
 
@@ -1428,7 +1437,10 @@ func scanCommitRows(rows *sql.Rows) ([]map[string]any, error) {
 func scanCommitRow(scanner interface{ Scan(...any) error }, m map[string]any) error {
 	var id, title, summary, evSum, revNotes, branch, chash, status, testStatus, reviewStatus, filesJSON, createdAt, updatedAt string
 	var taskID, decID sql.NullString
-	if err := scanner.Scan(&id, &title, &summary, &branch, &chash, &taskID, &decID, &status, &testStatus, &reviewStatus, &filesJSON, &createdAt, &updatedAt, &evSum, &revNotes); err != nil {
+	// Column order MUST match CREATE TABLE commits:
+	// id, title, summary, evidence_summary, review_notes, branch, commit_hash,
+	// task_id, decision_id, status, test_status, review_status, files_json, created_at, updated_at
+	if err := scanner.Scan(&id, &title, &summary, &evSum, &revNotes, &branch, &chash, &taskID, &decID, &status, &testStatus, &reviewStatus, &filesJSON, &createdAt, &updatedAt); err != nil {
 		return err
 	}
 	m["id"] = id
@@ -1506,9 +1518,9 @@ func scanBugRows(rows *sql.Rows) ([]map[string]any, error) {
 }
 
 func scanBugRow(scanner interface{ Scan(...any) error }, m map[string]any) error {
-	var id, title, desc, severity, status, createdAt, updatedAt, errMsg, files, rootCause, fix, tags string
+	var id, title, desc, severity, status, errMsg, files, rootCause, fix, tags, createdAt, updatedAt string
 	var commitID sql.NullString
-	if err := scanner.Scan(&id, &title, &desc, &severity, &status, &commitID, &createdAt, &updatedAt, &errMsg, &files, &rootCause, &fix, &tags); err != nil {
+	if err := scanner.Scan(&id, &title, &desc, &severity, &status, &commitID, &errMsg, &files, &rootCause, &fix, &tags, &createdAt, &updatedAt); err != nil {
 		return err
 	}
 	m["id"] = id
@@ -1581,7 +1593,7 @@ func scanIdeaRows(rows *sql.Rows) ([]map[string]any, error) {
 func scanIdeaRow(scanner interface{ Scan(...any) error }, m map[string]any) error {
 	var id, title, summary, impact, source, status, currentSummary, mainQuestion, recommendedNextAction, updatedAt, createdAt string
 	var canonConflict int
-	if err := scanner.Scan(&id, &title, &summary, &impact, &source, &status, &canonConflict, &createdAt, &currentSummary, &mainQuestion, &recommendedNextAction, &updatedAt); err != nil {
+	if err := scanner.Scan(&id, &title, &summary, &impact, &source, &status, &canonConflict, &currentSummary, &mainQuestion, &recommendedNextAction, &updatedAt, &createdAt); err != nil {
 		return err
 	}
 	m["id"] = id
@@ -1715,3 +1727,109 @@ func getTask(id string) (map[string]any, error) {
 	task["note_history"] = notes
 	return task, nil
 }
+
+// ============================================================
+// Delete operations
+// ============================================================
+
+func deleteTask(id string) error {
+	db, err := openDB()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	_, err = db.Exec("DELETE FROM tasks WHERE id = ?", id)
+	return err
+}
+
+func deletePlan(id string) error {
+	db, err := openDB()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	_, err = db.Exec("DELETE FROM plans WHERE id = ?", id)
+	return err
+}
+
+func deleteBug(id string) error {
+	db, err := openDB()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	_, err = db.Exec("DELETE FROM bugs WHERE id = ?", id)
+	return err
+}
+
+// ============================================================
+// Events — PM intent change tracking (Phase 1)
+// ============================================================
+
+func createEvent(typ, entityType, entityID, summary string) (map[string]any, error) {
+	db, err := openDB()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	id := slug("evt")
+	now := nowISO()
+	_, err = db.Exec("INSERT INTO events (id, type, entity_type, entity_id, summary, created_at, consumed_by_agent) VALUES (?, ?, ?, ?, ?, ?, 0)", id, typ, entityType, entityID, summary, now)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"id": id, "type": typ, "entity_type": entityType, "entity_id": entityID, "summary": summary, "created_at": now, "consumed_by_agent": false}, nil
+}
+
+func listEvents(consumedOnly string) ([]map[string]any, error) {
+	db, err := openDB()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	q := "SELECT * FROM events"
+	if consumedOnly == "unconsumed" {
+		q += " WHERE consumed_by_agent = 0"
+	}
+	q += " ORDER BY created_at DESC LIMIT 50"
+	rows, err := db.Query(q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var events []map[string]any
+	for rows.Next() {
+		var id, typ, entityType, entityID, summary, createdAt string
+		var consumed int
+		rows.Scan(&id, &typ, &entityType, &entityID, &summary, &createdAt, &consumed)
+		events = append(events, map[string]any{
+			"id": id, "type": typ, "entity_type": entityType, "entity_id": entityID,
+			"summary": summary, "created_at": createdAt, "consumed_by_agent": consumed == 1,
+		})
+	}
+	if events == nil {
+		events = []map[string]any{}
+	}
+	return events, nil
+}
+
+func markEventsConsumed() error {
+	db, err := openDB()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	_, err = db.Exec("UPDATE events SET consumed_by_agent = 1 WHERE consumed_by_agent = 0")
+	return err
+}
+
+func getUnconsumedEvents() ([]map[string]any, error) {
+	return listEvents("unconsumed")
+}
+
+// ============================================================
+// Feedback — delegated to remote API (feedback.go)
+//   Compatible with Python pmai feedback server.
+//   CLI: aipmc feedback add --label bug|suggestion --content "..."
+//   CLI: aipmc feedback list [--label bug|suggestion]
+// ============================================================

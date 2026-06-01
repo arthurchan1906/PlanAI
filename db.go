@@ -25,11 +25,16 @@ func findDBPath() (string, error) {
 	}
 	// Walk up from cwd looking for .pmai/
 	cwd, _ := os.Getwd()
-	for dir := cwd; dir != "/" && dir != "."; dir = filepath.Dir(dir) {
+	for dir := cwd; dir != "/" && dir != "."; {
 		pmaiDir := filepath.Join(dir, ".pmai")
 		if info, err := os.Stat(pmaiDir); err == nil && info.IsDir() {
 			return filepath.Join(pmaiDir, "data", "pmai.db"), nil
 		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break // reached filesystem root (e.g. D: on Windows)
+		}
+		dir = parent
 	}
 	// Fallback to cwd/.pmai/
 	return filepath.Join(cwd, ".pmai", "data", "pmai.db"), nil
@@ -268,6 +273,17 @@ var schemaStatements = []string{
 		created_at TEXT NOT NULL,
 		FOREIGN KEY(task_id) REFERENCES tasks(id)
 	)`,
+	`CREATE TABLE IF NOT EXISTS events (
+		id TEXT PRIMARY KEY,
+		type TEXT NOT NULL,
+		entity_type TEXT NOT NULL,
+		entity_id TEXT NOT NULL,
+		summary TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		consumed_by_agent INTEGER NOT NULL DEFAULT 0
+	)`,
+	// Note: feedback is stored on remote server (see feedback.go),
+	// not in the local SQLite database. Compatible with Python pmai.
 }
 
 // ---- Migrations ----
@@ -378,11 +394,16 @@ func findRuntimeDir() (string, error) {
 		return dir, nil
 	}
 	cwd, _ := os.Getwd()
-	for dir := cwd; dir != "/" && dir != "."; dir = filepath.Dir(dir) {
+	for dir := cwd; dir != "/" && dir != "."; {
 		pmaiDir := filepath.Join(dir, ".pmai")
 		if info, err := os.Stat(pmaiDir); err == nil && info.IsDir() {
 			return pmaiDir, nil
 		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break // reached filesystem root (e.g. D: on Windows)
+		}
+		dir = parent
 	}
 	return filepath.Join(cwd, ".pmai"), nil
 }

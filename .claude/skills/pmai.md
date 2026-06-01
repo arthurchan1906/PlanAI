@@ -1,6 +1,4 @@
-package main
-
-const skillMD = `---
+---
 name: pmai
 description: AIPM project management — use MCP tools for all operations. Triggers: before coding, after commits, bug discovery, creating tasks/plans.
 ---
@@ -35,9 +33,9 @@ Every record must have a parent. No orphans.
 
 ## CLI (debug/fallback only)
 
-` + "`" + "aipmc init`" + ` — one-time project setup
-` + "`" + "aipmc web`" + ` — PM dashboard server
-` + "`" + "aipmc mcp`" + ` — start MCP server (usually auto-launched)
+`aipmc init` — one-time project setup
+`aipmc web` — PM dashboard server
+`aipmc mcp` — start MCP server (usually auto-launched)
 
 ## NEVER
 
@@ -47,4 +45,3 @@ Every record must have a parent. No orphans.
 - Record bugs without error and root-cause
 
 *Installed by aipmc. To update: aipmc init*
-`
