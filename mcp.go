@@ -684,9 +684,36 @@ func (s *mcpServer) Run() error {
 	}
 }
 
+// supportedProtocolVersions lists MCP protocol versions this server supports
+// (date-based versions per the MCP spec). The server echoes back the client's
+// requested version if it's in this list; otherwise it negotiates down.
+var supportedProtocolVersions = map[string]bool{
+	"2024-11-05": true,
+	"2025-03-26": true,
+	"2025-06-18": true,
+}
+
 func (s *mcpServer) handleInitialize(msg *jsonrpcMessage) {
+	// Extract the client's requested protocol version
+	clientVersion := ""
+	if msg.Params != nil {
+		var params struct {
+			ProtocolVersion string `json:"protocolVersion"`
+		}
+		if err := json.Unmarshal(msg.Params, &params); err == nil {
+			clientVersion = params.ProtocolVersion
+		}
+	}
+
+	// Echo back the client's version if we support it; otherwise fall back to
+	// the oldest stable version for maximum compatibility.
+	protoVersion := "2024-11-05"
+	if supportedProtocolVersions[clientVersion] {
+		protoVersion = clientVersion
+	}
+
 	result := map[string]interface{}{
-		"protocolVersion": "0.2",
+		"protocolVersion": protoVersion,
 		"capabilities": map[string]interface{}{
 			"tools": map[string]bool{},
 		},

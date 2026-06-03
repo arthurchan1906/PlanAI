@@ -41,7 +41,7 @@ func PrintHelp() {
 
 PRIMARY (infrastructure):
   aipmc init                     Initialize project + auto-configure MCP
-  aipmc setup [platform]         Configure MCP: Claude/Cursor/Windsurf/Cline/Roo/all
+  aipmc setup <platform>          Configure MCP for a specific platform (run without args to see options)
   aipmc web                      Start web UI server (PM dashboard)
   aipmc mcp                      Start MCP server (Agent interface)
 

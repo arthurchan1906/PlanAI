@@ -27,8 +27,8 @@ func main() {
 		}
 		writeSkillFile()
 		fmt.Printf("Initialized .pmai at %s\n", filepath.Dir(filepath.Dir(path)))
-		// Auto-configure MCP if Claude Code project exists
-		if err := setupMCP(""); err != nil {
+		// Auto-configure MCP for all platforms
+		if err := setupMCP("all"); err != nil {
 			fmt.Fprintf(os.Stderr, "MCP setup skipped: %v (run 'aipmc setup' manually)\n", err)
 		}
 		return
@@ -36,11 +36,22 @@ func main() {
 		cli.PrintHelp()
 		return
 	case "setup":
-		target := ""
-		if len(os.Args) > 2 {
-			target = os.Args[2]
+		if len(os.Args) < 3 {
+			// No platform specified — show available platforms
+			fmt.Println("Please specify a platform to configure.")
+			fmt.Println()
+			listPlatforms()
+			os.Exit(0)
 		}
-		if err := setupMCP(target); err != nil {
+		target := os.Args[2]
+		// Resolve short name / alias to full platform name
+		resolved, err := resolvePlatform(target)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Unknown platform: %s\n\n", target)
+			listPlatforms()
+			os.Exit(1)
+		}
+		if err := setupMCP(resolved); err != nil {
 			fmt.Fprintf(os.Stderr, "setup failed: %v\n", err)
 			os.Exit(1)
 		}
