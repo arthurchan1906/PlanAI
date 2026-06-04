@@ -244,7 +244,7 @@ func listCommits(status, taskID, decisionID, since string, limit int) ([]map[str
 		return nil, err
 	}
 	defer db.Close()
-	q := "SELECT * FROM commits"
+	q := "SELECT id, title, summary, evidence_summary, review_notes, branch, commit_hash, task_id, decision_id, status, test_status, review_status, files_json, created_at, updated_at FROM commits"
 	var args []any
 	var clauses []string
 	if status != "" {
@@ -293,7 +293,7 @@ func getCommit(id string) (map[string]any, error) {
 	}
 	defer db.Close()
 	c := map[string]any{}
-	row := db.QueryRow("SELECT * FROM commits WHERE id = ?", id)
+	row := db.QueryRow("SELECT id, title, summary, evidence_summary, review_notes, branch, commit_hash, task_id, decision_id, status, test_status, review_status, files_json, created_at, updated_at FROM commits WHERE id = ?", id)
 	if err := scanCommitRow(row, c); err != nil {
 		return nil, err
 	}
@@ -345,7 +345,7 @@ func updateCommit(id string, payload map[string]any) (map[string]any, error) {
 		return nil, err
 	}
 	defer db.Close()
-	row := db.QueryRow("SELECT * FROM commits WHERE id = ?", id)
+	row := db.QueryRow("SELECT id, title, summary, evidence_summary, review_notes, branch, commit_hash, task_id, decision_id, status, test_status, review_status, files_json, created_at, updated_at FROM commits WHERE id = ?", id)
 	existing := map[string]any{}
 	if err := scanCommitRow(row, existing); err != nil {
 		return nil, err
