@@ -19,7 +19,11 @@
       "Bash(PYTHONIOENCODING=utf-8 conda run *)",
       "Bash(sqlite3 *)",
       "Bash(./dist/aipmc.exe setup *)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(go vet *)",
+      "Bash(/Users/dazsec/workspace/aipmc/dist/aipmc setup *)",
+      "Bash(/Users/dazsec/workspace/aipmc/dist/aipmc mcp *)",
+      "Bash(python3 -c \"import sys,json; r=json.load\\(sys.stdin\\); print\\('protocolVersion:', r['result']['protocolVersion']\\)\")"
     ]
   },
   "mcpServers": {
