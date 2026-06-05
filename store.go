@@ -1343,6 +1343,236 @@ func updateCanon(decisionID, productGoal, engFocus, arch string, addScope, addAv
 }
 
 // ============================================================
+// Threads — 线索 (retrospective aggregation of related entities)
+// ============================================================
+
+type Thread struct {
+	ID        string          `json:"id"`
+	Title     string          `json:"title"`
+	Summary   string          `json:"summary"`
+	Status    string          `json:"status"`
+	Source    string          `json:"source"`
+	Items     []ThreadItem    `json:"items"`
+	CreatedAt string          `json:"created_at"`
+	UpdatedAt string          `json:"updated_at"`
+}
+
+type ThreadItem struct {
+	EntityType string `json:"entity_type"`
+	EntityID   string `json:"entity_id"`
+	Title      string `json:"title"`
+	Status     string `json:"status"`
+	Note       string `json:"note"`
+	AddedAt    string `json:"added_at"`
+}
+
+type ThreadSuggestion struct {
+	SuggestedTitle string        `json:"suggested_title"`
+	Rationale      string        `json:"rationale"`
+	SourceEntities []ThreadItem  `json:"source_entities"`
+	Score          float64       `json:"score"`
+}
+
+func listThreads(status string) ([]map[string]any, error) {
+	db, err := openDB()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	q := "SELECT * FROM threads"
+	var args []any
+	if status != "" {
+		q += " WHERE status = ?"
+		args = append(args, status)
+	}
+	q += " ORDER BY updated_at DESC"
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var threads []map[string]any
+	for rows.Next() {
+		var id, title, summary, status, source, createdAt, updatedAt string
+		rows.Scan(&id, &title, &summary, &status, &source, &createdAt, &updatedAt)
+		threads = append(threads, map[string]any{
+			"id": id, "title": title, "summary": summary, "status": status,
+			"source": source, "created_at": createdAt, "updated_at": updatedAt,
+		})
+	}
+	if threads == nil {
+		threads = []map[string]any{}
+	}
+	for _, t := range threads {
+		items, _ := listThreadItems(str(t["id"]))
+		t["items"] = items
+	}
+	return threads, nil
+}
+
+func getThread(id string) (map[string]any, error) {
+	db, err := openDB()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	row := db.QueryRow("SELECT * FROM threads WHERE id = ?", id)
+	var tid, title, summary, status, source, createdAt, updatedAt string
+	if err := row.Scan(&tid, &title, &summary, &status, &source, &createdAt, &updatedAt); err != nil {
+		return nil, err
+	}
+	items, _ := listThreadItems(id)
+	return map[string]any{
+		"id": tid, "title": title, "summary": summary, "status": status,
+		"source": source, "items": items, "created_at": createdAt, "updated_at": updatedAt,
+	}, nil
+}
+
+func createThread(title, summary, source string) (map[string]any, error) {
+	db, err := openDB()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	id := slug("thread")
+	now := nowISO()
+	if source == "" {
+		source = "manual"
+	}
+	_, err = db.Exec("INSERT INTO threads (id, title, summary, status, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", id, title, summary, "active", source, now, now)
+	if err != nil {
+		return nil, err
+	}
+	return getThread(id)
+}
+
+func updateThread(id string, payload map[string]any) (map[string]any, error) {
+	db, err := openDB()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	setParts := []string{}
+	args := []any{}
+	for k, v := range payload {
+		col := mapKeyToColumn(k)
+		if col == "" {
+			continue
+		}
+		setParts = append(setParts, col+" = ?")
+		args = append(args, v)
+	}
+	if len(setParts) == 0 {
+		return getThread(id)
+	}
+	setParts = append(setParts, "updated_at = ?")
+	args = append(args, nowISO())
+	args = append(args, id)
+	_, err = db.Exec(fmt.Sprintf("UPDATE threads SET %s WHERE id = ?", strings.Join(setParts, ", ")), args...)
+	if err != nil {
+		return nil, err
+	}
+	return getThread(id)
+}
+
+func deleteThread(id string) error {
+	db, err := openDB()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	db.Exec("DELETE FROM thread_items WHERE thread_id = ?", id)
+	_, err = db.Exec("DELETE FROM threads WHERE id = ?", id)
+	return err
+}
+
+func listThreadItems(threadID string) ([]map[string]any, error) {
+	db, err := openDB()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	rows, err := db.Query("SELECT entity_type, entity_id, note, added_at FROM thread_items WHERE thread_id = ? ORDER BY added_at", threadID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []map[string]any
+	for rows.Next() {
+		var etype, eid, note, addedAt string
+		rows.Scan(&etype, &eid, &note, &addedAt)
+		title, status := resolveEntityTitleStatus(etype, eid)
+		items = append(items, map[string]any{
+			"entity_type": etype, "entity_id": eid, "title": title, "status": status,
+			"note": note, "added_at": addedAt,
+		})
+	}
+	if items == nil {
+		items = []map[string]any{}
+	}
+	return items, nil
+}
+
+func addToThread(threadID, entityType, entityID, note string) (map[string]any, error) {
+	db, err := openDB()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	now := nowISO()
+	_, err = db.Exec("INSERT OR REPLACE INTO thread_items (thread_id, entity_type, entity_id, added_at, note) VALUES (?, ?, ?, ?, ?)", threadID, entityType, entityID, now, note)
+	if err != nil {
+		return nil, err
+	}
+	db.Exec("UPDATE threads SET updated_at = ? WHERE id = ?", now, threadID)
+	return getThread(threadID)
+}
+
+func removeFromThread(threadID, entityType, entityID string) error {
+	db, err := openDB()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	_, err = db.Exec("DELETE FROM thread_items WHERE thread_id = ? AND entity_type = ? AND entity_id = ?", threadID, entityType, entityID)
+	return err
+}
+
+func resolveEntityTitleStatus(entityType, entityID string) (string, string) {
+	switch entityType {
+	case "task":
+		if t, err := getTask(entityID); err == nil {
+			return str(t["title"]), str(t["status"])
+		}
+	case "plan":
+		if p, err := getPlan(entityID); err == nil {
+			return str(p["title"]), str(p["status"])
+		}
+	case "commit":
+		if c, err := getCommit(entityID); err == nil {
+			return str(c["title"]), str(c["status"])
+		}
+	case "decision":
+		if d, err := getDecision(entityID); err == nil {
+			return str(d["title"]), str(d["status"])
+		}
+	case "idea":
+		if i, err := getIdea(entityID); err == nil {
+			return str(i["title"]), str(i["status"])
+		}
+	case "bug":
+		if b, err := getBug(entityID); err == nil {
+			return str(b["title"]), str(b["status"])
+		}
+	case "roadmap":
+		if r, err := getRoadmap(entityID); err == nil {
+			return str(r["title"]), str(r["status"])
+		}
+	}
+	return "", ""
+}
+
+// ============================================================
 // Helpers
 // ============================================================
 

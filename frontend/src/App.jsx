@@ -27,6 +27,7 @@ import {
   AppstoreOutlined,
   ProjectOutlined,
   TeamOutlined,
+  NodeIndexOutlined,
 } from "@ant-design/icons";
 
 // 导入工具和常量
@@ -47,6 +48,7 @@ import DecisionsView from "./views/DecisionsView";
 import CommitsView from "./views/CommitsView";
 import BugsView from "./views/BugsView";
 import GlobalSearch from "./components/GlobalSearch";
+import ThreadsView from "./views/ThreadsView";
 import DailyViewHuman from "./views/DailyViewHuman";
 
 const { Header, Sider, Content } = Layout;
@@ -73,6 +75,7 @@ function ConsoleApp() {
     canon, visions, roadmaps, plans, principles,
     codeStatus, recentGitCommits,
     tasks, taskNotes, commits, bugs, ideas, docs, docAudit, decisions, daily,
+    threads, threadSuggestions, threadStatus,
     loadAll, runAction,
   } = useBootstrap(api, message);
 
@@ -230,6 +233,30 @@ function ConsoleApp() {
     setView("commits");
   }
 
+  function handleCreateThread(suggestion) {
+    return runAction(
+      () => api("/pmai/threads", {
+        method: "POST",
+        body: JSON.stringify({
+          title: suggestion.suggested_title,
+          summary: suggestion.rationale,
+          source: "suggestion",
+        }),
+      }),
+      "Thread created",
+    );
+  }
+
+  function handleAddToThread(threadId, entityType, entityId) {
+    return runAction(
+      () => api(`/pmai/threads/${threadId}/items`, {
+        method: "POST",
+        body: JSON.stringify({ entity_type: entityType, entity_id: entityId }),
+      }),
+      "Added to thread",
+    );
+  }
+
   function handleOpenCommitAttention(attention) {
     setFocusedTaskId("");
     setCommitSearch("");
@@ -254,7 +281,7 @@ function ConsoleApp() {
             children: group.children.map(item => ({
               key: item.key,
               label: item.label,
-              icon: ({ dashboard: <DashboardOutlined />, tasks: <ScheduleOutlined />, decisions: <FundProjectionScreenOutlined />, commits: <BranchesOutlined />, bugs: <BugOutlined />, planning: <AppstoreOutlined />, visions: <CompassOutlined />, principles: <SafetyCertificateOutlined />, canon: <BookOutlined />, ideas: <BulbOutlined />, docs: <FileTextOutlined />, daily: <ProjectOutlined />, code: <CodeOutlined /> })[item.key] || null,
+              icon: ({ dashboard: <DashboardOutlined />, tasks: <ScheduleOutlined />, decisions: <FundProjectionScreenOutlined />, commits: <BranchesOutlined />, bugs: <BugOutlined />, planning: <AppstoreOutlined />, threads: <NodeIndexOutlined />, visions: <CompassOutlined />, principles: <SafetyCertificateOutlined />, canon: <BookOutlined />, ideas: <BulbOutlined />, docs: <FileTextOutlined />, daily: <ProjectOutlined />, code: <CodeOutlined /> })[item.key] || null,
             }))
           }))}
           onClick={({ key }) => setView(key)} 
@@ -296,6 +323,21 @@ function ConsoleApp() {
               onSubmitReview={handleSubmitReview}
               onDeleteNote={handleDeleteNote}
               onOpenCommit={handleOpenTaskCommit}
+            />
+          )}
+          {view === "threads" && (
+            <ThreadsView
+              threads={threads}
+              threadSuggestions={threadSuggestions}
+              threadStatus={threadStatus}
+              plans={plans}
+              tasks={tasks}
+              commits={commits}
+              decisions={decisions}
+              busy={busy}
+              loading={loading}
+              onCreateThread={handleCreateThread}
+              onAddToThread={handleAddToThread}
             />
           )}
           {view === "visions" && <VisionsView visions={visions} visionForm={visionForm} setVisionForm={setVisionForm} busy={busy} onCreateVision={p => runAction(() => api(p.id ? `/pmai/visions/${p.id}` : "/pmai/visions", { method: p.id ? "PATCH" : "POST", body: JSON.stringify(p) }), "Vision updated")} onUpdateVision={(id, p) => runAction(() => api(`/pmai/visions/${id}`, { method: "PATCH", body: JSON.stringify(p) }), "Vision updated")} onOpenVisionDetail={handleOpenVisionDetail} tasks={tasks} decisions={decisions} />}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 )
 
 // ============================================================
@@ -243,6 +244,44 @@ func (s *mcpServer) registerTools() {
 			Required: []string{"label", "content"},
 		},
 	}, s.handleSubmitFeedback)
+
+	// Thread (线索) tools
+	s.addTool(MCPTool{
+		Name:        "aipm_suggest_threads",
+		Description: "从最近的 commit 历史中自动分析并建议线索（thread）。Agent 应在每日结束时调用此工具，帮助发现今天的工作属于哪些已有线索，或是否形成了新线索。",
+		InputSchema: MCPInputSchema{
+			Type:       "object",
+			Properties: map[string]interface{}{},
+		},
+	}, s.handleSuggestThreads)
+
+	s.addTool(MCPTool{
+		Name:        "aipm_create_thread",
+		Description: "创建一条新线索（thread）。线索是一组相关 task/commit/decision/idea 的聚合视图，用于追踪跨 plan 的、非线性推进的工作流。",
+		InputSchema: MCPInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"title":   map[string]string{"type": "string", "description": "线索标题"},
+				"summary": map[string]string{"type": "string", "description": "线索描述"},
+			},
+			Required: []string{"title"},
+		},
+	}, s.handleCreateThread)
+
+	s.addTool(MCPTool{
+		Name:        "aipm_add_to_thread",
+		Description: "将一个实体（task/commit/decision/idea）添加到已有线索中。用于将分散在不同 plan 下的相关工作归入同一条线索。",
+		InputSchema: MCPInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"thread_id":   map[string]string{"type": "string", "description": "线索 ID"},
+				"entity_type": map[string]string{"type": "string", "description": "实体类型 (task/commit/decision/idea/plan/bug)"},
+				"entity_id":   map[string]string{"type": "string", "description": "实体 ID"},
+				"note":        map[string]string{"type": "string", "description": "添加说明（可选）"},
+			},
+			Required: []string{"thread_id", "entity_type", "entity_id"},
+		},
+	}, s.handleAddToThread)
 }
 
 func (s *mcpServer) addTool(tool MCPTool, handler mcpToolHandler) {
@@ -643,6 +682,102 @@ func (s *mcpServer) handleAnalyze(args map[string]interface{}) mcpToolResult {
 		},
 		RelatedContext: report,
 		Reflection:     report.Summary,
+	}
+}
+
+// ---- Thread (线索) Handlers ----
+
+func (s *mcpServer) handleSuggestThreads(args map[string]interface{}) mcpToolResult {
+	suggestions := analyzeThreadSuggestions()
+	status := analyzeThreadStatus()
+
+	var text string
+	if len(suggestions) == 0 {
+		text = "未发现新的线索建议。"
+	} else {
+		text = fmt.Sprintf("发现 %d 条线索建议：\n", len(suggestions))
+		for _, sug := range suggestions {
+			text += fmt.Sprintf("- **%s** — %s (score: %.0f%%)\n", sug.SuggestedTitle, sug.Rationale, sug.Score*100)
+		}
+	}
+
+	paused := []string{}
+	for _, ts := range status {
+		if ts.Paused {
+			paused = append(paused, fmt.Sprintf("%s (%d 天无活动)", ts.ThreadTitle, ts.DaysSinceLastActivity))
+		}
+	}
+	if len(paused) > 0 {
+		text += fmt.Sprintf("\n⏸️ 暂停的线索: %s", strings.Join(paused, ", "))
+	}
+
+	return mcpToolResult{
+		Content: []mcpContent{
+			{Type: "text", Text: text},
+		},
+		RelatedContext: map[string]any{
+			"suggestions":   suggestions,
+			"thread_status": status,
+		},
+		Reflection: fmt.Sprintf("建议 %d 条新线索，%d 条线索暂停中", len(suggestions), len(paused)),
+	}
+}
+
+func (s *mcpServer) handleCreateThread(args map[string]interface{}) mcpToolResult {
+	title := getStr(args, "title", "")
+	summary := getStr(args, "summary", "")
+
+	if title == "" {
+		return mcpToolResult{
+			Content: []mcpContent{{Type: "text", Text: "title 为必填项"}},
+			IsError: true,
+		}
+	}
+
+	t, err := createThread(title, summary, "agent")
+	if err != nil {
+		return mcpToolResult{
+			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("创建线索失败: %v", err)}},
+			IsError: true,
+		}
+	}
+
+	return mcpToolResult{
+		Content: []mcpContent{
+			{Type: "text", Text: fmt.Sprintf("线索已创建: %s [%s]", title, t["id"])},
+		},
+		RelatedContext: t,
+		Reflection:     fmt.Sprintf("线索 '%s' 已创建", title),
+	}
+}
+
+func (s *mcpServer) handleAddToThread(args map[string]interface{}) mcpToolResult {
+	threadID := getStr(args, "thread_id", "")
+	entityType := getStr(args, "entity_type", "")
+	entityID := getStr(args, "entity_id", "")
+	note := getStr(args, "note", "")
+
+	if threadID == "" || entityType == "" || entityID == "" {
+		return mcpToolResult{
+			Content: []mcpContent{{Type: "text", Text: "thread_id, entity_type, entity_id 为必填项"}},
+			IsError: true,
+		}
+	}
+
+	t, err := addToThread(threadID, entityType, entityID, note)
+	if err != nil {
+		return mcpToolResult{
+			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("添加失败: %v", err)}},
+			IsError: true,
+		}
+	}
+
+	return mcpToolResult{
+		Content: []mcpContent{
+			{Type: "text", Text: fmt.Sprintf("已将 %s/%s 添加到线索 %s", entityType, entityID, threadID)},
+		},
+		RelatedContext: t,
+		Reflection:     fmt.Sprintf("已添加到线索 '%s'", str(t["title"])),
 	}
 }
 

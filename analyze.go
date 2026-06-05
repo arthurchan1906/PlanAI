@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // ============================================================
@@ -617,14 +618,236 @@ func titleSimilarity(a, b string) float64 {
 	return float64(intersection) / float64(minLen)
 }
 
+// ThreadSuggestResult is a suggested thread from commit analysis.
+type ThreadSuggestResult struct {
+	SuggestedTitle string          `json:"suggested_title"`
+	Rationale      string          `json:"rationale"`
+	SourceEntities []ThreadItem    `json:"source_entities"`
+	Score          float64         `json:"score"`
+}
+
+// ThreadStatusResult shows the status of existing threads.
+type ThreadStatusResult struct {
+	ThreadID     string `json:"thread_id"`
+	ThreadTitle  string `json:"thread_title"`
+	Status       string `json:"status"`
+	DaysSinceLastActivity int `json:"days_since_last_activity"`
+	ItemCount    int    `json:"item_count"`
+	Paused       bool   `json:"paused"`
+}
+
+// analyzeThreadSuggestions clusters recent commits to suggest threads.
+func analyzeThreadSuggestions() []ThreadSuggestResult {
+	commits, err := listCommits("", "", "", "", 50)
+	if err != nil {
+		return nil
+	}
+
+	// Collect commit chains: group by task_id and file patterns
+	type clusterInfo struct {
+		commits   []map[string]any
+		filePaths map[string]bool
+		taskIDs   map[string]bool
+		planIDs   map[string]bool
+	}
+	cluster := &clusterInfo{
+		filePaths: make(map[string]bool),
+		taskIDs:   make(map[string]bool),
+		planIDs:   make(map[string]bool),
+	}
+
+	for _, c := range commits {
+		if str(c["id"]) == "" {
+			continue
+		}
+		cluster.commits = append(cluster.commits, c)
+		if tid := str(c["task_id"]); tid != "" {
+			cluster.taskIDs[tid] = true
+		}
+		if files, ok := c["files"].([]any); ok {
+			for _, f := range files {
+				if fn, ok := f.(string); ok {
+					cluster.filePaths[fn] = true
+				}
+			}
+		}
+	}
+
+	// Enrich: for each task_id, find its plan
+	for tid := range cluster.taskIDs {
+		task, err := getTaskSimple(tid)
+		if err != nil {
+			continue
+		}
+		if pid := str(task["plan_id"]); pid != "" {
+			cluster.planIDs[pid] = true
+		}
+	}
+
+	// Extract top-level directory patterns from file paths
+	dirCounts := make(map[string]int)
+	for fp := range cluster.filePaths {
+		parts := strings.Split(fp, "/")
+		if len(parts) > 0 {
+			dir := strings.ToLower(parts[0])
+			if dir != "" && dir != "." {
+				dirCounts[dir]++
+			}
+		}
+	}
+
+	if len(cluster.commits) == 0 {
+		return nil
+	}
+
+	var results []ThreadSuggestResult
+
+	// Suggest threads based on plan groupings
+	for pid := range cluster.planIDs {
+		plan, err := getPlan(pid)
+		if err != nil || plan == nil {
+			continue
+		}
+
+		var relatedCommits []map[string]any
+		for _, c := range cluster.commits {
+			tid := str(c["task_id"])
+			if tid == "" {
+				continue
+			}
+			task, err := getTaskSimple(tid)
+			if err != nil {
+				continue
+			}
+			if str(task["plan_id"]) == pid {
+				relatedCommits = append(relatedCommits, c)
+			}
+		}
+
+		if len(relatedCommits) == 0 {
+			continue
+		}
+
+		entities := []ThreadItem{}
+		for _, c := range relatedCommits[:min(5, len(relatedCommits))] {
+			entities = append(entities, ThreadItem{
+				EntityType: "commit",
+				EntityID:   str(c["id"]),
+				Title:      str(c["title"]),
+				Status:     str(c["status"]),
+			})
+		}
+
+		results = append(results, ThreadSuggestResult{
+			SuggestedTitle: str(plan["title"]),
+			Rationale:      fmt.Sprintf("%d commits linked to plan %s", len(relatedCommits), str(plan["title"])),
+			SourceEntities: entities,
+			Score:          float64(len(relatedCommits)) / float64(len(cluster.commits)),
+		})
+	}
+
+	// Suggest threads based on directory clusters (for unlinked commits)
+	suggestedDirs := []string{}
+	for dir, cnt := range dirCounts {
+		if cnt >= 2 {
+			suggestedDirs = append(suggestedDirs, dir)
+		}
+	}
+	if len(suggestedDirs) > 0 {
+		entities := []ThreadItem{}
+		count := 0
+		for _, c := range cluster.commits {
+			if count >= 5 {
+				break
+			}
+			entities = append(entities, ThreadItem{
+				EntityType: "commit",
+				EntityID:   str(c["id"]),
+				Title:      str(c["title"]),
+				Status:     str(c["status"]),
+			})
+			count++
+		}
+		results = append(results, ThreadSuggestResult{
+			SuggestedTitle: fmt.Sprintf("Work in %s", strings.Join(suggestedDirs, ", ")),
+			Rationale:      fmt.Sprintf("Commits spread across directories: %s", strings.Join(suggestedDirs, ", ")),
+			SourceEntities: entities,
+			Score:          0.5,
+		})
+	}
+
+	if results == nil {
+		results = []ThreadSuggestResult{}
+	}
+	return results
+}
+
+// analyzeThreadStatus checks existing threads for activity gaps.
+func analyzeThreadStatus() []ThreadStatusResult {
+	threads, err := listThreads("active")
+	if err != nil {
+		return nil
+	}
+
+	var results []ThreadStatusResult
+	for _, t := range threads {
+		tid := str(t["id"])
+		items, ok := t["items"].([]map[string]any)
+		if !ok || len(items) == 0 {
+			continue
+		}
+		// Find the most recent activity date from thread items
+		latestAdded := ""
+		for _, item := range items {
+			if at := str(item["added_at"]); at > latestAdded {
+				latestAdded = at
+			}
+		}
+		tr := ThreadStatusResult{
+			ThreadID:    tid,
+			ThreadTitle: str(t["title"]),
+			Status:      str(t["status"]),
+			ItemCount:   len(items),
+		}
+		if latestAdded != "" {
+			tr.DaysSinceLastActivity = daysSince(latestAdded)
+			tr.Paused = tr.DaysSinceLastActivity > 7
+		}
+		results = append(results, tr)
+	}
+	if results == nil {
+		results = []ThreadStatusResult{}
+	}
+	return results
+}
+
+func daysSince(dateStr string) int {
+	t, err := time.Parse("2006-01-02T15:04:05", dateStr)
+	if err != nil {
+		t2, err2 := time.Parse("2006-01-02", dateStr)
+		if err2 != nil {
+			return 0
+		}
+		t = t2
+	}
+	return int(time.Since(t).Hours() / 24)
+}
+
 // BuildBriefing generates a structured Markdown briefing for the Agent.
 func BuildBriefing() string {
 	report := runFullAnalysis()
 	tasks, _ := listTasks("in_progress", "")
 	events, _ := getUnconsumedEvents()
+	threadSummary := buildThreadSummary()
 
 	var b strings.Builder
 	b.WriteString("🏗️ 项目简报 — AIPM\n\n")
+
+	// Thread summary first — this is the "story so far"
+	if threadSummary != "" {
+		b.WriteString(threadSummary)
+		b.WriteString("\n")
+	}
 
 	// Current focus
 	if len(tasks) > 0 {
@@ -632,6 +855,33 @@ func BuildBriefing() string {
 		for _, t := range tasks[:min(3, len(tasks))] {
 			b.WriteString(fmt.Sprintf("- **%s** [%s] _%s_\n", t.Title, t.ID, t.Status))
 		}
+		b.WriteString("\n")
+	}
+
+	// Thread suggestions
+	suggestions := analyzeThreadSuggestions()
+	if len(suggestions) > 0 {
+		b.WriteString("## 🧵 建议的线索 (从最近 commit 推断)\n")
+		b.WriteString("以下线索是 AI 从 commit 历史中自动识别的。用 `aipmc thread add` 确认：\n\n")
+		for _, s := range suggestions {
+			b.WriteString(fmt.Sprintf("- **%s** — %s\n", s.SuggestedTitle, s.Rationale))
+		}
+		b.WriteString("\n")
+	}
+
+	// Paused threads
+	threadStatus := analyzeThreadStatus()
+	pausedCount := 0
+	for _, ts := range threadStatus {
+		if ts.Paused {
+			if pausedCount == 0 {
+				b.WriteString("## ⏸️ 暂停的线索 (超过 7 天无活动)\n")
+			}
+			b.WriteString(fmt.Sprintf("- **%s** (%d 天无活动, %d items)\n", ts.ThreadTitle, ts.DaysSinceLastActivity, ts.ItemCount))
+			pausedCount++
+		}
+	}
+	if pausedCount > 0 {
 		b.WriteString("\n")
 	}
 
@@ -684,10 +934,29 @@ func BuildBriefing() string {
 		b.WriteString("\n")
 	}
 
-	if report.Summary == "All clear — no issues detected." {
+	if report.Summary == "All clear — no issues detected." && threadSummary == "" && len(suggestions) == 0 && pausedCount == 0 {
 		b.WriteString("✅ 一切正常，无问题检测。\n")
 	}
 
+	return b.String()
+}
+
+func buildThreadSummary() string {
+	threads, err := listThreads("active")
+	if err != nil || len(threads) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("## 🧵 当前活跃线索\n")
+	for _, t := range threads[:min(3, len(threads))] {
+		items, _ := t["items"].([]map[string]any)
+		itemCount := 0
+		if items != nil {
+			itemCount = len(items)
+		}
+		b.WriteString(fmt.Sprintf("- **%s** _(%d items, since %s)_\n", str(t["title"]), itemCount, str(t["created_at"])))
+	}
 	return b.String()
 }
 

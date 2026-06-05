@@ -445,6 +445,58 @@ func dispatchEvent(subcmd string, args *cli.Args) {
 	}
 }
 
+func dispatchThread(subcmd string, args *cli.Args) {
+	switch subcmd {
+	case "list":
+		threads, _ := listThreads(args.Str("status", ""))
+		cli.PrintJSON(map[string]any{"threads": threads})
+	case "show":
+		t, _ := getThread(args.Get("id"))
+		cli.PrintJSON(t)
+	case "add":
+		t, err := createThread(args.Get("title"), args.Str("summary", ""), args.Str("source", "manual"))
+		if err != nil {
+			cli.Fail(err)
+		}
+		cli.PrintJSON(map[string]any{"thread": t})
+	case "update":
+		payload := map[string]any{}
+		for _, k := range []string{"title", "summary", "status"} {
+			if v := args.Str(k, ""); v != "" {
+				payload[k] = v
+			}
+		}
+		t, _ := updateThread(args.Get("id"), payload)
+		cli.PrintJSON(map[string]any{"thread": t})
+	case "item":
+		// os.Args[3] is the item subcommand (add/remove), after "thread item"
+		itemSub := ""
+		if len(os.Args) > 3 {
+			itemSub = os.Args[3]
+		}
+		switch itemSub {
+		case "add":
+			t, _ := addToThread(args.Get("thread_id"), args.Get("entity_type"), args.Get("entity_id"), args.Str("note", ""))
+			cli.PrintJSON(map[string]any{"thread": t})
+		case "remove":
+			removeFromThread(args.Get("thread_id"), args.Get("entity_type"), args.Get("entity_id"))
+			cli.PrintJSON(map[string]any{"ok": true})
+		default:
+			fmt.Fprintf(os.Stderr, "unknown thread item subcommand: %s\n", itemSub)
+			os.Exit(1)
+		}
+	case "delete":
+		deleteThread(args.Get("id"))
+		cli.PrintJSON(map[string]any{"ok": true})
+	case "suggest":
+		suggestions := analyzeThreadSuggestions()
+		cli.PrintJSON(map[string]any{"suggestions": suggestions})
+	default:
+		fmt.Fprintf(os.Stderr, "unknown thread subcommand: %s\n", subcmd)
+		os.Exit(1)
+	}
+}
+
 func dispatchFeedback(subcmd string, args *cli.Args) {
 	switch subcmd {
 	case "list":

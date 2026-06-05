@@ -185,6 +185,13 @@ func handleGetEntity(w http.ResponseWriter, entity, id string) {
 			return
 		}
 		sendJSON(w, v)
+	case "threads":
+		t, err := getThread(id)
+		if err != nil {
+			sendError(w, 404, err.Error())
+			return
+		}
+		sendJSON(w, t)
 	default:
 		sendError(w, 404, fmt.Sprintf("unknown entity: %s", entity))
 	}
@@ -264,6 +271,13 @@ func handlePatchEntity(w http.ResponseWriter, entity, id string, body map[string
 			return
 		}
 		sendJSON(w, v)
+	case "threads":
+		t, err := updateThread(id, body)
+		if err != nil {
+			sendError(w, 400, err.Error())
+			return
+		}
+		sendJSON(w, t)
 	default:
 		sendError(w, 404, fmt.Sprintf("unknown entity: %s", entity))
 	}
@@ -374,6 +388,11 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 	case method == "GET" && path == "links":
 		links, _ := listLinks(q.Get("source_id"), q.Get("target_id"), q.Get("relation"))
 		sendJSON(w, map[string]any{"links": links})
+	case method == "GET" && path == "threads":
+		threads, _ := listThreads(q.Get("status"))
+		sendJSON(w, map[string]any{"threads": threads})
+	case method == "GET" && path == "thread-suggestions":
+		sendJSON(w, map[string]any{"suggestions": analyzeThreadSuggestions(), "thread_status": analyzeThreadStatus()})
 	case method == "GET" && path == "search":
 		sendJSON(w, searchProjectContext(q.Get("q"), 8))
 	case method == "GET" && path == "dashboard":
@@ -495,6 +514,10 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 			docAudit["active_records"] = ac; docAudit["tracked_files_in_fs"] = len(tf)
 		}
 
+		threads, _ := listThreads("")
+		threadSuggestions := analyzeThreadSuggestions()
+		threadStatus := analyzeThreadStatus()
+
 		sendJSON(w, map[string]any{
 			"dashboard":dashboard,"ai_context":ctx,
 			"next_packet":func() map[string]any { np := buildNextActionPacket(); np["mainline"] = map[string]any{}; np["backup_actions"] = []any{}; np["pending_questions"] = []any{}; return np }(),
@@ -561,6 +584,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 			"doc_audit":docAudit,"decisions":webDecisions,
 			"daily":daily,"module_progress":map[string]any{},
 			"analysis":runFullAnalysis(),"briefing":BuildBriefing(),
+			"threads":threads,"thread_suggestions":threadSuggestions,"thread_status":threadStatus,
 		})
 
 	case method == "POST" && path == "tasks":
@@ -635,6 +659,37 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		sendJSON(w, v)
+	case method == "POST" && path == "threads":
+		body := readBody()
+		t, err := createThread(str(body["title"]), pstr(body, "summary", ""), pstr(body, "source", "manual"))
+		if err != nil {
+			sendError(w, 400, err.Error())
+			return
+		}
+		sendJSON(w, t)
+	case method == "POST" && strings.HasPrefix(path, "threads/") && strings.HasSuffix(path, "/items"):
+		id := extractID(path, "threads/", "/items")
+		body := readBody()
+		t, err := addToThread(id, str(body["entity_type"]), str(body["entity_id"]), pstr(body, "note", ""))
+		if err != nil {
+			sendError(w, 400, err.Error())
+			return
+		}
+		sendJSON(w, t)
+	case method == "DELETE" && strings.HasPrefix(path, "threads/") && strings.Contains(path, "/items/"):
+		// DELETE /threads/{thread-id}/items/{entity-type}/{entity-id}
+		pathTrimmed := strings.TrimPrefix(path, "threads/")
+		parts := strings.SplitN(pathTrimmed, "/items/", 2)
+		if len(parts) == 2 {
+			threadID := parts[0]
+			itemParts := strings.SplitN(parts[1], "/", 2)
+			if len(itemParts) == 2 {
+				removeFromThread(threadID, itemParts[0], itemParts[1])
+				sendJSON(w, map[string]any{"ok": true})
+				return
+			}
+		}
+		sendError(w, 400, "invalid thread item path")
 	case method == "POST" && path == "links":
 		body := readBody()
 		link, err := createLink(str(body["source_type"]), str(body["source_id"]), str(body["relation"]), str(body["target_type"]), str(body["target_id"]), pstr(body, "note", ""))

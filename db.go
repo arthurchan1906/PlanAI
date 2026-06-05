@@ -282,6 +282,24 @@ var schemaStatements = []string{
 		created_at TEXT NOT NULL,
 		consumed_by_agent INTEGER NOT NULL DEFAULT 0
 	)`,
+	`CREATE TABLE IF NOT EXISTS threads (
+		id TEXT PRIMARY KEY,
+		title TEXT NOT NULL,
+		summary TEXT NOT NULL DEFAULT '',
+		status TEXT NOT NULL DEFAULT 'active',
+		source TEXT NOT NULL DEFAULT 'manual',
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	)`,
+	`CREATE TABLE IF NOT EXISTS thread_items (
+		thread_id TEXT NOT NULL,
+		entity_type TEXT NOT NULL,
+		entity_id TEXT NOT NULL,
+		added_at TEXT NOT NULL,
+		note TEXT NOT NULL DEFAULT '',
+		PRIMARY KEY (thread_id, entity_type, entity_id),
+		FOREIGN KEY(thread_id) REFERENCES threads(id)
+	)`,
 	// Note: feedback is stored on remote server (see feedback.go),
 	// not in the local SQLite database. Compatible with Python pmai.
 }

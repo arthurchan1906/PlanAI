@@ -97,6 +97,18 @@ func searchProjectContext(query string, limit int) map[string]any {
 		}
 	}
 
+	// Search threads
+	if threads, err := listThreads(""); err == nil {
+		for _, t := range threads {
+			haystack := strings.ToLower(str(t["title"]) + " " + str(t["summary"]))
+			score := matchScore(haystack, terms)
+			if score > 0 {
+				results = append(results, searchHit{Type: "thread", ID: str(t["id"]), Title: str(t["title"]), Status: str(t["status"]), Score: score,
+					Command: fmt.Sprintf("aipmc thread show --id %s", str(t["id"]))})
+			}
+		}
+	}
+
 	// Search principles
 	if prs, err := listPrinciples("", ""); err == nil {
 		for _, p := range prs {
@@ -183,6 +195,7 @@ func str(v any) string {
 func buildAgentStartPacket() map[string]any {
 	tasks, _ := listTasks("in_progress", "")
 	plans, _ := listPlans("", "active")
+	threads, _ := listThreads("active")
 
 	// Fetch unconsumed PM events to inject into Agent's context
 	events, _ := getUnconsumedEvents()
@@ -195,6 +208,9 @@ func buildAgentStartPacket() map[string]any {
 		})
 	}
 
+	// Thread suggestions
+	threadSugs := analyzeThreadSuggestions()
+
 	return map[string]any{
 		"role":    "ai_start",
 		"message": "Use this before coding. Reuse existing PMAI tasks/plans/decisions/docs before creating new ones.",
@@ -206,7 +222,9 @@ func buildAgentStartPacket() map[string]any {
 		"current_focus": map[string]any{
 			"in_progress_tasks": tasks[:min(3, len(tasks))],
 			"active_plans":      plans[:min(3, len(plans))],
+			"active_threads":    threads[:min(3, len(threads))],
 		},
+		"thread_suggestions": threadSugs,
 		"briefing": BuildBriefing(), // Markdown briefing for Agent consumption
 		"pm_alerts": alerts,          // Unconsumed PM intent changes
 		"recommended_flow": []map[string]any{

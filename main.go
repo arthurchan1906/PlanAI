@@ -135,6 +135,8 @@ func main() {
 		dispatchEvent(subcmd, args)
 	case "feedback":
 		dispatchFeedback(subcmd, args)
+	case "thread":
+		dispatchThread(subcmd, args)
 	case "brief":
 		dispatchBrief(subcmd, args)
 	default:

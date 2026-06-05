@@ -28,6 +28,7 @@ export const NAV_GROUPS = [
     label: "Planning",
     children: [
       { key: "planning", label: "Plans" },
+      { key: "threads", label: "Threads" },
       { key: "visions", label: "Visions" },
       { key: "principles", label: "Principles" },
       { key: "canon", label: "Canon" },
