@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -86,7 +87,7 @@ func main() {
 			os.Exit(1)
 		}
 		// Also setup hooks for Claude Code
-		if resolved == "Claude Code" || target == "claude" {
+		if resolved == "Claude Code" || target == "claude" || resolved == "Gemini CLI" || target == "gemini" {
 			if err := setupHooksCmd(resolved); err != nil {
 				fmt.Fprintf(os.Stderr, "hook setup failed: %v\n", err)
 			}
@@ -143,6 +144,30 @@ func main() {
 		return
 	case "wait":
 		waitForTurnCmd(os.Args[2:])
+		return
+	case "hook-gemini":
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil { return }
+		var c struct {
+			Event          string `json:"hook_event_name"`
+			Prompt         string `json:"prompt"`
+			PromptResponse string `json:"prompt_response"`
+			ToolName       string `json:"tool_name"`
+			ToolInput      any    `json:"tool_input"`
+		}
+		if err := json.Unmarshal(data, &c); err != nil { return }
+
+		switch c.Event {
+		case "BeforeAgent":
+			if c.Prompt != "" { logDiscussion("", "user", "gemini-cli", c.Prompt) }
+		case "AfterTool":
+			if c.ToolName != "" {
+				inputJSON, _ := json.Marshal(c.ToolInput)
+				logDiscussion("", "assistant", "gemini-cli-tool", fmt.Sprintf("[Tool Call: %s] %s", c.ToolName, string(inputJSON)))
+			}
+		case "AfterAgent":
+			if c.PromptResponse != "" { logDiscussion("", "assistant", "gemini-cli", c.PromptResponse) }
+		}
 		return
 	case "mcp":
 		server := newMCPServer(aiClient)

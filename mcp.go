@@ -343,6 +343,20 @@ func (s *mcpServer) registerTools() {
 		},
 	}, s.handleSearchDiscussions)
 
+	s.addTool(MCPTool{
+		Name:        "aipm_log_discussion",
+		Description: "手动记录一段讨论或决策。当对话中产生了重要的结论、架构决策或未来计划时，调用此工具将其永久保存到项目知识库中。",
+		InputSchema: MCPInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"content": map[string]string{"type": "string", "description": "要记录的讨论内容"},
+				"role":    map[string]string{"type": "string", "description": "可选: 角色 (user/assistant)，默认 assistant"},
+				"session": map[string]string{"type": "string", "description": "可选: 会话 ID"},
+			},
+			Required: []string{"content"},
+		},
+	}, s.handleLogDiscussion)
+
 	// Agent collaboration tools (meetings, assignments)
 	s.registerAgentTools()
 }
@@ -841,6 +855,26 @@ func (s *mcpServer) handleSearchDiscussions(args map[string]interface{}) mcpTool
 		Content:        []mcpContent{{Type: "text", Text: b.String()}},
 		RelatedContext: map[string]interface{}{"results": results, "total": total},
 		Reflection:     reflection,
+	}
+}
+
+func (s *mcpServer) handleLogDiscussion(args map[string]interface{}) mcpToolResult {
+	content := getStr(args, "content", "")
+	role := getStr(args, "role", "assistant")
+	session := getStr(args, "session", "")
+
+	if content == "" {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "content 为必填项"}}, IsError: true}
+	}
+
+	res, err := logDiscussion(session, role, "mcp", content)
+	if err != nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("记录讨论失败: %v", err)}}, IsError: true}
+	}
+
+	return mcpToolResult{
+		Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("✅ 讨论已记录 [%s]", res["id"])}},
+		RelatedContext: res,
 	}
 }
 

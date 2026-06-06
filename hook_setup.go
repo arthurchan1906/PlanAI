@@ -50,10 +50,38 @@ func setupHooksCmd(targetPlatform string) error {
 	if home == "" { return fmt.Errorf("cannot determine home directory") }
 
 	binaryPath := resolveBinaryPath()
-
-	// Write Stop hook script
 	hookDir := filepath.Join(home, ".aipm", "hooks")
 	os.MkdirAll(hookDir, 0755)
+
+	if targetPlatform == "Gemini CLI" || targetPlatform == "gemini" {
+		hookCommand := fmt.Sprintf("\"%s\" hook-gemini", filepath.ToSlash(binaryPath))
+		fmt.Printf("  ✅ Gemini hook configured to use internal command\n")
+
+		// Update .gemini/settings.json
+		runtimeDir, _ := findRuntimeDir()
+		projectRoot := filepath.Dir(runtimeDir)
+		settingsPath := filepath.Join(projectRoot, ".gemini", "settings.json")
+
+		cfg := map[string]any{}
+		if data, err := os.ReadFile(settingsPath); err == nil && len(data) > 0 {
+			json.Unmarshal(data, &cfg)
+		}
+
+		hooks, _ := cfg["hooks"].(map[string]any)
+		if hooks == nil { hooks = map[string]any{} }
+
+		hookEntry := []any{map[string]any{"command": hookCommand, "type": "command"}}
+		hooks["BeforeAgent"] = hookEntry
+		hooks["AfterTool"] = hookEntry
+		hooks["AfterAgent"] = hookEntry
+		cfg["hooks"] = hooks
+
+		os.MkdirAll(filepath.Dir(settingsPath), 0755)
+		data, _ := json.MarshalIndent(cfg, "", "  ")
+		return os.WriteFile(settingsPath, data, 0644)
+	}
+
+	// Write Stop hook script
 
 	stopPath := filepath.Join(hookDir, "save-discussion.sh")
 	if err := os.WriteFile(stopPath, []byte(hookScriptContent(binaryPath)), 0755); err != nil {

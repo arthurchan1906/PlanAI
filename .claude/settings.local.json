@@ -24,7 +24,9 @@
       "Bash(chmod +x /c/Users/chenz/.aipm/hooks/save-tool.sh)",
       "Bash(xxd)",
       "Bash(bash /tmp/build_deploy.sh)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(/d/code/AI/PlanAI/dist/aipmc.exe setup *)",
+      "Bash(/d/code/AI/PlanAI/dist/aipmc.exe hook-gemini *)"
     ]
   },
   "enabledMcpjsonServers": [

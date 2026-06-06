@@ -75,26 +75,25 @@ export default function DiscussionsView() {
   const [source, setSource] = useState("");
   const [sources, setSources] = useState([]);
 
-  async function load(p = 1) {
+  async function loadSources() {
+    const data = await api("/pmai/discussions/sources");
+    if (data.sources) setSources(data.sources);
+  }
+
+  async function load(p = 1, srcOverride) {
     setLoading(true);
     const params = new URLSearchParams();
     params.set("page", p);
     if (query) params.set("q", query);
-    if (source) params.set("source", source);
+    const finalSource = srcOverride !== undefined ? srcOverride : source;
+    if (finalSource) params.set("source", finalSource);
     const data = await api(`/pmai/discussions?${params}`);
-    console.log("[discussions] loaded:", (data.discussions || []).length, "total:", data.total);
-    (data.discussions || []).slice(0, 3).forEach(d => {
-      console.log("[discussions]", d.role, d.content?.slice(0, 60), "hash:", (d.content||"").indexOf("\\n"), "nl:", (d.content||"").indexOf("\n"));
-    });
     setDiscussions(processData(data.discussions || []));
     setTotal(data.total || 0);
-    const srcs = new Set();
-    (data.discussions || []).forEach(d => { if (d.source) srcs.add(d.source); });
-    setSources(Array.from(srcs));
     setLoading(false);
   }
 
-  useEffect(() => { load(1); }, []);
+  useEffect(() => { load(1); loadSources(); }, []);
 
   return (
     <div>
@@ -108,7 +107,7 @@ export default function DiscussionsView() {
           <Input prefix={<SearchOutlined />} placeholder="搜索..." value={query}
             onChange={(e) => setQuery(e.target.value)} onPressEnter={() => load(1)} style={{ width: 280 }} />
           <Select allowClear placeholder="来源" value={source || undefined}
-            onChange={(v) => { setSource(v || ""); }} style={{ width: 140 }}
+            onChange={(v) => { setSource(v || ""); load(1, v || ""); }} style={{ width: 140 }}
             options={sources.map(s => ({ value: s, label: s }))} />
           <Button type="primary" onClick={() => load(1)}>搜索</Button>
         </Space>

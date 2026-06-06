@@ -29,6 +29,7 @@ var platforms = []platformConfig{
 	{Name: "Windsurf", Key: "windsurf", ConfigDir: ".windsurf", ConfigFile: "mcp.json"},
 	{Name: "Cline (VS Code)", Key: "cline", ConfigDir: ".vscode", ConfigFile: "cline_mcp_servers.json", Aliases: []string{"vscode-cline"}},
 	{Name: "Roo Code", Key: "roo", ConfigDir: ".vscode", ConfigFile: "mcp.json", Aliases: []string{"roo-code", "roocode"}},
+	{Name: "Gemini CLI", Key: "gemini", ConfigDir: ".gemini", ConfigFile: "settings.json", Aliases: []string{"gc"}},
 	// TOML-format configs
 	{Name: "Codex (OpenAI)", Key: "codex", ConfigDir: "", ConfigFile: "", Aliases: []string{"openai", "openai-codex"}},
 }

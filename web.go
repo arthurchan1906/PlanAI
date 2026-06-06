@@ -854,16 +854,14 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		nextNum := len(existing) + 1
 		createMeetingTurn(roomID, nextNum, "agent", next, fmt.Sprintf("[AI 仲裁] %s。请就此发表意见。", reason))
 		sendJSON(w, map[string]any{"next_agent": next, "reason": reason})
-	case method == "POST" && path == "discussions":
-		body := readBody()
-		d, err := logDiscussion(str(body["session_id"]), str(body["role"]), str(body["source"]), str(body["content"]))
-		if err != nil { sendError(w, 400, err.Error()); return }
-		sendJSON(w, d)
 	case method == "GET" && path == "discussions":
 		page := 1; if p := q.Get("page"); p != "" { fmt.Sscanf(p, "%d", &page) }
 		src := q.Get("source")
 		results, total, _ := searchDiscussions(q.Get("q"), src, page, 20)
 		sendJSON(w, map[string]any{"discussions": results, "total": total, "page": page})
+	case method == "GET" && path == "discussions/sources":
+		sources, _ := listDiscussionSources()
+		sendJSON(w, map[string]any{"sources": sources})
 	case method == "GET" && path == "smart-search":
 		result := searchProjectContext(q.Get("q"), 8)
 		sendJSON(w, result)

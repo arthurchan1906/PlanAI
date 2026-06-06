@@ -72,3 +72,26 @@ func searchDiscussions(query, source string, page, pageSize int) ([]map[string]a
 	if out == nil { out = []map[string]any{} }
 	return out, total, nil
 }
+
+func listDiscussionSources() ([]string, error) {
+	db, err := openDB()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	rows, err := db.Query("SELECT DISTINCT source FROM discussion_log WHERE source != '' ORDER BY source")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []string
+	for rows.Next() {
+		var s string
+		rows.Scan(&s)
+		result = append(result, s)
+	}
+	if result == nil { result = []string{} }
+	return result, nil
+}

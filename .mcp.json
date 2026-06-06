@@ -4,7 +4,7 @@
       "args": [
         "mcp"
       ],
-      "command": "D:/code/AI/PlanAI/aipmc.exe"
+      "command": "D:/code/AI/PlanAI/dist/aipmc.exe"
     }
   }
 }
