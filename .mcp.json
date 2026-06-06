@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "aipm": {
+      "args": [
+        "mcp"
+      ],
+      "command": "D:/code/AI/PlanAI/aipmc.exe"
+    }
+  }
+}

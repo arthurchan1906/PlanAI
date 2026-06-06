@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	"aipmc/ai"
 )
 
 // ============================================================
@@ -60,18 +62,20 @@ type mcpToolHandler func(args map[string]interface{}) mcpToolResult
 
 // mcpServer holds registered tools and handles the protocol lifecycle.
 type mcpServer struct {
-	tools   map[string]MCPTool
+	tools    map[string]MCPTool
 	handlers map[string]mcpToolHandler
-	reader  *bufio.Reader
-	writer  io.Writer
+	reader   *bufio.Reader
+	writer   io.Writer
+	ai       *ai.Client
 }
 
-func newMCPServer() *mcpServer {
+func newMCPServer(aiClient *ai.Client) *mcpServer {
 	s := &mcpServer{
-		tools:   make(map[string]MCPTool),
+		tools:    make(map[string]MCPTool),
 		handlers: make(map[string]mcpToolHandler),
-		reader:  bufio.NewReader(os.Stdin),
-		writer:  os.Stdout,
+		reader:   bufio.NewReader(os.Stdin),
+		writer:   os.Stdout,
+		ai:       aiClient,
 	}
 	s.registerTools()
 	return s
@@ -79,12 +83,15 @@ func newMCPServer() *mcpServer {
 
 // registerTools registers all MCP tools with descriptions and schemas.
 func (s *mcpServer) registerTools() {
+	// Core tools
 	s.addTool(MCPTool{
 		Name:        "aipm_get_briefing",
-		Description: "获取当前项目简报。包含进行中的任务、PM 最新变更、进度风险、重复检测、scope 漂移等分析结果。Agent 在开始编码前应调用此工具获取最新上下文。",
+		Description: "获取当前项目简报。包含进行中的任务、PM 最新变更、进度风险、重复检测、scope 漂移等分析结果。Agent 在开始编码前应调用此工具获取最新上下文。提供 agent_id 时返回个性化简报（包含分配的任務和待参与的会议）。",
 		InputSchema: MCPInputSchema{
-			Type:       "object",
-			Properties: map[string]interface{}{},
+			Type: "object",
+			Properties: map[string]interface{}{
+				"agent_id": map[string]string{"type": "string", "description": "可选: Agent ID，提供时返回个性化简报"},
+			},
 		},
 	}, s.handleBriefing)
 
@@ -248,7 +255,7 @@ func (s *mcpServer) registerTools() {
 	// Thread (线索) tools
 	s.addTool(MCPTool{
 		Name:        "aipm_suggest_threads",
-		Description: "从最近的 commit 历史中自动分析并建议线索（thread）。Agent 应在每日结束时调用此工具，帮助发现今天的工作属于哪些已有线索，或是否形成了新线索。",
+		Description: "启发式分析最近的 commit 历史并建议线索（thread）。注意：此工具基于算法自动聚类，Agent 应优先使用 aipm_daily_review 获取原始数据并进行自主语义分析。",
 		InputSchema: MCPInputSchema{
 			Type:       "object",
 			Properties: map[string]interface{}{},
@@ -282,6 +289,62 @@ func (s *mcpServer) registerTools() {
 			Required: []string{"thread_id", "entity_type", "entity_id"},
 		},
 	}, s.handleAddToThread)
+
+	// Daily review — gives the agent raw commit data to do its own semantic analysis
+	s.addTool(MCPTool{
+		Name:        "aipm_daily_review",
+		Description: "获取今日或最近的 commits 及完整上下文（task、plan、文件、已有线索），供 Agent 进行语义分析和线索整理。Agent 应在每日结束时调用此工具，独立分析 commits 之间的逻辑关联，然后使用 aipm_create_thread 和 aipm_add_to_thread 创建/更新线索。",
+		InputSchema: MCPInputSchema{
+			Type:       "object",
+			Properties: map[string]interface{}{},
+		},
+	}, s.handleDailyReview)
+
+	// Smart search — AI-enhanced when available
+	s.addTool(MCPTool{
+		Name:        "aipm_smart_search",
+		Description: "智能搜索 — FTS5 关键词搜索 + AI 语义重排序（当 AI 可用时）。返回 BM25 排序结果，如果配置了 AI 端点则自动使用 embedding 进行语义重排。",
+		InputSchema: MCPInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"query": map[string]string{"type": "string", "description": "搜索关键词"},
+				"limit": map[string]string{"type": "integer", "description": "返回结果数量上限，默认 8"},
+			},
+			Required: []string{"query"},
+		},
+	}, s.handleSmartSearch)
+
+	// Agent registration
+	s.addTool(MCPTool{
+		Name:        "aipm_register_agent",
+		Description: "注册临时 Agent 身份。每次调用创建新 ID（不按名称去重）。用于会议、审查等临时协作任务。任务结束后身份即弃。",
+		InputSchema: MCPInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"name":         map[string]string{"type": "string", "description": "Agent 名称"},
+				"role":         map[string]string{"type": "string", "description": "角色: coder | reviewer | insight"},
+				"capabilities": map[string]string{"type": "string", "description": "能力标签，逗号分隔 (例: frontend,react,typescript)"},
+			},
+			Required: []string{"name"},
+		},
+	}, s.handleRegisterAgent)
+
+	// Discussion log tools
+	s.addTool(MCPTool{
+		Name:        "aipm_search_discussions",
+		Description: "搜索项目讨论历史。查找之前讨论过的想法、决策、问题。用关键词搜索过去的对话记录。",
+		InputSchema: MCPInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"query": map[string]string{"type": "string", "description": "搜索关键词"},
+				"limit": map[string]string{"type": "integer", "description": "结果数量，默认 10"},
+			},
+			Required: []string{"query"},
+		},
+	}, s.handleSearchDiscussions)
+
+	// Agent collaboration tools (meetings, assignments)
+	s.registerAgentTools()
 }
 
 func (s *mcpServer) addTool(tool MCPTool, handler mcpToolHandler) {
@@ -292,7 +355,13 @@ func (s *mcpServer) addTool(tool MCPTool, handler mcpToolHandler) {
 // ---- Tool Handlers ----
 
 func (s *mcpServer) handleBriefing(args map[string]interface{}) mcpToolResult {
-	briefing := BuildBriefing()
+	agentID := getStr(args, "agent_id", "")
+	var briefing string
+	if agentID != "" {
+		briefing = BuildBriefingForAgent(agentID)
+	} else {
+		briefing = BuildBriefing()
+	}
 	report := runFullAnalysis()
 
 	related := map[string]interface{}{
@@ -685,6 +754,96 @@ func (s *mcpServer) handleAnalyze(args map[string]interface{}) mcpToolResult {
 	}
 }
 
+func (s *mcpServer) handleSmartSearch(args map[string]interface{}) mcpToolResult {
+	query := getStr(args, "query", "")
+	if query == "" {
+		return mcpToolResult{
+			Content: []mcpContent{{Type: "text", Text: "请提供搜索关键词 (query)"}},
+			IsError: true,
+		}
+	}
+	limit := 8
+
+	// FTS5 keyword search
+	results := searchFTS5(query, limit*3)
+	aiEnhanced := false
+
+	// AI rerank when available
+	if s.ai != nil && s.ai.Enabled() && results != nil {
+		if reranked := aiSearchRerank(query, limit, results); reranked != nil {
+			results = reranked
+			aiEnhanced = true
+		}
+	}
+
+	// Fall back to linear if FTS5 unavailable
+	if results == nil {
+		results = searchLinear(query)
+	}
+
+	var text strings.Builder
+	text.WriteString(fmt.Sprintf("搜索 '%s' 找到 %d 个结果", query, len(results)))
+	if aiEnhanced {
+		text.WriteString(" (AI 语义重排)")
+	}
+	for _, h := range results {
+		text.WriteString(fmt.Sprintf("\n- [%s] %s (%s)", h.Type, h.Title, h.ID))
+	}
+
+	reflection := ""
+	if len(results) == 0 {
+		reflection = "未找到匹配结果。可以创建新的 task/plan，但请先确认是否属于已有 plan 的范围。"
+	} else if aiEnhanced {
+		reflection = "结果已通过 AI 语义重排序，排名靠前的结果更相关。"
+	}
+
+	return mcpToolResult{
+		Content:        []mcpContent{{Type: "text", Text: text.String()}},
+		RelatedContext: map[string]interface{}{"results": results, "ai_enhanced": aiEnhanced},
+		Reflection:     reflection,
+	}
+}
+
+func (s *mcpServer) handleRegisterAgent(args map[string]interface{}) mcpToolResult {
+	name := getStr(args, "name", "")
+	if name == "" {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "请提供 Agent 名称 (name)"}}, IsError: true}
+	}
+	role := getStr(args, "role", "coder")
+	caps := getStr(args, "capabilities", "")
+
+	// Always create a new agent identity — temporary, per-session
+	profile, err := createAgentProfile(name, role, caps)
+	if err != nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("注册 Agent 失败: %v", err)}}, IsError: true}
+	}
+	return mcpToolResult{
+		Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("✅ Agent '%s' 已注册 (role: %s)", name, role)}},
+		RelatedContext: map[string]interface{}{"agent": profile, "action": "created"},
+	}
+}
+
+func (s *mcpServer) handleSearchDiscussions(args map[string]interface{}) mcpToolResult {
+	query := getStr(args, "query", "")
+	limit := 10
+	if l := getStr(args, "limit", ""); l != "" { fmt.Sscanf(l, "%d", &limit) }
+	results, total, _ := searchDiscussions(query, "", 1, limit)
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("搜索讨论历史 '%s': %d 条结果 (共 %d 条)\n", query, len(results), total))
+	for _, r := range results {
+		b.WriteString(fmt.Sprintf("\n- [%s][%s] %s", r["role"], r["source"], r["content"]))
+	}
+	reflection := ""
+	if len(results) == 0 {
+		reflection = "未找到相关讨论记录。"
+	}
+	return mcpToolResult{
+		Content:        []mcpContent{{Type: "text", Text: b.String()}},
+		RelatedContext: map[string]interface{}{"results": results, "total": total},
+		Reflection:     reflection,
+	}
+}
+
 // ---- Thread (线索) Handlers ----
 
 func (s *mcpServer) handleSuggestThreads(args map[string]interface{}) mcpToolResult {
@@ -778,6 +937,95 @@ func (s *mcpServer) handleAddToThread(args map[string]interface{}) mcpToolResult
 		},
 		RelatedContext: t,
 		Reflection:     fmt.Sprintf("已添加到线索 '%s'", str(t["title"])),
+	}
+}
+
+func (s *mcpServer) handleDailyReview(args map[string]interface{}) mcpToolResult {
+	commits, err := listRecentCommitsWithContext(100)
+	if err != nil {
+		return mcpToolResult{
+			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("获取 commit 失败: %v", err)}},
+			IsError: true,
+		}
+	}
+
+	threads, _ := listThreads("active")
+	suggestions := analyzeThreadSuggestions()
+	status := analyzeThreadStatus()
+
+	var text strings.Builder
+	text.WriteString(fmt.Sprintf("## 每日复盘 — 共 %d 条 commit\n\n", len(commits)))
+	text.WriteString("请独立分析以下 commits 之间的语义关联（而非仅依赖启发式建议），然后：\n")
+	text.WriteString("1. 识别逻辑上属于同一工作流的 commits，用 aipm_create_thread 创建线索\n")
+	text.WriteString("2. 对匹配已有线索的 commits，用 aipm_add_to_thread 追加\n")
+	text.WriteString("3. 每个线索应有一个**有意义的标题**和 **summary**（说明这条线索在做什么、为什么重要）\n")
+	text.WriteString("4. 不要盲目接受启发式建议 — 用你的判断力\n\n")
+
+	if len(threads) > 0 {
+		text.WriteString("### 已有线索（可追加）\n")
+		for _, t := range threads[:min(5, len(threads))] {
+			items := t["items"]
+			itemCount := 0
+			if arr, ok := items.([]map[string]any); ok {
+				itemCount = len(arr)
+			}
+			text.WriteString(fmt.Sprintf("- %s [%s] (%d items)\n", str(t["title"]), str(t["id"]), itemCount))
+		}
+		text.WriteString("\n")
+	}
+
+	if len(suggestions) > 0 {
+		text.WriteString("### 启发式建议（仅供参考，不要盲从）\n")
+		for _, sug := range suggestions {
+			text.WriteString(fmt.Sprintf("- %s (score: %.0f%%)\n", sug.SuggestedTitle, sug.Score*100))
+		}
+		text.WriteString("\n")
+	}
+
+	// Commit list
+	text.WriteString("### 近期 Commits（含上下文）\n")
+	for i, c := range commits[:min(30, len(commits))] {
+		text.WriteString(fmt.Sprintf("%d. `%s` — **%s**\n", i+1, c.ID[:min(8, len(c.ID))], c.Title))
+		if c.TaskTitle != "" {
+			text.WriteString(fmt.Sprintf("   task: %s [%s]", c.TaskTitle, c.TaskID))
+		}
+		if c.PlanTitle != "" {
+			text.WriteString(fmt.Sprintf(" | plan: %s", c.PlanTitle))
+		}
+		if len(c.Files) > 0 {
+			topFiles := c.Files[:min(3, len(c.Files))]
+			text.WriteString(fmt.Sprintf(" | files: %s", strings.Join(topFiles, ", ")))
+			if len(c.Files) > 3 {
+				text.WriteString(fmt.Sprintf(" +%d more", len(c.Files)-3))
+			}
+		}
+		if len(c.InThreads) > 0 {
+			text.WriteString(fmt.Sprintf(" | 已有线索: %s", strings.Join(c.InThreads, ", ")))
+		}
+		text.WriteString("\n")
+	}
+
+	paused := []string{}
+	for _, ts := range status {
+		if ts.Paused {
+			paused = append(paused, fmt.Sprintf("%s (%d 天无活动)", ts.ThreadTitle, ts.DaysSinceLastActivity))
+		}
+	}
+	if len(paused) > 0 {
+		text.WriteString(fmt.Sprintf("\n⏸️ 暂停的线索: %s\n", strings.Join(paused, ", ")))
+	}
+
+	return mcpToolResult{
+		Content: []mcpContent{
+			{Type: "text", Text: text.String()},
+		},
+		RelatedContext: map[string]any{
+			"commits":          commits,
+			"existing_threads": threads,
+			"suggestions":      suggestions,
+			"thread_status":    status,
+		},
+		Reflection: fmt.Sprintf("已提供 %d 条 commit 供分析，%d 条启发式建议，%d 条已有线索", len(commits), len(suggestions), len(threads)),
 	}
 }
 

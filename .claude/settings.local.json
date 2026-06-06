@@ -1,37 +1,75 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git log *)",
-      "Bash(git diff *)",
       "Bash(go build *)",
-      "Bash(./dist/aipmc.exe mcp *)",
-      "Bash(./dist/aipmc.exe bug *)",
-      "Bash(./dist/aipmc.exe status *)",
-      "Bash(./dist/aipmc.exe analyze *)",
-      "Bash(./dist/aipmc.exe feedback *)",
-      "Bash(/c/Users/chenz/.aipm/aipmc feedback *)",
-      "Bash(aipmc feedback *)",
-      "Read(//c/Users/chenz/**)",
-      "Read(//d/code/**)",
-      "Read(//d/code/AI/**)",
-      "Bash(xargs grep -l \"pmai\\\\|aipm\")",
-      "Bash(conda run *)",
-      "Bash(PYTHONIOENCODING=utf-8 conda run *)",
+      "Bash(npx vite *)",
       "Bash(sqlite3 *)",
-      "Bash(./dist/aipmc.exe setup *)",
-      "WebSearch",
-      "Bash(go vet *)",
-      "Bash(/Users/dazsec/workspace/aipmc/dist/aipmc setup *)",
-      "Bash(/Users/dazsec/workspace/aipmc/dist/aipmc mcp *)",
-      "Bash(python3 -c \"import sys,json; r=json.load\\(sys.stdin\\); print\\('protocolVersion:', r['result']['protocolVersion']\\)\")"
+      "Bash(./aipmc.exe *)",
+      "Bash(curl *)",
+      "Bash(taskkill *)",
+      "Bash(cp *)",
+      "Bash(echo *)",
+      "Bash(timeout *)",
+      "Bash(/d/code/AI/PlanAI/dist/aipmc.exe web *)",
+      "Bash(taskkill //f //im aipmc.exe)",
+      "Bash(cp aipmc.exe dist/aipmc.exe)",
+      "Bash(python3 -c \"import sys,json; d=json.loads\\(sys.stdin.read\\(\\)\\); print\\(d.get\\('role',''\\), d.get\\('content',''\\)\\)\")",
+      "Bash(python3 -c ' *)",
+      "Bash(cat)",
+      "Bash(chmod +x /c/Users/chenz/.aipm/hooks/save-discussion.sh)",
+      "Bash(sh -c 'C=$\\(cat\\); SID=$\\(echo \"$C\" | grep -o '\\\\''\"session_id\":\"[^\"]*\"'\\\\'' | head -1 | sed '\\\\''s/\"session_id\":\"//;s/\"//'\\\\''\\); MSG=$\\(echo \"$C\" | sed '\\\\''s/.*\"last_assistant_message\":\"//;s/\",\"stop_hook_active.*//;s/\"}$//'\\\\''\\); echo \"SID=$SID MSG=$MSG\"')",
+      "Bash(sh -c 'C=$\\(cat\\); SID=$\\(echo \"$C\" | grep -o '\\\\''\"session_id\":\"[^\"]*\"'\\\\'' | head -1 | sed '\\\\''s/\"session_id\":\"//;s/\"//'\\\\''\\); MSG=$\\(echo \"$C\" | sed '\\\\''s/.*\"prompt\":\"//;s/\",\"hook_event_name.*//;s/\"}$//'\\\\''\\); echo \"SID=$SID MSG=$MSG\"')",
+      "Bash(chmod +x /c/Users/chenz/.aipm/hooks/save-discussion.sh /c/Users/chenz/.aipm/hooks/save-user-prompt.sh)",
+      "Bash(python -c \"import json; f=open\\('D:/code/AI/PlanAI/.claude/settings.local.json'\\); c=json.load\\(f\\); f.close\\(\\); c.pop\\('hooks',None\\); json.dump\\(c, open\\('D:/code/AI/PlanAI/.claude/settings.local.json','w'\\), indent=2\\)\")",
+      "Bash(chmod +x /c/Users/chenz/.aipm/hooks/save-tool.sh)",
+      "Bash(xxd)",
+      "Bash(bash /tmp/build_deploy.sh)",
+      "Bash(git add *)"
     ]
   },
-  "mcpServers": {
-    "aipm": {
-      "command": "D:/code/AI/PlanAI/dist/aipmc.exe",
-      "args": [
-        "mcp"
-      ]
-    }
+  "enabledMcpjsonServers": [
+    "aipm"
+  ],
+  "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:/Users/chenz/.aipm/hooks/save-tool.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:/Users/chenz/.aipm/hooks/save-discussion.sh"
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:/Users/chenz/.aipm/hooks/save-discussion.sh"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:/Users/chenz/.aipm/hooks/save-user-prompt.sh"
+          }
+        ]
+      }
+    ]
   }
 }

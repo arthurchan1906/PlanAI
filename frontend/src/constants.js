@@ -44,6 +44,17 @@ export const NAV_GROUPS = [
       { key: "code", label: "Code" },
     ],
   },
+  {
+    key: "collab",
+    label: "Collaboration",
+    children: [
+      { key: "agents", label: "Agents" },
+      { key: "meetings", label: "Meetings" },
+      { key: "assignments", label: "Assignments" },
+      { key: "audit", label: "Audit Log" },
+      { key: "discussions", label: "Discussions" },
+    ],
+  },
 ];
 
 export const NAV_ITEMS = NAV_GROUPS.flatMap((group) => group.children);

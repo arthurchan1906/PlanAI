@@ -50,6 +50,11 @@ import BugsView from "./views/BugsView";
 import GlobalSearch from "./components/GlobalSearch";
 import ThreadsView from "./views/ThreadsView";
 import DailyViewHuman from "./views/DailyViewHuman";
+import AgentsView from "./views/AgentsView";
+import MeetingsView from "./views/MeetingsView";
+import AssignmentsView from "./views/AssignmentsView";
+import AuditView from "./views/AuditView";
+import DiscussionsView from "./views/DiscussionsView";
 
 const { Header, Sider, Content } = Layout;
 const { Title, Text } = Typography;
@@ -76,6 +81,7 @@ function ConsoleApp() {
     codeStatus, recentGitCommits,
     tasks, taskNotes, commits, bugs, ideas, docs, docAudit, decisions, daily,
     threads, threadSuggestions, threadStatus,
+    agents, meetings, assignments, auditLogs,
     loadAll, runAction,
   } = useBootstrap(api, message);
 
@@ -378,6 +384,11 @@ function ConsoleApp() {
             />
           )}
           {view === "decisions" && <DecisionsView decisions={decisions} decisionSearch={decisionSearch} decisionStatusFilter={decisionStatusFilter} setDecisionSearch={setDecisionSearch} setDecisionStatusFilter={setDecisionStatusFilter} decisionForm={decisionForm} setDecisionForm={setDecisionForm} busy={busy} onOpenIdea={handleOpenIdea} onCreateDecision={() => runAction(() => api("/pmai/decisions", { method: "POST", body: JSON.stringify(decisionForm) }), "Decision created")} onUpdateDecision={(id, s) => runAction(() => api(`/pmai/decisions/${id}`, { method: "PATCH", body: JSON.stringify({ status: s }) }), "Decision updated")} onCopyIntoCanon={id => { setCanonForm({...canonForm, decisionId: id}); setView("canon"); }} />}
+          {view === "agents" && <AgentsView agents={agents} loading={loading} loadAll={loadAll} busy={busy} />}
+          {view === "meetings" && <MeetingsView meetings={meetings} agents={agents} loading={loading} loadAll={loadAll} busy={busy} />}
+          {view === "assignments" && <AssignmentsView assignments={assignments} agents={agents} tasks={tasks} loading={loading} loadAll={loadAll} busy={busy} />}
+          {view === "audit" && <AuditView auditLogs={auditLogs} loading={loading} loadAll={loadAll} />}
+          {view === "discussions" && <DiscussionsView />}
           {view === "daily" && <DailyViewHuman daily={daily} dailyForm={dailyForm} setDailyForm={setDailyForm} busy={busy} onAppendDaily={() => runDailyAction("POST", "Daily note updated")} onReplaceDaily={() => runDailyAction("PUT", "Daily note replaced")} tasks={tasks} commits={commits} onCreateTaskFromDaily={handleCreateTaskFromDaily} />}
         </Content>
       </Layout>

@@ -28,6 +28,10 @@ export default function useBootstrap(api, message) {
   const [threads, setThreads] = useState([]);
   const [threadSuggestions, setThreadSuggestions] = useState([]);
   const [threadStatus, setThreadStatus] = useState([]);
+const [agents, setAgents] = useState([]);
+const [meetings, setMeetings] = useState([]);
+const [assignments, setAssignments] = useState([]);
+const [auditLogs, setAuditLogs] = useState([]);
 
   async function loadAll() {
     setLoading(true);
@@ -57,6 +61,10 @@ export default function useBootstrap(api, message) {
       setThreads(payload.threads || []);
       setThreadSuggestions(payload.thread_suggestions || []);
       setThreadStatus(payload.thread_status || []);
+      setAgents(payload.agents || []);
+      setMeetings(payload.meetings || []);
+      setAssignments(payload.assignments || []);
+      setAuditLogs(payload.audit_logs || []);
     } catch (error) {
       message.error(error.message || "Load failed");
     } finally {
@@ -85,6 +93,7 @@ export default function useBootstrap(api, message) {
     canon, visions, roadmaps, plans, principles,
     codeStatus, recentGitCommits,
     tasks, taskNotes, commits, bugs, ideas, docs, docAudit, decisions, daily,
+    agents, meetings, assignments, auditLogs,
     threads, threadSuggestions, threadStatus,
     loadAll, runAction,
   };

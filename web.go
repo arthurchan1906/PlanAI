@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"aipmc/ai"
 )
 
 //go:embed frontend/dist
@@ -192,6 +194,18 @@ func handleGetEntity(w http.ResponseWriter, entity, id string) {
 			return
 		}
 		sendJSON(w, t)
+	case "agents":
+		a, err := getAgentProfile(id)
+		if err != nil { sendError(w, 404, err.Error()); return }
+		sendJSON(w, a)
+	case "meetings":
+		m, err := getMeetingRoom(id)
+		if err != nil { sendError(w, 404, err.Error()); return }
+		sendJSON(w, m)
+	case "assignments":
+		a, err := getAssignment(id)
+		if err != nil { sendError(w, 404, err.Error()); return }
+		sendJSON(w, a)
 	default:
 		sendError(w, 404, fmt.Sprintf("unknown entity: %s", entity))
 	}
@@ -278,6 +292,14 @@ func handlePatchEntity(w http.ResponseWriter, entity, id string, body map[string
 			return
 		}
 		sendJSON(w, t)
+	case "agents":
+		a, err := updateAgentProfile(id, body)
+		if err != nil { sendError(w, 400, err.Error()); return }
+		sendJSON(w, a)
+	case "assignments":
+		a, err := updateAssignment(id, body)
+		if err != nil { sendError(w, 400, err.Error()); return }
+		sendJSON(w, a)
 	default:
 		sendError(w, 404, fmt.Sprintf("unknown entity: %s", entity))
 	}
@@ -534,6 +556,10 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 				return ib
 			}(),"canon":canon,"visions":visions,
 			"roadmaps":webRoadmaps,"plans":enhancedPlans,"principles":principles,
+			"agents":func() []map[string]any { a, _ := listAgentProfiles(); if a == nil { a = []map[string]any{} }; return a }(),
+			"meetings":func() []map[string]any { m, _ := listMeetingRooms(""); if m == nil { m = []map[string]any{} }; return m }(),
+			"assignments":func() []map[string]any { as, _ := listAssignments("", ""); if as == nil { as = []map[string]any{} }; return as }(),
+			"audit_logs":func() []map[string]any { l, _ := listAuditLog("", "", 100); if l == nil { l = []map[string]any{} }; return l }(),
 			"code_status":func() map[string]any {
 		branch := runGit("rev-parse", "--abbrev-ref", "HEAD")
 		if branch == "" { branch = "main" }
@@ -734,6 +760,113 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 			}
 			sendJSON(w, result)
 		}
+	// ---- Agent Profiles ----
+	case method == "GET" && path == "agents":
+		agents, _ := listAgentProfiles()
+		sendJSON(w, map[string]any{"agents": agents})
+	case method == "POST" && path == "agents":
+		body := readBody()
+		profile, err := createAgentProfile(str(body["name"]), str(body["role"]), str(body["capabilities"]))
+		if err != nil { sendError(w, 400, err.Error()); return }
+		sendJSON(w, profile)
+	case method == "PATCH" && strings.HasPrefix(path, "agents/"):
+		id := strings.TrimPrefix(path, "agents/")
+		a, err := updateAgentProfile(id, readBody())
+		if err != nil { sendError(w, 400, err.Error()); return }
+		sendJSON(w, a)
+	// ---- Meeting Rooms ----
+	case method == "GET" && path == "meetings":
+		rooms, _ := listMeetingRooms(q.Get("status"))
+		sendJSON(w, map[string]any{"meetings": rooms})
+	case method == "POST" && path == "meetings":
+		body := readBody()
+		room, err := createMeetingRoom(str(body["title"]), str(body["topic"]), str(body["context"]), str(body["created_by"]))
+		if err != nil { sendError(w, 400, err.Error()); return }
+		sendJSON(w, room)
+	case method == "POST" && strings.HasPrefix(path, "meetings/") && strings.HasSuffix(path, "/close"):
+		id := extractID(path, "meetings/", "/close")
+		r, err := closeMeetingRoom(id)
+		if err != nil { sendError(w, 400, err.Error()); return }
+		sendJSON(w, r)
+	case method == "POST" && strings.HasPrefix(path, "meetings/") && strings.HasSuffix(path, "/turns"):
+		body := readBody()
+		roomID := extractID(path, "meetings/", "/turns")
+		turn, err := createMeetingTurn(roomID, 0, str(body["speaker_type"]), str(body["speaker_id"]), str(body["question"]))
+		if err != nil { sendError(w, 400, err.Error()); return }
+		sendJSON(w, turn)
+	case method == "POST" && strings.HasPrefix(path, "meetings/") && strings.HasSuffix(path, "/participants"):
+		body := readBody()
+		roomID := extractID(path, "meetings/", "/participants")
+		p, err := confirmMeetingAttendance(roomID, str(body["agent_id"]))
+		if err != nil { sendError(w, 400, err.Error()); return }
+		sendJSON(w, p)
+	// ---- Assignments ----
+	case method == "GET" && path == "assignments":
+		asgns, _ := listAssignments(q.Get("agent_id"), q.Get("status"))
+		sendJSON(w, map[string]any{"assignments": asgns})
+	case method == "POST" && path == "assignments":
+		body := readBody()
+		a, err := createAssignment(str(body["agent_id"]), str(body["task_id"]), str(body["role"]), str(body["scope"]), str(body["assigned_by"]))
+		if err != nil { sendError(w, 400, err.Error()); return }
+		sendJSON(w, a)
+	case method == "PATCH" && strings.HasPrefix(path, "assignments/"):
+		id := strings.TrimPrefix(path, "assignments/")
+		a, err := updateAssignment(id, readBody())
+		if err != nil { sendError(w, 400, err.Error()); return }
+		sendJSON(w, a)
+	// ---- Audit Log ----
+	case method == "GET" && path == "audit":
+		logs, _ := listAuditLog(q.Get("actor_type"), q.Get("entity_type"), 200)
+		sendJSON(w, map[string]any{"audit_logs": logs})
+	// ---- AI Search ----
+	case method == "POST" && strings.HasPrefix(path, "meetings/") && strings.HasSuffix(path, "/typing"):
+		body := readBody()
+		roomID := extractID(path, "meetings/", "/typing")
+		typing := 0
+		if v, ok := body["pm_typing"]; ok {
+			if b, ok := v.(bool); ok && b { typing = 1 }
+			if f, ok := v.(float64); ok && f > 0 { typing = 1 }
+		}
+		db, err := openDB()
+		if err == nil { defer db.Close(); db.Exec("UPDATE meeting_rooms SET pm_typing = ? WHERE id = ?", typing, roomID) }
+		sendJSON(w, map[string]any{"ok": true, "pm_typing": typing})
+	case method == "POST" && path == "arbitrate":
+		body := readBody()
+		roomID := str(body["room_id"])
+		room, err := getMeetingRoom(roomID)
+		if err != nil { sendError(w, 404, err.Error()); return }
+		turns, _ := listMeetingTurns(roomID)
+		var recent []ai.ArbitrationTurn
+		start := 0
+		if len(turns) > 8 { start = len(turns) - 8 }
+		for i := start; i < len(turns); i++ {
+			t := turns[i]
+			txt := str(t["question"])
+			if r := str(t["response"]); r != "" { txt = r }
+			recent = append(recent, ai.ArbitrationTurn{
+				SpeakerType: str(t["speaker_type"]), SpeakerID: str(t["speaker_id"]),
+				Content: txt, AddressTo: str(t["address_to"]),
+			})
+		}
+		next, reason, err := aiClient.ArbitrateNextSpeaker(str(room["topic"]), str(room["agent_roles_context"]), recent)
+		if err != nil { sendError(w, 500, err.Error()); return }
+		existing, _ := listMeetingTurns(roomID)
+		nextNum := len(existing) + 1
+		createMeetingTurn(roomID, nextNum, "agent", next, fmt.Sprintf("[AI 仲裁] %s。请就此发表意见。", reason))
+		sendJSON(w, map[string]any{"next_agent": next, "reason": reason})
+	case method == "POST" && path == "discussions":
+		body := readBody()
+		d, err := logDiscussion(str(body["session_id"]), str(body["role"]), str(body["source"]), str(body["content"]))
+		if err != nil { sendError(w, 400, err.Error()); return }
+		sendJSON(w, d)
+	case method == "GET" && path == "discussions":
+		page := 1; if p := q.Get("page"); p != "" { fmt.Sscanf(p, "%d", &page) }
+		src := q.Get("source")
+		results, total, _ := searchDiscussions(q.Get("q"), src, page, 20)
+		sendJSON(w, map[string]any{"discussions": results, "total": total, "page": page})
+	case method == "GET" && path == "smart-search":
+		result := searchProjectContext(q.Get("q"), 8)
+		sendJSON(w, result)
 	case method == "GET":
 		entity, id := parseEntityID(path)
 		handleGetEntity(w, entity, id)

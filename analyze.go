@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -636,150 +637,445 @@ type ThreadStatusResult struct {
 	Paused       bool   `json:"paused"`
 }
 
-// analyzeThreadSuggestions clusters recent commits to suggest threads.
+// analyzeThreadSuggestions uses multi-dimensional similarity to cluster
+// related commits and suggest threads. It considers title keyword overlap,
+// file path affinity, plan membership, and time proximity — so work that
+// spans multiple plans or evolves organically can still be recognized.
 func analyzeThreadSuggestions() []ThreadSuggestResult {
-	commits, err := listCommits("", "", "", "", 50)
-	if err != nil {
+	commits, err := listCommits("", "", "", "", 100)
+	if err != nil || len(commits) < 2 {
 		return nil
 	}
 
-	// Collect commit chains: group by task_id and file patterns
-	type clusterInfo struct {
-		commits   []map[string]any
-		filePaths map[string]bool
-		taskIDs   map[string]bool
-		planIDs   map[string]bool
-	}
-	cluster := &clusterInfo{
-		filePaths: make(map[string]bool),
-		taskIDs:   make(map[string]bool),
-		planIDs:   make(map[string]bool),
-	}
-
-	for _, c := range commits {
-		if str(c["id"]) == "" {
-			continue
-		}
-		cluster.commits = append(cluster.commits, c)
-		if tid := str(c["task_id"]); tid != "" {
-			cluster.taskIDs[tid] = true
-		}
-		if files, ok := c["files"].([]any); ok {
-			for _, f := range files {
-				if fn, ok := f.(string); ok {
-					cluster.filePaths[fn] = true
-				}
-			}
-		}
-	}
-
-	// Enrich: for each task_id, find its plan
-	for tid := range cluster.taskIDs {
-		task, err := getTaskSimple(tid)
-		if err != nil {
-			continue
-		}
-		if pid := str(task["plan_id"]); pid != "" {
-			cluster.planIDs[pid] = true
-		}
-	}
-
-	// Extract top-level directory patterns from file paths
-	dirCounts := make(map[string]int)
-	for fp := range cluster.filePaths {
-		parts := strings.Split(fp, "/")
-		if len(parts) > 0 {
-			dir := strings.ToLower(parts[0])
-			if dir != "" && dir != "." {
-				dirCounts[dir]++
-			}
-		}
-	}
-
-	if len(cluster.commits) == 0 {
+	items, planTitles := parseCommitItems(commits)
+	if len(items) < 2 {
 		return nil
 	}
+
+	clusters := clusterBySimilarity(items, 0.2)
 
 	var results []ThreadSuggestResult
-
-	// Suggest threads based on plan groupings
-	for pid := range cluster.planIDs {
-		plan, err := getPlan(pid)
-		if err != nil || plan == nil {
+	for _, cl := range clusters {
+		if len(cl) < 2 {
 			continue
 		}
-
-		var relatedCommits []map[string]any
-		for _, c := range cluster.commits {
-			tid := str(c["task_id"])
-			if tid == "" {
-				continue
-			}
-			task, err := getTaskSimple(tid)
-			if err != nil {
-				continue
-			}
-			if str(task["plan_id"]) == pid {
-				relatedCommits = append(relatedCommits, c)
-			}
-		}
-
-		if len(relatedCommits) == 0 {
-			continue
-		}
-
-		entities := []ThreadItem{}
-		for _, c := range relatedCommits[:min(5, len(relatedCommits))] {
-			entities = append(entities, ThreadItem{
-				EntityType: "commit",
-				EntityID:   str(c["id"]),
-				Title:      str(c["title"]),
-				Status:     str(c["status"]),
-			})
-		}
-
-		results = append(results, ThreadSuggestResult{
-			SuggestedTitle: str(plan["title"]),
-			Rationale:      fmt.Sprintf("%d commits linked to plan %s", len(relatedCommits), str(plan["title"])),
-			SourceEntities: entities,
-			Score:          float64(len(relatedCommits)) / float64(len(cluster.commits)),
-		})
+		sug := buildThreadSuggestion(items, cl, planTitles, len(items))
+		results = append(results, sug)
 	}
 
-	// Suggest threads based on directory clusters (for unlinked commits)
-	suggestedDirs := []string{}
-	for dir, cnt := range dirCounts {
-		if cnt >= 2 {
-			suggestedDirs = append(suggestedDirs, dir)
-		}
-	}
-	if len(suggestedDirs) > 0 {
-		entities := []ThreadItem{}
-		count := 0
-		for _, c := range cluster.commits {
-			if count >= 5 {
-				break
-			}
-			entities = append(entities, ThreadItem{
-				EntityType: "commit",
-				EntityID:   str(c["id"]),
-				Title:      str(c["title"]),
-				Status:     str(c["status"]),
-			})
-			count++
-		}
-		results = append(results, ThreadSuggestResult{
-			SuggestedTitle: fmt.Sprintf("Work in %s", strings.Join(suggestedDirs, ", ")),
-			Rationale:      fmt.Sprintf("Commits spread across directories: %s", strings.Join(suggestedDirs, ", ")),
-			SourceEntities: entities,
-			Score:          0.5,
-		})
-	}
+	sort.Slice(results, func(i, j int) bool { return results[i].Score > results[j].Score })
 
 	if results == nil {
 		results = []ThreadSuggestResult{}
 	}
 	return results
+}
+
+// commitItem holds enriched commit data for similarity comparison.
+type commitItem struct {
+	id        string
+	title     string
+	files     []string
+	taskID    string
+	planID    string
+	ts        time.Time
+	keywords  []string
+}
+
+// stopWords filters out common non-semantic words during keyword extraction.
+var stopWords = map[string]bool{
+	"the": true, "a": true, "an": true, "is": true, "are": true, "was": true,
+	"were": true, "be": true, "been": true, "have": true, "has": true, "had": true,
+	"do": true, "does": true, "did": true, "will": true, "would": true, "can": true,
+	"could": true, "should": true, "may": true, "might": true, "must": true,
+	"to": true, "of": true, "in": true, "for": true, "on": true, "with": true,
+	"at": true, "by": true, "from": true, "as": true, "into": true, "through": true,
+	"and": true, "or": true, "nor": true, "not": true, "no": true, "but": true,
+	"this": true, "that": true, "it": true, "its": true, "so": true, "yet": true,
+	"all": true, "any": true, "few": true, "more": true, "most": true, "some": true,
+	"each": true, "both": true, "just": true, "only": true, "very": true, "too": true,
+	"also": true, "now": true, "then": true, "here": true, "there": true,
+	"add": true, "fix": true, "update": true, "remove": true, "delete": true,
+	"refactor": true, "implement": true, "use": true, "make": true, "get": true,
+	"set": true, "change": true, "test": true, "wip": true, "clean": true,
+	"support": true, "handle": true, "improve": true, "allow": true, "enable": true,
+}
+
+// parseCommitItems converts raw commit maps into enriched commitItem structs,
+// resolving task → plan relationships via a local cache.
+func parseCommitItems(commits []map[string]any) ([]commitItem, map[string]string) {
+	type taskMeta struct{ planID string }
+	taskCache := map[string]*taskMeta{}
+	planTitles := map[string]string{}
+
+	var items []commitItem
+	for _, c := range commits {
+		ci := commitItem{
+			id:     str(c["id"]),
+			title:  str(c["title"]),
+			taskID: str(c["task_id"]),
+		}
+		if t, err := time.Parse("2006-01-02T15:04:05", str(c["created_at"])); err == nil {
+			ci.ts = t
+		}
+		if rawFiles, ok := c["files"].([]any); ok {
+			for _, f := range rawFiles {
+				if s, ok := f.(string); ok {
+					ci.files = append(ci.files, s)
+				}
+			}
+		}
+		// Resolve task → plan
+		if ci.taskID != "" {
+			if tc, ok := taskCache[ci.taskID]; ok {
+				ci.planID = tc.planID
+			} else {
+				if t, err := getTaskSimple(ci.taskID); err == nil {
+					taskCache[ci.taskID] = &taskMeta{str(t["plan_id"])}
+					ci.planID = str(t["plan_id"])
+				}
+			}
+		}
+		// Cache plan title
+		if ci.planID != "" {
+			if _, ok := planTitles[ci.planID]; !ok {
+				if p, err := getPlan(ci.planID); err == nil && p != nil {
+					planTitles[ci.planID] = str(p["title"])
+				}
+			}
+		}
+		ci.keywords = extractKeywords(ci.title)
+		items = append(items, ci)
+	}
+	return items, planTitles
+}
+
+// extractKeywords splits a title into meaningful lowercase tokens, filtering
+// out stop words and single characters.
+func extractKeywords(title string) []string {
+	title = strings.ToLower(title)
+	// Split on common delimiters including CJK-unfriendly ones
+	words := strings.FieldsFunc(title, func(r rune) bool {
+		return r == ' ' || r == ':' || r == ',' || r == ';' || r == '-' || r == '_' ||
+			r == '.' || r == '/' || r == '(' || r == ')' || r == '[' || r == ']' ||
+			r == '→' || r == '{' || r == '}' || r == '"' || r == '\''
+	})
+	var result []string
+	for _, w := range words {
+		w = strings.TrimSpace(w)
+		if len(w) < 2 || stopWords[w] {
+			continue
+		}
+		result = append(result, w)
+	}
+	return result
+}
+
+// commitPairSim computes a weighted multi-dimensional similarity between two commits.
+// Weights: title keywords 0.30, file overlap 0.35, same plan 0.15, time proximity 0.20.
+func commitPairSim(a, b commitItem) float64 {
+	const wtTitle, wtFiles, wtPlan, wtTime = 0.30, 0.35, 0.15, 0.20
+	var score float64
+
+	// 1. Title keyword overlap (Jaccard)
+	if len(a.keywords) > 0 && len(b.keywords) > 0 {
+		score += wtTitle * jaccardStrings(a.keywords, b.keywords)
+	}
+
+	// 2. File path overlap (Jaccard) — strongest signal for related work
+	if len(a.files) > 0 && len(b.files) > 0 {
+		score += wtFiles * jaccardStrings(a.files, b.files)
+	}
+
+	// 3. Same plan membership — soft signal (work can span multiple plans)
+	if a.planID != "" && b.planID != "" && a.planID == b.planID {
+		score += wtPlan
+	}
+
+	// 4. Time proximity — decays linearly over 72 hours
+	if !a.ts.IsZero() && !b.ts.IsZero() {
+		hours := b.ts.Sub(a.ts).Hours()
+		if hours < 0 {
+			hours = -hours
+		}
+		if hours < 72 {
+			score += wtTime * (1.0 - hours/72.0)
+		}
+	}
+
+	return score
+}
+
+// jaccardStrings computes Jaccard similarity: |A ∩ B| / |A ∪ B|.
+func jaccardStrings(a, b []string) float64 {
+	setA := make(map[string]bool, len(a))
+	for _, s := range a {
+		setA[s] = true
+	}
+	intersection := 0
+	union := make(map[string]bool, len(a)+len(b))
+	for _, s := range a {
+		union[s] = true
+	}
+	for _, s := range b {
+		union[s] = true
+		if setA[s] {
+			intersection++
+		}
+	}
+	if len(union) == 0 {
+		return 0
+	}
+	return float64(intersection) / float64(len(union))
+}
+
+// clusterBySimilarity groups commits into clusters using union-find on the
+// similarity graph. Two commits are connected if their similarity ≥ threshold.
+func clusterBySimilarity(items []commitItem, threshold float64) [][]int {
+	n := len(items)
+	parent := make([]int, n)
+	for i := range parent {
+		parent[i] = i
+	}
+	var find func(int) int
+	find = func(x int) int {
+		if parent[x] != x {
+			parent[x] = find(parent[x])
+		}
+		return parent[x]
+	}
+	union := func(x, y int) {
+		parent[find(x)] = find(y)
+	}
+
+	for i := 0; i < n; i++ {
+		for j := i + 1; j < n; j++ {
+			if commitPairSim(items[i], items[j]) >= threshold {
+				union(i, j)
+			}
+		}
+	}
+
+	// Collect clusters
+	groups := map[int][]int{}
+	for i := 0; i < n; i++ {
+		root := find(i)
+		groups[root] = append(groups[root], i)
+	}
+
+	var clusters [][]int
+	for _, g := range groups {
+		clusters = append(clusters, g)
+	}
+	return clusters
+}
+
+// buildThreadSuggestion generates a ThreadSuggestResult from a cluster of commits.
+func buildThreadSuggestion(items []commitItem, indices []int, planTitles map[string]string, total int) ThreadSuggestResult {
+	// Collect cluster stats
+	planSet := map[string]bool{}
+	fileCounts := map[string]int{}
+	keywordCounts := map[string]int{}
+	var clusterFiles, clusterKeywords []string
+	var firstTime, lastTime time.Time
+
+	for _, idx := range indices {
+		ci := items[idx]
+		if ci.planID != "" {
+			planSet[ci.planID] = true
+		}
+		for _, f := range ci.files {
+			fileCounts[f]++
+			clusterFiles = append(clusterFiles, f)
+		}
+		for _, kw := range ci.keywords {
+			keywordCounts[kw]++
+			clusterKeywords = append(clusterKeywords, kw)
+		}
+		if !ci.ts.IsZero() {
+			if firstTime.IsZero() || ci.ts.Before(firstTime) {
+				firstTime = ci.ts
+			}
+			if lastTime.IsZero() || ci.ts.After(lastTime) {
+				lastTime = ci.ts
+			}
+		}
+	}
+
+	// Generate title
+	title := generateThreadTitle(items, indices, planSet, planTitles, fileCounts, keywordCounts)
+
+	// Generate rationale
+	rationale := generateThreadRationale(len(indices), planSet, planTitles, fileCounts, keywordCounts, firstTime, lastTime)
+
+	// Score: cluster size / total * cross-plan bonus * file-concentration bonus
+	sizeScore := float64(len(indices)) / float64(total)
+	crossPlanBonus := 1.0
+	if len(planSet) >= 2 {
+		crossPlanBonus = 1.0 + 0.15*float64(len(planSet)-1)
+	}
+	// File concentration: higher = more focused work
+	fileConcentration := 0.5
+	if len(clusterFiles) > 0 {
+		uniqueFiles := len(fileCounts)
+		fileConcentration = float64(uniqueFiles) / float64(len(clusterFiles))
+	}
+
+	score := sizeScore * crossPlanBonus * (fileConcentration + 0.5) * 2.5
+	if score > 1.0 {
+		score = 1.0
+	}
+	if score < 0.1 {
+		score = 0.1
+	}
+
+	// Build source entities (top 8)
+	entities := []ThreadItem{}
+	for i, idx := range indices {
+		if i >= 8 {
+			break
+		}
+		ci := items[idx]
+		entities = append(entities, ThreadItem{
+			EntityType: "commit",
+			EntityID:   ci.id,
+			Title:      ci.title,
+			Status:     "committed",
+		})
+	}
+
+	return ThreadSuggestResult{
+		SuggestedTitle: title,
+		Rationale:      rationale,
+		SourceEntities: entities,
+		Score:          score,
+	}
+}
+
+// generateThreadTitle produces a human-readable title for a cluster.
+func generateThreadTitle(items []commitItem, indices []int, planSet map[string]bool, planTitles map[string]string, fileCounts map[string]int, keywordCounts map[string]int) string {
+	// Strategy 1: If cluster is dominated by a single plan (>60% of commits), use plan title as base
+	planVotes := map[string]int{}
+	for _, idx := range indices {
+		if items[idx].planID != "" {
+			planVotes[items[idx].planID]++
+		}
+	}
+	var dominantPlan string
+	for pid, cnt := range planVotes {
+		if float64(cnt)/float64(len(indices)) >= 0.6 {
+			if dominantPlan == "" || cnt > planVotes[dominantPlan] {
+				dominantPlan = pid
+			}
+		}
+	}
+	if dominantPlan != "" {
+		title := planTitles[dominantPlan]
+		if title == "" {
+			title = dominantPlan
+		}
+		return title + " 相关工作"
+	}
+
+	// Strategy 2: Use the most common file path prefix (directory level)
+	if len(fileCounts) > 0 {
+		dirVotes := map[string]int{}
+		for fp, cnt := range fileCounts {
+			parts := strings.Split(fp, "/")
+			// Try 2-level deep prefix for specificity
+			var prefix string
+			if len(parts) >= 2 {
+				prefix = strings.Join(parts[:2], "/")
+			} else if len(parts) == 1 && parts[0] != "" {
+				prefix = parts[0]
+			}
+			if prefix != "" {
+				dirVotes[prefix] += cnt
+			}
+		}
+		var bestDir string
+		var bestCnt int
+		for d, c := range dirVotes {
+			if c > bestCnt {
+				bestCnt = c
+				bestDir = d
+			}
+		}
+		if bestDir != "" {
+			return fmt.Sprintf("Work on %s", bestDir)
+		}
+	}
+
+	// Strategy 3: Use top 2-3 keywords
+	type kv struct{ k string; v int }
+	var kvs []kv
+	for k, v := range keywordCounts {
+		kvs = append(kvs, kv{k, v})
+	}
+	sort.Slice(kvs, func(i, j int) bool { return kvs[i].v > kvs[j].v })
+	var topKws []string
+	for i := 0; i < len(kvs) && i < 3; i++ {
+		topKws = append(topKws, kvs[i].k)
+	}
+	if len(topKws) > 0 {
+		return strings.Join(topKws, ", ") + " 相关变更"
+	}
+
+	// Fallback
+	return fmt.Sprintf("最近 %d 条相关工作", len(indices))
+}
+
+// generateThreadRationale explains why this cluster forms a meaningful thread.
+func generateThreadRationale(n int, planSet map[string]bool, planTitles map[string]string, fileCounts map[string]int, keywordCounts map[string]int, firstTime, lastTime time.Time) string {
+	parts := []string{fmt.Sprintf("%d 条 commit", n)}
+
+	// Plans
+	if len(planSet) > 0 {
+		var pnames []string
+		for pid := range planSet {
+			if t, ok := planTitles[pid]; ok && t != "" {
+				pnames = append(pnames, t)
+			}
+		}
+		if len(pnames) > 0 {
+			if len(pnames) <= 2 {
+				parts = append(parts, fmt.Sprintf("涉及计划: %s", strings.Join(pnames, ", ")))
+			} else {
+				parts = append(parts, fmt.Sprintf("跨 %d 个计划", len(pnames)))
+			}
+		}
+	} else {
+		parts = append(parts, "未关联计划")
+	}
+
+	// File paths: list top 2 directories
+	if len(fileCounts) > 0 {
+		type fkv struct{ f string; c int }
+		var fkvs []fkv
+		for f, c := range fileCounts {
+			fkvs = append(fkvs, fkv{f, c})
+		}
+		sort.Slice(fkvs, func(i, j int) bool { return fkvs[i].c > fkvs[j].c })
+		var topFiles []string
+		for i := 0; i < len(fkvs) && i < 2; i++ {
+			topFiles = append(topFiles, fkvs[i].f)
+		}
+		if len(topFiles) > 0 {
+			parts = append(parts, fmt.Sprintf("主要文件: %s", strings.Join(topFiles, ", ")))
+		}
+	}
+
+	// Time span
+	if !firstTime.IsZero() && !lastTime.IsZero() {
+		span := lastTime.Sub(firstTime)
+		if span.Hours() >= 24 {
+			parts = append(parts, fmt.Sprintf("历时 %d 天", int(span.Hours()/24)))
+		} else if span.Hours() >= 1 {
+			parts = append(parts, fmt.Sprintf("历时 %d 小时", int(span.Hours())))
+		}
+	}
+
+	return strings.Join(parts, " · ")
 }
 
 // analyzeThreadStatus checks existing threads for activity gaps.
@@ -839,6 +1135,8 @@ func BuildBriefing() string {
 	tasks, _ := listTasks("in_progress", "")
 	events, _ := getUnconsumedEvents()
 	threadSummary := buildThreadSummary()
+	suggestions := analyzeThreadSuggestions()
+	threadStatus := analyzeThreadStatus()
 
 	var b strings.Builder
 	b.WriteString("🏗️ 项目简报 — AIPM\n\n")
@@ -849,96 +1147,266 @@ func BuildBriefing() string {
 		b.WriteString("\n")
 	}
 
-	// Current focus
+	// ── Layer 1: ⚠️ 立即行动 ──
+	hasImmediate := false
+	if len(events) > 0 || len(report.Blocked) > 0 || len(report.Orphans) > 0 || len(report.Progress) > 0 {
+		// Collect urgency flags from progress analysis
+		hasOffTrack := false
+		for _, p := range report.Progress {
+			if p.RiskLevel == "off_track" {
+				hasOffTrack = true
+				break
+			}
+		}
+		if len(events) > 0 || len(report.Blocked) > 0 || len(report.Orphans) > 0 || hasOffTrack {
+			hasImmediate = true
+			b.WriteString("## ⚠️ 立即行动\n\n")
+		}
+
+		if len(events) > 0 {
+			b.WriteString("### PM 最新变更\n")
+			for _, e := range events {
+				b.WriteString(fmt.Sprintf("- [%s] %s\n", e["type"], e["summary"]))
+			}
+			b.WriteString(fmt.Sprintf("  → 建议: 用 aipm_mark_consumed 标记已读\n\n"))
+		}
+
+		if len(report.Blocked) > 0 {
+			b.WriteString("### 阻塞任务\n")
+			for _, bl := range report.Blocked {
+				b.WriteString(fmt.Sprintf("- **%s** — 阻塞 %d 天\n", bl.TaskTitle, bl.DaysBlocked))
+				b.WriteString(fmt.Sprintf("  → 建议: 检查阻塞原因，必要时联系 PM 做决策\n"))
+			}
+			b.WriteString("\n")
+		}
+
+		if len(report.Orphans) > 0 {
+			b.WriteString("### 孤儿任务 (in_progress 但无 commit)\n")
+			for _, o := range report.Orphans {
+				b.WriteString(fmt.Sprintf("- **%s** [%s]\n", o.TaskTitle, o.TaskID))
+			}
+			b.WriteString(fmt.Sprintf("  → 建议: 检查这些任务是否需要 commit 或更新状态\n\n"))
+		}
+
+		for _, p := range report.Progress {
+			if p.RiskLevel == "off_track" {
+				b.WriteString(fmt.Sprintf("### 严重偏离: **%s** (%d%% 完成, %d/%d tasks)\n",
+					p.PlanTitle, p.ProgressPct, p.DoneTasks, p.TotalTasks))
+				b.WriteString(fmt.Sprintf("  → 建议: 立即评估是否需要调整 scope 或追加资源\n\n"))
+			}
+		}
+	}
+
+	// ── Layer 2: 📋 应该知道 ──
+	b.WriteString("## 📋 应该知道\n\n")
+
 	if len(tasks) > 0 {
-		b.WriteString("## 当前进行中的任务\n")
-		for _, t := range tasks[:min(3, len(tasks))] {
+		b.WriteString("### 当前进行中的任务\n")
+		for _, t := range tasks[:min(5, len(tasks))] {
 			b.WriteString(fmt.Sprintf("- **%s** [%s] _%s_\n", t.Title, t.ID, t.Status))
-		}
-		b.WriteString("\n")
-	}
-
-	// Thread suggestions
-	suggestions := analyzeThreadSuggestions()
-	if len(suggestions) > 0 {
-		b.WriteString("## 🧵 建议的线索 (从最近 commit 推断)\n")
-		b.WriteString("以下线索是 AI 从 commit 历史中自动识别的。用 `aipmc thread add` 确认：\n\n")
-		for _, s := range suggestions {
-			b.WriteString(fmt.Sprintf("- **%s** — %s\n", s.SuggestedTitle, s.Rationale))
-		}
-		b.WriteString("\n")
-	}
-
-	// Paused threads
-	threadStatus := analyzeThreadStatus()
-	pausedCount := 0
-	for _, ts := range threadStatus {
-		if ts.Paused {
-			if pausedCount == 0 {
-				b.WriteString("## ⏸️ 暂停的线索 (超过 7 天无活动)\n")
+			sug := getActionableSuggestion(t)
+			if sug != "" {
+				b.WriteString(fmt.Sprintf("  → %s\n", sug))
 			}
-			b.WriteString(fmt.Sprintf("- **%s** (%d 天无活动, %d items)\n", ts.ThreadTitle, ts.DaysSinceLastActivity, ts.ItemCount))
-			pausedCount++
-		}
-	}
-	if pausedCount > 0 {
-		b.WriteString("\n")
-	}
-
-	// PM alerts
-	if len(events) > 0 {
-		b.WriteString("## ⚠️ PM 最新变更\n")
-		for _, e := range events {
-			b.WriteString(fmt.Sprintf("- [%s] %s\n", e["type"], e["summary"]))
-		}
-		b.WriteString("\n")
-	}
-
-	// Risks
-	if len(report.Orphans) > 0 {
-		b.WriteString("## 🔍 孤儿任务 (in_progress 但无 commit)\n")
-		for _, o := range report.Orphans {
-			b.WriteString(fmt.Sprintf("- **%s** [%s]\n", o.TaskTitle, o.TaskID))
-		}
-		b.WriteString("\n")
-	}
-
-	atRiskCount := 0
-	for _, p := range report.Progress {
-		if p.RiskLevel == "at_risk" || p.RiskLevel == "off_track" {
-			if atRiskCount == 0 {
-				b.WriteString("## 📊 进度风险\n")
-			}
-			b.WriteString(fmt.Sprintf("- **%s**: %d%% 完成 (%d/%d tasks) — %s\n",
-				p.PlanTitle, p.ProgressPct, p.DoneTasks, p.TotalTasks, p.RiskLevel))
-			atRiskCount++
-		}
-	}
-	if atRiskCount > 0 {
-		b.WriteString("\n")
-	}
-
-	if len(report.Duplicates) > 0 {
-		b.WriteString("## ⚠️ 检测到重复\n")
-		for _, d := range report.Duplicates {
-			b.WriteString(fmt.Sprintf("- **%s** 与 **%s** 相似度 %.0f%%\n", d.Title1, d.Title2, d.Similarity*100))
 		}
 		b.WriteString("\n")
 	}
 
 	if len(report.Drifts) > 0 {
-		b.WriteString("## 🔗 Scope 漂移\n")
+		b.WriteString("### Scope 漂移\n")
 		for _, d := range report.Drifts {
 			b.WriteString(fmt.Sprintf("- Commit **%s**: 文件 %v 超出 plan scope\n", d.CommitTitle, d.OutOfScope))
+		}
+		b.WriteString(fmt.Sprintf("  → 建议: 确认这些文件是否应属于当前 task\n\n"))
+	}
+
+	if len(report.Duplicates) > 0 {
+		b.WriteString("### 检测到重复\n")
+		for _, d := range report.Duplicates {
+			b.WriteString(fmt.Sprintf("- **%s** ≈ **%s** (%.0f%%)\n", d.Title1, d.Title2, d.Similarity*100))
+		}
+		b.WriteString(fmt.Sprintf("  → 建议: 检查是否为重复工作，避免并行开发冲突\n\n"))
+	}
+
+	atRiskCount := 0
+	for _, p := range report.Progress {
+		if p.RiskLevel == "at_risk" {
+			if atRiskCount == 0 {
+				b.WriteString("### 进度风险\n")
+			}
+			b.WriteString(fmt.Sprintf("- **%s**: %d%% 完成 (%d/%d tasks)\n",
+				p.PlanTitle, p.ProgressPct, p.DoneTasks, p.TotalTasks))
+			atRiskCount++
+		}
+	}
+	if atRiskCount > 0 {
+		b.WriteString(fmt.Sprintf("  → 建议: 检查剩余工作量和截止日期，必要时调整优先级\n\n"))
+	}
+
+	if len(report.Impacts) > 0 {
+		b.WriteString(fmt.Sprintf("### %d 个决策影响待评估\n", len(report.Impacts)))
+		for _, imp := range report.Impacts {
+			b.WriteString(fmt.Sprintf("- Decision **%s** 影响 %d plans, %d tasks\n",
+				imp.DecisionTitle, len(imp.AffectedPlans), len(imp.AffectedTasks)))
+		}
+		b.WriteString(fmt.Sprintf("  → 建议: 检查受影响的 task 是否需要重新评估\n\n"))
+	}
+
+	if len(report.CrossTasks) > 0 {
+		b.WriteString(fmt.Sprintf("### %d 个跨 task 文件关联\n", len(report.CrossTasks)))
+		b.WriteString(fmt.Sprintf("  → 建议: 检查是否有潜在的合并冲突或逻辑依赖\n\n"))
+	}
+
+	if len(suggestions) > 0 {
+		b.WriteString("### 🧵 建议的新线索\n")
+		for _, s := range suggestions {
+			b.WriteString(fmt.Sprintf("- **%s** — %s\n", s.SuggestedTitle, s.Rationale))
+		}
+		b.WriteString(fmt.Sprintf("  → 建议: 用 aipmc thread add 确认或创建\n\n"))
+	}
+
+	// ── Layer 3: 💡 参考 ──
+	hasReference := false
+	if len(threadStatus) > 0 {
+		pausedCount := 0
+		for _, ts := range threadStatus {
+			if ts.Paused {
+				pausedCount++
+			}
+		}
+		if pausedCount > 0 {
+			if !hasReference {
+				b.WriteString("## 💡 参考\n\n")
+				hasReference = true
+			}
+			b.WriteString("### 暂停的线索 (超过 7 天无活动)\n")
+			for _, ts := range threadStatus {
+				if ts.Paused {
+					b.WriteString(fmt.Sprintf("- **%s** (%d 天无活动, %d items)\n", ts.ThreadTitle, ts.DaysSinceLastActivity, ts.ItemCount))
+				}
+			}
+			b.WriteString("\n")
+		}
+	}
+
+	if !hasImmediate && report.Summary == "All clear — no issues detected." && threadSummary == "" && len(suggestions) == 0 {
+		b.WriteString("✅ 一切正常，无问题检测。\n")
+	}
+
+	// AI executive summary when available
+	if aiClient != nil && aiClient.Enabled() {
+		summary, err := aiClient.Summarize(b.String(),
+			"Generate a 1-2 sentence executive summary in Chinese of this project briefing, focusing on what needs the most attention right now.")
+		if err == nil && summary != "" {
+			b.WriteString("\n---\n")
+			b.WriteString("### 🤖 AI 简报摘要\n")
+			b.WriteString(summary + "\n")
+		}
+	}
+
+	return b.String()
+}
+
+// BuildBriefingForAgent generates a personalized briefing for a specific agent.
+func BuildBriefingForAgent(agentID string) string {
+	base := BuildBriefing()
+	assignments, _ := listAssignments(agentID, "")
+
+	var b strings.Builder
+	b.WriteString(base)
+
+	// Agent-specific section
+	if len(assignments) > 0 {
+		b.WriteString("\n## 🎯 你的任务\n\n")
+		for _, a := range assignments {
+			status := str(a["status"])
+			role := str(a["role"])
+			scope := str(a["scope"])
+			icon := "⬜"
+			switch status {
+			case "in_progress":
+				icon = "🔄"
+			case "done":
+				icon = "✅"
+			case "assigned":
+				icon = "📋"
+			}
+			b.WriteString(fmt.Sprintf("- %s [%s] **%s**: %s\n", icon, status, role, scope))
+			if tid := str(a["task_id"]); tid != "" {
+				b.WriteString(fmt.Sprintf("  → task: aipmc task show --id %s\n", tid))
+			}
 		}
 		b.WriteString("\n")
 	}
 
-	if report.Summary == "All clear — no issues detected." && threadSummary == "" && len(suggestions) == 0 && pausedCount == 0 {
-		b.WriteString("✅ 一切正常，无问题检测。\n")
+	// Active meetings involving this agent
+	rooms, _ := listMeetingRooms("active")
+	hasMeetings := false
+	for _, r := range rooms {
+		parts, _ := listMeetingParticipants(str(r["id"]))
+		for _, p := range parts {
+			if str(p["agent_id"]) == agentID {
+				if !hasMeetings {
+					b.WriteString("## 📞 待参与的会议\n\n")
+					hasMeetings = true
+				}
+				lastSeen := 0
+				if v, ok := p["last_seen_turn"]; ok {
+					switch vv := v.(type) {
+					case int:
+						lastSeen = vv
+					case int64:
+						lastSeen = int(vv)
+					}
+				}
+				// Count waiting turns for this agent
+				turns, _ := listMeetingTurns(str(r["id"]))
+				waitingForMe := 0
+				latestTurn := 0
+				for _, t := range turns {
+					if tn, ok := t["turn_number"].(string); ok {
+						n := 0
+						fmt.Sscanf(tn, "%d", &n)
+						if n > latestTurn {
+							latestTurn = n
+						}
+					}
+					if str(t["speaker_id"]) == agentID && str(t["status"]) == "waiting" {
+						waitingForMe++
+					}
+				}
+				newSince := latestTurn - lastSeen
+				info := fmt.Sprintf("最新 Turn %d, 你同步到 Turn %d", latestTurn, lastSeen)
+				if waitingForMe > 0 {
+					info += fmt.Sprintf(", ⚠️ %d 条待你回应", waitingForMe)
+				}
+				if newSince > 0 && lastSeen > 0 {
+					info += fmt.Sprintf(", %d 条新发言", newSince)
+				}
+				b.WriteString(fmt.Sprintf("- **%s** [%s] — %s\n", str(r["title"]), str(r["id"]), info))
+			}
+		}
+	}
+	if hasMeetings {
+		b.WriteString("  → 用 aipm_get_meeting_turn(room_id, turn_id, since_turn=N) 获取增量上下文\n\n")
 	}
 
 	return b.String()
+}
+
+// getActionableSuggestion returns a context-aware suggestion for a task.
+func getActionableSuggestion(task Task) string {
+	switch task.Status {
+	case "blocked":
+		return "确认: 此任务是否仍需阻塞？联系 PM 或检查 blocker 状态"
+	case "in_progress":
+		return "确认: 是否有未记录的 commit？推进到下一个检查点"
+	case "todo":
+		return "确认: 是否已准备好开始？检查依赖是否已满足"
+	case "done":
+		return ""
+	}
+	return ""
 }
 
 func buildThreadSummary() string {

@@ -4,13 +4,100 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"aipmc/ai"
 )
+
+// searchFTS5 queries the FTS5 index with BM25 ranking.
+// Returns nil if the index is unavailable, so callers can fall back.
+func searchFTS5(query string, limit int) []searchHit {
+	db, err := openDB()
+	if err != nil {
+		return nil
+	}
+	defer db.Close()
+
+	// Build a MATCH query: prefix-wildcard on the last term for partial matching.
+	terms := searchTerms(query)
+	if len(terms) == 0 {
+		return []searchHit{}
+	}
+	ftsQuery := strings.Join(terms, " ") + "*"
+
+	rows, err := db.Query(`
+		SELECT entity_type, entity_id, title, rank
+		FROM fts5_index
+		WHERE fts5_index MATCH ?
+		ORDER BY rank
+		LIMIT ?`, ftsQuery, limit)
+	if err != nil {
+		return nil // fall back to linear search
+	}
+	defer rows.Close()
+
+	var results []searchHit
+	for rows.Next() {
+		var entityType, entityID, title string
+		var rank float64
+		rows.Scan(&entityType, &entityID, &title, &rank)
+		results = append(results, searchHit{
+			Type:    entityType,
+			ID:      entityID,
+			Title:   title,
+			Score:   int(rank * 100),
+			Command: fmt.Sprintf("aipmc %s show --id %s", entityType, entityID),
+		})
+	}
+	if results == nil {
+		results = []searchHit{}
+	}
+	return results
+}
 
 // searchProjectContext searches across all entity types.
 func searchProjectContext(query string, limit int) map[string]any {
 	terms := searchTerms(query)
 	if len(terms) == 0 {
 		return map[string]any{"query": query, "count": 0, "results": []any{}}
+	}
+
+	// Try FTS5 first — BM25 ranking with proper full-text search.
+	results := searchFTS5(query, limit*3)
+	if results == nil {
+		// FTS5 unavailable: fall back to linear scan.
+		results = searchLinear(query)
+		// Sort and truncate linear results
+		sort.Slice(results, func(i, j int) bool {
+			if results[i].Score != results[j].Score {
+				return results[i].Score > results[j].Score
+			}
+			if results[i].Type != results[j].Type {
+				return results[i].Type < results[j].Type
+			}
+			return results[i].Title < results[j].Title
+		})
+	}
+
+	if limit <= 0 {
+		limit = 8
+	}
+	if len(results) > limit {
+		results = results[:limit]
+	}
+
+	return map[string]any{
+		"query":   query,
+		"count":   len(results),
+		"results": results,
+	}
+}
+
+// searchLinear performs the original linear scan across all entity tables.
+// Used as a fallback when FTS5 is unavailable.
+func searchLinear(query string) []searchHit {
+	terms := searchTerms(query)
+	if len(terms) == 0 {
+		return []searchHit{}
 	}
 
 	var results []searchHit
@@ -120,29 +207,7 @@ func searchProjectContext(query string, limit int) map[string]any {
 		}
 	}
 
-	// Sort by score desc, then type, then title
-	sort.Slice(results, func(i, j int) bool {
-		if results[i].Score != results[j].Score {
-			return results[i].Score > results[j].Score
-		}
-		if results[i].Type != results[j].Type {
-			return results[i].Type < results[j].Type
-		}
-		return results[i].Title < results[j].Title
-	})
-
-	if limit <= 0 {
-		limit = 8
-	}
-	if len(results) > limit {
-		results = results[:limit]
-	}
-
-	return map[string]any{
-		"query":   query,
-		"count":   len(results),
-		"results": results,
-	}
+	return results
 }
 
 type searchHit struct {
@@ -152,6 +217,35 @@ type searchHit struct {
 	Status  string `json:"status"`
 	Score   int    `json:"score"`
 	Command string `json:"command,omitempty"`
+}
+
+// SearchText returns the text used for semantic embedding comparison.
+func (h searchHit) SearchText() string { return h.Title }
+
+// aiSearchRerank wraps ai.HybridSearch for the searchHit type.
+// Returns nil if AI is unavailable or fails.
+func aiSearchRerank(query string, limit int, candidates []searchHit) []searchHit {
+	// Convert to interface slice
+	providers := make([]ai.SearchResultProvider, len(candidates))
+	for i := range candidates {
+		providers[i] = candidates[i]
+	}
+	reranked := ai.HybridSearch(query, limit, aiClient, func(q string, l int) []ai.SearchResultProvider {
+		hits := searchFTS5(q, l)
+		out := make([]ai.SearchResultProvider, len(hits))
+		for i := range hits {
+			out[i] = hits[i]
+		}
+		return out
+	})
+	// Convert back
+	result := make([]searchHit, len(reranked))
+	for i, p := range reranked {
+		if h, ok := p.(searchHit); ok {
+			result[i] = h
+		}
+	}
+	return result
 }
 
 func searchTerms(query string) []string {

@@ -9,6 +9,17 @@ import (
 	"path/filepath"
 )
 
+// ---- FTS5 sync helpers ----
+
+func syncFTS5Entity(db *sql.DB, entityType, entityID, title, content string) {
+	db.Exec("INSERT OR REPLACE INTO fts5_index (content, entity_type, entity_id, title) VALUES (?, ?, ?, ?)",
+		content, entityType, entityID, title)
+}
+
+func deleteFTS5Entity(db *sql.DB, entityType, entityID string) {
+	db.Exec("DELETE FROM fts5_index WHERE entity_type = ? AND entity_id = ?", entityType, entityID)
+}
+
 // ============================================================
 // Tasks
 // ============================================================
@@ -92,6 +103,8 @@ func createTask(title, priority, status, phase, planID string, acceptance []stri
 	if err != nil {
 		return nil, err
 	}
+	syncFTS5Entity(db, "task", id, title, title)
+
 	// Auto-create event
 	createEvent("task_created", "task", id, fmt.Sprintf("New task: %s", title))
 	var taskIDsJSON string
@@ -142,6 +155,8 @@ func updateTask(id, status, note string, allowWithoutCommit, appendNote bool) (m
 	if err != nil {
 		return nil, err
 	}
+	title := str(existing["title"])
+	syncFTS5Entity(db, "task", id, title, title+" "+nextNote)
 	if note != "" {
 		mode := "replace"
 		if appendNote {
@@ -335,6 +350,7 @@ func createCommit(title, summary, evidenceSummary, reviewNotes, branch, commitHa
 	if err != nil {
 		return nil, err
 	}
+	syncFTS5Entity(db, "commit", id, title, title+" "+summary)
 	c, _ := getCommit(id)
 	return c, nil
 }
@@ -436,6 +452,7 @@ func createPlan(title, goal, roadmapID, visionID, priority, status string, scope
 		return nil, err
 	}
 	// Auto-create event for PM tracking
+	syncFTS5Entity(db, "plan", id, title, title+" "+goal)
 	createEvent("plan_created", "plan", id, fmt.Sprintf("New plan created: %s", title))
 	return getPlan(id)
 }
@@ -627,6 +644,7 @@ func createDecision(title, background, decision, status string) (map[string]any,
 	if err != nil {
 		return nil, err
 	}
+		syncFTS5Entity(db, "decision", id, title, title+" "+background+" "+decision)
 	return getDecision(id)
 }
 
@@ -695,6 +713,7 @@ func createIdea(title, summary, impact, source string, canonConflict bool, curre
 	if err != nil {
 		return nil, err
 	}
+		syncFTS5Entity(db, "idea", id, title, title+" "+summary)
 	return getIdea(id)
 }
 
@@ -836,6 +855,7 @@ func createRoadmap(title, targetDate, visionID, status, priority string) (map[st
 	if err != nil {
 		return nil, err
 	}
+		syncFTS5Entity(db, "roadmap", id, title, title)
 	return getRoadmap(id)
 }
 
@@ -927,6 +947,7 @@ func createPrinciple(title, summary, kind, status string) (map[string]any, error
 	if err != nil {
 		return nil, err
 	}
+		syncFTS5Entity(db, "principle", id, title, title+" "+summary)
 	return getPrinciple(id)
 }
 
@@ -1250,6 +1271,7 @@ func createVision(title, summary, status, horizon string) (map[string]any, error
 	id := slug("vision")
 	now := nowISO()
 	db.Exec("INSERT INTO visions (id, title, summary, status, horizon, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", id, title, summary, status, horizon, now, now)
+		syncFTS5Entity(db, "vision", id, title, title+" "+summary)
 	return getVision(id)
 }
 
@@ -1443,6 +1465,7 @@ func createThread(title, summary, source string) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+		syncFTS5Entity(db, "thread", id, title, title+" "+summary)
 	return getThread(id)
 }
 
@@ -1570,6 +1593,100 @@ func resolveEntityTitleStatus(entityType, entityID string) (string, string) {
 		}
 	}
 	return "", ""
+}
+
+// CommitContext wraps a commit with resolved task/plan/thread context for agent analysis.
+type CommitContext struct {
+	ID        string   `json:"id"`
+	Title     string   `json:"title"`
+	Files     []string `json:"files"`
+	TaskID    string   `json:"task_id"`
+	TaskTitle string   `json:"task_title"`
+	PlanID    string   `json:"plan_id"`
+	PlanTitle string   `json:"plan_title"`
+	CreatedAt string   `json:"created_at"`
+	InThreads []string `json:"in_threads"`
+}
+
+// listRecentCommitsWithContext returns recent commits enriched with task/plan/file/thread
+// information, ready for the AI agent to review and organize into threads.
+func listRecentCommitsWithContext(limit int) ([]CommitContext, error) {
+	commits, err := listCommits("", "", "", "", limit)
+	if err != nil {
+		return nil, err
+	}
+
+	db, err := openDB()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	taskCache := map[string]map[string]any{}
+	planCache := map[string]map[string]any{}
+
+	var results []CommitContext
+	for _, c := range commits {
+		cc := CommitContext{
+			ID:        str(c["id"]),
+			Title:     str(c["title"]),
+			TaskID:    str(c["task_id"]),
+			CreatedAt: str(c["created_at"]),
+		}
+
+		if rawFiles, ok := c["files"].([]any); ok {
+			for _, f := range rawFiles {
+				if s, ok := f.(string); ok {
+					cc.Files = append(cc.Files, s)
+				}
+			}
+		}
+
+		// Resolve task
+		if cc.TaskID != "" {
+			if t, ok := taskCache[cc.TaskID]; ok {
+				cc.TaskTitle = str(t["title"])
+				cc.PlanID = str(t["plan_id"])
+			} else {
+				if t, err := getTaskSimple(cc.TaskID); err == nil {
+					taskCache[cc.TaskID] = t
+					cc.TaskTitle = str(t["title"])
+					cc.PlanID = str(t["plan_id"])
+				}
+			}
+		}
+
+		// Resolve plan
+		if cc.PlanID != "" {
+			if p, ok := planCache[cc.PlanID]; ok {
+				cc.PlanTitle = str(p["title"])
+			} else {
+				if p, err := getPlan(cc.PlanID); err == nil && p != nil {
+					planCache[cc.PlanID] = p
+					cc.PlanTitle = str(p["title"])
+				}
+			}
+		}
+
+		// Resolve existing thread memberships
+		if tidRows, err := db.Query("SELECT thread_id FROM thread_items WHERE entity_type = 'commit' AND entity_id = ?", cc.ID); err == nil {
+			for tidRows.Next() {
+				var tid string
+				if tidRows.Scan(&tid) == nil {
+					cc.InThreads = append(cc.InThreads, tid)
+				}
+			}
+			tidRows.Close()
+		}
+
+		if cc.InThreads == nil {
+			cc.InThreads = []string{}
+		}
+
+		results = append(results, cc)
+	}
+
+	return results, nil
 }
 
 // ============================================================
@@ -2063,3 +2180,106 @@ func getUnconsumedEvents() ([]map[string]any, error) {
 //   CLI: aipmc feedback add --label bug|suggestion --content "..."
 //   CLI: aipmc feedback list [--label bug|suggestion]
 // ============================================================
+
+// ---- Agent Profiles ----
+
+func createAgentProfile(name, role, capabilities string) (map[string]any, error) {
+	db, err := openDB()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	id := slug("agent")
+	now := nowISO()
+	if role == "" {
+		role = "coder"
+	}
+	if capabilities == "" {
+		capabilities = "[]"
+	}
+	_, err = db.Exec("INSERT INTO agent_profiles (id, name, role, capabilities, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'active', ?, ?)", id, name, role, capabilities, now, now)
+	if err != nil {
+		return nil, err
+	}
+	syncFTS5Entity(db, "agent", id, name, name+" "+role)
+	return getAgentProfile(id)
+}
+
+func getAgentProfile(id string) (map[string]any, error) {
+	db, err := openDB()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	row := db.QueryRow("SELECT id, name, role, capabilities, status, created_at, updated_at FROM agent_profiles WHERE id = ?", id)
+	a := map[string]any{}
+	var caps string
+	var aid, aname, arole, astatus, acreatedAt, aupdatedAt string
+	row.Scan(&aid, &aname, &arole, &caps, &astatus, &acreatedAt, &aupdatedAt)
+	a["id"] = aid; a["name"] = aname; a["role"] = arole; a["status"] = astatus; a["created_at"] = acreatedAt; a["updated_at"] = aupdatedAt
+	a["capabilities"] = parseJSONList(caps)
+	return a, nil
+}
+
+func listAgentProfiles() ([]map[string]any, error) {
+	db, err := openDB()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	rows, err := db.Query("SELECT id, name, role, capabilities, status, created_at, updated_at FROM agent_profiles ORDER BY name")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []map[string]any
+	for rows.Next() {
+		a := map[string]any{}
+		var caps string
+		var id, name, role, status, createdAt, updatedAt string
+		rows.Scan(&id, &name, &role, &caps, &status, &createdAt, &updatedAt)
+		a["id"] = id; a["name"] = name; a["role"] = role; a["status"] = status; a["created_at"] = createdAt; a["updated_at"] = updatedAt
+		a["capabilities"] = parseJSONList(caps)
+		result = append(result, a)
+	}
+	if result == nil {
+		result = []map[string]any{}
+	}
+	return result, nil
+}
+
+func updateAgentProfile(id string, payload map[string]any) (map[string]any, error) {
+	db, err := openDB()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	row := db.QueryRow("SELECT id, name, role, capabilities, status FROM agent_profiles WHERE id = ?", id)
+	var existingName, existingRole string
+	var caps string
+	var existingStatus string
+	var existingID string
+	row.Scan(&existingID, &existingName, &existingRole, &caps, &existingStatus)
+	setParts := []string{}
+	args := []any{}
+	for k, v := range payload {
+		switch k {
+		case "name", "role", "status":
+			setParts = append(setParts, k+" = ?")
+			args = append(args, v)
+		}
+	}
+	if len(setParts) == 0 {
+		return getAgentProfile(id)
+	}
+	setParts = append(setParts, "updated_at = ?")
+	args = append(args, nowISO())
+	args = append(args, id)
+	_, err = db.Exec("UPDATE agent_profiles SET "+strings.Join(setParts, ", ")+" WHERE id = ?", args...)
+	if err != nil {
+		return nil, err
+	}
+	a, _ := getAgentProfile(id)
+	syncFTS5Entity(db, "agent", id, str(a["name"]), str(a["name"])+" "+str(a["role"]))
+	return a, nil
+}

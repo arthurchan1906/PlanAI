@@ -2,13 +2,43 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"aipmc/ai"
 	"aipmc/cli"
 )
 
+// aiClient is the global AI client, initialized in main().
+// nil when AI is not configured — all AI-dependent code paths
+// gracefully degrade.
+var aiClient *ai.Client
+
+func initAI() {
+	cfg := loadConfig()
+	endpoint := cfg.AIEndpoint
+	if endpoint == "" {
+		endpoint = os.Getenv("AI_ENDPOINT")
+	}
+	model := cfg.AIModel
+	if model == "" {
+		model = os.Getenv("AI_MODEL")
+	}
+	chatModel := cfg.AIChatModel
+	if chatModel == "" {
+		chatModel = os.Getenv("AI_CHAT_MODEL")
+	}
+	if endpoint != "" {
+		apiKey := os.Getenv("AI_API_KEY")
+		aiClient = ai.NewClient(endpoint, model, chatModel, apiKey)
+	}
+}
+
 func main() {
+	initAI()
+
 	if len(os.Args) < 2 {
 		fmt.Println("AIPM CLI — AI Project Manager")
 		fmt.Println("Usage: aipmc <command> [args...]")
@@ -55,9 +85,67 @@ func main() {
 			fmt.Fprintf(os.Stderr, "setup failed: %v\n", err)
 			os.Exit(1)
 		}
+		// Also setup hooks for Claude Code
+		if resolved == "Claude Code" || target == "claude" {
+			if err := setupHooksCmd(resolved); err != nil {
+				fmt.Fprintf(os.Stderr, "hook setup failed: %v\n", err)
+			}
+		}
+		return
+	case "log":
+		role := ""
+		source := ""
+		content := ""
+		sid := ""
+		fromStdin := false
+		args := os.Args[2:]
+		for i := 0; i < len(args); i++ {
+			switch args[i] {
+			case "--role": if i+1 < len(args) { role = args[i+1]; i++ }
+			case "--source": if i+1 < len(args) { source = args[i+1]; i++ }
+			case "--content": if i+1 < len(args) { content = args[i+1]; i++ }
+			case "--session": if i+1 < len(args) { sid = args[i+1]; i++ }
+			case "--stdin": fromStdin = true
+			}
+		}
+		if fromStdin {
+			data, _ := io.ReadAll(os.Stdin)
+			content = string(data)
+			// Strip trailing JSON artifacts (leftover from hook sed parsing)
+			for _, suffix := range []string{
+				`","background_tasks`,
+				`","stop_hook_active`,
+				`","session_crons`,
+				`","hook_event_name`,
+			} {
+				if idx := strings.Index(content, suffix); idx > 0 {
+					content = content[:idx] + `"}`
+					break
+				}
+			}
+			content = strings.TrimSuffix(content, `"}`)
+			content = strings.TrimSuffix(content, `}`)
+		}
+		if role == "" || content == "" {
+			fmt.Fprintln(os.Stderr, "Usage: aipmc log --role <user|assistant> --source <name> (--content <text> | --stdin) [--session <id>]")
+			os.Exit(1)
+		}
+		r, err := logDiscussion(sid, role, source, content)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "log error: %v\n", err)
+			os.Exit(1)
+		}
+		preview := content
+		if len([]rune(preview)) > 80 {
+			preview = string([]rune(preview)[:80])
+		}
+		fmt.Printf("logged %s [%s][%s] %s\n", r["id"].(string), role, source, preview)
+		return
+	case "wait":
+		waitForTurnCmd(os.Args[2:])
 		return
 	case "mcp":
-		server := newMCPServer()
+		server := newMCPServer(aiClient)
 		if err := server.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "MCP server error: %v\n", err)
 			os.Exit(1)
