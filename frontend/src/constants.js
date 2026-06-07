@@ -14,31 +14,22 @@ export const BUG_SEVERITIES = ["critical", "major", "minor", "trivial"];
 
 export const NAV_GROUPS = [
   {
-    key: "core",
-    label: "Core",
+    key: "project",
+    label: "Project",
     children: [
-      { key: "dashboard", label: "Dashboard" },
-      { key: "decisions", label: "Decisions" },
+      { key: "decisions", label: "Governance" },
+      { key: "planning", label: "Plans & Tasks" },
       { key: "commits", label: "Commits" },
-      { key: "bugs", label: "Bugs" },
-    ],
-  },
-  {
-    key: "strategy",
-    label: "Planning",
-    children: [
-      { key: "planning", label: "Plans" },
       { key: "threads", label: "Threads" },
-      { key: "visions", label: "Visions" },
-      { key: "principles", label: "Principles" },
-      { key: "canon", label: "Canon" },
+      { key: "bugs", label: "Bugs" },
     ],
   },
   {
     key: "knowledge",
     label: "Knowledge",
     children: [
-      { key: "ideas", label: "Ideas" },
+      { key: "discussions", label: "Discussions" },
+      { key: "ideas", label: "Inbox" },
       { key: "docs", label: "Docs" },
       { key: "daily", label: "Daily" },
       { key: "code", label: "Code" },
@@ -46,13 +37,19 @@ export const NAV_GROUPS = [
   },
   {
     key: "collab",
-    label: "Collaboration",
+    label: "Collab",
     children: [
       { key: "agents", label: "Agents" },
       { key: "meetings", label: "Meetings" },
       { key: "assignments", label: "Assignments" },
       { key: "audit", label: "Audit Log" },
-      { key: "discussions", label: "Discussions" },
+    ],
+  },
+  {
+    key: "config",
+    label: "Config",
+    children: [
+      { key: "settings", label: "Settings" },
     ],
   },
 ];

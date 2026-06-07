@@ -26,7 +26,22 @@
       "Bash(bash /tmp/build_deploy.sh)",
       "Bash(git add *)",
       "Bash(/d/code/AI/PlanAI/dist/aipmc.exe setup *)",
-      "Bash(/d/code/AI/PlanAI/dist/aipmc.exe hook-gemini *)"
+      "Bash(/d/code/AI/PlanAI/dist/aipmc.exe hook-gemini *)",
+      "Bash(python -m json.tool)",
+      "Bash(python -c \"import sys,json; print\\(json.dumps\\(json.load\\(sys.stdin\\), indent=2\\)\\)\")",
+      "Bash(bash /tmp/rebuild.sh)",
+      "Bash(./node_modules/.bin/vite build *)",
+      "Bash(npm run *)",
+      "Bash(head -144 /d/code/AI/PlanAI/frontend/src/views/GovernanceView.jsx)",
+      "Bash(mv /tmp/gov_clean.jsx /d/code/AI/PlanAI/frontend/src/views/GovernanceView.jsx)",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('Embedding models:', [m['id'] for m in d.get\\('data',[]\\)]\\)\")",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('Embedding OK, dims:', len\\(d['data'][0]['embedding']\\)\\)\")",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('Chat models:', [m['id'] for m in d.get\\('data',[]\\)]\\)\")",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('AI enabled:', d['ai_enabled']\\); print\\('endpoint:', d['ai_endpoint']\\); print\\('chat:', d['ai_chat_model']\\); print\\('emb endpoint:', d['ai_embedding_endpoint']\\); print\\('emb model:', d['ai_model']\\)\")",
+      "Bash(python -c \"import sys,json; print\\(json.load\\(sys.stdin\\)\\)\")",
+      "Bash(/d/code/AI/PlanAI/dist/aipmc.exe log *)",
+      "Bash(/d/code/AI/PlanAI/dist/aipmc.exe embed *)",
+      "Bash(git commit -m 'feat: embedding vectors in separate pmai_vectors.db + manual trigger + search rerank + UI reorganization *)"
     ]
   },
   "enabledMcpjsonServers": [

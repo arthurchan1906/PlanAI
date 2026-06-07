@@ -1,12 +1,45 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"sort"
 	"strings"
 
 	"aipmc/ai"
 )
+
+// searchFTS5WithDB queries FTS5 using the provided DB connection (for cross-project search).
+func searchFTS5WithDB(db *sql.DB, query string, limit int) []searchHit {
+	terms := searchTerms(query)
+	if len(terms) == 0 {
+		return []searchHit{}
+	}
+	ftsQuery := strings.Join(terms, " ") + "*"
+	rows, err := db.Query(`
+		SELECT entity_type, entity_id, title, rank
+		FROM fts5_index
+		WHERE fts5_index MATCH ?
+		ORDER BY rank
+		LIMIT ?`, ftsQuery, limit)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var results []searchHit
+	for rows.Next() {
+		var entityType, entityID, title string
+		var rank float64
+		rows.Scan(&entityType, &entityID, &title, &rank)
+		results = append(results, searchHit{
+			Type: entityType, ID: entityID, Title: title,
+			Score: int(rank * 100),
+			Command: fmt.Sprintf("aipmc %s show --id %s", entityType, entityID),
+		})
+	}
+	if results == nil { results = []searchHit{} }
+	return results
+}
 
 // searchFTS5 queries the FTS5 index with BM25 ranking.
 // Returns nil if the index is unavailable, so callers can fall back.

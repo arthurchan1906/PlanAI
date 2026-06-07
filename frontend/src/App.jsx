@@ -17,7 +17,6 @@ import {
   DashboardOutlined,
   FileTextOutlined,
   FundProjectionScreenOutlined,
-  ReloadOutlined,
   ScheduleOutlined,
   SettingOutlined,
   BranchesOutlined,
@@ -28,6 +27,8 @@ import {
   ProjectOutlined,
   TeamOutlined,
   NodeIndexOutlined,
+  MessageOutlined,
+  RobotOutlined,
 } from "@ant-design/icons";
 
 // 导入工具和常量
@@ -36,18 +37,14 @@ import { todayString, buildCanonPayload, buildCommitPayload, buildBugPayload, bu
 import { NAV_GROUPS, NAV_ITEMS } from "./constants";
 
 // 导入视图组件
-import DashboardView from "./views/DashboardView";
 import RoadmapView from "./views/RoadmapView";
 import VisionsView from "./views/VisionsView";
-import PrinciplesView from "./views/PrinciplesView";
 import CodeView from "./views/CodeView";
-import CanonView from "./views/CanonView";
+import GovernanceView from "./views/GovernanceView";
 import IdeasView from "./views/IdeasView";
 import DocsView from "./views/DocsView";
-import DecisionsView from "./views/DecisionsView";
 import CommitsView from "./views/CommitsView";
 import BugsView from "./views/BugsView";
-import GlobalSearch from "./components/GlobalSearch";
 import ThreadsView from "./views/ThreadsView";
 import DailyViewHuman from "./views/DailyViewHuman";
 import AgentsView from "./views/AgentsView";
@@ -55,6 +52,7 @@ import MeetingsView from "./views/MeetingsView";
 import AssignmentsView from "./views/AssignmentsView";
 import AuditView from "./views/AuditView";
 import DiscussionsView from "./views/DiscussionsView";
+import SettingsView from "./views/SettingsView";
 
 const { Header, Sider, Content } = Layout;
 const { Title, Text } = Typography;
@@ -62,7 +60,7 @@ const { Title, Text } = Typography;
 function getViewFromHash() {
   const raw = window.location.hash.replace(/^#/, "");
   if (raw && NAV_ITEMS.some(i => i.key === raw)) return raw;
-  return "dashboard";
+  return "commits";
 }
 
 function ConsoleApp() {
@@ -275,7 +273,7 @@ function ConsoleApp() {
   return (
     <Layout className="console-layout">
       <Sider width={180} className="console-sider" breakpoint="lg" collapsedWidth="0">
-        <div className="brand-block"><div className="brand-mark">PM</div></div>
+        <div className="brand-block"><div className="brand-mark">AIPM</div></div>
         <Menu 
           theme="dark" 
           mode="inline" 
@@ -287,7 +285,7 @@ function ConsoleApp() {
             children: group.children.map(item => ({
               key: item.key,
               label: item.label,
-              icon: ({ dashboard: <DashboardOutlined />, tasks: <ScheduleOutlined />, decisions: <FundProjectionScreenOutlined />, commits: <BranchesOutlined />, bugs: <BugOutlined />, planning: <AppstoreOutlined />, threads: <NodeIndexOutlined />, visions: <CompassOutlined />, principles: <SafetyCertificateOutlined />, canon: <BookOutlined />, ideas: <BulbOutlined />, docs: <FileTextOutlined />, daily: <ProjectOutlined />, code: <CodeOutlined /> })[item.key] || null,
+              icon: ({ planning: <AppstoreOutlined />, commits: <BranchesOutlined />, bugs: <BugOutlined />, threads: <NodeIndexOutlined />, decisions: <FundProjectionScreenOutlined />, visions: <CompassOutlined />, discussions: <TeamOutlined />, ideas: <BulbOutlined />, docs: <FileTextOutlined />, daily: <ProjectOutlined />, code: <CodeOutlined />, agents: <RobotOutlined />, meetings: <MessageOutlined />, assignments: <ScheduleOutlined />, audit: <SafetyCertificateOutlined />, settings: <SettingOutlined /> })[item.key] || null,
             }))
           }))}
           onClick={({ key }) => setView(key)} 
@@ -305,13 +303,9 @@ function ConsoleApp() {
             />
             <Title level={3} className="header-title">{NAV_ITEMS.find(i => i.key === view)?.label}</Title>
           </div>
-          <Space>
-            <GlobalSearch onNavigate={handleSearchNavigate} />
-            <Button icon={<ReloadOutlined />} onClick={loadAll} loading={busy}>刷新</Button>
-          </Space>
         </Header>
         <Content className="console-content">
-          {view === "dashboard" && <DashboardView visions={visions} principles={principles} ideas={ideas} bugs={bugs} dashboard={dashboard} aiContext={aiContext} nextPacket={nextPacket} handoff={handoff} inbox={inbox} canon={canon} loading={loading} onOpenCanon={id => { setCanonForm({...canonForm, decisionId: id || ""}); setView("canon"); }} onOpenDecisions={() => setView("decisions")} onOpenPlans={() => setView("planning")} onOpenCommits={() => setView("commits")} onOpenCommitAttention={handleOpenCommitAttention} onOpenIdeas={() => setView("ideas")} onOpenDocs={() => setView("docs")} onOpenDaily={() => setView("daily")} onOpenPrinciples={() => setView("principles")} />}
+          {false && <DashboardView visions={visions} principles={principles} ideas={ideas} bugs={bugs} dashboard={dashboard} aiContext={aiContext} nextPacket={nextPacket} handoff={handoff} inbox={inbox} canon={canon} loading={loading} onOpenCanon={id => { setCanonForm({...canonForm, decisionId: id || ""}); setView("canon"); }} onOpenDecisions={() => setView("decisions")} onOpenPlans={() => setView("planning")} onOpenCommits={() => setView("commits")} onOpenCommitAttention={handleOpenCommitAttention} onOpenIdeas={() => setView("ideas")} onOpenDocs={() => setView("docs")} onOpenDaily={() => setView("daily")} onOpenPrinciples={() => setView("principles")} />}
           {view === "planning" && (
             <RoadmapView
               roadmaps={roadmaps}
@@ -383,12 +377,14 @@ function ConsoleApp() {
               onPruneDocs={() => runAction(() => api("/pmai/docs/prune", { method: "POST" }), "Archive pruned")}
             />
           )}
-          {view === "decisions" && <DecisionsView decisions={decisions} decisionSearch={decisionSearch} decisionStatusFilter={decisionStatusFilter} setDecisionSearch={setDecisionSearch} setDecisionStatusFilter={setDecisionStatusFilter} decisionForm={decisionForm} setDecisionForm={setDecisionForm} busy={busy} onOpenIdea={handleOpenIdea} onCreateDecision={() => runAction(() => api("/pmai/decisions", { method: "POST", body: JSON.stringify(decisionForm) }), "Decision created")} onUpdateDecision={(id, s) => runAction(() => api(`/pmai/decisions/${id}`, { method: "PATCH", body: JSON.stringify({ status: s }) }), "Decision updated")} onCopyIntoCanon={id => { setCanonForm({...canonForm, decisionId: id}); setView("canon"); }} />}
+          {view === "decisions" && <GovernanceView decisions={decisions} decisionForm={decisionForm} setDecisionForm={setDecisionForm} onCreateDecision={() => runAction(() => api("/pmai/decisions", { method: "POST", body: JSON.stringify({ title: decisionForm.title, background: decisionForm.background, decision: decisionForm.decision, status: "proposed" }) }), "Decision created")} busy={busy} loading={loading} principles={principles} principleForm={principleForm} setPrincipleForm={setPrincipleForm} canon={canon} canonForm={canonForm} setCanonForm={setCanonForm} visions={visions} visionForm={visionForm} setVisionForm={setVisionForm} onCreateVision={p => runAction(() => api("/pmai/visions", { method: "POST", body: JSON.stringify(p) }), "Vision created")} onSubmitCanon={() => runAction(() => api("/pmai/canon/update", { method: "POST", body: JSON.stringify(buildCanonPayload(canonForm)) }), "Canon updated")} />}
+          {view === "d_old" && <DecisionsView decisions={decisions} decisionSearch={decisionSearch} decisionStatusFilter={decisionStatusFilter} setDecisionSearch={setDecisionSearch} setDecisionStatusFilter={setDecisionStatusFilter} decisionForm={decisionForm} setDecisionForm={setDecisionForm} busy={busy} onOpenIdea={handleOpenIdea} onCreateDecision={() => runAction(() => api("/pmai/decisions", { method: "POST", body: JSON.stringify(decisionForm) }), "Decision created")} onUpdateDecision={(id, s) => runAction(() => api(`/pmai/decisions/${id}`, { method: "PATCH", body: JSON.stringify({ status: s }) }), "Decision updated")} onCopyIntoCanon={id => { setCanonForm({...canonForm, decisionId: id}); setView("canon"); }} />}
           {view === "agents" && <AgentsView agents={agents} loading={loading} loadAll={loadAll} busy={busy} />}
           {view === "meetings" && <MeetingsView meetings={meetings} agents={agents} loading={loading} loadAll={loadAll} busy={busy} />}
           {view === "assignments" && <AssignmentsView assignments={assignments} agents={agents} tasks={tasks} loading={loading} loadAll={loadAll} busy={busy} />}
           {view === "audit" && <AuditView auditLogs={auditLogs} loading={loading} loadAll={loadAll} />}
           {view === "discussions" && <DiscussionsView />}
+          {view === "settings" && <SettingsView />}
           {view === "daily" && <DailyViewHuman daily={daily} dailyForm={dailyForm} setDailyForm={setDailyForm} busy={busy} onAppendDaily={() => runDailyAction("POST", "Daily note updated")} onReplaceDaily={() => runDailyAction("PUT", "Daily note replaced")} tasks={tasks} commits={commits} onCreateTaskFromDaily={handleCreateTaskFromDaily} />}
         </Content>
       </Layout>

@@ -854,14 +854,64 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		nextNum := len(existing) + 1
 		createMeetingTurn(roomID, nextNum, "agent", next, fmt.Sprintf("[AI 仲裁] %s。请就此发表意见。", reason))
 		sendJSON(w, map[string]any{"next_agent": next, "reason": reason})
+	case method == "POST" && path == "discussions":
+		body := readBody()
+		d, err := logDiscussion(str(body["session_id"]), str(body["role"]), str(body["source"]), str(body["content"]))
+		if err != nil { sendError(w, 400, err.Error()); return }
+		sendJSON(w, d)
 	case method == "GET" && path == "discussions":
 		page := 1; if p := q.Get("page"); p != "" { fmt.Sscanf(p, "%d", &page) }
 		src := q.Get("source")
-		results, total, _ := searchDiscussions(q.Get("q"), src, page, 20)
+		pp := q.Get("project_path")
+		results, total, _ := searchDiscussions(q.Get("q"), src, pp, page, 20)
 		sendJSON(w, map[string]any{"discussions": results, "total": total, "page": page})
 	case method == "GET" && path == "discussions/sources":
 		sources, _ := listDiscussionSources()
 		sendJSON(w, map[string]any{"sources": sources})
+	case method == "GET" && path == "config":
+		cfg := loadConfig()
+		sendJSON(w, map[string]any{
+			"ai_endpoint":           cfg.AIEndpoint,
+			"ai_embedding_endpoint": cfg.AIEmbeddingEndpoint,
+			"ai_model":              cfg.AIModel,
+			"ai_chat_model":         cfg.AIChatModel,
+			"ai_enabled":            cfg.AIEndpoint != "",
+			"web_host":              cfg.WebHost,
+			"web_port":              cfg.WebPort,
+		})
+	case method == "POST" && path == "config":
+		cfg := loadConfig()
+		body := readBody()
+		if v := str(body["ai_endpoint"]); v != "" { cfg.AIEndpoint = v }
+		if v := str(body["ai_embedding_endpoint"]); v != "" { cfg.AIEmbeddingEndpoint = v }
+		if v := str(body["ai_model"]); v != "" { cfg.AIModel = v }
+		if v := str(body["ai_chat_model"]); v != "" { cfg.AIChatModel = v }
+		if v := str(body["web_host"]); v != "" { cfg.WebHost = v }
+		if v, ok := body["web_port"]; ok {
+			if f, ok := v.(float64); ok { cfg.WebPort = int(f) }
+		}
+		if err := saveConfig(cfg); err != nil {
+			sendError(w, 500, err.Error())
+			return
+		}
+		// Re-init AI client
+		initAI()
+		sendJSON(w, map[string]any{"ok": true, "ai_enabled": cfg.AIEndpoint != ""})
+	case method == "POST" && path == "discussions/embed":
+		count, err := embedDiscussions(100)
+		if err != nil { sendError(w, 500, err.Error()); return }
+		sendJSON(w, map[string]any{"ok": true, "embedded": count})
+	case method == "POST" && path == "ai-test":
+		if aiClient == nil || !aiClient.Enabled() {
+			sendJSON(w, map[string]any{"ok": false, "error": "AI 未配置"})
+			return
+		}
+		_, err := aiClient.Embed([]string{"test"})
+		if err != nil {
+			sendJSON(w, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+		sendJSON(w, map[string]any{"ok": true, "message": "AI 连接正常"})
 	case method == "GET" && path == "smart-search":
 		result := searchProjectContext(q.Get("q"), 8)
 		sendJSON(w, result)

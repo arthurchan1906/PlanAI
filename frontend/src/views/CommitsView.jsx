@@ -110,29 +110,6 @@ export default function CommitsView({
 
   return (
     <div className="view-stack">
-      <Card className="console-card" title="登记交付提交" bordered={false}>
-        <Form layout="vertical" onFinish={onCreateCommit}>
-          <Row gutter={16}>
-            <Col span={12}><Form.Item label="标题" required><Input value={commitForm.title} onChange={e => setCommitForm({...commitForm, title: e.target.value})} /></Form.Item></Col>
-            <Col span={12}><Form.Item label="分支"><Input value={commitForm.branch} onChange={e => setCommitForm({...commitForm, branch: e.target.value})} /></Form.Item></Col>
-            <Col span={24}><Form.Item label="摘要"><TextArea rows={2} value={commitForm.summary} onChange={e => setCommitForm({...commitForm, summary: e.target.value})} /></Form.Item></Col>
-            <Col span={24}><Form.Item label="Evidence Summary"><TextArea rows={2} value={commitForm.evidenceSummary} onChange={e => setCommitForm({...commitForm, evidenceSummary: e.target.value})} /></Form.Item></Col>
-            <Col span={24}><Form.Item label="Review Notes"><TextArea rows={2} value={commitForm.reviewNotes} onChange={e => setCommitForm({...commitForm, reviewNotes: e.target.value})} /></Form.Item></Col>
-            <Col span={12}>
-              <Form.Item label="关联任务">
-                <Select allowClear value={commitForm.taskId} onChange={v => setCommitForm({...commitForm, taskId: v})} options={tasks.map(t => ({ value: t.id, label: t.title }))} />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item label="关联决策">
-                <Select allowClear value={commitForm.decisionId} onChange={v => setCommitForm({...commitForm, decisionId: v})} options={decisions.map(d => ({ value: d.id, label: d.title }))} />
-              </Form.Item>
-            </Col>
-            <Col span={24}><Form.Item label="Files"><Input value={commitForm.files} placeholder="a.py | b.py" onChange={e => setCommitForm({...commitForm, files: e.target.value})} /></Form.Item></Col>
-          </Row>
-          <Button type="primary" htmlType="submit" loading={busy}>登记交付</Button>
-        </Form>
-      </Card>
       <Card
         className="console-card"
         title={focusedTaskId ? "交付清单（按任务过滤）" : "交付清单"}

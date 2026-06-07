@@ -33,7 +33,9 @@ func initAI() {
 	}
 	if endpoint != "" {
 		apiKey := os.Getenv("AI_API_KEY")
-		aiClient = ai.NewClient(endpoint, model, chatModel, apiKey)
+		embEndpoint := cfg.AIEmbeddingEndpoint
+		if embEndpoint == "" { embEndpoint = os.Getenv("AI_EMBEDDING_ENDPOINT") }
+		aiClient = ai.NewClient(endpoint, embEndpoint, model, chatModel, apiKey)
 	}
 }
 
@@ -142,12 +144,30 @@ func main() {
 		}
 		fmt.Printf("logged %s [%s][%s] %s\n", r["id"].(string), role, source, preview)
 		return
+	case "embed":
+		n := 0 // 0 = all
+		if len(os.Args) > 2 { fmt.Sscanf(os.Args[2], "%d", &n) }
+		count, err := embedDiscussions(n)
+		if err != nil { fmt.Fprintf(os.Stderr, "embed error: %v\n", err); os.Exit(1) }
+		fmt.Printf("embedded %d discussions\n", count)
+		return
 	case "wait":
 		waitForTurnCmd(os.Args[2:])
 		return
 	case "hook-gemini":
+		f, _ := os.OpenFile(filepath.Join(os.TempDir(), "aipm-hook-debug.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if f != nil {
+			defer f.Close()
+			fmt.Fprintf(f, "[%s] Hook triggered\n", nowISO())
+		}
+
 		data, err := io.ReadAll(os.Stdin)
-		if err != nil { return }
+		if err != nil {
+			if f != nil { fmt.Fprintf(f, "  ERROR reading stdin: %v\n", err) }
+			return
+		}
+		if f != nil { fmt.Fprintf(f, "  Read %d bytes\n", len(data)) }
+
 		var c struct {
 			Event          string `json:"hook_event_name"`
 			Prompt         string `json:"prompt"`
@@ -155,18 +175,29 @@ func main() {
 			ToolName       string `json:"tool_name"`
 			ToolInput      any    `json:"tool_input"`
 		}
-		if err := json.Unmarshal(data, &c); err != nil { return }
+		if err := json.Unmarshal(data, &c); err != nil {
+			if f != nil { fmt.Fprintf(f, "  ERROR unmarshalling: %v\n", err) }
+			return
+		}
+		if f != nil { fmt.Fprintf(f, "  Event: %s\n", c.Event) }
 
 		switch c.Event {
 		case "BeforeAgent":
-			if c.Prompt != "" { logDiscussion("", "user", "gemini-cli", c.Prompt) }
+			if c.Prompt != "" {
+				_, err := logDiscussion("", "user", "gemini-cli", c.Prompt)
+				if err != nil && f != nil { fmt.Fprintf(f, "  ERROR logging: %v\n", err) }
+			}
 		case "AfterTool":
 			if c.ToolName != "" {
 				inputJSON, _ := json.Marshal(c.ToolInput)
-				logDiscussion("", "assistant", "gemini-cli-tool", fmt.Sprintf("[Tool Call: %s] %s", c.ToolName, string(inputJSON)))
+				_, err := logDiscussion("", "assistant", "gemini-cli-tool", fmt.Sprintf("[Tool Call: %s] %s", c.ToolName, string(inputJSON)))
+				if err != nil && f != nil { fmt.Fprintf(f, "  ERROR logging tool: %v\n", err) }
 			}
 		case "AfterAgent":
-			if c.PromptResponse != "" { logDiscussion("", "assistant", "gemini-cli", c.PromptResponse) }
+			if c.PromptResponse != "" {
+				_, err := logDiscussion("", "assistant", "gemini-cli", c.PromptResponse)
+				if err != nil && f != nil { fmt.Fprintf(f, "  ERROR logging response: %v\n", err) }
+			}
 		}
 		return
 	case "mcp":

@@ -180,7 +180,7 @@ export default function ThreadsView({
   onAddToThread,
 }) {
   const [filter, setFilter] = useState("all");
-  const [viewMode, setViewMode] = useState("canvas");
+  const [viewMode, setViewMode] = useState(threads?.length ? "canvas" : "list");
 
   const timeRange = useMemo(() => {
     let minT = Infinity, maxT = -Infinity;
@@ -253,7 +253,7 @@ export default function ThreadsView({
         </Space>
       </div>
 
-      {viewMode === "canvas" && (
+      {viewMode === "canvas" && threads?.length > 0 && (
         <ThreadsCanvasView
           threads={threads}
           plans={plans}

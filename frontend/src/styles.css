@@ -43,14 +43,13 @@ body {
 .brand-mark {
   display: grid;
   place-items: center;
-  width: 36px;
+  width: auto;
   height: 36px;
-  border-radius: 12px;
-  background: linear-gradient(135deg, #5a97ff 0%, #2f6fec 100%);
-  color: #f8fbff;
+  padding: 0 10px;
   font-weight: 800;
+  font-size: 14px;
   letter-spacing: 0.08em;
-  box-shadow: 0 16px 32px rgba(47, 111, 236, 0.28);
+  color: #2f6fec;
 }
 
 .console-sider .ant-menu {

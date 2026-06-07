@@ -332,12 +332,13 @@ func (s *mcpServer) registerTools() {
 	// Discussion log tools
 	s.addTool(MCPTool{
 		Name:        "aipm_search_discussions",
-		Description: "搜索项目讨论历史。查找之前讨论过的想法、决策、问题。用关键词搜索过去的对话记录。",
+		Description: "搜索项目讨论历史。可指定 project_path 搜索其他项目的聊天数据。",
 		InputSchema: MCPInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
-				"query": map[string]string{"type": "string", "description": "搜索关键词"},
-				"limit": map[string]string{"type": "integer", "description": "结果数量，默认 10"},
+				"query":        map[string]string{"type": "string", "description": "搜索关键词"},
+				"limit":        map[string]string{"type": "integer", "description": "结果数量，默认 10"},
+				"project_path": map[string]string{"type": "string", "description": "可选: 目标项目路径，不传则搜索当前项目"},
 			},
 			Required: []string{"query"},
 		},
@@ -839,9 +840,10 @@ func (s *mcpServer) handleRegisterAgent(args map[string]interface{}) mcpToolResu
 
 func (s *mcpServer) handleSearchDiscussions(args map[string]interface{}) mcpToolResult {
 	query := getStr(args, "query", "")
+	projectPath := getStr(args, "project_path", "")
 	limit := 10
 	if l := getStr(args, "limit", ""); l != "" { fmt.Sscanf(l, "%d", &limit) }
-	results, total, _ := searchDiscussions(query, "", 1, limit)
+	results, total, _ := searchDiscussions(query, "", projectPath, 1, limit)
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("搜索讨论历史 '%s': %d 条结果 (共 %d 条)\n", query, len(results), total))
 	for _, r := range results {

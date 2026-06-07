@@ -42,24 +42,29 @@ func findDBPath() (string, error) {
 
 func openDB() (*sql.DB, error) {
 	dbPath, err := findDBPath()
-	if err != nil {
-		return nil, err
-	}
+	if err != nil { return nil, err }
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		return nil, fmt.Errorf("PMAI database not found: %s — run aipmc init first", dbPath)
 	}
 	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=MEMORY&_synchronous=NORMAL")
-	if err != nil {
-		return nil, err
-	}
-	if err := db.Ping(); err != nil {
-		db.Close()
-		return nil, err
-	}
-	if err := ensureSchema(db); err != nil {
-		db.Close()
-		return nil, err
-	}
+	if err != nil { return nil, err }
+	if err := db.Ping(); err != nil { db.Close(); return nil, err }
+	if err := ensureSchema(db); err != nil { db.Close(); return nil, err }
+	return db, nil
+}
+
+// openVectorsDB opens the separate embeddings database.
+// Vectors are large float arrays that grow quickly — keeping them
+// separate keeps the main DB lean and easy to backup/restore.
+func openVectorsDB() (*sql.DB, error) {
+	dir, err := findRuntimeDir()
+	if err != nil { return nil, err }
+	dbPath := filepath.Join(dir, "data", "pmai_vectors.db")
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil { return nil, err }
+	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=MEMORY&_synchronous=NORMAL")
+	if err != nil { return nil, err }
+	if err := db.Ping(); err != nil { db.Close(); return nil, err }
+	db.Exec("CREATE TABLE IF NOT EXISTS vectors (id TEXT PRIMARY KEY, embedding_json TEXT NOT NULL)")
 	return db, nil
 }
 
@@ -459,6 +464,11 @@ func migrate(db *sql.DB) error {
 		db.Exec("ALTER TABLE meeting_turns ADD COLUMN address_to TEXT DEFAULT ''")
 	}
 
+	// embedding column migration.
+	if !columnExists(db, "discussion_log", "embedding_json") {
+		db.Exec("ALTER TABLE discussion_log ADD COLUMN embedding_json TEXT DEFAULT ''")
+	}
+
 	// discussion_log migration.
 	if !tableOrVTableExists(db, "discussion_log") {
 		if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS discussion_log (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, role TEXT NOT NULL, source TEXT NOT NULL DEFAULT '', content TEXT NOT NULL, created_at TEXT NOT NULL)`); err != nil {
@@ -566,9 +576,10 @@ func columnExists(db *sql.DB, table, column string) bool {
 type RuntimeConfig struct {
 	WebHost     string `json:"web_host"`
 	WebPort     int    `json:"web_port"`
-	AIEndpoint  string `json:"ai_endpoint,omitempty"`
-	AIModel     string `json:"ai_model,omitempty"`
-	AIChatModel string `json:"ai_chat_model,omitempty"`
+	AIEndpoint          string `json:"ai_endpoint,omitempty"`
+	AIEmbeddingEndpoint string `json:"ai_embedding_endpoint,omitempty"`
+	AIModel             string `json:"ai_model,omitempty"`
+	AIChatModel         string `json:"ai_chat_model,omitempty"`
 }
 
 func loadConfig() RuntimeConfig {
@@ -576,6 +587,9 @@ func loadConfig() RuntimeConfig {
 	// Env-var overrides take precedence before config.json is read
 	if v := os.Getenv("AI_ENDPOINT"); v != "" {
 		cfg.AIEndpoint = v
+	}
+	if v := os.Getenv("AI_EMBEDDING_ENDPOINT"); v != "" {
+		cfg.AIEmbeddingEndpoint = v
 	}
 	if v := os.Getenv("AI_MODEL"); v != "" {
 		cfg.AIModel = v
@@ -603,6 +617,11 @@ func loadConfig() RuntimeConfig {
 		if cfg.AIEndpoint == "" {
 			if v, ok := raw["ai_endpoint"].(string); ok {
 				cfg.AIEndpoint = v
+			}
+		}
+		if cfg.AIEmbeddingEndpoint == "" {
+			if v, ok := raw["ai_embedding_endpoint"].(string); ok {
+				cfg.AIEmbeddingEndpoint = v
 			}
 		}
 		if cfg.AIModel == "" {
