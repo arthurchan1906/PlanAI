@@ -90,6 +90,7 @@ func main() {
 		}
 		// Also setup hooks for Claude Code
 		if resolved == "Claude Code" || target == "claude" || resolved == "Gemini CLI" || target == "gemini" {
+			// Auto-detect binary path and configure Claude Code / Gemini hooks
 			if err := setupHooksCmd(resolved); err != nil {
 				fmt.Fprintf(os.Stderr, "hook setup failed: %v\n", err)
 			}
@@ -133,7 +134,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "Usage: aipmc log --role <user|assistant> --source <name> (--content <text> | --stdin) [--session <id>]")
 			os.Exit(1)
 		}
-		r, err := logDiscussion(sid, role, source, content)
+		r, err := logDiscussion(sid, role, source, content, "")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "log error: %v\n", err)
 			os.Exit(1)
@@ -153,6 +154,9 @@ func main() {
 		return
 	case "wait":
 		waitForTurnCmd(os.Args[2:])
+		return
+	case "hook-process":
+		processClaudeHook()
 		return
 	case "hook-gemini":
 		f, _ := os.OpenFile(filepath.Join(os.TempDir(), "aipm-hook-debug.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -184,18 +188,18 @@ func main() {
 		switch c.Event {
 		case "BeforeAgent":
 			if c.Prompt != "" {
-				_, err := logDiscussion("", "user", "gemini-cli", c.Prompt)
+				_, err := logDiscussion("", "user", "gemini-cli", c.Prompt, "")
 				if err != nil && f != nil { fmt.Fprintf(f, "  ERROR logging: %v\n", err) }
 			}
 		case "AfterTool":
 			if c.ToolName != "" {
 				inputJSON, _ := json.Marshal(c.ToolInput)
-				_, err := logDiscussion("", "assistant", "gemini-cli-tool", fmt.Sprintf("[Tool Call: %s] %s", c.ToolName, string(inputJSON)))
+				_, err := logDiscussion("", "assistant", "gemini-cli-tool", fmt.Sprintf("[Tool Call: %s] %s", c.ToolName, string(inputJSON)), "")
 				if err != nil && f != nil { fmt.Fprintf(f, "  ERROR logging tool: %v\n", err) }
 			}
 		case "AfterAgent":
 			if c.PromptResponse != "" {
-				_, err := logDiscussion("", "assistant", "gemini-cli", c.PromptResponse)
+				_, err := logDiscussion("", "assistant", "gemini-cli", c.PromptResponse, "")
 				if err != nil && f != nil { fmt.Fprintf(f, "  ERROR logging response: %v\n", err) }
 			}
 		}

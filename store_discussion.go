@@ -13,7 +13,7 @@ import (
 
 // ---- Discussion Log ----
 
-func logDiscussion(sessionID, role, source, content string) (map[string]any, error) {
+func logDiscussion(sessionID, role, source, content, metadataJSON string) (map[string]any, error) {
 	db, err := openDB()
 	if err != nil { return nil, err }
 	defer db.Close()
@@ -21,7 +21,7 @@ func logDiscussion(sessionID, role, source, content string) (map[string]any, err
 	now := nowISO()
 	sid := sessionID
 	if sid == "" { sid = "unknown" }
-	_, err = db.Exec("INSERT INTO discussion_log (id, session_id, role, source, content, created_at) VALUES (?, ?, ?, ?, ?, ?)", id, sid, role, source, content, now)
+	_, err = db.Exec("INSERT INTO discussion_log (id, session_id, role, source, content, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", id, sid, role, source, content, metadataJSON, now)
 	if err != nil { return nil, err }
 	preview := content
 	if len([]rune(preview)) > 80 { preview = string([]rune(preview)[:80]) }
@@ -145,13 +145,13 @@ func searchDiscussions(query, source, projectPath string, page, pageSize int) ([
 	db.QueryRow("SELECT COUNT(*) FROM discussion_log "+where, args...).Scan(&total)
 	offset := (page - 1) * pageSize
 	selectArgs := append(args, pageSize, offset)
-	rows, err := db.Query("SELECT id, session_id, role, source, content, created_at FROM discussion_log "+where+" ORDER BY created_at DESC LIMIT ? OFFSET ?", selectArgs...)
+	rows, err := db.Query("SELECT id, session_id, role, source, content, metadata, created_at FROM discussion_log "+where+" ORDER BY created_at DESC LIMIT ? OFFSET ?", selectArgs...)
 	if err != nil { return nil, 0, err }
 	defer rows.Close()
 	for rows.Next() {
-		var id, sid, role, src, content, createdAt string
-		rows.Scan(&id, &sid, &role, &src, &content, &createdAt)
-		out = append(out, map[string]any{"id": id, "session_id": sid, "role": role, "source": src, "content": content, "created_at": createdAt})
+		var id, sid, role, src, content, metadata, createdAt string
+		rows.Scan(&id, &sid, &role, &src, &content, &metadata, &createdAt)
+		out = append(out, map[string]any{"id": id, "session_id": sid, "role": role, "source": src, "content": content, "metadata": metadata, "created_at": createdAt})
 	}
 	if out == nil { out = []map[string]any{} }
 	return out, total, nil
@@ -198,12 +198,12 @@ func rerankDiscussions(query string, ids []string, db *sql.DB) []string {
 }
 
 func getDiscussionByID(db *sql.DB, id string) map[string]any {
-	var rid, sid, role, src, content, createdAt string
-	row := db.QueryRow("SELECT id, session_id, role, source, content, created_at FROM discussion_log WHERE id = ?", id)
-	if err := row.Scan(&rid, &sid, &role, &src, &content, &createdAt); err != nil {
+	var rid, sid, role, src, content, metadata, createdAt string
+	row := db.QueryRow("SELECT id, session_id, role, source, content, metadata, created_at FROM discussion_log WHERE id = ?", id)
+	if err := row.Scan(&rid, &sid, &role, &src, &content, &metadata, &createdAt); err != nil {
 		return map[string]any{"id": id, "content": "(deleted)"}
 	}
-	return map[string]any{"id": rid, "session_id": sid, "role": role, "source": src, "content": content, "created_at": createdAt}
+	return map[string]any{"id": rid, "session_id": sid, "role": role, "source": src, "content": content, "metadata": metadata, "created_at": createdAt}
 }
 
 func listDiscussionSources() ([]string, error) {

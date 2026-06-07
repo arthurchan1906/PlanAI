@@ -1,4 +1,61 @@
 {
+  "enabledMcpjsonServers": [
+    "aipm"
+  ],
+  "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "args": [
+              "hook-process"
+            ],
+            "command": "D:/code/AI/PlanAI/aipmc.exe",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "args": [
+              "hook-process"
+            ],
+            "command": "D:/code/AI/PlanAI/aipmc.exe",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "args": [
+              "hook-process"
+            ],
+            "command": "D:/code/AI/PlanAI/aipmc.exe",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "args": [
+              "hook-process"
+            ],
+            "command": "D:/code/AI/PlanAI/aipmc.exe",
+            "type": "command"
+          }
+        ]
+      }
+    ]
+  },
   "permissions": {
     "allow": [
       "Bash(go build *)",
@@ -42,51 +99,6 @@
       "Bash(/d/code/AI/PlanAI/dist/aipmc.exe log *)",
       "Bash(/d/code/AI/PlanAI/dist/aipmc.exe embed *)",
       "Bash(git commit -m 'feat: embedding vectors in separate pmai_vectors.db + manual trigger + search rerank + UI reorganization *)"
-    ]
-  },
-  "enabledMcpjsonServers": [
-    "aipm"
-  ],
-  "hooks": {
-    "PostToolUse": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "C:/Users/chenz/.aipm/hooks/save-tool.sh"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "C:/Users/chenz/.aipm/hooks/save-discussion.sh"
-          }
-        ]
-      }
-    ],
-    "StopFailure": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "C:/Users/chenz/.aipm/hooks/save-discussion.sh"
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "C:/Users/chenz/.aipm/hooks/save-user-prompt.sh"
-          }
-        ]
-      }
     ]
   }
 }

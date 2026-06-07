@@ -469,6 +469,11 @@ func migrate(db *sql.DB) error {
 		db.Exec("ALTER TABLE discussion_log ADD COLUMN embedding_json TEXT DEFAULT ''")
 	}
 
+	// metadata column migration.
+	if !columnExists(db, "discussion_log", "metadata") {
+		db.Exec("ALTER TABLE discussion_log ADD COLUMN metadata TEXT DEFAULT ''")
+	}
+
 	// discussion_log migration.
 	if !tableOrVTableExists(db, "discussion_log") {
 		if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS discussion_log (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, role TEXT NOT NULL, source TEXT NOT NULL DEFAULT '', content TEXT NOT NULL, created_at TEXT NOT NULL)`); err != nil {

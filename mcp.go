@@ -869,7 +869,7 @@ func (s *mcpServer) handleLogDiscussion(args map[string]interface{}) mcpToolResu
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "content 为必填项"}}, IsError: true}
 	}
 
-	res, err := logDiscussion(session, role, "mcp", content)
+	res, err := logDiscussion(session, role, "mcp", content, "")
 	if err != nil {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("记录讨论失败: %v", err)}}, IsError: true}
 	}

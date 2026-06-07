@@ -856,7 +856,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		sendJSON(w, map[string]any{"next_agent": next, "reason": reason})
 	case method == "POST" && path == "discussions":
 		body := readBody()
-		d, err := logDiscussion(str(body["session_id"]), str(body["role"]), str(body["source"]), str(body["content"]))
+		d, err := logDiscussion(str(body["session_id"]), str(body["role"]), str(body["source"]), str(body["content"]), "")
 		if err != nil { sendError(w, 400, err.Error()); return }
 		sendJSON(w, d)
 	case method == "GET" && path == "discussions":
