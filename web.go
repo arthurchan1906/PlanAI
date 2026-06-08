@@ -859,12 +859,17 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		d, err := logDiscussion(str(body["session_id"]), str(body["role"]), str(body["source"]), str(body["content"]), "")
 		if err != nil { sendError(w, 400, err.Error()); return }
 		sendJSON(w, d)
-	case method == "GET" && path == "discussions":
-		page := 1; if p := q.Get("page"); p != "" { fmt.Sscanf(p, "%d", &page) }
-		src := q.Get("source")
-		pp := q.Get("project_path")
-		results, total, _ := searchDiscussions(q.Get("q"), src, pp, page, 20)
-		sendJSON(w, map[string]any{"discussions": results, "total": total, "page": page})
+		case method == "GET" && path == "discussions":
+			page := 1; if p := q.Get("page"); p != "" { fmt.Sscanf(p, "%d", &page) }
+			src := q.Get("source")
+			pp := q.Get("project_path")
+			typeFilter := q.Get("type")
+			results, total, _ := searchDiscussions(q.Get("q"), src, pp, page, 20)
+			if typeFilter != "" {
+				results = filterDiscussionsByType(results, typeFilter)
+			}
+			sendJSON(w, map[string]any{"discussions": results, "total": total, "page": page})
+
 	case method == "GET" && path == "discussions/sources":
 		sources, _ := listDiscussionSources()
 		sendJSON(w, map[string]any{"sources": sources})
@@ -968,3 +973,27 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		sendError(w, 404, fmt.Sprintf("not found: %s %s", method, path))
 	}
 }
+
+	// filterDiscussionsByType filters discussion results by message type.
+	// typeFilter can be "user", "assistant", or "tool" (comma-separated).
+	func filterDiscussionsByType(results []map[string]any, typeFilter string) []map[string]any {
+		types := splitAndTrim(typeFilter, ",")
+		typeSet := map[string]bool{}
+		for _, t := range types {
+			typeSet[t] = true
+		}
+		var filtered []map[string]any
+		for _, r := range results {
+			role := str(r["role"])
+			content := str(r["content"])
+			isTool := len(content) > 0 && strings.ContainsRune("🔧📝👁🔍🆕🛠📡", []rune(content)[0])
+			msgType := role
+			if role == "assistant" && isTool {
+				msgType = "tool"
+			}
+			if typeSet[msgType] {
+				filtered = append(filtered, r)
+			}
+		}
+		return filtered
+	}

@@ -288,18 +288,12 @@ export default function DiscussionsView() {
   const [showAgent, setShowAgent] = useState(true);
   const [showTool, setShowTool] = useState(true);
 
-  function isUserMsg(r) { return r.role === "user"; }
-  function isToolMsg(r) { return /^[🔧📝👁🔍🆕🛠📡]/.test(r.content || ""); }
-  function isAgentMsg(r) { return r.role === "assistant" && !isToolMsg(r); }
-
-  function filterDiscussions(list) {
-    if (showUser && showAgent && showTool) return list;
-    return list.filter(r => {
-      if (isUserMsg(r)) return showUser;
-      if (isToolMsg(r)) return showTool;
-      if (isAgentMsg(r)) return showAgent;
-      return true;
-    });
+  function buildTypeParam() {
+    const types = [];
+    if (showUser) types.push("user");
+    if (showAgent) types.push("assistant");
+    if (showTool) types.push("tool");
+    return types.length === 0 ? "" : types.length === 3 ? "" : types.join(",");
   }
 
   async function loadSources() {
@@ -314,13 +308,15 @@ export default function DiscussionsView() {
     if (query) params.set("q", query);
     const finalSource = srcOverride !== undefined ? srcOverride : source;
     if (finalSource) params.set("source", finalSource);
+    const tf = buildTypeParam();
+    if (tf) params.set("type", tf);
     const data = await api(`/pmai/discussions?${params}`);
     setDiscussions(processData(data.discussions || []));
     setTotal(data.total || 0);
     setLoading(false);
   }
 
-  useEffect(() => { load(1); loadSources(); }, []);
+  useEffect(() => { load(1); loadSources(); }, [showUser, showAgent, showTool]);
 
   return (
     <div>
@@ -341,25 +337,20 @@ export default function DiscussionsView() {
           <Checkbox checked={showTool} onChange={(e) => setShowTool(e.target.checked)}>🔧 工具</Checkbox>
         </Space>
       </Card>
-      {(() => {
-        const filtered = filterDiscussions(discussions);
-        return (
-          <Table
-            dataSource={filtered} columns={[
-              { title: "日期", dataIndex: "created_at", key: "date", width: 100,
-                render: (t, row) => ({ children: row._dateRowSpan > 0 ? (t || "").slice(0, 10) : "", props: { rowSpan: row._dateRowSpan } }) },
-              { title: "时间", dataIndex: "created_at", key: "time", width: 70,
-                render: (t) => <span style={{ fontSize: 12, color: "#999" }}>{(t || "").slice(11, 19)}</span> },
-              { title: "", dataIndex: "role", key: "role", width: 45,
-                render: (r, row) => /^[🔧✏️👁🔍📂🌐🔎🛠]/.test(row.content || "")
-                  ? <Tag color="default" style={{ fontSize: 11 }}>🔧</Tag>
-                  : <Tag color={r === "user" ? "blue" : "green"} style={{ fontSize: 11 }}>{r === "user" ? "👤" : "🤖"}</Tag> },
-              { title: "内容", dataIndex: "content", key: "content", render: (c, row) => renderContent(c, row.role, row._meta) },
-            ]}
-            rowKey="_key" loading={loading} size="small"
-            pagination={{ current: page, total, pageSize: 20, onChange: (p) => { setPage(p); load(p); }, showTotal: (t) => `共 ${t} 条${filtered.length !== t ? ' (筛选后 ' + filtered.length + ' 条)' : ''}` }} />
-        );
-      })()}
+      <Table
+        dataSource={discussions} columns={[
+          { title: "日期", dataIndex: "created_at", key: "date", width: 100,
+            render: (t, row) => ({ children: row._dateRowSpan > 0 ? (t || "").slice(0, 10) : "", props: { rowSpan: row._dateRowSpan } }) },
+          { title: "时间", dataIndex: "created_at", key: "time", width: 70,
+            render: (t) => <span style={{ fontSize: 12, color: "#999" }}>{(t || "").slice(11, 19)}</span> },
+          { title: "", dataIndex: "role", key: "role", width: 45,
+            render: (r, row) => /^[🔧✏️👁🔍📂🌐🔎🛠]/.test(row.content || "")
+              ? <Tag color="default" style={{ fontSize: 11 }}>🔧</Tag>
+              : <Tag color={r === "user" ? "blue" : "green"} style={{ fontSize: 11 }}>{r === "user" ? "👤" : "🤖"}</Tag> },
+          { title: "内容", dataIndex: "content", key: "content", render: (c, row) => renderContent(c, row.role, row._meta) },
+        ]}
+        rowKey="_key" loading={loading} size="small"
+        pagination={{ current: page, total, pageSize: 20, onChange: (p) => { setPage(p); load(p); }, showTotal: (t) => `共 ${t} 条` }} />
     </div>
   );
 }
