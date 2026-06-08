@@ -11,12 +11,17 @@ env/
 
 # Local runtime data
 .pmai/
+.aipm/
 *.db
 *.sqlite
 *.sqlite3
 *.db-journal
 *.sqlite-journal
 *.sqlite3-journal
+
+# Compiled binary (when built outside dist/)
+/aipmc
+/aipmc.exe
 
 dist/
 src/aipm_cli.egg-info/
@@ -29,6 +34,7 @@ src/aipm_cli.egg-info/
 *.pid
 *.seed
 *.out
+out.json
 
 # OS/editor noise
 .DS_Store
@@ -37,7 +43,8 @@ Thumbs.db
 .vscode/
 .qwen/
 
-# Frontend build output
+# Frontend
 ui/dist/
 ui/node_modules/
 frontend/node_modules/
+frontend/dist/
