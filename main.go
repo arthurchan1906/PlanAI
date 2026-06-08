@@ -212,7 +212,17 @@ func main() {
 		}
 		return
 	case "web":
-		runWebServer()
+		port := 0
+		host := ""
+		for i := 2; i < len(os.Args); i++ {
+			switch os.Args[i] {
+			case "--port", "-p":
+				if i+1 < len(os.Args) { fmt.Sscanf(os.Args[i+1], "%d", &port); i++ }
+			case "--host", "-h":
+				if i+1 < len(os.Args) { host = os.Args[i+1]; i++ }
+			}
+		}
+		runWebServer(port, host)
 		return
 	}
 

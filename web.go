@@ -18,8 +18,10 @@ import (
 //go:embed frontend/dist
 var uiFS embed.FS
 
-func runWebServer() {
+func runWebServer(portOverride int, hostOverride string) {
 	cfg := loadConfig()
+	if portOverride > 0 { cfg.WebPort = portOverride }
+	if hostOverride != "" { cfg.WebHost = hostOverride }
 	addr := fmt.Sprintf("%s:%d", cfg.WebHost, cfg.WebPort)
 
 	// Strip "frontend/dist/" prefix from embedded files
