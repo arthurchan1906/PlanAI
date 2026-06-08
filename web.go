@@ -19,10 +19,11 @@ import (
 var uiFS embed.FS
 
 func runWebServer(portOverride int, hostOverride string) {
-	cfg := loadConfig()
-	if portOverride > 0 { cfg.WebPort = portOverride }
-	if hostOverride != "" { cfg.WebHost = hostOverride }
-	addr := fmt.Sprintf("%s:%d", cfg.WebHost, cfg.WebPort)
+	port := 8720
+	host := "127.0.0.1"
+	if portOverride > 0 { port = portOverride }
+	if hostOverride != "" { host = hostOverride }
+	addr := fmt.Sprintf("%s:%d", host, port)
 
 	// Strip "frontend/dist/" prefix from embedded files
 	staticFS, err := fs.Sub(uiFS, "frontend/dist")
