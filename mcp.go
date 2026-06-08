@@ -1296,7 +1296,7 @@ func mcpLogDiscussion(toolName string, args map[string]interface{}, result mcpTo
 		}
 	}
 
-	logDiscussion("", "assistant", "claude-code-mcp", summary, metaJSON)
+	logDiscussion("", "assistant", "claude-code", summary, metaJSON)
 }
 
 // ---- Helpers ----
