@@ -341,20 +341,25 @@ export default function DiscussionsView() {
           <Checkbox checked={showTool} onChange={(e) => setShowTool(e.target.checked)}>🔧 工具</Checkbox>
         </Space>
       </Card>
-      <Table
-        dataSource={filterDiscussions(discussions)} columns={[
-          { title: "日期", dataIndex: "created_at", key: "date", width: 100,
-            render: (t, row) => ({ children: row._dateRowSpan > 0 ? (t || "").slice(0, 10) : "", props: { rowSpan: row._dateRowSpan } }) },
-          { title: "时间", dataIndex: "created_at", key: "time", width: 70,
-            render: (t) => <span style={{ fontSize: 12, color: "#999" }}>{(t || "").slice(11, 19)}</span> },
-          { title: "", dataIndex: "role", key: "role", width: 45,
-            render: (r, row) => /^[🔧✏️👁🔍📂🌐🔎🛠]/.test(row.content || "")
-              ? <Tag color="default" style={{ fontSize: 11 }}>🔧</Tag>
-              : <Tag color={r === "user" ? "blue" : "green"} style={{ fontSize: 11 }}>{r === "user" ? "👤" : "🤖"}</Tag> },
-          { title: "内容", dataIndex: "content", key: "content", render: (c, row) => renderContent(c, row.role, row._meta) },
-        ]}
-        rowKey="_key" loading={loading} size="small"
-        pagination={{ current: page, total, pageSize: 20, onChange: (p) => { setPage(p); load(p); }, showTotal: (t) => `共 ${t} 条` }} />
+      {(() => {
+        const filtered = filterDiscussions(discussions);
+        return (
+          <Table
+            dataSource={filtered} columns={[
+              { title: "日期", dataIndex: "created_at", key: "date", width: 100,
+                render: (t, row) => ({ children: row._dateRowSpan > 0 ? (t || "").slice(0, 10) : "", props: { rowSpan: row._dateRowSpan } }) },
+              { title: "时间", dataIndex: "created_at", key: "time", width: 70,
+                render: (t) => <span style={{ fontSize: 12, color: "#999" }}>{(t || "").slice(11, 19)}</span> },
+              { title: "", dataIndex: "role", key: "role", width: 45,
+                render: (r, row) => /^[🔧✏️👁🔍📂🌐🔎🛠]/.test(row.content || "")
+                  ? <Tag color="default" style={{ fontSize: 11 }}>🔧</Tag>
+                  : <Tag color={r === "user" ? "blue" : "green"} style={{ fontSize: 11 }}>{r === "user" ? "👤" : "🤖"}</Tag> },
+              { title: "内容", dataIndex: "content", key: "content", render: (c, row) => renderContent(c, row.role, row._meta) },
+            ]}
+            rowKey="_key" loading={loading} size="small"
+            pagination={{ current: page, total, pageSize: 20, onChange: (p) => { setPage(p); load(p); }, showTotal: (t) => `共 ${t} 条${filtered.length !== t ? ' (筛选后 ' + filtered.length + ' 条)' : ''}` }} />
+        );
+      })()}
     </div>
   );
 }
