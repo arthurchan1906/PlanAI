@@ -17,7 +17,7 @@ C:       source.c  ──(编译)──► 二进制文件 ──► 运行
 
 Go 和 C 一样是编译语言。但 Go 编译极快（几千行代码 < 1 秒），而且**交叉编译**一行命令：`GOOS=linux go build` 就能在 Windows 上编译出 Linux 二进制。
 
-**PlanAI 为什么用 Go**：编译后是一个单文件（`aipmc.exe`），不需要 Python 环境、不需要 `pip install`、不需要 Node.js。用户复制文件就能跑。
+**PlanAI 为什么用 Go**：编译后是一个单文件（`aipmc` / `aipmc.exe`），不需要 Python 环境、不需要 `pip install`、不需要 Node.js。用户复制文件就能跑。
 
 ### 2. 没有运行时依赖
 
@@ -29,7 +29,7 @@ var uiFS embed.FS        // React 前端打包进 Go 二进制
 // JS:     你需要 serve 静态目录
 ```
 
-Go 的 `embed` 指令在**编译时**把文件嵌进二进制。PlanAI 的整个 Web UI（React + Ant Design）就靠这一行打包进 `aipmc.exe`。
+Go 的 `embed` 指令在**编译时**把文件嵌进二进制。PlanAI 的整个 Web UI（React + Ant Design）就靠这一行打包进 `aipmc`。
 
 ### 3. 并发模型：goroutine vs 线程 vs async
 
@@ -394,10 +394,10 @@ func processClaudeHook() {
 
 ```bash
 cd frontend && npx vite build        # 编译前端
-cd D:\code\AI\PlanAI && go build     # 编译 Go
-taskkill //f //im aipmc.exe           # 停旧服务
-cp aipmc.exe dist/aipmc.exe          # 部署
-dist/aipmc.exe web &                 # 启动
+go build -o dist/aipmc .             # 编译 Go（跨平台）
+pkill aipmc || true                  # 停旧服务（Mac/Linux）
+# taskkill //f //im aipmc.exe        # 停旧服务（Windows）
+./dist/aipmc web &                   # 启动
 ```
 
 ---
@@ -656,8 +656,8 @@ C ----- Rust ----- Go ----- Java/C# ----- Python/JS
 **1. 编译产物即部署产物**
 
 ```bash
-go build -o aipmc.exe          # 产出单一文件
-scp aipmc.exe server:/usr/local/bin/  # 部署完成
+go build -o aipmc .              # 产出单一文件（Windows: aipmc.exe）
+scp aipmc server:/usr/local/bin/ # 部署完成
 ```
 
 不需要 Python 环境、不需要 `pip install`、不需要 `npm install`、不需要 Docker、不需要担心 glibc 版本、不需要担心 `.so` / `.dll` 缺失。这就是 PlanAI 选 Go 的核心原因——用户下载一个文件就能用。
