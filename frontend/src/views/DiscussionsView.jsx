@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Button, Card, Checkbox, Input, Select, Space, Table, Tag, Typography } from "antd";
-import { SearchOutlined, FullscreenOutlined, FullscreenExitOutlined } from "@ant-design/icons";
+import { SearchOutlined, FullscreenOutlined, FullscreenExitOutlined, CopyOutlined } from "@ant-design/icons";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
@@ -8,10 +8,35 @@ import { api } from "../utils/api";
 
 const { Title } = Typography;
 
-// DiffPanel — wraps diff body with file header and fullscreen toggle
+// buildUnifiedDiffText — converts hunks to a unified diff text for copying
+function buildUnifiedDiffText(filePath, hunks) {
+  let text = `--- a/${filePath}\n+++ b/${filePath}\n`;
+  for (const h of hunks) {
+    text += `@@ -${h.oldStart},${h.oldLines} +${h.newStart},${h.newLines} @@\n`;
+    for (const line of h.lines) {
+      text += line + "\n";
+    }
+  }
+  return text;
+}
+
+// DiffPanel — wraps diff body with file header, copy button, and fullscreen toggle
 function DiffPanel({ filePath, hunks, children }) {
   const [full, setFull] = useState(false);
   const hunkCount = hunks ? hunks.length : 0;
+
+  function handleCopy() {
+    const text = buildUnifiedDiffText(filePath, hunks || []);
+    navigator.clipboard.writeText(text).then(() => {}).catch(() => {});
+  }
+
+  const headerButtons = (
+    <Space size={4}>
+      <Button size="small" type="text" icon={<CopyOutlined />} onClick={handleCopy} />
+      <Button size="small" type="text" icon={<FullscreenOutlined />} onClick={() => setFull(true)} />
+    </Space>
+  );
+
   if (!full) {
     return (
       <div style={{ border: "1px solid #e8e8e8", borderRadius: 6, overflow: "hidden" }}>
@@ -20,7 +45,7 @@ function DiffPanel({ filePath, hunks, children }) {
             <span style={{ fontSize: 12, fontFamily: "monospace", color: "#2f6fec", fontWeight: 500 }}>📄 {filePath}</span>
             {hunkCount > 1 && <Tag style={{ marginLeft: 8, fontSize: 10 }}>{hunkCount} chunks</Tag>}
           </span>
-          <Button size="small" type="text" icon={<FullscreenOutlined />} onClick={() => setFull(true)} />
+          {headerButtons}
         </div>
         {children}
       </div>
@@ -33,9 +58,12 @@ function DiffPanel({ filePath, hunks, children }) {
           <span style={{ fontSize: 13, fontFamily: "monospace", color: "#2f6fec", fontWeight: 500 }}>📄 {filePath}</span>
           {hunkCount > 1 && <Tag style={{ marginLeft: 8, fontSize: 10 }}>{hunkCount} chunks</Tag>}
         </span>
-        <Button size="small" type="primary" icon={<FullscreenExitOutlined />} onClick={() => setFull(false)}>退出全屏</Button>
+        <Space size={8}>
+          <Button size="small" type="text" icon={<CopyOutlined />} onClick={handleCopy}>复制</Button>
+          <Button size="small" type="primary" icon={<FullscreenExitOutlined />} onClick={() => setFull(false)}>退出全屏</Button>
+        </Space>
       </div>
-      <div style={{ flex: 1, overflow: "auto" }}>{children}</div>
+      <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>{children}</div>
     </div>
   );
 }
