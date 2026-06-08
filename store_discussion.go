@@ -173,7 +173,7 @@ func searchDiscussions(query, source, typeFilter, projectPath string, page, page
 	db.QueryRow("SELECT COUNT(*) FROM discussion_log "+where, args...).Scan(&total)
 	offset := (page - 1) * pageSize
 	selectArgs := append(args, pageSize, offset)
-	rows, err := db.Query("SELECT id, session_id, role, source, content, metadata, created_at FROM discussion_log "+where+" ORDER BY created_at DESC LIMIT ? OFFSET ?", selectArgs...)
+	rows, err := db.Query("SELECT id, session_id, role, source, content, metadata, created_at FROM discussion_log "+where+" ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?", selectArgs...)
 	if err != nil { return nil, 0, err }
 	defer rows.Close()
 	for rows.Next() {

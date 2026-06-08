@@ -46,8 +46,8 @@ func processClaudeHook() {
 			ExitCode     int    `json:"exitCode"`
 			Content      string `json:"content"`
 			LinesCount   int    `json:"linesCount"`
+				StructuredPatch []patchHunk `json:"structuredPatch"`
 		} `json:"tool_response"`
-		StructuredPatch []patchHunk `json:"structuredPatch"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		os.Exit(0)
@@ -91,7 +91,7 @@ func processClaudeHook() {
 						FilePath string      `json:"file_path"`
 						Hunks    []patchHunk `json:"hunks"`
 					}
-					meta := editMeta{Type: "edit", FilePath: ti.FilePath, Hunks: raw.StructuredPatch}
+					meta := editMeta{Type: "edit", FilePath: ti.FilePath, Hunks: raw.ToolResponse.StructuredPatch}
 					if b, err := json.Marshal(meta); err == nil {
 						metadataJSON = string(b)
 					}
@@ -116,7 +116,7 @@ func processClaudeHook() {
 				meta := editMeta{
 					Type:      "edit",
 					FilePath:  ti.FilePath,
-					Hunks:     raw.StructuredPatch,
+					Hunks:     raw.ToolResponse.StructuredPatch,
 					OldString: ti.OldString,
 					NewString: ti.NewString,
 				}
