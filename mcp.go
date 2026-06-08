@@ -1189,8 +1189,8 @@ func (s *mcpServer) handleToolsCall(msg *jsonrpcMessage) {
 	result := handler(call.Arguments)
 
 	// Log MCP tool usage to discussion_log — MCP tools are invisible to
-	// Log MCP tool usage to discussion_log — MCP tools are invisible to
 	// Claude Code hooks, so we log them here for full traceability.
+	mcpLogDiscussion(call.Name, call.Arguments, result)
 
 	s.sendResult(msg.ID, result)
 }
