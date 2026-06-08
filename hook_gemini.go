@@ -7,13 +7,24 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
-// processGeminiHook reads the Gemini CLI BeforeAgent/AfterTool/AfterAgent hook stdin
-// JSON and saves to discussion_log.
+// processGeminiHook reads the Gemini CLI hook stdin JSON and saves to discussion_log.
 // Called via: aipmc hook-gemini
 func processGeminiHook() {
 	data, _ := io.ReadAll(os.Stdin)
+
+	// DEBUG: dump raw stdin to verify hook is firing
+	f, _ := os.OpenFile(filepath.Join(os.TempDir(), "aipm-gemini-hook-debug.txt"),
+		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if f != nil {
+		fmt.Fprintf(f, "=== [%s] len=%d ===\n", time.Now().Format("15:04:05"), len(data))
+		f.Write(data)
+		f.WriteString("\n=== END ===\n\n")
+		f.Close()
+	}
+
 	if len(data) < 10 {
 		os.Exit(0)
 	}
@@ -153,7 +164,6 @@ func processGeminiHook() {
 
 		default:
 			desc = "🛠 " + raw.ToolName
-			// Log raw input for unknown tools
 			if len(raw.ToolInput) > 0 {
 				type unknownMeta struct {
 					Type  string          `json:"type"`
@@ -178,10 +188,8 @@ func processGeminiHook() {
 }
 
 // setupGeminiHooks writes Gemini CLI hook configuration to .gemini/settings.json.
+// Uses the V2 hook format with matcher (wildcard) and nested hooks array.
 func setupGeminiHooks(commandPath string) error {
-	hookCommand := fmt.Sprintf("\"%s\" hook-gemini", commandPath)
-	fmt.Printf("  ✅ Gemini hook configured: %s\n", hookCommand)
-
 	runtimeDir, _ := findRuntimeDir()
 	projectRoot := filepath.Dir(runtimeDir)
 	settingsPath := filepath.Join(projectRoot, ".gemini", "settings.json")
@@ -196,13 +204,30 @@ func setupGeminiHooks(commandPath string) error {
 		hooks = map[string]any{}
 	}
 
-	hookEntry := []any{map[string]any{"command": hookCommand, "type": "command"}}
+	// Gemini CLI V2 hook format: [{matcher: "", hooks: [{type, command}]}]
+	hookEntry := []any{
+		map[string]any{
+			"matcher": "",
+			"hooks": []any{
+				map[string]any{
+					"type":    "command",
+					"command": commandPath + " hook-gemini",
+				},
+			},
+		},
+	}
+
 	hooks["BeforeAgent"] = hookEntry
-	hooks["AfterTool"] = hookEntry
 	hooks["AfterAgent"] = hookEntry
+	hooks["BeforeTool"] = hookEntry
+	hooks["AfterTool"] = hookEntry
 	cfg["hooks"] = hooks
 
 	os.MkdirAll(filepath.Dir(settingsPath), 0755)
 	data, _ := json.MarshalIndent(cfg, "", "  ")
-	return os.WriteFile(settingsPath, data, 0644)
+	if err := os.WriteFile(settingsPath, data, 0644); err != nil {
+		return fmt.Errorf("write settings: %w", err)
+	}
+	fmt.Printf("  ✅ Gemini hooks configured → %s\n", settingsPath)
+	return nil
 }
