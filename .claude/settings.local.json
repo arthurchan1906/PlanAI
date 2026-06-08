@@ -1,61 +1,4 @@
 {
-  "enabledMcpjsonServers": [
-    "aipm"
-  ],
-  "hooks": {
-    "PostToolUse": [
-      {
-        "hooks": [
-          {
-            "args": [
-              "hook-process"
-            ],
-            "command": "aipmc",
-            "type": "command"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "args": [
-              "hook-process"
-            ],
-            "command": "aipmc",
-            "type": "command"
-          }
-        ]
-      }
-    ],
-    "StopFailure": [
-      {
-        "hooks": [
-          {
-            "args": [
-              "hook-process"
-            ],
-            "command": "aipmc",
-            "type": "command"
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "args": [
-              "hook-process"
-            ],
-            "command": "aipmc",
-            "type": "command"
-          }
-        ]
-      }
-    ]
-  },
   "permissions": {
     "allow": [
       "Bash(git log *)",
@@ -76,7 +19,65 @@
       "Bash(cat)",
       "WebSearch",
       "mcp__aipm__aipm_get_briefing",
-      "mcp__aipm__aipm_search_context"
+      "mcp__aipm__aipm_search_context",
+      "Bash(python3 -m json.tool)"
+    ]
+  },
+  "enabledMcpjsonServers": [
+    "aipm"
+  ],
+  "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "aipmc",
+            "args": [
+              "hook-process"
+            ]
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "aipmc",
+            "args": [
+              "hook-process"
+            ]
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "aipmc",
+            "args": [
+              "hook-process"
+            ]
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "aipmc",
+            "args": [
+              "hook-process"
+            ]
+          }
+        ]
+      }
     ]
   },
   "mcpServers": {
