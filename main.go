@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -159,50 +158,7 @@ func main() {
 		processClaudeHook()
 		return
 	case "hook-gemini":
-		f, _ := os.OpenFile(filepath.Join(os.TempDir(), "aipm-hook-debug.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if f != nil {
-			defer f.Close()
-			fmt.Fprintf(f, "[%s] Hook triggered\n", nowISO())
-		}
-
-		data, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			if f != nil { fmt.Fprintf(f, "  ERROR reading stdin: %v\n", err) }
-			return
-		}
-		if f != nil { fmt.Fprintf(f, "  Read %d bytes\n", len(data)) }
-
-		var c struct {
-			Event          string `json:"hook_event_name"`
-			Prompt         string `json:"prompt"`
-			PromptResponse string `json:"prompt_response"`
-			ToolName       string `json:"tool_name"`
-			ToolInput      any    `json:"tool_input"`
-		}
-		if err := json.Unmarshal(data, &c); err != nil {
-			if f != nil { fmt.Fprintf(f, "  ERROR unmarshalling: %v\n", err) }
-			return
-		}
-		if f != nil { fmt.Fprintf(f, "  Event: %s\n", c.Event) }
-
-		switch c.Event {
-		case "BeforeAgent":
-			if c.Prompt != "" {
-				_, err := logDiscussion("", "user", "gemini-cli", c.Prompt, "")
-				if err != nil && f != nil { fmt.Fprintf(f, "  ERROR logging: %v\n", err) }
-			}
-		case "AfterTool":
-			if c.ToolName != "" {
-				inputJSON, _ := json.Marshal(c.ToolInput)
-				_, err := logDiscussion("", "assistant", "gemini-cli-tool", fmt.Sprintf("[Tool Call: %s] %s", c.ToolName, string(inputJSON)), "")
-				if err != nil && f != nil { fmt.Fprintf(f, "  ERROR logging tool: %v\n", err) }
-			}
-		case "AfterAgent":
-			if c.PromptResponse != "" {
-				_, err := logDiscussion("", "assistant", "gemini-cli", c.PromptResponse, "")
-				if err != nil && f != nil { fmt.Fprintf(f, "  ERROR logging response: %v\n", err) }
-			}
-		}
+		processGeminiHook()
 		return
 	case "mcp":
 		server := newMCPServer(aiClient)

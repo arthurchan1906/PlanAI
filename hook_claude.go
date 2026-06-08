@@ -2,8 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -220,4 +222,54 @@ func fmtExitCode(code int) string {
 		return ""
 	}
 	return " [exit:" + itoa(code) + "]"
+}
+
+// setupClaudeHooks writes Claude Code hook configuration to settings.local.json.
+// Configures Stop, StopFailure, UserPromptSubmit, and PostToolUse hooks
+// that all call "aipmc hook-process" (processClaudeHook).
+func setupClaudeHooks(commandPath string) error {
+	runtimeDir, err := findRuntimeDir()
+	if err != nil {
+		return fmt.Errorf("find runtime dir: %w", err)
+	}
+	projectRoot := filepath.Dir(runtimeDir)
+	settingsPath := filepath.Join(projectRoot, ".claude", "settings.local.json")
+
+	cfg := map[string]any{}
+	if data, err := os.ReadFile(settingsPath); err == nil && len(data) > 0 {
+		json.Unmarshal(data, &cfg)
+	}
+
+	hooks, _ := cfg["hooks"].(map[string]any)
+	if hooks == nil {
+		hooks = map[string]any{}
+	}
+
+	// All hooks use the same command: aipmc hook-process
+	// processClaudeHook() dispatches on hook_event_name
+	hookEntry := []any{
+		map[string]any{
+			"hooks": []any{
+				map[string]any{
+					"type":    "command",
+					"command": commandPath,
+					"args":    []string{"hook-process"},
+				},
+			},
+		},
+	}
+
+	hooks["Stop"] = hookEntry
+	hooks["StopFailure"] = hookEntry
+	hooks["UserPromptSubmit"] = hookEntry
+	hooks["PostToolUse"] = hookEntry
+	cfg["hooks"] = hooks
+
+	os.MkdirAll(filepath.Dir(settingsPath), 0755)
+	data, _ := json.MarshalIndent(cfg, "", "  ")
+	if err := os.WriteFile(settingsPath, data, 0644); err != nil {
+		return fmt.Errorf("write settings: %w", err)
+	}
+	fmt.Printf("  ✅ Hooks configured → %s\n", settingsPath)
+	return nil
 }
