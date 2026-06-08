@@ -218,15 +218,33 @@ function renderContent(c, role, metadata) {
   // Fallback: plain text diff (no metadata at all)
   function renderPlainDiff(content) {
     const lines = content.split("\n");
+    const hasHeader = lines.length > 0 && !lines[0].startsWith("-") && !lines[0].startsWith("+");
+    const numW = 40;
+    const numStyle = {
+      display: "inline-block", width: numW, minWidth: numW,
+      textAlign: "right", paddingRight: 6,
+      color: "#aaa", fontSize: 10, userSelect: "none",
+      lineHeight: "20px", minHeight: 20,
+    };
+    let lineNum = 1;
     return lines.map((line, i) => {
-      let style = {};
-      if (line.startsWith("- ") || line.startsWith("-")) style = { color: "#cf1322", background: "#fff1f0" };
-      else if (line.startsWith("+ ") || line.startsWith("+")) style = { color: "#389e0d", background: "#f6ffed" };
-      else if (i === 0) style = { color: "#2f6fec", fontWeight: 500 };
-      else style = { color: "#666" };
-      return <div key={i} style={{ ...style, padding: "1px 4px", fontSize: 12, fontFamily: "monospace" }}>{line || " "}</div>;
+      let bg, color;
+      if (line.startsWith("-")) { bg = "#fff1f0"; color = "#cf1322"; }
+      else if (line.startsWith("+")) { bg = "#f6ffed"; color = "#389e0d"; }
+      else { bg = "transparent"; color = "#555"; }
+      const isHeader = hasHeader && i === 0;
+      const prefix = line.length > 0 ? line[0] : "";
+      return (
+        <div key={i} style={{ display: "flex", borderBottom: "1px solid #f5f5f5", minHeight: 20, background: bg }}>
+          <span style={numStyle}>{isHeader ? "" : lineNum++}</span>
+          <span style={{ padding: "0 6px", fontSize: 11, fontFamily: "Consolas, \'Courier New\', monospace", whiteSpace: "pre", lineHeight: "20px", color }}>
+            {line || "\u00a0"}
+          </span>
+        </div>
+      );
     });
   }
+
 
   if (isEdit && text.includes("\n")) {
     return <div style={{ padding: "4px 0" }}>{renderPlainDiff(text)}</div>;

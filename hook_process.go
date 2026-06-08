@@ -107,11 +107,19 @@ func processClaudeHook() {
 					desc += "\n+ " + strings.TrimSpace(ti.NewString)
 				}
 				type editMeta struct {
-					Type     string      `json:"type"`
-					FilePath string      `json:"file_path"`
-					Hunks    []patchHunk `json:"hunks"`
+					Type      string      `json:"type"`
+					FilePath  string      `json:"file_path"`
+					Hunks     []patchHunk `json:"hunks,omitempty"`
+					OldString string      `json:"old_string,omitempty"`
+					NewString string      `json:"new_string,omitempty"`
 				}
-				meta := editMeta{Type: "edit", FilePath: ti.FilePath, Hunks: raw.StructuredPatch}
+				meta := editMeta{
+					Type:      "edit",
+					FilePath:  ti.FilePath,
+					Hunks:     raw.StructuredPatch,
+					OldString: ti.OldString,
+					NewString: ti.NewString,
+				}
 				if b, err := json.Marshal(meta); err == nil {
 					metadataJSON = string(b)
 				}
