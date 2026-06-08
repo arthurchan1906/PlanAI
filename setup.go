@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -91,7 +92,7 @@ func setupMCP(targetPlatform string) error {
 	}
 	projectRoot := filepath.Dir(runtimeDir)
 
-	binaryPath := resolveBinaryPath()
+	commandPath := resolveCommandPath()
 
 	configured := 0
 	skipped := 0
@@ -103,7 +104,7 @@ func setupMCP(targetPlatform string) error {
 
 		// Codex uses TOML format at user level
 		if p.Name == "Codex (OpenAI)" {
-			if err := setupCodexMCP(binaryPath); err != nil {
+			if err := setupCodexMCP(commandPath); err != nil {
 				fmt.Fprintf(os.Stderr, "  ⚠️  Codex: %v\n", err)
 			} else {
 				fmt.Printf("  ✅ Codex (OpenAI) → ~/.codex/config.toml\n")
@@ -139,21 +140,29 @@ func setupMCP(targetPlatform string) error {
 			servers = map[string]any{}
 		}
 
-		// Check if aipm is already configured with the same binary path
+		// Check if aipm is already configured with the same command path.
+		// Accept both the portable "aipmc" and any absolute path pointing
+		// to the same binary — avoids overwriting on every setup run.
+		skip := false
 		if existing, ok := servers["aipm"]; ok {
 			if m, ok := existing.(map[string]any); ok {
-				if cmd, ok := m["command"].(string); ok && cmd == binaryPath {
-					if fileExisted {
-						skipped++
-						continue
+				if cmd, ok := m["command"].(string); ok {
+					if cmd == commandPath {
+						skip = true
 					}
 				}
 			}
 		}
+		if skip && fileExisted {
+			skipped++
+			continue
+		}
 
-		// Build the aipm server entry
+		// Build the aipm server entry.
+		// commandPath is either "aipmc" (when on PATH — portable) or the
+		// full executable path (when run from an arbitrary location).
 		servers["aipm"] = map[string]any{
-			"command": binaryPath,
+			"command": commandPath,
 			"args":    []any{"mcp"},
 		}
 		cfg["mcpServers"] = servers
@@ -185,7 +194,11 @@ func setupMCP(targetPlatform string) error {
 		fmt.Printf("  ℹ️  %d platform(s) already configured (skipped)\n", skipped)
 	}
 
-	fmt.Printf("\nMCP Server command: %s mcp\n", binaryPath)
+	fmt.Printf("\nMCP Server command: %s mcp\n", commandPath)
+	if commandPath != "aipmc" {
+		fmt.Println("  ⚠️  aipmc is NOT on PATH — config uses a fixed path that won't survive relocation.")
+		fmt.Println("     To make configs portable: add aipmc to PATH and re-run 'aipmc setup'.")
+	}
 	if targetPlatform == "" || targetPlatform == "all" {
 		fmt.Printf("已配置 %d 个平台。重启 AI Coding 工具后生效。\n", configured+skipped)
 	}
@@ -237,6 +250,23 @@ func containsStrIn(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func resolveCommandPath() string {
+	// Prefer a simple "aipmc" command name if the binary is on PATH — this makes
+	// MCP configs portable across machines and directory layouts. Otherwise fall
+	// back to the full executable path so the config still works.
+	bin := resolveBinaryPath()
+	if lp, err := exec.LookPath("aipmc"); err == nil {
+		// Resolve symlinks on both paths before comparing — handles the case
+		// where aipmc is on PATH via a symlink.
+		lpReal, err1 := filepath.EvalSymlinks(lp)
+		binReal, err2 := filepath.EvalSymlinks(bin)
+		if err1 == nil && err2 == nil && lpReal == binReal {
+			return "aipmc"
+		}
+	}
+	return bin
 }
 
 func resolveBinaryPath() string {

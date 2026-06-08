@@ -60,13 +60,20 @@ type mcpContent struct {
 // MCP tool handler function signature.
 type mcpToolHandler func(args map[string]interface{}) mcpToolResult
 
+// mcpClientInfo holds the client identity reported during MCP initialize.
+type mcpClientInfo struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+}
+
 // mcpServer holds registered tools and handles the protocol lifecycle.
 type mcpServer struct {
-	tools    map[string]MCPTool
-	handlers map[string]mcpToolHandler
-	reader   *bufio.Reader
-	writer   io.Writer
-	ai       *ai.Client
+	tools      map[string]MCPTool
+	handlers   map[string]mcpToolHandler
+	reader     *bufio.Reader
+	writer     io.Writer
+	ai         *ai.Client
+	clientInfo *mcpClientInfo // captured from initialize — the client's "user agent"
 }
 
 func newMCPServer(aiClient *ai.Client) *mcpServer {
@@ -1113,14 +1120,23 @@ var supportedProtocolVersions = map[string]bool{
 }
 
 func (s *mcpServer) handleInitialize(msg *jsonrpcMessage) {
-	// Extract the client's requested protocol version
+	// Extract the client's requested protocol version and client info ("user agent").
 	clientVersion := ""
 	if msg.Params != nil {
 		var params struct {
-			ProtocolVersion string `json:"protocolVersion"`
+			ProtocolVersion string        `json:"protocolVersion"`
+			ClientInfo      mcpClientInfo `json:"clientInfo"`
 		}
 		if err := json.Unmarshal(msg.Params, &params); err == nil {
 			clientVersion = params.ProtocolVersion
+			// Capture client identity for debugging / analytics.
+			// This is cross-platform: all MCP clients (Claude Code, Cursor, etc.)
+			// send clientInfo regardless of host OS.
+			if params.ClientInfo.Name != "" {
+				s.clientInfo = &params.ClientInfo
+				fmt.Fprintf(os.Stderr, "[aipm-mcp] client connected: %s v%s (protocol %s)\n",
+					params.ClientInfo.Name, params.ClientInfo.Version, clientVersion)
+			}
 		}
 	}
 
