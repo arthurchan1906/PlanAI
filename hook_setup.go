@@ -5,15 +5,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 func setupHooksCmd(targetPlatform string) error {
-	binaryPath := resolveBinaryPath()
-	unixPath := strings.ReplaceAll(binaryPath, "\\", "/")
+	commandPath := resolveCommandPath()
 
 	if targetPlatform == "Gemini CLI" || targetPlatform == "gemini" {
-		hookCommand := fmt.Sprintf("\"%s\" hook-gemini", unixPath)
+		hookCommand := fmt.Sprintf("\"%s\" hook-gemini", commandPath)
 		fmt.Printf("  ✅ Gemini hook configured: %s\n", hookCommand)
 
 		runtimeDir, _ := findRuntimeDir()
@@ -43,8 +41,8 @@ func setupHooksCmd(targetPlatform string) error {
 
 	// Claude Code: direct binary call — no bash wrapper scripts.
 	// All hook processing is done in Go (hook_process.go), which parses
-	// stdin JSON directly. The binary path is auto-detected via os.Executable()
-	// so it works on any machine / any project folder.
+	// stdin JSON directly. Uses resolveCommandPath() — writes "aipmc" when
+	// the binary is on PATH (portable), or the absolute path as fallback.
 	runtimeDir, err := findRuntimeDir()
 	if err != nil {
 		return fmt.Errorf("find runtime dir: %w", err)
@@ -69,7 +67,7 @@ func setupHooksCmd(targetPlatform string) error {
 			"hooks": []any{
 				map[string]any{
 					"type":    "command",
-					"command": unixPath,
+					"command": commandPath,
 					"args":    []string{"hook-process"},
 				},
 			},
@@ -88,6 +86,5 @@ func setupHooksCmd(targetPlatform string) error {
 		return fmt.Errorf("write settings: %w", err)
 	}
 	fmt.Printf("  ✅ Hooks configured → %s\n", settingsPath)
-	fmt.Printf("  📌 Binary: %s\n", unixPath)
 	return nil
 }

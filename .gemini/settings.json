@@ -2,19 +2,19 @@
   "hooks": {
     "AfterAgent": [
       {
-        "command": "\"D:/code/AI/PlanAI/dist/aipmc.exe\" hook-gemini",
+        "command": "aipmc hook-gemini",
         "type": "command"
       }
     ],
     "AfterTool": [
       {
-        "command": "\"D:/code/AI/PlanAI/dist/aipmc.exe\" hook-gemini",
+        "command": "aipmc hook-gemini",
         "type": "command"
       }
     ],
     "BeforeAgent": [
       {
-        "command": "\"D:/code/AI/PlanAI/dist/aipmc.exe\" hook-gemini",
+        "command": "aipmc hook-gemini",
         "type": "command"
       }
     ]
@@ -24,7 +24,7 @@
       "args": [
         "mcp"
       ],
-      "command": "D:/code/AI/PlanAI/dist/aipmc.exe"
+      "command": "aipmc"
     }
   }
 }
