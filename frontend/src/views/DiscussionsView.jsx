@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import { Button, Card, Input, Select, Space, Table, Tag, Typography } from "antd";
-import { ReloadOutlined, SearchOutlined, FullscreenOutlined, FullscreenExitOutlined } from "@ant-design/icons";
+import { Button, Card, Checkbox, Input, Select, Space, Table, Tag, Typography } from "antd";
+import { SearchOutlined, FullscreenOutlined, FullscreenExitOutlined } from "@ant-design/icons";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
@@ -284,6 +284,23 @@ export default function DiscussionsView() {
   const [query, setQuery] = useState("");
   const [source, setSource] = useState("");
   const [sources, setSources] = useState([]);
+  const [showUser, setShowUser] = useState(true);
+  const [showAgent, setShowAgent] = useState(true);
+  const [showTool, setShowTool] = useState(true);
+
+  function isUserMsg(r) { return r.role === "user"; }
+  function isToolMsg(r) { return /^[🔧📝👁🔍🆕🛠📡]/.test(r.content || ""); }
+  function isAgentMsg(r) { return r.role === "assistant" && !isToolMsg(r); }
+
+  function filterDiscussions(list) {
+    if (showUser && showAgent && showTool) return list;
+    return list.filter(r => {
+      if (isUserMsg(r)) return showUser;
+      if (isToolMsg(r)) return showTool;
+      if (isAgentMsg(r)) return showAgent;
+      return true;
+    });
+  }
 
   async function loadSources() {
     const data = await api("/pmai/discussions/sources");
@@ -310,20 +327,22 @@ export default function DiscussionsView() {
       <style>{mdStyles}</style>
       <Space style={{ marginBottom: 16 }}>
         <Title level={4} style={{ margin: 0 }}>💬 讨论日志</Title>
-        <Button icon={<ReloadOutlined />} onClick={() => load(page)} loading={loading}>刷新</Button>
       </Space>
       <Card size="small" style={{ marginBottom: 16 }}>
-        <Space>
+        <Space wrap>
           <Input prefix={<SearchOutlined />} placeholder="搜索..." value={query}
             onChange={(e) => setQuery(e.target.value)} onPressEnter={() => load(1)} style={{ width: 280 }} />
           <Select allowClear placeholder="来源" value={source || undefined}
             onChange={(v) => { setSource(v || ""); load(1, v || ""); }} style={{ width: 140 }}
             options={sources.map(s => ({ value: s, label: s }))} />
           <Button type="primary" onClick={() => load(1)}>搜索</Button>
+          <Checkbox checked={showUser} onChange={(e) => setShowUser(e.target.checked)}>👤 用户</Checkbox>
+          <Checkbox checked={showAgent} onChange={(e) => setShowAgent(e.target.checked)}>🤖 Agent</Checkbox>
+          <Checkbox checked={showTool} onChange={(e) => setShowTool(e.target.checked)}>🔧 工具</Checkbox>
         </Space>
       </Card>
       <Table
-        dataSource={discussions} columns={[
+        dataSource={filterDiscussions(discussions)} columns={[
           { title: "日期", dataIndex: "created_at", key: "date", width: 100,
             render: (t, row) => ({ children: row._dateRowSpan > 0 ? (t || "").slice(0, 10) : "", props: { rowSpan: row._dateRowSpan } }) },
           { title: "时间", dataIndex: "created_at", key: "time", width: 70,
