@@ -864,10 +864,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 			src := q.Get("source")
 			pp := q.Get("project_path")
 			typeFilter := q.Get("type")
-			results, total, _ := searchDiscussions(q.Get("q"), src, pp, page, 20)
-			if typeFilter != "" {
-				results = filterDiscussionsByType(results, typeFilter)
-			}
+			results, total, _ := searchDiscussions(q.Get("q"), src, typeFilter, pp, page, 20)
 			sendJSON(w, map[string]any{"discussions": results, "total": total, "page": page})
 
 	case method == "GET" && path == "discussions/sources":

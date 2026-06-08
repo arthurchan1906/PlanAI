@@ -850,7 +850,7 @@ func (s *mcpServer) handleSearchDiscussions(args map[string]interface{}) mcpTool
 	projectPath := getStr(args, "project_path", "")
 	limit := 10
 	if l := getStr(args, "limit", ""); l != "" { fmt.Sscanf(l, "%d", &limit) }
-	results, total, _ := searchDiscussions(query, "", projectPath, 1, limit)
+	results, total, _ := searchDiscussions(query, "", "", projectPath, 1, limit)
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("搜索讨论历史 '%s': %d 条结果 (共 %d 条)\n", query, len(results), total))
 	for _, r := range results {

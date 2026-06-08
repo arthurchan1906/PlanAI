@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"aipmc/ai"
@@ -99,7 +100,7 @@ func openProjectDB(projectPath string) (*sql.DB, error) {
 	return db, nil
 }
 
-func searchDiscussions(query, source, projectPath string, page, pageSize int) ([]map[string]any, int, error) {
+func searchDiscussions(query, source, typeFilter, projectPath string, page, pageSize int) ([]map[string]any, int, error) {
 	db, err := openProjectDB(projectPath)
 	if err != nil { return nil, 0, err }
 	defer db.Close()
@@ -138,10 +139,37 @@ func searchDiscussions(query, source, projectPath string, page, pageSize int) ([
 		}
 	}
 
-	where := "WHERE 1=1"
-	var args []any
-	if source != "" { where += " AND source = ?"; args = append(args, source) }
-	if query != "" { where += " AND content LIKE ?"; args = append(args, "%"+query+"%") }
+		where := "WHERE 1=1"
+		var args []any
+		if source != "" { where += " AND source = ?"; args = append(args, source) }
+		if query != "" { where += " AND content LIKE ?"; args = append(args, "%"+query+"%") }
+		if typeFilter != "" {
+			toolEmojis := []string{"🔧","📝","👁","🔍","🆕","🛠","📡"}
+			typeParts := []string{}
+			for _, t := range splitAndTrim(typeFilter, ",") {
+				switch t {
+				case "user":
+					typeParts = append(typeParts, "role = 'user'")
+				case "assistant":
+					notTool := ""
+					for _, e := range toolEmojis {
+						if notTool != "" { notTool += " AND " }
+						notTool += "content NOT LIKE '" + e + "%'"
+					}
+					typeParts = append(typeParts, "(role = 'assistant' AND "+notTool+")")
+				case "tool":
+					isTool := ""
+					for _, e := range toolEmojis {
+						if isTool != "" { isTool += " OR " }
+						isTool += "content LIKE '" + e + "%'"
+					}
+					typeParts = append(typeParts, "("+isTool+")")
+				}
+			}
+			if len(typeParts) > 0 {
+				where += " AND (" + strings.Join(typeParts, " OR ") + ")"
+			}
+		}
 	db.QueryRow("SELECT COUNT(*) FROM discussion_log "+where, args...).Scan(&total)
 	offset := (page - 1) * pageSize
 	selectArgs := append(args, pageSize, offset)
