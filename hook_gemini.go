@@ -13,20 +13,30 @@ import (
 // processGeminiHook reads the Gemini CLI hook stdin JSON and saves to discussion_log.
 // Called via: aipmc hook-gemini
 func processGeminiHook() {
+	now := time.Now().Format("15:04:05.000")
 	data, _ := io.ReadAll(os.Stdin)
 
-	// DEBUG: dump raw stdin to verify hook is firing
+	// Stderr log: Gemini CLI captures stderr for debugging
+	logf := func(format string, args ...any) {
+		fmt.Fprintf(os.Stderr, "[aipm-gemini %s] ", now)
+		fmt.Fprintf(os.Stderr, format+"\n", args...)
+	}
+
+	logf("hook called, stdin=%d bytes", len(data))
+
+	if len(data) < 10 {
+		logf("stdin too short, exiting")
+		os.Exit(0)
+	}
+
+	// Dump raw stdin to file for detailed inspection
 	f, _ := os.OpenFile(filepath.Join(os.TempDir(), "aipm-gemini-hook-debug.txt"),
 		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if f != nil {
-		fmt.Fprintf(f, "=== [%s] len=%d ===\n", time.Now().Format("15:04:05"), len(data))
+		fmt.Fprintf(f, "=== [%s] len=%d ===\n", now, len(data))
 		f.Write(data)
 		f.WriteString("\n=== END ===\n\n")
 		f.Close()
-	}
-
-	if len(data) < 10 {
-		os.Exit(0)
 	}
 
 	type toolInput struct {
@@ -47,13 +57,19 @@ func processGeminiHook() {
 	}
 
 	if err := json.Unmarshal(data, &raw); err != nil {
+		logf("JSON parse FAILED: %v", err)
+		logf("raw stdin: %s", truncateStr(string(data), 200))
 		os.Exit(0)
 	}
 
+	logf("event=%s", raw.Event)
+
 	switch raw.Event {
 	case "BeforeAgent":
+		logf("BeforeAgent: prompt=%d chars", len(raw.Prompt))
 		if raw.Prompt != "" {
 			logDiscussion("", "user", "gemini-cli", raw.Prompt, "")
+			logf("logged to discussion (user/gemini-cli)")
 		}
 
 	case "AfterTool":
@@ -178,12 +194,20 @@ func processGeminiHook() {
 
 		if desc != "" {
 			logDiscussion("", "assistant", "gemini-cli", desc, metaJSON)
+			logf("AfterTool %s logged (desc=%d chars, meta=%d chars)", raw.ToolName, len(desc), len(metaJSON))
+		} else {
+			logf("AfterTool %s: no description generated", raw.ToolName)
 		}
 
 	case "AfterAgent":
+		logf("AfterAgent: response=%d chars", len(raw.PromptResponse))
 		if raw.PromptResponse != "" {
 			logDiscussion("", "assistant", "gemini-cli", raw.PromptResponse, "")
+			logf("logged to discussion (assistant/gemini-cli)")
 		}
+
+	default:
+		logf("unhandled event: %s", raw.Event)
 	}
 }
 
