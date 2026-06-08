@@ -57,6 +57,9 @@ func processGeminiHook() {
 		ToolResp  struct {
 			LLMContent json.RawMessage `json:"llmContent"`
 			ExitCode   int             `json:"exit_code"`
+			FileDiff   string          `json:"fileDiff"` // Diff for replace/write_file
+			FileName   string          `json:"fileName"`
+			IsNewFile  bool            `json:"isNewFile"`
 		} `json:"tool_response"`
 	}
 
@@ -83,14 +86,17 @@ func processGeminiHook() {
 		if raw.ToolName == "" {
 			break
 		}
+		// Normalize MCP tool names: strip server prefix
+		// Handles both "mcp_aipm_" and "mcp__aipm__" formats
 		raw.ToolName = strings.TrimPrefix(raw.ToolName, "mcp__aipm__")
+		raw.ToolName = strings.TrimPrefix(raw.ToolName, "mcp_aipm_")
 
 		var ti toolInput
 		json.Unmarshal(raw.ToolInput, &ti)
 		llmText := extractLLMText(raw.ToolResp.LLMContent)
 
 		desc := ""
-		var metaJSON string
+		var metadataJSON string
 
 		switch {
 		// Shell commands
@@ -112,7 +118,7 @@ func processGeminiHook() {
 			}
 			m := bashMeta{Type: "bash", Command: ti.Command, ExitCode: raw.ToolResp.ExitCode, Output: truncateStr(llmText, 2000)}
 			if b, _ := json.Marshal(m); b != nil {
-				metaJSON = string(b)
+				metadataJSON = string(b)
 			}
 			if llmText != "" {
 				desc += "\n  → " + strings.TrimSpace(truncateStr(llmText, 120))
@@ -129,19 +135,13 @@ func processGeminiHook() {
 			}
 			if fp != "" {
 				desc = "👁 " + fp
-				if llmText != "" {
-					lines := strings.Count(llmText, "\n") + 1
-					desc += fmt.Sprintf(" (%d lines)", lines)
-					type readMeta struct {
-						Type     string `json:"type"`
-						FilePath string `json:"file_path"`
-						Lines    int    `json:"lines"`
-						Preview  string `json:"preview,omitempty"`
-					}
-					m := readMeta{Type: "read", FilePath: fp, Lines: lines, Preview: truncateStr(llmText, 150)}
-					if b, _ := json.Marshal(m); b != nil {
-						metaJSON = string(b)
-					}
+				type readMeta struct {
+					Type     string `json:"type"`
+					FilePath string `json:"file_path"`
+				}
+				m := readMeta{Type: "read", FilePath: fp}
+				if b, _ := json.Marshal(m); b != nil {
+					metadataJSON = string(b)
 				}
 			}
 
@@ -153,21 +153,34 @@ func processGeminiHook() {
 			}
 			if fp != "" {
 				desc = "📂 " + fp
-				if llmText != "" {
-					desc += "\n  → " + truncateStr(llmText, 120)
-				}
 			}
 
 		// File writing (new file)
 		case raw.ToolName == "write_file" || raw.ToolName == "write":
 			if ti.FilePath != "" {
-				desc = "🆕 " + ti.FilePath
-				type newFileMeta struct {
-					Type     string `json:"type"`
-					FilePath string `json:"file_path"`
-				}
-				if b, _ := json.Marshal(newFileMeta{Type: "new_file", FilePath: ti.FilePath}); b != nil {
-					metaJSON = string(b)
+				if raw.ToolResp.IsNewFile {
+					desc = "🆕 " + ti.FilePath
+					type newFileMeta struct {
+						Type     string `json:"type"`
+						FilePath string `json:"file_path"`
+					}
+					if b, _ := json.Marshal(newFileMeta{Type: "new_file", FilePath: ti.FilePath}); b != nil {
+						metadataJSON = string(b)
+					}
+				} else {
+					desc = "📝 " + ti.FilePath
+					type editMeta struct {
+						Type     string      `json:"type"`
+						FilePath string      `json:"file_path"`
+						Hunks    []PatchHunk `json:"hunks,omitempty"`
+					}
+					m := editMeta{Type: "edit", FilePath: ti.FilePath}
+					if raw.ToolResp.FileDiff != "" {
+						m.Hunks = parseDiffToHunks(raw.ToolResp.FileDiff)
+					}
+					if b, _ := json.Marshal(m); b != nil {
+						metadataJSON = string(b)
+					}
 				}
 			}
 
@@ -182,14 +195,18 @@ func processGeminiHook() {
 					desc += "\n+ " + strings.TrimSpace(ti.NewString)
 				}
 				type editMeta struct {
-					Type      string `json:"type"`
-					FilePath  string `json:"file_path"`
-					OldString string `json:"old_string,omitempty"`
-					NewString string `json:"new_string,omitempty"`
+					Type      string      `json:"type"`
+					FilePath  string      `json:"file_path"`
+					Hunks     []PatchHunk `json:"hunks,omitempty"`
+					OldString string      `json:"old_string,omitempty"`
+					NewString string      `json:"new_string,omitempty"`
 				}
 				m := editMeta{Type: "edit", FilePath: ti.FilePath, OldString: ti.OldString, NewString: ti.NewString}
+				if raw.ToolResp.FileDiff != "" {
+					m.Hunks = parseDiffToHunks(raw.ToolResp.FileDiff)
+				}
 				if b, _ := json.Marshal(m); b != nil {
-					metaJSON = string(b)
+					metadataJSON = string(b)
 				}
 			}
 
@@ -199,7 +216,9 @@ func processGeminiHook() {
 			desc = name
 			if ti.Query != "" {
 				q := ti.Query
-				if len(q) > 60 { q = q[:60] + "..." }
+				if len(q) > 60 {
+					q = q[:60] + "..."
+				}
 				desc += " \"" + q + "\""
 			}
 
@@ -208,10 +227,65 @@ func processGeminiHook() {
 		}
 
 		if desc != "" {
-			logDiscussion(raw.SessionID, "assistant", "gemini-cli", desc, metaJSON)
+			logDiscussion(raw.SessionID, "assistant", "gemini-cli", desc, metadataJSON)
 			logf("%s %s logged", raw.Event, raw.ToolName)
 		}
 	}
+}
+
+type PatchHunk struct {
+	OldStart int      `json:"oldStart"`
+	OldLines int      `json:"oldLines"`
+	NewStart int      `json:"newStart"`
+	NewLines int      `json:"newLines"`
+	Lines    []string `json:"lines"`
+}
+
+func parseDiffToHunks(diff string) []PatchHunk {
+	var hunks []PatchHunk
+	lines := strings.Split(diff, "\n")
+	var currentHunk *PatchHunk
+
+	for _, line := range lines {
+		if strings.HasPrefix(line, "@@") {
+			if currentHunk != nil {
+				hunks = append(hunks, *currentHunk)
+			}
+			// Parse @@ -1,7 +1,7 @@
+			parts := strings.Split(line, " ")
+			if len(parts) >= 3 {
+				oldPart := strings.TrimPrefix(parts[1], "-")
+				newPart := strings.TrimPrefix(parts[2], "+")
+
+				oldNums := strings.Split(oldPart, ",")
+				newNums := strings.Split(newPart, ",")
+
+				h := PatchHunk{}
+				fmt.Sscanf(oldNums[0], "%d", &h.OldStart)
+				if len(oldNums) > 1 {
+					fmt.Sscanf(oldNums[1], "%d", &h.OldLines)
+				} else {
+					h.OldLines = 1
+				}
+				fmt.Sscanf(newNums[0], "%d", &h.NewStart)
+				if len(newNums) > 1 {
+					fmt.Sscanf(newNums[1], "%d", &h.NewLines)
+				} else {
+					h.NewLines = 1
+				}
+
+				currentHunk = &h
+			}
+		} else if currentHunk != nil {
+			if strings.HasPrefix(line, "+") || strings.HasPrefix(line, "-") || strings.HasPrefix(line, " ") {
+				currentHunk.Lines = append(currentHunk.Lines, line)
+			}
+		}
+	}
+	if currentHunk != nil {
+		hunks = append(hunks, *currentHunk)
+	}
+	return hunks
 }
 
 // extractLLMText extracts readable text from Gemini CLI's llmContent field.
