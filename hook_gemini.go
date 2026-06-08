@@ -6,56 +6,173 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // processGeminiHook reads the Gemini CLI BeforeAgent/AfterTool/AfterAgent hook stdin
 // JSON and saves to discussion_log.
 // Called via: aipmc hook-gemini
 func processGeminiHook() {
-	// Debug log
-	f, _ := os.OpenFile(filepath.Join(os.TempDir(), "aipm-hook-debug.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	defer func() { if f != nil { f.Close() } }()
-
-	if f != nil {
-		fmt.Fprintf(f, "[%s] Hook triggered\n", nowISO())
+	data, _ := io.ReadAll(os.Stdin)
+	if len(data) < 10 {
+		os.Exit(0)
 	}
 
-	data, err := io.ReadAll(os.Stdin)
-	if err != nil {
-		if f != nil { fmt.Fprintf(f, "  ERROR reading stdin: %v\n", err) }
-		return
+	type toolInput struct {
+		Command  string `json:"command"`
+		FilePath string `json:"file_path"`
+		Content  string `json:"content"`
+		Query    string `json:"query"`
 	}
-	if f != nil { fmt.Fprintf(f, "  Read %d bytes\n", len(data)) }
 
-	var c struct {
-		Event          string `json:"hook_event_name"`
-		Prompt         string `json:"prompt"`
-		PromptResponse string `json:"prompt_response"`
-		ToolName       string `json:"tool_name"`
-		ToolInput      any    `json:"tool_input"`
+	var raw struct {
+		Event          string          `json:"hook_event_name"`
+		Prompt         string          `json:"prompt"`
+		PromptResponse string          `json:"prompt_response"`
+		ToolName       string          `json:"tool_name"`
+		ToolInput      json.RawMessage `json:"tool_input"`
+		ToolOutput     string          `json:"tool_output"`
+		ExitCode       int             `json:"exit_code"`
 	}
-	if err := json.Unmarshal(data, &c); err != nil {
-		if f != nil { fmt.Fprintf(f, "  ERROR unmarshalling: %v\n", err) }
-		return
-	}
-	if f != nil { fmt.Fprintf(f, "  Event: %s\n", c.Event) }
 
-	switch c.Event {
+	if err := json.Unmarshal(data, &raw); err != nil {
+		os.Exit(0)
+	}
+
+	switch raw.Event {
 	case "BeforeAgent":
-		if c.Prompt != "" {
-			_, err := logDiscussion("", "user", "gemini-cli", c.Prompt, "")
-			if err != nil && f != nil { fmt.Fprintf(f, "  ERROR logging: %v\n", err) }
+		if raw.Prompt != "" {
+			logDiscussion("", "user", "gemini-cli", raw.Prompt, "")
 		}
+
 	case "AfterTool":
-		if c.ToolName != "" {
-			inputJSON, _ := json.Marshal(c.ToolInput)
-			_, err := logDiscussion("", "assistant", "gemini-cli-tool", fmt.Sprintf("[Tool Call: %s] %s", c.ToolName, string(inputJSON)), "")
-			if err != nil && f != nil { fmt.Fprintf(f, "  ERROR logging tool: %v\n", err) }
+		if raw.ToolName == "" {
+			break
 		}
+
+		var ti toolInput
+		json.Unmarshal(raw.ToolInput, &ti)
+
+		desc := ""
+		var metaJSON string
+
+		switch raw.ToolName {
+		case "run_shell_command", "RunShellCommand", "execute_command":
+			if ti.Command != "" {
+				cmdPreview := ti.Command
+				if len(cmdPreview) > 150 {
+					cmdPreview = cmdPreview[:150] + "..."
+				}
+				desc = "🔧 " + cmdPreview
+
+				type bashMeta struct {
+					Type     string `json:"type"`
+					Command  string `json:"command"`
+					ExitCode int    `json:"exit_code"`
+					Output   string `json:"output,omitempty"`
+				}
+				stdout := truncateStr(raw.ToolOutput, 2000)
+				meta := bashMeta{
+					Type:     "bash",
+					Command:  ti.Command,
+					ExitCode: raw.ExitCode,
+					Output:   stdout,
+				}
+				if b, _ := json.Marshal(meta); b != nil {
+					metaJSON = string(b)
+				}
+
+				if stdout != "" {
+					desc += "\n  → " + strings.TrimSpace(truncateStr(stdout, 120))
+				}
+				if raw.ExitCode != 0 {
+					desc += fmtExitCode(raw.ExitCode)
+				}
+			}
+
+		case "read_file", "ReadFile", "read":
+			if ti.FilePath != "" {
+				desc = "👁 " + ti.FilePath
+				if raw.ToolOutput != "" {
+					lines := strings.Count(raw.ToolOutput, "\n") + 1
+					desc += fmt.Sprintf(" (%d lines)", lines)
+
+					type readMeta struct {
+						Type     string `json:"type"`
+						FilePath string `json:"file_path"`
+						Lines    int    `json:"lines"`
+						Preview  string `json:"preview,omitempty"`
+					}
+					meta := readMeta{
+						Type:     "read",
+						FilePath: ti.FilePath,
+						Lines:    lines,
+						Preview:  truncateStr(raw.ToolOutput, 150),
+					}
+					if b, _ := json.Marshal(meta); b != nil {
+						metaJSON = string(b)
+					}
+				}
+			}
+
+		case "write_file", "WriteFile", "write", "edit_file", "EditFile", "edit":
+			if ti.FilePath != "" {
+				isNew := raw.ToolName == "write_file" || raw.ToolName == "WriteFile" || raw.ToolName == "write"
+				if isNew {
+					desc = "🆕 " + ti.FilePath
+					type newFileMeta struct {
+						Type     string `json:"type"`
+						FilePath string `json:"file_path"`
+					}
+					if b, _ := json.Marshal(newFileMeta{Type: "new_file", FilePath: ti.FilePath}); b != nil {
+						metaJSON = string(b)
+					}
+				} else {
+					desc = "📝 " + ti.FilePath
+					if ti.Content != "" {
+						preview := truncateStr(ti.Content, 100)
+						desc += "\n+ " + strings.TrimSpace(preview)
+					}
+					type editMeta struct {
+						Type     string `json:"type"`
+						FilePath string `json:"file_path"`
+						Content  string `json:"content,omitempty"`
+					}
+					if b, _ := json.Marshal(editMeta{Type: "edit", FilePath: ti.FilePath, Content: ti.Content}); b != nil {
+						metaJSON = string(b)
+					}
+				}
+			}
+
+		case "search", "grep", "Search", "Grep":
+			if ti.Query != "" {
+				desc = "🔍 " + ti.Query
+			} else if ti.Command != "" {
+				desc = "🔍 " + ti.Command
+			}
+
+		default:
+			desc = "🛠 " + raw.ToolName
+			// Log raw input for unknown tools
+			if len(raw.ToolInput) > 0 {
+				type unknownMeta struct {
+					Type  string          `json:"type"`
+					Tool  string          `json:"tool"`
+					Input json.RawMessage `json:"input,omitempty"`
+				}
+				if b, _ := json.Marshal(unknownMeta{Type: "tool", Tool: raw.ToolName, Input: raw.ToolInput}); b != nil {
+					metaJSON = string(b)
+				}
+			}
+		}
+
+		if desc != "" {
+			logDiscussion("", "assistant", "gemini-cli", desc, metaJSON)
+		}
+
 	case "AfterAgent":
-		if c.PromptResponse != "" {
-			_, err := logDiscussion("", "assistant", "gemini-cli", c.PromptResponse, "")
-			if err != nil && f != nil { fmt.Fprintf(f, "  ERROR logging response: %v\n", err) }
+		if raw.PromptResponse != "" {
+			logDiscussion("", "assistant", "gemini-cli", raw.PromptResponse, "")
 		}
 	}
 }
