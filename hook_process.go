@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -42,6 +41,11 @@ func processClaudeHook() {
 		ToolResponse struct {
 			OriginalFile string `json:"originalFile"`
 			FilePath     string `json:"filePath"`
+			Stdout       string `json:"stdout"`
+			Stderr       string `json:"stderr"`
+			ExitCode     int    `json:"exitCode"`
+			Content      string `json:"content"`
+			LinesCount   int    `json:"linesCount"`
 		} `json:"tool_response"`
 		StructuredPatch []patchHunk `json:"structuredPatch"`
 	}
@@ -63,12 +67,13 @@ func processClaudeHook() {
 	case "PostToolUse":
 		desc := raw.ToolName
 		ti := raw.ToolInput
+		tr := raw.ToolResponse
 		var metadataJSON string
 
 		switch raw.ToolName {
 		case "Write":
 			if ti.FilePath != "" {
-				isNewFile := raw.ToolResponse.OriginalFile == ""
+				isNewFile := tr.OriginalFile == ""
 				if isNewFile {
 					desc = "🆕 " + ti.FilePath
 					type newFileMeta struct {
@@ -112,25 +117,78 @@ func processClaudeHook() {
 				}
 			}
 		case "Bash":
-			if ti.Command != "" { desc = "🔧 " + ti.Command }
+			if ti.Command != "" {
+				// Truncate long commands for readability
+				cmdPreview := ti.Command
+				if len(cmdPreview) > 150 {
+					cmdPreview = cmdPreview[:150] + "..."
+				}
+				desc = "🔧 " + cmdPreview
+
+				// Capture stdout/stderr in metadata
+				type bashMeta struct {
+					Type     string `json:"type"`
+					Command  string `json:"command"`
+					ExitCode int    `json:"exit_code"`
+					Stdout   string `json:"stdout,omitempty"`
+					Stderr   string `json:"stderr,omitempty"`
+				}
+				stdout := truncateStr(tr.Stdout, 2000)
+				stderr := truncateStr(tr.Stderr, 500)
+				meta := bashMeta{
+					Type:     "bash",
+					Command:  ti.Command,
+					ExitCode: tr.ExitCode,
+					Stdout:   stdout,
+					Stderr:   stderr,
+				}
+				if b, err := json.Marshal(meta); err == nil {
+					metadataJSON = string(b)
+				}
+
+				// Append a preview of the output to the description
+				if stdout != "" {
+					outputPreview := truncateStr(stdout, 120)
+					desc += "\n  → " + strings.TrimSpace(outputPreview)
+				} else if stderr != "" {
+					errPreview := truncateStr(stderr, 120)
+					desc += "\n  ⚠ " + strings.TrimSpace(errPreview)
+				}
+				if tr.ExitCode != 0 {
+					desc += fmtExitCode(tr.ExitCode)
+				}
+			}
 		case "Read":
-			if ti.FilePath != "" { desc = "👁 " + ti.FilePath }
+			if ti.FilePath != "" {
+				desc = "👁 " + ti.FilePath
+				if tr.LinesCount > 0 {
+					desc += " (" + itoa(tr.LinesCount) + " lines)"
+				}
+				// Store content preview in metadata
+				if tr.Content != "" || tr.LinesCount > 0 {
+					type readMeta struct {
+						Type       string `json:"type"`
+						FilePath   string `json:"file_path"`
+						LinesCount int    `json:"lines_count"`
+						Preview    string `json:"preview,omitempty"`
+					}
+					meta := readMeta{
+						Type:       "read",
+						FilePath:   ti.FilePath,
+						LinesCount: tr.LinesCount,
+						Preview:    truncateStr(tr.Content, 150),
+					}
+					if b, err := json.Marshal(meta); err == nil {
+						metadataJSON = string(b)
+					}
+				}
+			}
 		case "Grep":
-			if ti.Command != "" { desc = "🔍 " + ti.Command }
+			if ti.Command != "" {
+				desc = "🔍 " + ti.Command
+			}
 		default:
 			desc = "🛠 " + raw.ToolName
-		}
-
-		// Debug log
-		if raw.ToolName == "Write" || raw.ToolName == "Edit" {
-			f, _ := os.OpenFile(filepath.Join(os.TempDir(), "aipm-hook-write-full.log"),
-				os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-			if f != nil {
-				f.WriteString("\n=== " + raw.ToolName + " " + ti.FilePath + " ===\n")
-				f.Write(data)
-				f.WriteString("\n=== END ===\n\n")
-				f.Close()
-			}
 		}
 
 		if desc != "" {
@@ -138,4 +196,20 @@ func processClaudeHook() {
 		}
 	}
 	os.Exit(0)
+}
+
+// truncateStr returns s truncated to maxLen characters, adding "..." if truncated.
+func truncateStr(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+
+// fmtExitCode returns a human-readable exit code suffix.
+func fmtExitCode(code int) string {
+	if code == 0 {
+		return ""
+	}
+	return " [exit:" + itoa(code) + "]"
 }

@@ -1187,6 +1187,13 @@ func (s *mcpServer) handleToolsCall(msg *jsonrpcMessage) {
 	}
 
 	result := handler(call.Arguments)
+
+	// Log MCP tool usage to discussion_log — MCP tools are invisible to
+	// Claude Code hooks, so we log them here for full traceability.
+	if s.clientInfo != nil {
+		mcpLogDiscussion(call.Name, call.Arguments, result)
+	}
+
 	s.sendResult(msg.ID, result)
 }
 
@@ -1216,6 +1223,82 @@ func (s *mcpServer) sendError(id interface{}, code int, message string) {
 func (s *mcpServer) writeMessage(msg jsonrpcMessage) {
 	data, _ := json.Marshal(msg)
 	fmt.Fprintf(s.writer, "%s\n", string(data))
+}
+
+// mcpLogDiscussion logs an MCP tool call to the discussion log.
+// MCP tools are invisible to Claude Code hooks, so we log them here
+// for full traceability in the PM dashboard.
+func mcpLogDiscussion(toolName string, args map[string]interface{}, result mcpToolResult) {
+	// Build a concise human-readable summary
+	summary := "📡 " + toolName
+	switch {
+	case result.IsError:
+		summary += " ❌"
+	default:
+		summary += " ✅"
+	}
+
+	// Include the first key argument as context
+	switch toolName {
+	case "aipm_get_briefing":
+		if aid, ok := args["agent_id"].(string); ok && aid != "" {
+			summary += " agent=" + aid
+		}
+	case "aipm_search_context", "aipm_smart_search", "aipm_search_discussions":
+		if q, ok := args["query"].(string); ok && q != "" {
+			if len(q) > 60 {
+				q = q[:60] + "..."
+			}
+			summary += " \"" + q + "\""
+		}
+	case "aipm_create_task":
+		if t, ok := args["title"].(string); ok {
+			summary += " \"" + t + "\""
+		}
+	case "aipm_record_commit":
+		if t, ok := args["title"].(string); ok {
+			summary += " \"" + t + "\""
+		}
+	case "aipm_record_bug":
+		if t, ok := args["title"].(string); ok {
+			summary += " \"" + t + "\""
+		}
+	case "aipm_update_task_status":
+		if tid, ok := args["task_id"].(string); ok {
+			summary += " " + tid
+		}
+		if st, ok := args["status"].(string); ok {
+			summary += " →" + st
+		}
+	case "aipm_append_task_note":
+		if tid, ok := args["task_id"].(string); ok {
+			summary += " " + tid
+		}
+	case "aipm_link_entities":
+		if rel, ok := args["relation"].(string); ok {
+			summary += " " + rel
+		}
+	case "aipm_record_decision":
+		if t, ok := args["title"].(string); ok {
+			summary += " \"" + t + "\""
+		}
+	}
+
+	// Include reflection in metadata
+	var metaJSON string
+	if result.Reflection != "" {
+		type mcpMeta struct {
+			Type       string `json:"type"`
+			Tool       string `json:"tool"`
+			Reflection string `json:"reflection"`
+		}
+		meta := mcpMeta{Type: "mcp_tool", Tool: toolName, Reflection: result.Reflection}
+		if b, err := json.Marshal(meta); err == nil {
+			metaJSON = string(b)
+		}
+	}
+
+	logDiscussion("", "assistant", "claude-code-mcp", summary, metaJSON)
 }
 
 // ---- Helpers ----
