@@ -16,20 +16,18 @@ func processGeminiHook() {
 	now := time.Now().Format("15:04:05.000")
 	data, _ := io.ReadAll(os.Stdin)
 
-	// Stderr log: Gemini CLI captures stderr for debugging
 	logf := func(format string, args ...any) {
 		fmt.Fprintf(os.Stderr, "[aipm-gemini %s] ", now)
 		fmt.Fprintf(os.Stderr, format+"\n", args...)
 	}
 
 	logf("hook called, stdin=%d bytes", len(data))
-
 	if len(data) < 10 {
 		logf("stdin too short, exiting")
 		os.Exit(0)
 	}
 
-	// Dump raw stdin to file for detailed inspection
+	// Debug dump for inspection
 	f, _ := os.OpenFile(filepath.Join(os.TempDir(), "aipm-gemini-hook-debug.txt"),
 		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if f != nil {
@@ -40,179 +38,206 @@ func processGeminiHook() {
 	}
 
 	type toolInput struct {
-		Command  string `json:"command"`
-		FilePath string `json:"file_path"`
-		Content  string `json:"content"`
-		Query    string `json:"query"`
+		Command   string `json:"command"`
+		FilePath  string `json:"file_path"`
+		DirPath   string `json:"dir_path"`
+		Content   string `json:"content"`
+		OldString string `json:"old_string"`
+		NewString string `json:"new_string"`
+		Query     string `json:"query"`
 	}
 
 	var raw struct {
-		Event          string          `json:"hook_event_name"`
-		Prompt         string          `json:"prompt"`
-		PromptResponse string          `json:"prompt_response"`
-		ToolName       string          `json:"tool_name"`
-		ToolInput      json.RawMessage `json:"tool_input"`
-		ToolOutput     string          `json:"tool_output"`
-		ExitCode       int             `json:"exit_code"`
+		Event     string `json:"hook_event_name"`
+		SessionID string `json:"session_id"`
+		Prompt    string `json:"prompt"`
+		Response  string `json:"prompt_response"`
+		ToolName  string `json:"tool_name"`
+		ToolInput json.RawMessage
+		ToolResp  struct {
+			LLMContent json.RawMessage `json:"llmContent"`
+			ExitCode   int             `json:"exit_code"`
+		} `json:"tool_response"`
 	}
 
 	if err := json.Unmarshal(data, &raw); err != nil {
 		logf("JSON parse FAILED: %v", err)
-		logf("raw stdin: %s", truncateStr(string(data), 200))
 		os.Exit(0)
 	}
-
 	logf("event=%s", raw.Event)
 
 	switch raw.Event {
 	case "BeforeAgent":
-		logf("BeforeAgent: prompt=%d chars", len(raw.Prompt))
 		if raw.Prompt != "" {
-			logDiscussion("", "user", "gemini-cli", raw.Prompt, "")
-			logf("logged to discussion (user/gemini-cli)")
+			logDiscussion(raw.SessionID, "user", "gemini-cli", raw.Prompt, "")
+			logf("BeforeAgent logged (%d chars)", len(raw.Prompt))
 		}
 
-	case "AfterTool":
+	case "AfterAgent":
+		if raw.Response != "" {
+			logDiscussion(raw.SessionID, "assistant", "gemini-cli", raw.Response, "")
+			logf("AfterAgent logged (%d chars)", len(raw.Response))
+		}
+
+	case "BeforeTool", "AfterTool":
 		if raw.ToolName == "" {
 			break
 		}
+		raw.ToolName = strings.TrimPrefix(raw.ToolName, "mcp__aipm__")
 
 		var ti toolInput
 		json.Unmarshal(raw.ToolInput, &ti)
+		llmText := extractLLMText(raw.ToolResp.LLMContent)
 
 		desc := ""
 		var metaJSON string
 
-		switch raw.ToolName {
-		case "run_shell_command", "RunShellCommand", "execute_command":
-			if ti.Command != "" {
-				cmdPreview := ti.Command
-				if len(cmdPreview) > 150 {
-					cmdPreview = cmdPreview[:150] + "..."
-				}
-				desc = "🔧 " + cmdPreview
+		switch {
+		// Shell commands
+		case raw.ToolName == "run_shell_command" || raw.ToolName == "execute_command":
+			cmd := ti.Command
+			if cmd == "" {
+				cmd = fmt.Sprintf("%v", raw.ToolInput)
+			}
+			if len(cmd) > 150 {
+				cmd = cmd[:150] + "..."
+			}
+			desc = "🔧 " + cmd
 
-				type bashMeta struct {
-					Type     string `json:"type"`
-					Command  string `json:"command"`
-					ExitCode int    `json:"exit_code"`
-					Output   string `json:"output,omitempty"`
-				}
-				stdout := truncateStr(raw.ToolOutput, 2000)
-				meta := bashMeta{
-					Type:     "bash",
-					Command:  ti.Command,
-					ExitCode: raw.ExitCode,
-					Output:   stdout,
-				}
-				if b, _ := json.Marshal(meta); b != nil {
-					metaJSON = string(b)
-				}
-
-				if stdout != "" {
-					desc += "\n  → " + strings.TrimSpace(truncateStr(stdout, 120))
-				}
-				if raw.ExitCode != 0 {
-					desc += fmtExitCode(raw.ExitCode)
-				}
+			type bashMeta struct {
+				Type     string `json:"type"`
+				Command  string `json:"command"`
+				ExitCode int    `json:"exit_code"`
+				Output   string `json:"output,omitempty"`
+			}
+			m := bashMeta{Type: "bash", Command: ti.Command, ExitCode: raw.ToolResp.ExitCode, Output: truncateStr(llmText, 2000)}
+			if b, _ := json.Marshal(m); b != nil {
+				metaJSON = string(b)
+			}
+			if llmText != "" {
+				desc += "\n  → " + strings.TrimSpace(truncateStr(llmText, 120))
+			}
+			if raw.ToolResp.ExitCode != 0 {
+				desc += fmtExitCode(raw.ToolResp.ExitCode)
 			}
 
-		case "read_file", "ReadFile", "read":
-			if ti.FilePath != "" {
-				desc = "👁 " + ti.FilePath
-				if raw.ToolOutput != "" {
-					lines := strings.Count(raw.ToolOutput, "\n") + 1
+		// File reading
+		case raw.ToolName == "read_file":
+			fp := ti.FilePath
+			if fp == "" {
+				fp = ti.DirPath
+			}
+			if fp != "" {
+				desc = "👁 " + fp
+				if llmText != "" {
+					lines := strings.Count(llmText, "\n") + 1
 					desc += fmt.Sprintf(" (%d lines)", lines)
-
 					type readMeta struct {
 						Type     string `json:"type"`
 						FilePath string `json:"file_path"`
 						Lines    int    `json:"lines"`
 						Preview  string `json:"preview,omitempty"`
 					}
-					meta := readMeta{
-						Type:     "read",
-						FilePath: ti.FilePath,
-						Lines:    lines,
-						Preview:  truncateStr(raw.ToolOutput, 150),
-					}
-					if b, _ := json.Marshal(meta); b != nil {
+					m := readMeta{Type: "read", FilePath: fp, Lines: lines, Preview: truncateStr(llmText, 150)}
+					if b, _ := json.Marshal(m); b != nil {
 						metaJSON = string(b)
 					}
 				}
 			}
 
-		case "write_file", "WriteFile", "write", "edit_file", "EditFile", "edit":
+		// Directory listing
+		case raw.ToolName == "list_directory":
+			fp := ti.DirPath
+			if fp == "" {
+				fp = ti.FilePath
+			}
+			if fp != "" {
+				desc = "📂 " + fp
+				if llmText != "" {
+					desc += "\n  → " + truncateStr(llmText, 120)
+				}
+			}
+
+		// File writing (new file)
+		case raw.ToolName == "write_file" || raw.ToolName == "write":
 			if ti.FilePath != "" {
-				isNew := raw.ToolName == "write_file" || raw.ToolName == "WriteFile" || raw.ToolName == "write"
-				if isNew {
-					desc = "🆕 " + ti.FilePath
-					type newFileMeta struct {
-						Type     string `json:"type"`
-						FilePath string `json:"file_path"`
-					}
-					if b, _ := json.Marshal(newFileMeta{Type: "new_file", FilePath: ti.FilePath}); b != nil {
-						metaJSON = string(b)
-					}
-				} else {
-					desc = "📝 " + ti.FilePath
-					if ti.Content != "" {
-						preview := truncateStr(ti.Content, 100)
-						desc += "\n+ " + strings.TrimSpace(preview)
-					}
-					type editMeta struct {
-						Type     string `json:"type"`
-						FilePath string `json:"file_path"`
-						Content  string `json:"content,omitempty"`
-					}
-					if b, _ := json.Marshal(editMeta{Type: "edit", FilePath: ti.FilePath, Content: ti.Content}); b != nil {
-						metaJSON = string(b)
-					}
+				desc = "🆕 " + ti.FilePath
+				type newFileMeta struct {
+					Type     string `json:"type"`
+					FilePath string `json:"file_path"`
+				}
+				if b, _ := json.Marshal(newFileMeta{Type: "new_file", FilePath: ti.FilePath}); b != nil {
+					metaJSON = string(b)
 				}
 			}
 
-		case "search", "grep", "Search", "Grep":
+		// File editing
+		case raw.ToolName == "replace" || raw.ToolName == "edit_file" || raw.ToolName == "edit":
+			if ti.FilePath != "" {
+				desc = "📝 " + ti.FilePath
+				if ti.OldString != "" {
+					desc += "\n- " + strings.TrimSpace(ti.OldString)
+				}
+				if ti.NewString != "" {
+					desc += "\n+ " + strings.TrimSpace(ti.NewString)
+				}
+				type editMeta struct {
+					Type      string `json:"type"`
+					FilePath  string `json:"file_path"`
+					OldString string `json:"old_string,omitempty"`
+					NewString string `json:"new_string,omitempty"`
+				}
+				m := editMeta{Type: "edit", FilePath: ti.FilePath, OldString: ti.OldString, NewString: ti.NewString}
+				if b, _ := json.Marshal(m); b != nil {
+					metaJSON = string(b)
+				}
+			}
+
+		// MCP tools (mcp__aipm__ prefix already stripped)
+		case strings.HasPrefix(raw.ToolName, "aipm_"):
+			name := "📡 " + raw.ToolName
+			desc = name
 			if ti.Query != "" {
-				desc = "🔍 " + ti.Query
-			} else if ti.Command != "" {
-				desc = "🔍 " + ti.Command
+				q := ti.Query
+				if len(q) > 60 { q = q[:60] + "..." }
+				desc += " \"" + q + "\""
 			}
 
 		default:
 			desc = "🛠 " + raw.ToolName
-			if len(raw.ToolInput) > 0 {
-				type unknownMeta struct {
-					Type  string          `json:"type"`
-					Tool  string          `json:"tool"`
-					Input json.RawMessage `json:"input,omitempty"`
-				}
-				if b, _ := json.Marshal(unknownMeta{Type: "tool", Tool: raw.ToolName, Input: raw.ToolInput}); b != nil {
-					metaJSON = string(b)
-				}
-			}
 		}
 
 		if desc != "" {
-			logDiscussion("", "assistant", "gemini-cli", desc, metaJSON)
-			logf("AfterTool %s logged (desc=%d chars, meta=%d chars)", raw.ToolName, len(desc), len(metaJSON))
-		} else {
-			logf("AfterTool %s: no description generated", raw.ToolName)
+			logDiscussion(raw.SessionID, "assistant", "gemini-cli", desc, metaJSON)
+			logf("%s %s logged", raw.Event, raw.ToolName)
 		}
-
-	case "AfterAgent":
-		logf("AfterAgent: response=%d chars", len(raw.PromptResponse))
-		if raw.PromptResponse != "" {
-			logDiscussion("", "assistant", "gemini-cli", raw.PromptResponse, "")
-			logf("logged to discussion (assistant/gemini-cli)")
-		}
-
-	default:
-		logf("unhandled event: %s", raw.Event)
 	}
 }
 
+// extractLLMText extracts readable text from Gemini CLI's llmContent field.
+// llmContent can be: a plain string, an array of {text: "..."} objects, or null.
+func extractLLMText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var arr []map[string]any
+	if json.Unmarshal(raw, &arr) == nil {
+		var parts []string
+		for _, item := range arr {
+			if t, ok := item["text"].(string); ok {
+				parts = append(parts, t)
+			}
+		}
+		return strings.Join(parts, "\n")
+	}
+	return ""
+}
+
 // setupGeminiHooks writes Gemini CLI hook configuration to .gemini/settings.json.
-// Uses the V2 hook format with matcher (wildcard) and nested hooks array.
 func setupGeminiHooks(commandPath string) error {
 	runtimeDir, _ := findRuntimeDir()
 	projectRoot := filepath.Dir(runtimeDir)
@@ -228,7 +253,6 @@ func setupGeminiHooks(commandPath string) error {
 		hooks = map[string]any{}
 	}
 
-	// Gemini CLI V2 hook format: [{matcher: "", hooks: [{type, command}]}]
 	hookEntry := []any{
 		map[string]any{
 			"matcher": "",
