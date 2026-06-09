@@ -160,6 +160,9 @@ func main() {
 	case "hook-gemini":
 		processGeminiHook()
 		return
+	case "hook-codex":
+		processCodexHook()
+		return
 	case "mcp":
 		server := newMCPServer(aiClient)
 		if err := server.Run(); err != nil {

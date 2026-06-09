@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // processGeminiHook reads the Gemini CLI hook stdin JSON and saves to discussion_log.
@@ -30,14 +31,16 @@ func processGeminiHook() {
 		os.Exit(0)
 	}
 
-	// Debug dump for inspection
-	f, _ := os.OpenFile(filepath.Join(os.TempDir(), "aipm-gemini-hook-debug.txt"),
-		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if f != nil {
-		fmt.Fprintf(f, "=== [%s] len=%d ===\n", now, len(data))
-		f.Write(data)
-		f.WriteString("\n=== END ===\n\n")
-		f.Close()
+	// Debug dump for inspection (only when AIPM_DEBUG_HOOK is set)
+	if os.Getenv("AIPM_DEBUG_HOOK") != "" {
+		f, _ := os.OpenFile(filepath.Join(os.TempDir(), "aipm-gemini-hook-debug.txt"),
+			os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if f != nil {
+			fmt.Fprintf(f, "=== [%s] len=%d ===\n", now, len(data))
+			f.Write(data)
+			f.WriteString("\n=== END ===\n\n")
+			f.Close()
+		}
 	}
 
 	// Parse just enough to route the event. Everything else goes into metadata as raw JSON.
@@ -140,7 +143,14 @@ func garbledFenceIndex(s string) int {
 	if mid >= len(mapping) {
 		return -1
 	}
-	return mapping[mid]
+	// Ensure the cut point is at a valid UTF-8 boundary.
+	// If mapping[mid] falls inside a multi-byte character, walk back
+	// to the start of that character so we never split a rune.
+	idx := mapping[mid]
+	for idx > 0 && !utf8.RuneStart(s[idx]) {
+		idx--
+	}
+	return idx
 }
 
 // buildFullMeta builds a metadata JSON from the complete raw hook input.
@@ -238,6 +248,22 @@ func escapeJSON(s string) string {
 	return s
 }
 
+// truncateText truncates s to at most maxRunes runes, adding "..." if truncated.
+// Unlike truncateStr (which uses byte length), this is safe for multi-byte UTF-8.
+func truncateText(s string, maxRunes int) string {
+	if utf8.RuneCountInString(s) <= maxRunes {
+		return s
+	}
+	count := 0
+	for i := range s {
+		if count >= maxRunes {
+			return s[:i] + "..."
+		}
+		count++
+	}
+	return s
+}
+
 // buildToolContent builds a concise human-readable description for a tool call.
 func buildToolContent(toolName string, toolInput, toolResp json.RawMessage) string {
 	ti := parseToolInput(toolInput)
@@ -255,12 +281,13 @@ func buildToolContent(toolName string, toolInput, toolResp json.RawMessage) stri
 		if cmd == "" && len(toolInput) > 0 {
 			cmd = string(toolInput)
 		}
-		if len(cmd) > 150 {
-			cmd = cmd[:150] + "..."
-		}
+		cmd = truncateText(cmd, 150)
 		result := "🔧 " + cmd
 		if llmText != "" {
-			result += "\n  → " + strings.TrimSpace(truncateStr(llmText, 120))
+			result += "\n  → " + strings.TrimSpace(truncateText(llmText, 120))
+		}
+		if ec := extractExitCode(toolResp); ec != 0 {
+			result += fmtExitCode(ec)
 		}
 		return result
 
@@ -268,6 +295,9 @@ func buildToolContent(toolName string, toolInput, toolResp json.RawMessage) stri
 		fp := ti["file_path"]
 		if fp == "" {
 			fp = ti["dir_path"]
+		}
+		if fp == "" {
+			fp = ti["path"]
 		}
 		if fp != "" {
 			return "👁 " + fp
@@ -334,9 +364,7 @@ func buildToolContent(toolName string, toolInput, toolResp json.RawMessage) stri
 			q = ti["q"]
 		}
 		if q != "" {
-			if len(q) > 60 {
-				q = q[:60] + "..."
-			}
+			q = truncateText(q, 60)
 			result += " \"" + q + "\""
 		}
 		return result
@@ -352,9 +380,7 @@ func buildToolContent(toolName string, toolInput, toolResp json.RawMessage) stri
 			label = ti["strategic_intent"]
 		}
 		if label != "" {
-			if len(label) > 100 {
-				label = label[:100] + "..."
-			}
+			label = truncateText(label, 100)
 			return "📌 " + label
 		}
 		return "📌 update_topic"
@@ -362,9 +388,7 @@ func buildToolContent(toolName string, toolInput, toolResp json.RawMessage) stri
 	case toolName == "grep_search":
 		pattern := ti["pattern"]
 		if pattern != "" {
-			if len(pattern) > 80 {
-				pattern = pattern[:80] + "..."
-			}
+			pattern = truncateText(pattern, 80)
 			return "🔍 \"" + pattern + "\""
 		}
 		return "🔍 grep_search"
@@ -373,10 +397,7 @@ func buildToolContent(toolName string, toolInput, toolResp json.RawMessage) stri
 		label := "🛠 " + toolName
 		for _, key := range []string{"query", "pattern", "file_path", "path", "url"} {
 			if v := ti[key]; v != "" {
-				qv := v
-				if len(qv) > 80 {
-					qv = qv[:80] + "..."
-				}
+				qv := truncateText(v, 80)
 				label += " \"" + qv + "\""
 				break
 			}
@@ -466,6 +487,31 @@ func extractLLMText(raw json.RawMessage) string {
 	return ""
 }
 
+// extractExitCode tries to find an exit code in tool_response JSON.
+// Returns 0 if no non-zero exit code is found.
+func extractExitCode(toolResp json.RawMessage) int {
+	if len(toolResp) == 0 {
+		return 0
+	}
+	// Try top-level exitCode
+	var flat struct {
+		ExitCode int `json:"exitCode"`
+	}
+	if json.Unmarshal(toolResp, &flat) == nil && flat.ExitCode != 0 {
+		return flat.ExitCode
+	}
+	// Try nested in returnDisplay
+	var nested struct {
+		ReturnDisplay struct {
+			ExitCode int `json:"exitCode"`
+		} `json:"returnDisplay"`
+	}
+	if json.Unmarshal(toolResp, &nested) == nil && nested.ReturnDisplay.ExitCode != 0 {
+		return nested.ReturnDisplay.ExitCode
+	}
+	return 0
+}
+
 // ---- Diff parsing ----
 
 type PatchHunk struct {
@@ -495,15 +541,26 @@ func parseDiffToHunks(diff string) []PatchHunk {
 				newNums := strings.Split(newPart, ",")
 
 				h := PatchHunk{}
-				fmt.Sscanf(oldNums[0], "%d", &h.OldStart)
+				if _, err := fmt.Sscanf(oldNums[0], "%d", &h.OldStart); err != nil {
+					// Malformed hunk header — skip this hunk
+					currentHunk = nil
+					continue
+				}
 				if len(oldNums) > 1 {
-					fmt.Sscanf(oldNums[1], "%d", &h.OldLines)
+					if _, err := fmt.Sscanf(oldNums[1], "%d", &h.OldLines); err != nil {
+						h.OldLines = 1
+					}
 				} else {
 					h.OldLines = 1
 				}
-				fmt.Sscanf(newNums[0], "%d", &h.NewStart)
+				if _, err := fmt.Sscanf(newNums[0], "%d", &h.NewStart); err != nil {
+					currentHunk = nil
+					continue
+				}
 				if len(newNums) > 1 {
-					fmt.Sscanf(newNums[1], "%d", &h.NewLines)
+					if _, err := fmt.Sscanf(newNums[1], "%d", &h.NewLines); err != nil {
+						h.NewLines = 1
+					}
 				} else {
 					h.NewLines = 1
 				}
@@ -540,13 +597,14 @@ func setupGeminiHooks(commandPath string) error {
 		hooks = map[string]any{}
 	}
 
+	// Quote the path in case it contains spaces (e.g. from os.Executable()).
 	hookEntry := []any{
 		map[string]any{
 			"matcher": "",
 			"hooks": []any{
 				map[string]any{
 					"type":    "command",
-					"command": commandPath + " hook-gemini",
+					"command": "\"" + commandPath + "\" hook-gemini",
 				},
 			},
 		},
@@ -554,7 +612,6 @@ func setupGeminiHooks(commandPath string) error {
 
 	hooks["BeforeAgent"] = hookEntry
 	hooks["AfterAgent"] = hookEntry
-	hooks["BeforeTool"] = hookEntry
 	hooks["AfterTool"] = hookEntry
 	cfg["hooks"] = hooks
 
