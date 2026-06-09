@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -17,30 +18,29 @@ import (
 // Strategy: store the COMPLETE raw JSON as metadata so nothing is lost.
 // The UI / analysis layer can parse and display it later.
 func processGeminiHook() {
-	now := time.Now().Format("15:04:05.000")
+	now := time.Now().Format("2006-01-02T15:04:05.000")
 	data, _ := io.ReadAll(os.Stdin)
+
+	// Always persist raw hook JSON for debugging.
+	dumpRawHook("gemini", now, data)
 
 	logf := func(format string, args ...any) {
 		fmt.Fprintf(os.Stderr, "[aipm-gemini %s] ", now)
 		fmt.Fprintf(os.Stderr, format+"\n", args...)
 	}
 
+	// Catch panics so a bug never crashes the parent process.
+	defer func() {
+		if r := recover(); r != nil {
+			logf("PANIC: %v\n%s", r, string(debug.Stack()))
+			os.Exit(0)
+		}
+	}()
+
 	logf("hook called, stdin=%d bytes", len(data))
 	if len(data) < 10 {
 		logf("stdin too short, exiting")
 		os.Exit(0)
-	}
-
-	// Debug dump for inspection (only when AIPM_DEBUG_HOOK is set)
-	if os.Getenv("AIPM_DEBUG_HOOK") != "" {
-		f, _ := os.OpenFile(filepath.Join(os.TempDir(), "aipm-gemini-hook-debug.txt"),
-			os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if f != nil {
-			fmt.Fprintf(f, "=== [%s] len=%d ===\n", now, len(data))
-			f.Write(data)
-			f.WriteString("\n=== END ===\n\n")
-			f.Close()
-		}
 	}
 
 	// Parse just enough to route the event. Everything else goes into metadata as raw JSON.
@@ -58,17 +58,20 @@ func processGeminiHook() {
 	}
 
 	if err := json.Unmarshal(data, &raw); err != nil {
-		logf("JSON parse FAILED: %v", err)
+		logf("JSON parse FAILED: %v — raw(first 200): %s", err, safePrefix(string(data), 200))
 		os.Exit(0)
 	}
-	logf("event=%s tool=%s", raw.Event, raw.ToolName)
+	logf("event=%s tool=%s session=%s", raw.Event, raw.ToolName, raw.SessionID)
 
 	switch raw.Event {
 	case "BeforeAgent":
 		if raw.Prompt != "" {
 			meta := buildFullMeta("before_agent", data)
-			logDiscussion(raw.SessionID, "user", "gemini-cli", raw.Prompt, meta)
-			logf("BeforeAgent logged (%d chars)", len(raw.Prompt))
+			if _, err := logDiscussion(raw.SessionID, "user", "gemini-cli", raw.Prompt, meta); err != nil {
+				logf("BeforeAgent log FAILED: %v", err)
+			} else {
+				logf("BeforeAgent logged (%d chars)", len(raw.Prompt))
+			}
 		}
 
 	case "AfterAgent":
@@ -82,8 +85,11 @@ func processGeminiHook() {
 				clean = clean[:idx]
 			}
 			meta := buildFullMeta("after_agent", data)
-			logDiscussion(raw.SessionID, "assistant", "gemini-cli", clean, meta)
-			logf("AfterAgent logged (%d/%d chars)", len(clean), len(raw.Response))
+			if _, err := logDiscussion(raw.SessionID, "assistant", "gemini-cli", clean, meta); err != nil {
+				logf("AfterAgent log FAILED: %v", err)
+			} else {
+				logf("AfterAgent logged (%d/%d chars)", len(clean), len(raw.Response))
+			}
 		}
 
 	case "BeforeTool":
@@ -103,8 +109,11 @@ func processGeminiHook() {
 		meta := buildFullMeta("after_tool", data)
 
 		if content != "" {
-			logDiscussion(raw.SessionID, "assistant", "gemini-cli", content, meta)
-			logf("AfterTool %s logged", raw.ToolName)
+			if _, err := logDiscussion(raw.SessionID, "assistant", "gemini-cli", content, meta); err != nil {
+				logf("AfterTool %s log FAILED: %v", raw.ToolName, err)
+			} else {
+				logf("AfterTool %s logged", raw.ToolName)
+			}
 		} else {
 			logf("AfterTool %s — empty content, skipped", raw.ToolName)
 		}
@@ -597,14 +606,16 @@ func setupGeminiHooks(commandPath string) error {
 		hooks = map[string]any{}
 	}
 
-	// Quote the path in case it contains spaces (e.g. from os.Executable()).
+	// Only quote the path if it contains spaces — bare quoting "aipmc"
+	// breaks command execution on Windows.
+	hookCmd := shellQuote(commandPath) + " hook-gemini"
 	hookEntry := []any{
 		map[string]any{
 			"matcher": "",
 			"hooks": []any{
 				map[string]any{
 					"type":    "command",
-					"command": "\"" + commandPath + "\" hook-gemini",
+					"command": hookCmd,
 				},
 			},
 		},

@@ -6,7 +6,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
+	"time"
 )
 
 // processClaudeHook reads the Claude Code PostToolUse/Stop/UserPromptSubmit hook stdin
@@ -14,7 +16,20 @@ import (
 // Uses Go's encoding/json — 100% reliable, zero shell dependency.
 // Called via: aipmc hook-process
 func processClaudeHook() {
+	now := time.Now().Format("2006-01-02T15:04:05.000")
 	data, _ := io.ReadAll(os.Stdin)
+
+	// Always persist raw hook JSON for debugging.
+	dumpRawHook("claude", now, data)
+
+	// Catch panics so a bug never crashes the parent process.
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "[aipm-claude %s] PANIC: %v\n%s\n", now, r, string(debug.Stack()))
+			os.Exit(0)
+		}
+	}()
+
 	if len(data) < 10 {
 		os.Exit(0)
 	}
@@ -41,29 +56,34 @@ func processClaudeHook() {
 			NewString string `json:"new_string"`
 		} `json:"tool_input"`
 		ToolResponse struct {
-			OriginalFile string `json:"originalFile"`
-			FilePath     string `json:"filePath"`
-			Stdout       string `json:"stdout"`
-			Stderr       string `json:"stderr"`
-			ExitCode     int    `json:"exitCode"`
-			Content      string `json:"content"`
-			LinesCount   int    `json:"linesCount"`
-				StructuredPatch []patchHunk `json:"structuredPatch"`
+			OriginalFile    string      `json:"originalFile"`
+			FilePath        string      `json:"filePath"`
+			Stdout          string      `json:"stdout"`
+			Stderr          string      `json:"stderr"`
+			ExitCode        int         `json:"exitCode"`
+			Content         string      `json:"content"`
+			LinesCount      int         `json:"linesCount"`
+			StructuredPatch []patchHunk `json:"structuredPatch"`
 		} `json:"tool_response"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
+		fmt.Fprintf(os.Stderr, "[aipm-claude %s] JSON parse FAILED: %v — raw(first 200): %s\n", now, err, safePrefix(string(data), 200))
 		os.Exit(0)
 	}
 
 	switch raw.Event {
 	case "UserPromptSubmit":
 		if raw.Prompt != "" {
-			logDiscussion(raw.SessionID, "user", "claude-code", raw.Prompt, "")
+			if _, err := logDiscussion(raw.SessionID, "user", "claude-code", raw.Prompt, ""); err != nil {
+				fmt.Fprintf(os.Stderr, "[aipm-claude %s] UserPromptSubmit log FAILED: %v\n", now, err)
+			}
 		}
 
 	case "Stop", "StopFailure":
 		if raw.LastAssistantMessage != "" {
-			logDiscussion(raw.SessionID, "assistant", "claude-code", raw.LastAssistantMessage, "")
+			if _, err := logDiscussion(raw.SessionID, "assistant", "claude-code", raw.LastAssistantMessage, ""); err != nil {
+				fmt.Fprintf(os.Stderr, "[aipm-claude %s] Stop log FAILED: %v\n", now, err)
+			}
 		}
 
 	case "PostToolUse":
@@ -202,7 +222,9 @@ func processClaudeHook() {
 		}
 
 		if desc != "" {
-			logDiscussion(raw.SessionID, "assistant", "claude-code", desc, metadataJSON)
+			if _, err := logDiscussion(raw.SessionID, "assistant", "claude-code", desc, metadataJSON); err != nil {
+				fmt.Fprintf(os.Stderr, "[aipm-claude %s] PostToolUse %s log FAILED: %v\n", now, raw.ToolName, err)
+			}
 		}
 	}
 	os.Exit(0)

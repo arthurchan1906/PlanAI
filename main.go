@@ -87,8 +87,8 @@ func main() {
 			fmt.Fprintf(os.Stderr, "setup failed: %v\n", err)
 			os.Exit(1)
 		}
-		// Also setup hooks for Claude Code
-		if resolved == "Claude Code" || target == "claude" || resolved == "Gemini CLI" || target == "gemini" {
+		// Also setup hooks for platforms that support them
+		if resolved == "Claude Code" || target == "claude" || resolved == "Gemini CLI" || target == "gemini" || resolved == "Codex (OpenAI)" || target == "codex" {
 			// Auto-detect binary path and configure Claude Code / Gemini hooks
 			if err := setupHooksCmd(resolved); err != nil {
 				fmt.Fprintf(os.Stderr, "hook setup failed: %v\n", err)

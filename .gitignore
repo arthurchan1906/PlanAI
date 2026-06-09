@@ -48,6 +48,7 @@ Thumbs.db
 .cursor/
 .windsurf/
 .gemini/
+.codex/
 .mcp.json
 
 # Frontend
