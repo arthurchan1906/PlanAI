@@ -12,6 +12,9 @@ import (
 
 // processGeminiHook reads the Gemini CLI hook stdin JSON and saves to discussion_log.
 // Called via: aipmc hook-gemini
+//
+// Strategy: store the COMPLETE raw JSON as metadata so nothing is lost.
+// The UI / analysis layer can parse and display it later.
 func processGeminiHook() {
 	now := time.Now().Format("15:04:05.000")
 	data, _ := io.ReadAll(os.Stdin)
@@ -37,201 +40,433 @@ func processGeminiHook() {
 		f.Close()
 	}
 
-	type toolInput struct {
-		Command   string `json:"command"`
-		FilePath  string `json:"file_path"`
-		DirPath   string `json:"dir_path"`
-		Content   string `json:"content"`
-		OldString string `json:"old_string"`
-		NewString string `json:"new_string"`
-		Query     string `json:"query"`
-	}
-
+	// Parse just enough to route the event. Everything else goes into metadata as raw JSON.
 	var raw struct {
-		Event     string `json:"hook_event_name"`
-		SessionID string `json:"session_id"`
-		Prompt    string `json:"prompt"`
-		Response  string `json:"prompt_response"`
-		ToolName  string `json:"tool_name"`
-		ToolInput json.RawMessage
-		ToolResp  struct {
-			LLMContent json.RawMessage `json:"llmContent"`
-			ExitCode   int             `json:"exit_code"`
-			FileDiff   string          `json:"fileDiff"` // Diff for replace/write_file
-			FileName   string          `json:"fileName"`
-			IsNewFile  bool            `json:"isNewFile"`
-		} `json:"tool_response"`
+		Event     string          `json:"hook_event_name"`
+		SessionID string          `json:"session_id"`
+		Prompt    string          `json:"prompt"`
+		Response  string          `json:"prompt_response"`
+		ToolName  string          `json:"tool_name"`
+		ToolInput json.RawMessage `json:"tool_input"`
+		ToolResp  json.RawMessage `json:"tool_response"`
+		// CWD and timestamp for context
+		CWD       string `json:"cwd"`
+		Timestamp string `json:"timestamp"`
 	}
 
 	if err := json.Unmarshal(data, &raw); err != nil {
 		logf("JSON parse FAILED: %v", err)
 		os.Exit(0)
 	}
-	logf("event=%s", raw.Event)
+	logf("event=%s tool=%s", raw.Event, raw.ToolName)
 
 	switch raw.Event {
 	case "BeforeAgent":
 		if raw.Prompt != "" {
-			logDiscussion(raw.SessionID, "user", "gemini-cli", raw.Prompt, "")
+			meta := buildFullMeta("before_agent", data)
+			logDiscussion(raw.SessionID, "user", "gemini-cli", raw.Prompt, meta)
 			logf("BeforeAgent logged (%d chars)", len(raw.Prompt))
 		}
 
 	case "AfterAgent":
 		if raw.Response != "" {
-			logDiscussion(raw.SessionID, "assistant", "gemini-cli", raw.Response, "")
-			logf("AfterAgent logged (%d chars)", len(raw.Response))
+			// Strip the garbled duplicate that Gemini CLI appends.
+			// The duplicate begins right after a closing ``` that is NOT
+			// followed by \n:  "...``` 重复内容..."  (should be "...```\n...")
+			// Valid fences ("```\n" or "```text\n") are left alone.
+			clean := raw.Response
+			if idx := garbledFenceIndex(clean); idx >= 0 {
+				clean = clean[:idx]
+			}
+			meta := buildFullMeta("after_agent", data)
+			logDiscussion(raw.SessionID, "assistant", "gemini-cli", clean, meta)
+			logf("AfterAgent logged (%d/%d chars)", len(clean), len(raw.Response))
 		}
 
-	case "BeforeTool", "AfterTool":
+	case "BeforeTool":
+		// Skip BeforeTool — only record AfterTool to avoid duplicates.
+		logf("BeforeTool %s skipped (only AfterTool is recorded)", raw.ToolName)
+
+	case "AfterTool":
 		if raw.ToolName == "" {
 			break
 		}
+
 		// Normalize MCP tool names: strip server prefix
-		// Handles both "mcp_aipm_" and "mcp__aipm__" formats
 		raw.ToolName = strings.TrimPrefix(raw.ToolName, "mcp__aipm__")
 		raw.ToolName = strings.TrimPrefix(raw.ToolName, "mcp_aipm_")
 
-		var ti toolInput
-		json.Unmarshal(raw.ToolInput, &ti)
-		llmText := extractLLMText(raw.ToolResp.LLMContent)
+		content := buildToolContent(raw.ToolName, raw.ToolInput, raw.ToolResp)
+		meta := buildFullMeta("after_tool", data)
 
-		desc := ""
-		var metadataJSON string
-
-		switch {
-		// Shell commands
-		case raw.ToolName == "run_shell_command" || raw.ToolName == "execute_command":
-			cmd := ti.Command
-			if cmd == "" {
-				cmd = fmt.Sprintf("%v", raw.ToolInput)
-			}
-			if len(cmd) > 150 {
-				cmd = cmd[:150] + "..."
-			}
-			desc = "🔧 " + cmd
-
-			type bashMeta struct {
-				Type     string `json:"type"`
-				Command  string `json:"command"`
-				ExitCode int    `json:"exit_code"`
-				Output   string `json:"output,omitempty"`
-			}
-			m := bashMeta{Type: "bash", Command: ti.Command, ExitCode: raw.ToolResp.ExitCode, Output: truncateStr(llmText, 2000)}
-			if b, _ := json.Marshal(m); b != nil {
-				metadataJSON = string(b)
-			}
-			if llmText != "" {
-				desc += "\n  → " + strings.TrimSpace(truncateStr(llmText, 120))
-			}
-			if raw.ToolResp.ExitCode != 0 {
-				desc += fmtExitCode(raw.ToolResp.ExitCode)
-			}
-
-		// File reading
-		case raw.ToolName == "read_file":
-			fp := ti.FilePath
-			if fp == "" {
-				fp = ti.DirPath
-			}
-			if fp != "" {
-				desc = "👁 " + fp
-				type readMeta struct {
-					Type     string `json:"type"`
-					FilePath string `json:"file_path"`
-				}
-				m := readMeta{Type: "read", FilePath: fp}
-				if b, _ := json.Marshal(m); b != nil {
-					metadataJSON = string(b)
-				}
-			}
-
-		// Directory listing
-		case raw.ToolName == "list_directory":
-			fp := ti.DirPath
-			if fp == "" {
-				fp = ti.FilePath
-			}
-			if fp != "" {
-				desc = "📂 " + fp
-			}
-
-		// File writing (new file)
-		case raw.ToolName == "write_file" || raw.ToolName == "write":
-			if ti.FilePath != "" {
-				if raw.ToolResp.IsNewFile {
-					desc = "🆕 " + ti.FilePath
-					type newFileMeta struct {
-						Type     string `json:"type"`
-						FilePath string `json:"file_path"`
-					}
-					if b, _ := json.Marshal(newFileMeta{Type: "new_file", FilePath: ti.FilePath}); b != nil {
-						metadataJSON = string(b)
-					}
-				} else {
-					desc = "📝 " + ti.FilePath
-					type editMeta struct {
-						Type     string      `json:"type"`
-						FilePath string      `json:"file_path"`
-						Hunks    []PatchHunk `json:"hunks,omitempty"`
-					}
-					m := editMeta{Type: "edit", FilePath: ti.FilePath}
-					if raw.ToolResp.FileDiff != "" {
-						m.Hunks = parseDiffToHunks(raw.ToolResp.FileDiff)
-					}
-					if b, _ := json.Marshal(m); b != nil {
-						metadataJSON = string(b)
-					}
-				}
-			}
-
-		// File editing
-		case raw.ToolName == "replace" || raw.ToolName == "edit_file" || raw.ToolName == "edit":
-			if ti.FilePath != "" {
-				desc = "📝 " + ti.FilePath
-				if ti.OldString != "" {
-					desc += "\n- " + strings.TrimSpace(ti.OldString)
-				}
-				if ti.NewString != "" {
-					desc += "\n+ " + strings.TrimSpace(ti.NewString)
-				}
-				type editMeta struct {
-					Type      string      `json:"type"`
-					FilePath  string      `json:"file_path"`
-					Hunks     []PatchHunk `json:"hunks,omitempty"`
-					OldString string      `json:"old_string,omitempty"`
-					NewString string      `json:"new_string,omitempty"`
-				}
-				m := editMeta{Type: "edit", FilePath: ti.FilePath, OldString: ti.OldString, NewString: ti.NewString}
-				if raw.ToolResp.FileDiff != "" {
-					m.Hunks = parseDiffToHunks(raw.ToolResp.FileDiff)
-				}
-				if b, _ := json.Marshal(m); b != nil {
-					metadataJSON = string(b)
-				}
-			}
-
-		// MCP tools (mcp__aipm__ prefix already stripped)
-		case strings.HasPrefix(raw.ToolName, "aipm_"):
-			name := "📡 " + raw.ToolName
-			desc = name
-			if ti.Query != "" {
-				q := ti.Query
-				if len(q) > 60 {
-					q = q[:60] + "..."
-				}
-				desc += " \"" + q + "\""
-			}
-
-		default:
-			desc = "🛠 " + raw.ToolName
-		}
-
-		if desc != "" {
-			logDiscussion(raw.SessionID, "assistant", "gemini-cli", desc, metadataJSON)
-			logf("%s %s logged", raw.Event, raw.ToolName)
+		if content != "" {
+			logDiscussion(raw.SessionID, "assistant", "gemini-cli", content, meta)
+			logf("AfterTool %s logged", raw.ToolName)
+		} else {
+			logf("AfterTool %s — empty content, skipped", raw.ToolName)
 		}
 	}
 }
+
+// garbledFenceIndex finds where the garbled duplicate begins.
+//
+// Gemini CLI's prompt_response is the clean text followed by a garbled copy
+// with random extra spaces. When you strip ALL spaces, the two halves are
+// identical. So the midpoint of the space-normalized text IS the boundary.
+func garbledFenceIndex(s string) int {
+	if len(s) < 200 {
+		return -1
+	}
+
+	// Build space-normalized version, tracking original positions.
+	var mapping []int // normalized-index → original-index
+	var norm strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] != ' ' {
+			mapping = append(mapping, i)
+			norm.WriteByte(s[i])
+		}
+	}
+
+	n := norm.Len()
+	if n < 80 {
+		return -1
+	}
+
+	// The clean text and garbled copy are the same (minus spaces).
+	// Midpoint of normalized text ≈ boundary in original text.
+	// Use 48% to stay slightly conservative (don't cut into clean text).
+	mid := n * 48 / 100
+	if mid >= len(mapping) {
+		return -1
+	}
+	return mapping[mid]
+}
+
+// buildFullMeta builds a metadata JSON from the complete raw hook input.
+// We re-serialize to ensure valid JSON and add a type tag.
+// For AfterTool events, also extracts standardized diff fields so the frontend
+// can render Gemini data the same as Claude Code data.
+func buildFullMeta(eventType string, rawJSON []byte) string {
+	var raw map[string]any
+	if err := json.Unmarshal(rawJSON, &raw); err != nil {
+		return fmt.Sprintf(`{"type":"%s","raw":"%s"}`, eventType, escapeJSON(string(rawJSON)))
+	}
+	raw["_type"] = eventType
+	delete(raw, "transcript_path")
+
+	// Enrich AfterTool events with standardized diff metadata
+	if eventType == "after_tool" {
+		enrichGeminiMeta(raw)
+	}
+
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// enrichGeminiMeta extracts standardized diff fields from Gemini CLI's
+// nested tool_response.returnDisplay format and promotes them to top-level
+// metadata keys so the frontend can render diffs using the same code paths
+// as Claude Code (DiffPanel + renderUnifiedHunks).
+func enrichGeminiMeta(raw map[string]any) {
+	toolResp, _ := raw["tool_response"].(map[string]any)
+	if toolResp == nil {
+		return
+	}
+
+	rdRaw := toolResp["returnDisplay"]
+	if rdRaw == nil {
+		return
+	}
+	rd, _ := rdRaw.(map[string]any)
+	if rd == nil {
+		return
+	}
+
+	fp, _ := rd["filePath"].(string)
+	if fp == "" {
+		fp, _ = rd["fileName"].(string)
+	}
+	if fp == "" {
+		if ti, ok := raw["tool_input"].(map[string]any); ok {
+			fp, _ = ti["file_path"].(string)
+			if fp == "" {
+				fp, _ = ti["path"].(string)
+			}
+		}
+	}
+
+	// Case 1: New file
+	if isNew, ok := rd["isNewFile"].(bool); ok && isNew {
+		raw["type"] = "new_file"
+		raw["file_path"] = fp
+		return
+	}
+
+	// Case 2: Edit with unified diff
+	fileDiff, _ := rd["fileDiff"].(string)
+	if fileDiff == "" {
+		return
+	}
+
+	raw["type"] = "edit"
+	raw["file_path"] = fp
+
+	hunks := parseDiffToHunks(fileDiff)
+	if len(hunks) > 0 {
+		raw["hunks"] = hunks
+	}
+
+	if ti, ok := raw["tool_input"].(map[string]any); ok {
+		if oldStr, ok := ti["old_string"].(string); ok && oldStr != "" {
+			raw["old_string"] = oldStr
+		}
+		if newStr, ok := ti["new_string"].(string); ok && newStr != "" {
+			raw["new_string"] = newStr
+		}
+	}
+}
+
+func escapeJSON(s string) string {
+	b, _ := json.Marshal(s)
+	if len(b) >= 2 {
+		return string(b[1 : len(b)-1])
+	}
+	return s
+}
+
+// buildToolContent builds a concise human-readable description for a tool call.
+func buildToolContent(toolName string, toolInput, toolResp json.RawMessage) string {
+	ti := parseToolInput(toolInput)
+	llmText := extractLLMText(toolResp)
+
+	switch {
+	case toolName == "run_shell_command" || toolName == "execute_command":
+		cmd := ti["command"]
+		if cmd == "" {
+			cmd = ti["cmd"]
+		}
+		if cmd == "" {
+			cmd = ti["description"]
+		}
+		if cmd == "" && len(toolInput) > 0 {
+			cmd = string(toolInput)
+		}
+		if len(cmd) > 150 {
+			cmd = cmd[:150] + "..."
+		}
+		result := "🔧 " + cmd
+		if llmText != "" {
+			result += "\n  → " + strings.TrimSpace(truncateStr(llmText, 120))
+		}
+		return result
+
+	case toolName == "read_file":
+		fp := ti["file_path"]
+		if fp == "" {
+			fp = ti["dir_path"]
+		}
+		if fp != "" {
+			return "👁 " + fp
+		}
+		return "👁 read_file"
+
+	case toolName == "write_file" || toolName == "write":
+		fp := ti["file_path"]
+		if fp == "" {
+			fp = ti["path"]
+		}
+		if fp != "" {
+			if isNewFile(toolResp) {
+				return "🆕 " + fp
+			}
+			return "📝 " + fp
+		}
+		return "📝 write_file"
+
+	case toolName == "replace" || toolName == "edit_file" || toolName == "edit":
+		fp := ti["file_path"]
+		if fp == "" {
+			fp = ti["path"]
+		}
+		result := ""
+		if fp != "" {
+			result = "📝 " + fp
+		} else {
+			result = "📝 replace"
+		}
+		oldStr := ti["old_string"]
+		if oldStr == "" {
+			oldStr = ti["old_str"]
+		}
+		newStr := ti["new_string"]
+		if newStr == "" {
+			newStr = ti["new_str"]
+		}
+		if oldStr != "" {
+			result += "\n- " + strings.TrimSpace(oldStr)
+		}
+		if newStr != "" {
+			result += "\n+ " + strings.TrimSpace(newStr)
+		}
+		return result
+
+	case toolName == "list_directory":
+		fp := ti["dir_path"]
+		if fp == "" {
+			fp = ti["file_path"]
+		}
+		if fp == "" {
+			fp = ti["path"]
+		}
+		if fp != "" {
+			return "📂 " + fp
+		}
+		return "📂 list_directory"
+
+	case strings.HasPrefix(toolName, "aipm_"):
+		result := "📡 " + toolName
+		q := ti["query"]
+		if q == "" {
+			q = ti["q"]
+		}
+		if q != "" {
+			if len(q) > 60 {
+				q = q[:60] + "..."
+			}
+			result += " \"" + q + "\""
+		}
+		return result
+
+	case toolName == "update_topic":
+		// Gemini CLI sends title, summary, strategic_intent — not always all three.
+		// Prefer title (shortest), then summary, then strategic_intent.
+		label := ti["title"]
+		if label == "" {
+			label = ti["summary"]
+		}
+		if label == "" {
+			label = ti["strategic_intent"]
+		}
+		if label != "" {
+			if len(label) > 100 {
+				label = label[:100] + "..."
+			}
+			return "📌 " + label
+		}
+		return "📌 update_topic"
+
+	case toolName == "grep_search":
+		pattern := ti["pattern"]
+		if pattern != "" {
+			if len(pattern) > 80 {
+				pattern = pattern[:80] + "..."
+			}
+			return "🔍 \"" + pattern + "\""
+		}
+		return "🔍 grep_search"
+
+	default:
+		label := "🛠 " + toolName
+		for _, key := range []string{"query", "pattern", "file_path", "path", "url"} {
+			if v := ti[key]; v != "" {
+				qv := v
+				if len(qv) > 80 {
+					qv = qv[:80] + "..."
+				}
+				label += " \"" + qv + "\""
+				break
+			}
+		}
+		return label
+	}
+}
+
+// parseToolInput extracts known fields from tool_input into a flat map.
+func parseToolInput(raw json.RawMessage) map[string]string {
+	result := make(map[string]string)
+	if len(raw) == 0 {
+		return result
+	}
+	var m map[string]any
+	if json.Unmarshal(raw, &m) != nil {
+		return result
+	}
+	for k, v := range m {
+		if s, ok := v.(string); ok {
+			result[k] = s
+		}
+	}
+	return result
+}
+
+// isNewFile checks if the tool_response.returnDisplay contains isNewFile: true.
+func isNewFile(toolResp json.RawMessage) bool {
+	if len(toolResp) == 0 {
+		return false
+	}
+	var resp struct {
+		ReturnDisplay struct {
+			IsNewFile bool `json:"isNewFile"`
+		} `json:"returnDisplay"`
+	}
+	if json.Unmarshal(toolResp, &resp) == nil {
+		return resp.ReturnDisplay.IsNewFile
+	}
+	var flat struct {
+		IsNewFile bool `json:"isNewFile"`
+	}
+	if json.Unmarshal(toolResp, &flat) == nil {
+		return flat.IsNewFile
+	}
+	return false
+}
+
+// extractLLMText extracts readable text from Gemini CLI's tool_response.
+// Handles: plain string, array of {text: "..."}, or {llmContent: ..., returnDisplay: ...}.
+func extractLLMText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var arr []map[string]any
+	if json.Unmarshal(raw, &arr) == nil {
+		var parts []string
+		for _, item := range arr {
+			if t, ok := item["text"].(string); ok {
+				parts = append(parts, t)
+			}
+		}
+		return strings.Join(parts, "")
+	}
+	var resp struct {
+		LLMContent    json.RawMessage `json:"llmContent"`
+		ReturnDisplay json.RawMessage `json:"returnDisplay"`
+	}
+	if json.Unmarshal(raw, &resp) == nil {
+		if len(resp.LLMContent) > 0 {
+			return extractLLMText(resp.LLMContent)
+		}
+		if len(resp.ReturnDisplay) > 0 {
+			return extractLLMText(resp.ReturnDisplay)
+		}
+	}
+	var summary struct {
+		Summary string `json:"summary"`
+	}
+	if json.Unmarshal(raw, &summary) == nil && summary.Summary != "" {
+		return summary.Summary
+	}
+	return ""
+}
+
+// ---- Diff parsing ----
 
 type PatchHunk struct {
 	OldStart int      `json:"oldStart"`
@@ -251,7 +486,6 @@ func parseDiffToHunks(diff string) []PatchHunk {
 			if currentHunk != nil {
 				hunks = append(hunks, *currentHunk)
 			}
-			// Parse @@ -1,7 +1,7 @@
 			parts := strings.Split(line, " ")
 			if len(parts) >= 3 {
 				oldPart := strings.TrimPrefix(parts[1], "-")
@@ -288,28 +522,7 @@ func parseDiffToHunks(diff string) []PatchHunk {
 	return hunks
 }
 
-// extractLLMText extracts readable text from Gemini CLI's llmContent field.
-// llmContent can be: a plain string, an array of {text: "..."} objects, or null.
-func extractLLMText(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	var s string
-	if json.Unmarshal(raw, &s) == nil {
-		return s
-	}
-	var arr []map[string]any
-	if json.Unmarshal(raw, &arr) == nil {
-		var parts []string
-		for _, item := range arr {
-			if t, ok := item["text"].(string); ok {
-				parts = append(parts, t)
-			}
-		}
-		return strings.Join(parts, "\n")
-	}
-	return ""
-}
+// ---- Gemini CLI hook setup ----
 
 // setupGeminiHooks writes Gemini CLI hook configuration to .gemini/settings.json.
 func setupGeminiHooks(commandPath string) error {
