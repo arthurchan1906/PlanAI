@@ -21,8 +21,9 @@ func processGeminiHook() {
 	now := time.Now().Format("2006-01-02T15:04:05.000")
 	data, _ := io.ReadAll(os.Stdin)
 
-	// Always persist raw hook JSON for debugging.
-	dumpRawHook("gemini", now, data)
+	if os.Getenv("AIPM_DEBUG_HOOK") != "" {
+		dumpRawHook("gemini", now, data)
+	}
 
 	logf := func(format string, args ...any) {
 		fmt.Fprintf(os.Stderr, "[aipm-gemini %s] ", now)
@@ -76,12 +77,8 @@ func processGeminiHook() {
 
 	case "AfterAgent":
 		if raw.Response != "" {
-			// Strip the garbled duplicate that Gemini CLI appends.
-			// The duplicate begins right after a closing ``` that is NOT
-			// followed by \n:  "...``` 重复内容..."  (should be "...```\n...")
-			// Valid fences ("```\n" or "```text\n") are left alone.
 			clean := raw.Response
-			if idx := garbledFenceIndex(clean); idx >= 0 {
+			if idx := findGarbledBoundary(clean); idx >= 0 {
 				clean = clean[:idx]
 			}
 			meta := buildFullMeta("after_agent", data)
@@ -120,46 +117,89 @@ func processGeminiHook() {
 	}
 }
 
-// garbledFenceIndex finds where the garbled duplicate begins.
+// findGarbledBoundary locates the split between clean text and garbled duplicate
+// in Gemini CLI's prompt_response.
 //
-// Gemini CLI's prompt_response is the clean text followed by a garbled copy
-// with random extra spaces. When you strip ALL spaces, the two halves are
-// identical. So the midpoint of the space-normalized text IS the boundary.
-func garbledFenceIndex(s string) int {
+// Gemini appends a garbled copy of the response suffix with random extra
+// whitespace. After stripping ALL whitespace, the text has the form:
+//
+//	stripped = clean_prefix + B + B
+//
+// where B is the duplicated suffix. The algorithm takes the last k chars
+// (whitespace-stripped), searches for them earlier in the text, and uses the
+// match position as the boundary.
+func findGarbledBoundary(s string) int {
 	if len(s) < 200 {
 		return -1
 	}
 
-	// Build space-normalized version, tracking original positions.
-	var mapping []int // normalized-index → original-index
+	// Build whitespace-normalized version with position mapping.
+	var mapping []int
 	var norm strings.Builder
 	for i := 0; i < len(s); i++ {
-		if s[i] != ' ' {
+		if !isSpace(s[i]) {
 			mapping = append(mapping, i)
 			norm.WriteByte(s[i])
 		}
 	}
 
-	n := norm.Len()
-	if n < 80 {
+	stripped := norm.String()
+	N := len(stripped)
+	if N < 60 {
 		return -1
 	}
 
-	// The clean text and garbled copy are the same (minus spaces).
-	// Midpoint of normalized text ≈ boundary in original text.
-	// Use 48% to stay slightly conservative (don't cut into clean text).
-	mid := n * 48 / 100
-	if mid >= len(mapping) {
-		return -1
+	// Adaptive K-search.  Stripped text = clean_prefix + B + B.
+	// For any suffix of length K that fits entirely within the second B:
+	//   first = start(B) + len(B) - K   ⇒   first + K = start(B) + len(B)
+	// i.e. first+K is the boundary regardless of K.  So we stop at the
+	// first K that gives a unique match (matches=1), or on a 1→0 drop
+	// (K crossed into clean_prefix — use the previous iteration).
+	prevFirst := -1
+	prevK := 0
+	for k := 4; k < N; k++ {
+		suffix := stripped[N-k:]
+		if N-k <= 0 {
+			break
+		}
+		first := strings.Index(stripped[:N-k], suffix)
+
+		if first < 0 {
+			// Crossed into clean_prefix — use last valid match.
+			if prevFirst >= 0 {
+				k = prevK
+				first = prevFirst
+			} else {
+				return -1
+			}
+		}
+
+		// Check uniqueness: is there a second match?
+		second := strings.Index(stripped[first+1:N-k], suffix)
+		if second >= 0 {
+			// Multiple matches — need larger K to disambiguate.
+			prevFirst = first
+			prevK = k
+			continue
+		}
+
+		// Unique match.  first + K = boundary.
+		boundary := first + k
+		if boundary >= len(mapping) {
+			return -1
+		}
+		idx := mapping[boundary]
+		for idx > 0 && !utf8.RuneStart(s[idx]) {
+			idx--
+		}
+		return idx
 	}
-	// Ensure the cut point is at a valid UTF-8 boundary.
-	// If mapping[mid] falls inside a multi-byte character, walk back
-	// to the start of that character so we never split a rune.
-	idx := mapping[mid]
-	for idx > 0 && !utf8.RuneStart(s[idx]) {
-		idx--
-	}
-	return idx
+	return -1
+}
+
+// isSpace returns true for ASCII whitespace (space, tab, newline, carriage return).
+func isSpace(b byte) bool {
+	return b == ' ' || b == '\t' || b == '\n' || b == '\r'
 }
 
 // buildFullMeta builds a metadata JSON from the complete raw hook input.

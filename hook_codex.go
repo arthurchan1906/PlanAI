@@ -22,9 +22,9 @@ func processCodexHook() {
 	now := time.Now().Format("2006-01-02T15:04:05.000")
 	data, _ := io.ReadAll(os.Stdin)
 
-	// Always persist the raw hook JSON so we can debug format issues.
-	// Writes to .pmai/logs/codex-hook.log (rotated manually).
-	dumpRawHook("codex", now, data)
+	if os.Getenv("AIPM_DEBUG_HOOK") != "" {
+		dumpRawHook("codex", now, data)
+	}
 
 	logf := func(format string, args ...any) {
 		fmt.Fprintf(os.Stderr, "[aipm-codex %s] ", now)

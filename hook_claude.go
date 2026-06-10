@@ -19,8 +19,9 @@ func processClaudeHook() {
 	now := time.Now().Format("2006-01-02T15:04:05.000")
 	data, _ := io.ReadAll(os.Stdin)
 
-	// Always persist raw hook JSON for debugging.
-	dumpRawHook("claude", now, data)
+	if os.Getenv("AIPM_DEBUG_HOOK") != "" {
+		dumpRawHook("claude", now, data)
+	}
 
 	// Catch panics so a bug never crashes the parent process.
 	defer func() {
