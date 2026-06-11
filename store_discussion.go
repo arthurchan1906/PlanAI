@@ -218,19 +218,3 @@ func getDiscussionByID(db *sql.DB, id string) map[string]any {
 	return map[string]any{"id": rid, "session_id": sid, "role": role, "source": src, "content": content, "metadata": metadata, "created_at": createdAt}
 }
 
-func listDiscussionSources() ([]string, error) {
-	db, err := pmdb.Open()
-	if err != nil { return nil, err }
-	defer db.Close()
-	rows, err := db.Query("SELECT DISTINCT source FROM discussion_log WHERE source != '' ORDER BY source")
-	if err != nil { return nil, err }
-	defer rows.Close()
-	var result []string
-	for rows.Next() {
-		var s string
-		rows.Scan(&s)
-		result = append(result, s)
-	}
-	if result == nil { result = []string{} }
-	return result, nil
-}
