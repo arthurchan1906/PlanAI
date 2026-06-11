@@ -1,4 +1,4 @@
-package main
+package mcp
 
 import (
 	"bufio"
@@ -11,6 +11,7 @@ import (
 	"aipmc/ai"
 	"aipmc/analyze"
 	"aipmc/store"
+	"aipmc/u"
 )
 
 // ============================================================
@@ -70,21 +71,38 @@ type mcpClientInfo struct {
 
 // mcpServer holds registered tools and handles the protocol lifecycle.
 type mcpServer struct {
-	tools      map[string]MCPTool
-	handlers   map[string]mcpToolHandler
-	reader     *bufio.Reader
-	writer     io.Writer
-	ai         *ai.Client
-	clientInfo *mcpClientInfo // captured from initialize — the client's "user agent"
+	tools         map[string]MCPTool
+	handlers      map[string]mcpToolHandler
+	reader        *bufio.Reader
+	writer        io.Writer
+	ai            *ai.Client
+	clientInfo    *mcpClientInfo // captured from initialize — the client's "user agent"
+	// Search functions injected from root
+	searchContext     func(string, int) map[string]any
+	searchFTS5        func(string, int) interface{}
+	searchLinear      func(string) interface{}
+	aiRerank          func(string, int, interface{}) interface{}
+	searchDiscussions func(string, string, string, string, int, int) ([]map[string]any, int, error)
 }
 
-func newMCPServer(aiClient *ai.Client) *mcpServer {
+func NewServer(aiClient *ai.Client,
+	searchContext func(string, int) map[string]any,
+	searchFTS5 func(string, int) interface{},
+	searchLinear func(string) interface{},
+	aiRerank func(string, int, interface{}) interface{},
+	searchDiscussions func(string, string, string, string, int, int) ([]map[string]any, int, error),
+) *mcpServer {
 	s := &mcpServer{
-		tools:    make(map[string]MCPTool),
-		handlers: make(map[string]mcpToolHandler),
-		reader:   bufio.NewReader(os.Stdin),
-		writer:   os.Stdout,
-		ai:       aiClient,
+		tools:             make(map[string]MCPTool),
+		handlers:          make(map[string]mcpToolHandler),
+		reader:            bufio.NewReader(os.Stdin),
+		writer:            os.Stdout,
+		ai:                aiClient,
+		searchContext:     searchContext,
+		searchFTS5:        searchFTS5,
+		searchLinear:      searchLinear,
+		aiRerank:          aiRerank,
+		searchDiscussions: searchDiscussions,
 	}
 	s.registerTools()
 	return s
@@ -382,9 +400,9 @@ func (s *mcpServer) handleBriefing(args map[string]interface{}) mcpToolResult {
 	agentID := getStr(args, "agent_id", "")
 	var briefing string
 	if agentID != "" {
-		briefing = analyze.BuildBriefingForAgent(agentID, aiClient)
+		briefing = analyze.BuildBriefingForAgent(agentID, s.ai)
 	} else {
-		briefing = analyze.BuildBriefing(aiClient)
+		briefing = analyze.BuildBriefing(s.ai)
 	}
 	report := analyze.RunFullAnalysis()
 
@@ -419,13 +437,13 @@ func (s *mcpServer) handleSearch(args map[string]interface{}) mcpToolResult {
 			IsError: true,
 		}
 	}
-	result := searchProjectContext(query, 10)
+	result := s.searchContext(query, 10)
 
 	// Build enriched context
 	relatedIDs := []string{}
-	if results, ok := result["results"].([]searchHit); ok {
+	if results, ok := result["results"].([]map[string]interface{}); ok {
 		for _, h := range results {
-			relatedIDs = append(relatedIDs, h.ID)
+			relatedIDs = append(relatedIDs, u.Str(h["id"]))
 		}
 	}
 
@@ -443,8 +461,10 @@ func (s *mcpServer) handleSearch(args map[string]interface{}) mcpToolResult {
 	}
 
 	text := fmt.Sprintf("搜索 '%s' 找到 %v 个结果", query, result["count"])
-	for _, h := range result["results"].([]searchHit) {
-		text += fmt.Sprintf("\n- [%s] %s (%s)", h.Type, h.Title, h.ID)
+	if results, ok := result["results"].([]map[string]interface{}); ok {
+		for _, h := range results {
+			text += fmt.Sprintf("\n- [%s] %s (%s)", u.Str(h["type"]), u.Str(h["title"]), u.Str(h["id"]))
+		}
 	}
 
 	return mcpToolResult{
@@ -464,7 +484,7 @@ func (s *mcpServer) handleRecordCommit(args map[string]interface{}) mcpToolResul
 
 	var files []string
 	if filesStr != "" {
-		for _, f := range splitAndTrim(filesStr, ",") {
+		for _, f := range u.SplitAndTrim(filesStr, ",") {
 			if f != "" {
 				files = append(files, f)
 			}
@@ -543,15 +563,15 @@ func (s *mcpServer) handleCreateTask(args map[string]interface{}) mcpToolResult 
 	plan, _ := store.GetPlan(planID)
 	related := map[string]interface{}{
 		"task":           task,
-		"plan_title":     str(plan["title"]),
-		"plan_status":    str(plan["status"]),
+		"plan_title":     u.Str(plan["title"]),
+		"plan_status":    u.Str(plan["status"]),
 	}
 
-	reflection := fmt.Sprintf("Task '%s' 已创建 (plan: %s)。", title, str(plan["title"]))
+	reflection := fmt.Sprintf("Task '%s' 已创建 (plan: %s)。", title, u.Str(plan["title"]))
 	if hasDuplicate {
 		reflection += " ⚠️ 可能已存在类似 task，请用 aipm_search_context 确认。"
 	}
-	if str(plan["status"]) == "draft" {
+	if u.Str(plan["status"]) == "draft" {
 		reflection += " ℹ️ 注意：此 plan 仍为 draft 状态。"
 	}
 
@@ -788,21 +808,36 @@ func (s *mcpServer) handleSmartSearch(args map[string]interface{}) mcpToolResult
 	}
 	limit := 8
 
-	// FTS5 keyword search
-	results := searchFTS5(query, limit*3)
+	// FTS5 keyword search — returns interface{}, type-assert to usable form
+	resultsRaw := s.searchFTS5(query, limit*3)
+	var results []map[string]interface{}
 	aiEnhanced := false
+
+	if resultsRaw != nil {
+		// Try to cast to []map[string]interface{} (adapter in root converts)
+		if arr, ok := resultsRaw.([]map[string]interface{}); ok {
+			results = arr
+		}
+	}
 
 	// AI rerank when available
 	if s.ai != nil && s.ai.Enabled() && results != nil {
-		if reranked := aiSearchRerank(query, limit, results); reranked != nil {
-			results = reranked
-			aiEnhanced = true
+		if reranked := s.aiRerank(query, limit, results); reranked != nil {
+			if arr, ok := reranked.([]map[string]interface{}); ok {
+				results = arr
+				aiEnhanced = true
+			}
 		}
 	}
 
 	// Fall back to linear if FTS5 unavailable
 	if results == nil {
-		results = searchLinear(query)
+		linearRaw := s.searchLinear(query)
+		if linearRaw != nil {
+			if arr, ok := linearRaw.([]map[string]interface{}); ok {
+				results = arr
+			}
+		}
 	}
 
 	var text strings.Builder
@@ -811,7 +846,7 @@ func (s *mcpServer) handleSmartSearch(args map[string]interface{}) mcpToolResult
 		text.WriteString(" (AI 语义重排)")
 	}
 	for _, h := range results {
-		text.WriteString(fmt.Sprintf("\n- [%s] %s (%s)", h.Type, h.Title, h.ID))
+		text.WriteString(fmt.Sprintf("\n- [%s] %s (%s)", u.Str(h["type"]), u.Str(h["title"]), u.Str(h["id"])))
 	}
 
 	reflection := ""
@@ -852,7 +887,7 @@ func (s *mcpServer) handleSearchDiscussions(args map[string]interface{}) mcpTool
 	projectPath := getStr(args, "project_path", "")
 	limit := 10
 	if l := getStr(args, "limit", ""); l != "" { fmt.Sscanf(l, "%d", &limit) }
-	results, total, _ := searchDiscussions(query, "", "", projectPath, 1, limit)
+	results, total, _ := s.searchDiscussions(query, "", "", projectPath, 1, limit)
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("搜索讨论历史 '%s': %d 条结果 (共 %d 条)\n", query, len(results), total))
 	for _, r := range results {
@@ -981,7 +1016,7 @@ func (s *mcpServer) handleAddToThread(args map[string]interface{}) mcpToolResult
 			{Type: "text", Text: fmt.Sprintf("已将 %s/%s 添加到线索 %s", entityType, entityID, threadID)},
 		},
 		RelatedContext: t,
-		Reflection:     fmt.Sprintf("已添加到线索 '%s'", str(t["title"])),
+		Reflection:     fmt.Sprintf("已添加到线索 '%s'", u.Str(t["title"])),
 	}
 }
 
@@ -1014,7 +1049,7 @@ func (s *mcpServer) handleDailyReview(args map[string]interface{}) mcpToolResult
 			if arr, ok := items.([]map[string]any); ok {
 				itemCount = len(arr)
 			}
-			text.WriteString(fmt.Sprintf("- %s [%s] (%d items)\n", str(t["title"]), str(t["id"]), itemCount))
+			text.WriteString(fmt.Sprintf("- %s [%s] (%d items)\n", u.Str(t["title"]), u.Str(t["id"]), itemCount))
 		}
 		text.WriteString("\n")
 	}
@@ -1310,17 +1345,6 @@ func getStr(m map[string]interface{}, key, def string) string {
 		}
 	}
 	return def
-}
-
-func splitAndTrim(s, sep string) []string {
-	var result []string
-	for _, part := range splitStr(s, sep) {
-		part = trimStr(part)
-		if part != "" {
-			result = append(result, part)
-		}
-	}
-	return result
 }
 
 func splitStr(s, sep string) []string {

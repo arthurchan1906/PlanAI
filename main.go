@@ -17,6 +17,7 @@ import (
 	"aipmc/cli"
 	pmdb "aipmc/db"
 	"aipmc/hook"
+	"aipmc/mcp"
 	"aipmc/store"
 	"aipmc/web"
 )
@@ -177,7 +178,38 @@ func main() {
 		hook.ProcessCodexHook()
 		return
 	case "mcp":
-		server := newMCPServer(aiClient)
+		server := mcp.NewServer(aiClient,
+			searchProjectContext,
+			func(q string, l int) interface{} {
+				hits := searchFTS5(q, l)
+				if hits == nil { return nil }
+				out := make([]map[string]interface{}, len(hits))
+				for i, h := range hits {
+					out[i] = map[string]interface{}{"type": h.Type, "id": h.ID, "title": h.Title, "status": h.Status, "score": h.Score, "command": h.Command}
+				}
+				return out
+			},
+			func(q string) interface{} {
+				hits := searchLinear(q)
+				out := make([]map[string]interface{}, len(hits))
+				for i, h := range hits {
+					out[i] = map[string]interface{}{"type": h.Type, "id": h.ID, "title": h.Title, "status": h.Status, "score": h.Score, "command": h.Command}
+				}
+				return out
+			},
+			func(q string, l int, hits interface{}) interface{} {
+				if raw, ok := hits.([]map[string]interface{}); ok {
+					reranked := aiSearchRerank(q, l, searchHitFromMaps(raw))
+					out := make([]map[string]interface{}, len(reranked))
+					for i, h := range reranked {
+						out[i] = map[string]interface{}{"type": h.Type, "id": h.ID, "title": h.Title, "status": h.Status, "score": h.Score, "command": h.Command}
+					}
+					return out
+				}
+				return nil
+			},
+			searchDiscussions,
+		)
 		if err := server.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "MCP server error: %v\n", err)
 			os.Exit(1)
@@ -511,4 +543,34 @@ func truncateLine(s string, maxLen int) string {
 		return s
 	}
 	return string(runes[:maxLen]) + "..."
+}
+
+// searchHitFromMaps converts []map[string]interface{} to []searchHit.
+// Used as a bridge between mcp package's generic types and root's concrete searchHit type.
+func searchHitFromMaps(maps []map[string]interface{}) []searchHit {
+	out := make([]searchHit, len(maps))
+	for i, m := range maps {
+		out[i] = searchHit{
+			Type:    strVal(m["type"]),
+			ID:      strVal(m["id"]),
+			Title:   strVal(m["title"]),
+			Status:  strVal(m["status"]),
+			Score:   intVal(m["score"]),
+			Command: strVal(m["command"]),
+		}
+	}
+	return out
+}
+
+func strVal(v interface{}) string {
+	if s, ok := v.(string); ok { return s }
+	return ""
+}
+
+func intVal(v interface{}) int {
+	switch n := v.(type) {
+	case int: return n
+	case float64: return int(n)
+	default: return 0
+	}
 }

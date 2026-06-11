@@ -15,6 +15,7 @@ import (
 	"aipmc/analyze"
 	pmdb "aipmc/db"
 	"aipmc/store"
+	"aipmc/u"
 	"aipmc/web"
 )
 
@@ -971,7 +972,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 	// filterDiscussionsByType filters discussion results by message type.
 	// typeFilter can be "user", "assistant", or "tool" (comma-separated).
 	func filterDiscussionsByType(results []map[string]any, typeFilter string) []map[string]any {
-		types := splitAndTrim(typeFilter, ",")
+		types := u.SplitAndTrim(typeFilter, ",")
 		typeSet := map[string]bool{}
 		for _, t := range types {
 			typeSet[t] = true

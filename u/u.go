@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -145,4 +146,23 @@ func SafePrefix(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+// SplitAndTrim splits s by sep and trims whitespace from each part, skipping empty parts.
+func SplitAndTrim(s, sep string) []string {
+	if s == "" {
+		return []string{}
+	}
+	parts := strings.Split(s, sep)
+	var result []string
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	if result == nil {
+		result = []string{}
+	}
+	return result
 }

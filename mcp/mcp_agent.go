@@ -1,4 +1,4 @@
-package main
+package mcp
 
 import (
 	"fmt"
@@ -7,6 +7,7 @@ import (
 	"aipmc/ai"
 	pmdb "aipmc/db"
 	"aipmc/store"
+	"aipmc/u"
 )
 
 // registerAgentTools adds meeting + assignment MCP tools.
@@ -159,15 +160,15 @@ func (s *mcpServer) handleGetMeetingTurn(args map[string]interface{}) mcpToolRes
 		fmt.Sscanf(tn, "%d", &currentTurnNum)
 	}
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("## 会议: %s\n\n", str(room["title"])))
-	b.WriteString(fmt.Sprintf("### 会议主题\n%s\n\n", str(room["topic"])))
-	b.WriteString(fmt.Sprintf("### 会议模式\n%s\n\n", str(room["meeting_mode"])))
-	if roles := str(room["agent_roles_context"]); roles != "" {
+	b.WriteString(fmt.Sprintf("## 会议: %s\n\n", u.Str(room["title"])))
+	b.WriteString(fmt.Sprintf("### 会议主题\n%s\n\n", u.Str(room["topic"])))
+	b.WriteString(fmt.Sprintf("### 会议模式\n%s\n\n", u.Str(room["meeting_mode"])))
+	if roles := u.Str(room["agent_roles_context"]); roles != "" {
 		b.WriteString(fmt.Sprintf("### 参会角色\n%s\n\n", roles))
 	}
 	allTurns, _ := store.ListMeetingTurns(roomID)
 	incremental := sinceTurn > 0
-	b.WriteString(fmt.Sprintf("### PM/仲裁对你的提问 (Turn %d)\n%s\n\n", currentTurnNum, str(turn["question"])))
+	b.WriteString(fmt.Sprintf("### PM/仲裁对你的提问 (Turn %d)\n%s\n\n", currentTurnNum, u.Str(turn["question"])))
 	b.WriteString("### 之前的发言")
 	if incremental {
 		b.WriteString(fmt.Sprintf(" (Turn %d-%d 新内容)", sinceTurn+1, currentTurnNum-1))
@@ -179,7 +180,7 @@ func (s *mcpServer) handleGetMeetingTurn(args map[string]interface{}) mcpToolRes
 		if tn, ok := t["turn_number"].(string); ok {
 			fmt.Sscanf(tn, "%d", &turnNum)
 		}
-		if str(t["id"]) == turnID {
+		if u.Str(t["id"]) == turnID {
 			break
 		}
 		if incremental && turnNum <= sinceTurn {
@@ -187,18 +188,18 @@ func (s *mcpServer) handleGetMeetingTurn(args map[string]interface{}) mcpToolRes
 		}
 		hasPrevious = true
 		sp := "PM"
-		if str(t["speaker_type"]) == "agent" {
-			sp = str(t["speaker_id"])
+		if u.Str(t["speaker_type"]) == "agent" {
+			sp = u.Str(t["speaker_id"])
 		}
-		txt := str(t["question"])
-		if r := str(t["response"]); r != "" {
+		txt := u.Str(t["question"])
+		if r := u.Str(t["response"]); r != "" {
 			txt = r
 		}
 		line := fmt.Sprintf("- [T%d] %s: %s", turnNum, sp, txt)
-		if addr := str(t["address_to"]); addr != "" {
+		if addr := u.Str(t["address_to"]); addr != "" {
 			line += fmt.Sprintf(" (→ %s)", addr)
 		}
-		if rp := str(t["reply_to"]); rp != "" {
+		if rp := u.Str(t["reply_to"]); rp != "" {
 			line += " (@reply)"
 		}
 		b.WriteString(line + "\n")
@@ -235,7 +236,7 @@ func (s *mcpServer) handleRespondInMeeting(args map[string]interface{}) mcpToolR
 	if err != nil {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("回应失败: %v", err)}}, IsError: true}
 	}
-	store.RecordAudit("agent", str(turn["speaker_id"]), "respond_meeting", "meeting_turn", turnID, "Agent responded in meeting")
+	store.RecordAudit("agent", u.Str(turn["speaker_id"]), "respond_meeting", "meeting_turn", turnID, "Agent responded in meeting")
 	return mcpToolResult{
 		Content:        []mcpContent{{Type: "text", Text: "✅ 回应已提交"}},
 		RelatedContext: map[string]interface{}{"turn": turn},
@@ -255,16 +256,16 @@ func (s *mcpServer) handleGetMyAssignments(args map[string]interface{}) mcpToolR
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("## 你的分配清单 (%d 项)\n\n", len(assignments)))
 	for _, a := range assignments {
-		b.WriteString(fmt.Sprintf("- [%s] **%s** (%s)", str(a["id"]), str(a["role"]), str(a["status"])))
-		if tid := str(a["task_id"]); tid != "" {
+		b.WriteString(fmt.Sprintf("- [%s] **%s** (%s)", u.Str(a["id"]), u.Str(a["role"]), u.Str(a["status"])))
+		if tid := u.Str(a["task_id"]); tid != "" {
 			b.WriteString(fmt.Sprintf(" — task: %s", tid))
 		}
-		b.WriteString(fmt.Sprintf("\n  scope: %s\n", str(a["scope"])))
+		b.WriteString(fmt.Sprintf("\n  scope: %s\n", u.Str(a["scope"])))
 	}
 	reflection := ""
 	pending := 0
 	for _, a := range assignments {
-		if str(a["status"]) == "assigned" {
+		if u.Str(a["status"]) == "assigned" {
 			pending++
 		}
 	}
@@ -287,9 +288,9 @@ func (s *mcpServer) handleClaimAssignment(args map[string]interface{}) mcpToolRe
 	if err != nil {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("认领失败: %v", err)}}, IsError: true}
 	}
-	store.RecordAudit("agent", str(a["agent_id"]), "claim_assignment", "assignment", assignmentID, "Agent claimed assignment")
+	store.RecordAudit("agent", u.Str(a["agent_id"]), "claim_assignment", "assignment", assignmentID, "Agent claimed assignment")
 	return mcpToolResult{
-		Content:        []mcpContent{{Type: "text", Text: fmt.Sprintf("✅ 已认领: %s (%s)", str(a["role"]), str(a["scope"]))}},
+		Content:        []mcpContent{{Type: "text", Text: fmt.Sprintf("✅ 已认领: %s (%s)", u.Str(a["role"]), u.Str(a["scope"]))}},
 		RelatedContext: map[string]interface{}{"assignment": a},
 	}
 }
@@ -308,9 +309,9 @@ func (s *mcpServer) handleCompleteAssignment(args map[string]interface{}) mcpToo
 	if err != nil {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("完成标记失败: %v", err)}}, IsError: true}
 	}
-	store.RecordAudit("agent", str(a["agent_id"]), "complete_assignment", "assignment", assignmentID, "Agent completed assignment")
+	store.RecordAudit("agent", u.Str(a["agent_id"]), "complete_assignment", "assignment", assignmentID, "Agent completed assignment")
 	return mcpToolResult{
-		Content:        []mcpContent{{Type: "text", Text: fmt.Sprintf("✅ 分配已完成: %s", str(a["role"]))}},
+		Content:        []mcpContent{{Type: "text", Text: fmt.Sprintf("✅ 分配已完成: %s", u.Str(a["role"]))}},
 		RelatedContext: map[string]interface{}{"assignment": a},
 		Reflection:     "请确认所有相关工作已通过 aipm_record_commit 记录。",
 	}
@@ -327,8 +328,8 @@ func (s *mcpServer) handleSpeakInMeeting(args map[string]interface{}) mcpToolRes
 	}
 	existing, _ := store.ListMeetingTurns(roomID)
 	nextNum := len(existing) + 1
-	id := slug("turn")
-	now := nowISO()
+	id := u.Slug("turn")
+	now := u.NowISO()
 	db, err := pmdb.Open()
 	if err != nil {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("数据库错误: %v", err)}}, IsError: true}
@@ -353,7 +354,7 @@ func (s *mcpServer) handleArbitrateNext(args map[string]interface{}) mcpToolResu
 	if err != nil {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("会议不存在: %v", err)}}, IsError: true}
 	}
-	if aiClient == nil || !aiClient.Enabled() {
+	if s.ai == nil || !s.ai.Enabled() {
 		return mcpToolResult{
 			Content:    []mcpContent{{Type: "text", Text: "AI 未配置，无法自动仲裁。请 PM 手动点名下一个发言人。"}},
 			IsError:    true,
@@ -368,20 +369,20 @@ func (s *mcpServer) handleArbitrateNext(args map[string]interface{}) mcpToolResu
 	}
 	for i := start; i < len(turns); i++ {
 		t := turns[i]
-		txt := str(t["question"])
-		if r := str(t["response"]); r != "" {
+		txt := u.Str(t["question"])
+		if r := u.Str(t["response"]); r != "" {
 			txt = r
 		}
 		recent = append(recent, ai.ArbitrationTurn{
-			SpeakerType: str(t["speaker_type"]),
-			SpeakerID:   str(t["speaker_id"]),
+			SpeakerType: u.Str(t["speaker_type"]),
+			SpeakerID:   u.Str(t["speaker_id"]),
 			Content:     txt,
-			AddressTo:   str(t["address_to"]),
+			AddressTo:   u.Str(t["address_to"]),
 		})
 	}
-	nextAgent, reason, err := aiClient.ArbitrateNextSpeaker(
-		str(room["topic"]),
-		str(room["agent_roles_context"]),
+	nextAgent, reason, err := s.ai.ArbitrateNextSpeaker(
+		u.Str(room["topic"]),
+		u.Str(room["agent_roles_context"]),
 		recent,
 	)
 	if err != nil {
@@ -392,8 +393,8 @@ func (s *mcpServer) handleArbitrateNext(args map[string]interface{}) mcpToolResu
 	}
 	existing, _ := store.ListMeetingTurns(roomID)
 	nextNum := len(existing) + 1
-	id := slug("turn")
-	now := nowISO()
+	id := u.Slug("turn")
+	now := u.NowISO()
 	db, err2 := pmdb.Open()
 	if err2 == nil {
 		defer db.Close()

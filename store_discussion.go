@@ -11,6 +11,7 @@ import (
 
 	"aipmc/ai"
 	pmdb "aipmc/db"
+	"aipmc/u"
 )
 
 // embedDiscussions computes embeddings and stores them in pmai_vectors.db.
@@ -64,7 +65,7 @@ func embedDiscussions(batchSize int) (int, error) {
 		embs, err := aiClient.Embed(texts)
 		if err != nil { return count, fmt.Errorf("embed batch %d: %w", i, err) }
 		for k, emb := range embs {
-			vdb.Exec("INSERT OR REPLACE INTO vectors (id, embedding_json) VALUES (?, ?)", ids[k], jsonStr(emb))
+			vdb.Exec("INSERT OR REPLACE INTO vectors (id, embedding_json) VALUES (?, ?)", ids[k], u.JsonStr(emb))
 			count++
 		}
 	}
@@ -112,8 +113,8 @@ func searchDiscussions(query, source, typeFilter, projectPath string, page, page
 					out = append(out, getDiscussionByID(db, id))
 				}
 				sort.Slice(out, func(i, j int) bool {
-					a, _ := time.Parse("2006-01-02T15:04:05", str(out[i]["created_at"]))
-					b, _ := time.Parse("2006-01-02T15:04:05", str(out[j]["created_at"]))
+					a, _ := time.Parse("2006-01-02T15:04:05", u.Str(out[i]["created_at"]))
+					b, _ := time.Parse("2006-01-02T15:04:05", u.Str(out[j]["created_at"]))
 					return a.After(b)
 				})
 				if out == nil { out = []map[string]any{} }
@@ -129,7 +130,7 @@ func searchDiscussions(query, source, typeFilter, projectPath string, page, page
 		if typeFilter != "" {
 			toolEmojis := []string{"🔧","📝","👁","🔍","🆕","🛠","📡"}
 			typeParts := []string{}
-			for _, t := range splitAndTrim(typeFilter, ",") {
+			for _, t := range u.SplitAndTrim(typeFilter, ",") {
 				switch t {
 				case "user":
 					typeParts = append(typeParts, "role = 'user'")
