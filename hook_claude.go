@@ -9,6 +9,9 @@ import (
 	"runtime/debug"
 	"strings"
 	"time"
+
+	pmdb "aipmc/db"
+	"aipmc/store"
 )
 
 // processClaudeHook reads the Claude Code PostToolUse/Stop/UserPromptSubmit hook stdin
@@ -75,14 +78,14 @@ func processClaudeHook() {
 	switch raw.Event {
 	case "UserPromptSubmit":
 		if raw.Prompt != "" {
-			if _, err := logDiscussion(raw.SessionID, "user", "claude-code", raw.Prompt, ""); err != nil {
+			if _, err := store.LogDiscussion(raw.SessionID, "user", "claude-code", raw.Prompt, ""); err != nil {
 				fmt.Fprintf(os.Stderr, "[aipm-claude %s] UserPromptSubmit log FAILED: %v\n", now, err)
 			}
 		}
 
 	case "Stop", "StopFailure":
 		if raw.LastAssistantMessage != "" {
-			if _, err := logDiscussion(raw.SessionID, "assistant", "claude-code", raw.LastAssistantMessage, ""); err != nil {
+			if _, err := store.LogDiscussion(raw.SessionID, "assistant", "claude-code", raw.LastAssistantMessage, ""); err != nil {
 				fmt.Fprintf(os.Stderr, "[aipm-claude %s] Stop log FAILED: %v\n", now, err)
 			}
 		}
@@ -223,7 +226,7 @@ func processClaudeHook() {
 		}
 
 		if desc != "" {
-			if _, err := logDiscussion(raw.SessionID, "assistant", "claude-code", desc, metadataJSON); err != nil {
+			if _, err := store.LogDiscussion(raw.SessionID, "assistant", "claude-code", desc, metadataJSON); err != nil {
 				fmt.Fprintf(os.Stderr, "[aipm-claude %s] PostToolUse %s log FAILED: %v\n", now, raw.ToolName, err)
 			}
 		}
@@ -251,7 +254,7 @@ func fmtExitCode(code int) string {
 // Configures Stop, StopFailure, UserPromptSubmit, and PostToolUse hooks
 // that all call "aipmc hook-process" (processClaudeHook).
 func setupClaudeHooks(commandPath string) error {
-	runtimeDir, err := findRuntimeDir()
+	runtimeDir, err := pmdb.RuntimeDir()
 	if err != nil {
 		return fmt.Errorf("find runtime dir: %w", err)
 	}

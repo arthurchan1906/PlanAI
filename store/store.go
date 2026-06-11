@@ -1,24 +1,16 @@
-package main
+package store
 
 import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"os"
 	"path/filepath"
+	"strings"
+
+	pmdb "aipmc/db"
+	"aipmc/u"
 )
-
-// ---- FTS5 sync helpers ----
-
-func syncFTS5Entity(db *sql.DB, entityType, entityID, title, content string) {
-	db.Exec("INSERT OR REPLACE INTO fts5_index (content, entity_type, entity_id, title) VALUES (?, ?, ?, ?)",
-		content, entityType, entityID, title)
-}
-
-func deleteFTS5Entity(db *sql.DB, entityType, entityID string) {
-	db.Exec("DELETE FROM fts5_index WHERE entity_type = ? AND entity_id = ?", entityType, entityID)
-}
 
 // ============================================================
 // Tasks
@@ -41,8 +33,8 @@ type Task struct {
 	CreatedAt        string `json:"created_at"`
 }
 
-func listTasks(status, planID string) ([]Task, error) {
-	db, err := openDB()
+func ListTasks(status, planID string) ([]Task, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -62,71 +54,71 @@ func listTasks(status, planID string) ([]Task, error) {
 		q += " WHERE " + strings.Join(clauses, " AND ")
 	}
 	q += " ORDER BY CASE status WHEN 'in_progress' THEN 0 WHEN 'todo' THEN 1 WHEN 'blocked' THEN 2 ELSE 3 END, priority, updated_at DESC"
-	return scanTasks(db.Query(q, args...))
+	return ScanTasks(db.Query(q, args...))
 }
 
-func getTaskSimple(id string) (map[string]any, error) {
-	db, err := openDB()
+func GetTaskSimple(id string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
 	task := map[string]any{}
 	row := db.QueryRow("SELECT * FROM tasks WHERE id = ?", id)
-	if err := scanTaskRow(row, task); err != nil {
+	if err := ScanTaskRow(row, task); err != nil {
 		return nil, err
 	}
 	return task, nil
 }
 
-func createTask(title, priority, status, phase, planID string, acceptance []string) (map[string]any, error) {
+func CreateTask(title, priority, status, phase, planID string, acceptance []string) (map[string]any, error) {
 	if planID == "" {
 		return nil, fmt.Errorf("task requires --plan-id. Find a plan: aipmc plan list")
 	}
-	db, err := openDB()
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
-	id := slug("task")
-	now := nowISO()
+	id := u.Slug("task")
+	now := u.NowISO()
 	accJSON := "[]"
 	if len(acceptance) > 0 {
-		accJSON = jsonStr(acceptance)
+		accJSON = u.JsonStr(acceptance)
 	}
 	// Backfill roadmap_id from the plan
 	var roadmapID string
 	if err := db.QueryRow("SELECT roadmap_id FROM plans WHERE id = ?", planID).Scan(&roadmapID); err != nil {
 		roadmapID = ""
 	}
-	_, err = db.Exec("INSERT INTO tasks (id, title, status, priority, phase, plan_id, acceptance_json, related_docs_json, related_decisions_json, last_note, updated_at, roadmap_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, title, status, priority, phase, planID, accJSON, "[]", "[]", "", today(), roadmapID, now)
+	_, err = db.Exec("INSERT INTO tasks (id, title, status, priority, phase, plan_id, acceptance_json, related_docs_json, related_decisions_json, last_note, updated_at, roadmap_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, title, status, priority, phase, planID, accJSON, "[]", "[]", "", u.Today(), roadmapID, now)
 	if err != nil {
 		return nil, err
 	}
-	syncFTS5Entity(db, "task", id, title, title)
+	pmdb.SyncFTS5Entity(db, "task", id, title, title)
 
 	// Auto-create event
-	createEvent("task_created", "task", id, fmt.Sprintf("New task: %s", title))
+	CreateEvent("task_created", "task", id, fmt.Sprintf("New task: %s", title))
 	var taskIDsJSON string
 	if err := db.QueryRow("SELECT task_ids_json FROM plans WHERE id = ?", planID).Scan(&taskIDsJSON); err == nil {
 		var ids []string
 		json.Unmarshal([]byte(taskIDsJSON), &ids)
 		ids = append(ids, id)
 		newJSON, _ := json.Marshal(ids)
-		db.Exec("UPDATE plans SET task_ids_json = ?, updated_at = ? WHERE id = ?", string(newJSON), nowISO(), planID)
+		db.Exec("UPDATE plans SET task_ids_json = ?, updated_at = ? WHERE id = ?", string(newJSON), u.NowISO(), planID)
 	}
-	return getTaskSimple(id)
+	return GetTaskSimple(id)
 }
 
-func updateTask(id, status, note string, allowWithoutCommit, appendNote bool) (map[string]any, error) {
-	db, err := openDB()
+func UpdateTask(id, status, note string, allowWithoutCommit, appendNote bool) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
 	row := db.QueryRow("SELECT * FROM tasks WHERE id = ?", id)
 	existing := map[string]any{}
-	if err := scanTaskRow(row, existing); err != nil {
+	if err := ScanTaskRow(row, existing); err != nil {
 		return nil, err
 	}
 	oldStatus := existing["status"].(string)
@@ -134,7 +126,7 @@ func updateTask(id, status, note string, allowWithoutCommit, appendNote bool) (m
 		status = oldStatus
 	}
 	if status != oldStatus {
-		db.Exec("INSERT INTO task_notes (id, task_id, content, mode, created_at) VALUES (?, ?, ?, ?, ?)", slug("task-note"), id, fmt.Sprintf("Status changed from %s to %s", oldStatus, status), "system", nowISO())
+		db.Exec("INSERT INTO task_notes (id, task_id, content, mode, created_at) VALUES (?, ?, ?, ?, ?)", u.Slug("task-note"), id, fmt.Sprintf("Status changed from %s to %s", oldStatus, status), "system", u.NowISO())
 	}
 	if status == "done" && oldStatus != "done" && !allowWithoutCommit {
 		var count int
@@ -151,31 +143,31 @@ func updateTask(id, status, note string, allowWithoutCommit, appendNote bool) (m
 			nextNote = note
 		}
 	}
-	_, err = db.Exec("UPDATE tasks SET status = ?, last_note = ?, updated_at = ? WHERE id = ?", status, nextNote, today(), id)
+	_, err = db.Exec("UPDATE tasks SET status = ?, last_note = ?, updated_at = ? WHERE id = ?", status, nextNote, u.Today(), id)
 	if err != nil {
 		return nil, err
 	}
-	title := str(existing["title"])
-	syncFTS5Entity(db, "task", id, title, title+" "+nextNote)
+	title := u.Str(existing["title"])
+	pmdb.SyncFTS5Entity(db, "task", id, title, title+" "+nextNote)
 	if note != "" {
 		mode := "replace"
 		if appendNote {
 			mode = "append"
 		}
-		db.Exec("INSERT INTO task_notes (id, task_id, content, mode, created_at) VALUES (?, ?, ?, ?, ?)", slug("task-note"), id, note, mode, nowISO())
+		db.Exec("INSERT INTO task_notes (id, task_id, content, mode, created_at) VALUES (?, ?, ?, ?, ?)", u.Slug("task-note"), id, note, mode, u.NowISO())
 	}
-	return getTaskSimple(id)
+	return GetTaskSimple(id)
 }
 
-func appendTaskNote(taskID, content string) (map[string]any, error) {
-	db, err := openDB()
+func AppendTaskNote(taskID, content string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
 	row := db.QueryRow("SELECT * FROM tasks WHERE id = ?", taskID)
 	existing := map[string]any{}
-	if err := scanTaskRow(row, existing); err != nil {
+	if err := ScanTaskRow(row, existing); err != nil {
 		return nil, err
 	}
 	content = strings.TrimSpace(content)
@@ -186,13 +178,13 @@ func appendTaskNote(taskID, content string) (map[string]any, error) {
 	if ln, _ := existing["last_note"].(string); ln != "" {
 		nextNote = strings.TrimRight(ln, "\n") + "\n\n" + content
 	}
-	db.Exec("INSERT INTO task_notes (id, task_id, content, mode, created_at) VALUES (?, ?, ?, ?, ?)", slug("task-note"), taskID, content, "append", nowISO())
-	db.Exec("UPDATE tasks SET last_note = ?, updated_at = ? WHERE id = ?", nextNote, today(), taskID)
-	return getTask(taskID)
+	db.Exec("INSERT INTO task_notes (id, task_id, content, mode, created_at) VALUES (?, ?, ?, ?, ?)", u.Slug("task-note"), taskID, content, "append", u.NowISO())
+	db.Exec("UPDATE tasks SET last_note = ?, updated_at = ? WHERE id = ?", nextNote, u.Today(), taskID)
+	return GetTask(taskID)
 }
 
-func listTaskNotes(taskID string, limit int) ([]map[string]any, error) {
-	db, err := openDB()
+func ListTaskNotes(taskID string, limit int) ([]map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -214,8 +206,8 @@ func listTaskNotes(taskID string, limit int) ([]map[string]any, error) {
 	return notes, nil
 }
 
-func planTask(taskID string, steps []string) (map[string]any, error) {
-	db, err := openDB()
+func PlanTask(taskID string, steps []string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -224,19 +216,19 @@ func planTask(taskID string, steps []string) (map[string]any, error) {
 	for i, s := range steps {
 		items[i] = map[string]any{"text": s, "done": false}
 	}
-	db.Exec("UPDATE tasks SET acceptance_json = ?, updated_at = ? WHERE id = ?", jsonStr(items), today(), taskID)
-	return getTaskSimple(taskID)
+	db.Exec("UPDATE tasks SET acceptance_json = ?, updated_at = ? WHERE id = ?", u.JsonStr(items), u.Today(), taskID)
+	return GetTaskSimple(taskID)
 }
 
-func updateTaskCheckpoint(taskID string, index int, done bool) (map[string]any, error) {
-	db, err := openDB()
+func UpdateTaskCheckpoint(taskID string, index int, done bool) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
 	row := db.QueryRow("SELECT * FROM tasks WHERE id = ?", taskID)
 	existing := map[string]any{}
-	if err := scanTaskRow(row, existing); err != nil {
+	if err := ScanTaskRow(row, existing); err != nil {
 		return nil, err
 	}
 	var acc []map[string]any
@@ -245,16 +237,16 @@ func updateTaskCheckpoint(taskID string, index int, done bool) (map[string]any, 
 		return nil, fmt.Errorf("checkpoint index %d out of range", index)
 	}
 	acc[index]["done"] = done
-	db.Exec("UPDATE tasks SET acceptance_json = ?, updated_at = ? WHERE id = ?", jsonStr(acc), today(), taskID)
-	return getTaskSimple(taskID)
+	db.Exec("UPDATE tasks SET acceptance_json = ?, updated_at = ? WHERE id = ?", u.JsonStr(acc), u.Today(), taskID)
+	return GetTaskSimple(taskID)
 }
 
 // ============================================================
 // Commits
 // ============================================================
 
-func listCommits(status, taskID, decisionID, since string, limit int) ([]map[string]any, error) {
-	db, err := openDB()
+func ListCommits(status, taskID, decisionID, since string, limit int) ([]map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -276,7 +268,7 @@ func listCommits(status, taskID, decisionID, since string, limit int) ([]map[str
 	}
 	if since != "" {
 		if since == "today" {
-			since = today()
+			since = u.Today()
 		}
 		clauses = append(clauses, "created_at >= ?")
 		args = append(args, since)
@@ -294,22 +286,22 @@ func listCommits(status, taskID, decisionID, since string, limit int) ([]map[str
 		return nil, err
 	}
 	defer rows.Close()
-	return scanCommitRows(rows)
+	return ScanCommitRows(rows)
 }
 
-func listCommitsByTask(taskID string) ([]map[string]any, error) {
-	return listCommits("", taskID, "", "", 0)
+func ListCommitsByTask(taskID string) ([]map[string]any, error) {
+	return ListCommits("", taskID, "", "", 0)
 }
 
-func getCommit(id string) (map[string]any, error) {
-	db, err := openDB()
+func GetCommit(id string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
 	c := map[string]any{}
 	row := db.QueryRow("SELECT id, title, summary, evidence_summary, review_notes, branch, commit_hash, task_id, decision_id, status, test_status, review_status, files_json, created_at, updated_at FROM commits WHERE id = ?", id)
-	if err := scanCommitRow(row, c); err != nil {
+	if err := ScanCommitRow(row, c); err != nil {
 		return nil, err
 	}
 	if tid, _ := c["task_id"].(string); tid != "" {
@@ -327,11 +319,11 @@ func getCommit(id string) (map[string]any, error) {
 	return c, nil
 }
 
-func createCommit(title, summary, evidenceSummary, reviewNotes, branch, commitHash, taskID, decisionID, status, testStatus, reviewStatus string, files []string) (map[string]any, error) {
+func CreateCommit(title, summary, evidenceSummary, reviewNotes, branch, commitHash, taskID, decisionID, status, testStatus, reviewStatus string, files []string) (map[string]any, error) {
 	if taskID == "" {
 		return nil, fmt.Errorf("commit requires --task-id (or --task-ids for multi-task). Find a task: aipmc task list --status in_progress")
 	}
-	db, err := openDB()
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -340,36 +332,36 @@ func createCommit(title, summary, evidenceSummary, reviewNotes, branch, commitHa
 	if err := db.QueryRow("SELECT 1 FROM tasks WHERE id = ?", taskID).Scan(&_x); err != nil {
 		return nil, fmt.Errorf("task not found: %s", taskID)
 	}
-	id := slug("commit")
-	now := nowISO()
+	id := u.Slug("commit")
+	now := u.NowISO()
 	filesJSON := "[]"
 	if len(files) > 0 {
-		filesJSON = jsonStr(files)
+		filesJSON = u.JsonStr(files)
 	}
 	_, err = db.Exec("INSERT INTO commits (id, title, summary, evidence_summary, review_notes, branch, commit_hash, task_id, decision_id, status, test_status, review_status, files_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, title, summary, evidenceSummary, reviewNotes, branch, commitHash, taskID, decisionID, status, testStatus, reviewStatus, filesJSON, now, now)
 	if err != nil {
 		return nil, err
 	}
-	syncFTS5Entity(db, "commit", id, title, title+" "+summary)
-	c, _ := getCommit(id)
+	pmdb.SyncFTS5Entity(db, "commit", id, title, title+" "+summary)
+	c, _ := GetCommit(id)
 	return c, nil
 }
 
-func updateCommit(id string, payload map[string]any) (map[string]any, error) {
-	db, err := openDB()
+func UpdateCommit(id string, payload map[string]any) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
 	row := db.QueryRow("SELECT id, title, summary, evidence_summary, review_notes, branch, commit_hash, task_id, decision_id, status, test_status, review_status, files_json, created_at, updated_at FROM commits WHERE id = ?", id)
 	existing := map[string]any{}
-	if err := scanCommitRow(row, existing); err != nil {
+	if err := ScanCommitRow(row, existing); err != nil {
 		return nil, err
 	}
 	setParts := []string{}
 	args := []any{}
 	for k, v := range payload {
-		col := mapKeyToColumn(k)
+		col := MapKeyToColumn(k)
 		if col == "" {
 			continue
 		}
@@ -380,7 +372,7 @@ func updateCommit(id string, payload map[string]any) (map[string]any, error) {
 		return existing, nil
 	}
 	setParts = append(setParts, "updated_at = ?")
-	args = append(args, nowISO())
+	args = append(args, u.NowISO())
 	args = append(args, id)
 	_, err = db.Exec(fmt.Sprintf("UPDATE commits SET %s WHERE id = ?", strings.Join(setParts, ", ")), args...)
 	if err != nil {
@@ -393,8 +385,8 @@ func updateCommit(id string, payload map[string]any) (map[string]any, error) {
 // Plans
 // ============================================================
 
-func listPlans(roadmapID, status string) ([]map[string]any, error) {
-	db, err := openDB()
+func ListPlans(roadmapID, status string) ([]map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -419,46 +411,46 @@ func listPlans(roadmapID, status string) ([]map[string]any, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	return scanPlanRows(rows)
+	return ScanPlanRows(rows)
 }
 
-func getPlan(id string) (map[string]any, error) {
-	db, err := openDB()
+func GetPlan(id string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
 	p := map[string]any{}
 	row := db.QueryRow("SELECT * FROM plans WHERE id = ?", id)
-	if err := scanPlanRow(row, p); err != nil {
+	if err := ScanPlanRow(row, p); err != nil {
 		return nil, err
 	}
 	return p, nil
 }
 
-func createPlan(title, goal, roadmapID, visionID, priority, status string, scope, risks, assumptions, taskIDs []string) (map[string]any, error) {
+func CreatePlan(title, goal, roadmapID, visionID, priority, status string, scope, risks, assumptions, taskIDs []string) (map[string]any, error) {
 	if roadmapID == "" {
 		return nil, fmt.Errorf("plan requires --roadmap-id. Find a roadmap: aipmc roadmap list")
 	}
-	db, err := openDB()
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
-	id := slug("plan")
-	now := nowISO()
-	_, err = db.Exec("INSERT INTO plans (id, roadmap_id, vision_id, title, goal, status, priority, scope_json, risks_json, assumptions_json, task_ids_json, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, roadmapID, visionID, title, goal, status, priority, jsonStr(scope), jsonStr(risks), jsonStr(assumptions), jsonStr(taskIDs), "manual", now, now)
+	id := u.Slug("plan")
+	now := u.NowISO()
+	_, err = db.Exec("INSERT INTO plans (id, roadmap_id, vision_id, title, goal, status, priority, scope_json, risks_json, assumptions_json, task_ids_json, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, roadmapID, visionID, title, goal, status, priority, u.JsonStr(scope), u.JsonStr(risks), u.JsonStr(assumptions), u.JsonStr(taskIDs), "manual", now, now)
 	if err != nil {
 		return nil, err
 	}
 	// Auto-create event for PM tracking
-	syncFTS5Entity(db, "plan", id, title, title+" "+goal)
-	createEvent("plan_created", "plan", id, fmt.Sprintf("New plan created: %s", title))
-	return getPlan(id)
+	pmdb.SyncFTS5Entity(db, "plan", id, title, title+" "+goal)
+	CreateEvent("plan_created", "plan", id, fmt.Sprintf("New plan created: %s", title))
+	return GetPlan(id)
 }
 
-func updatePlan(id string, payload map[string]any) (map[string]any, error) {
-	db, err := openDB()
+func UpdatePlan(id string, payload map[string]any) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -466,7 +458,7 @@ func updatePlan(id string, payload map[string]any) (map[string]any, error) {
 	setParts := []string{}
 	args := []any{}
 	for k, v := range payload {
-		col := mapKeyToColumn(k)
+		col := MapKeyToColumn(k)
 		if col == "" {
 			continue
 		}
@@ -474,24 +466,24 @@ func updatePlan(id string, payload map[string]any) (map[string]any, error) {
 		args = append(args, v)
 	}
 	if len(setParts) == 0 {
-		return getPlan(id)
+		return GetPlan(id)
 	}
 	setParts = append(setParts, "updated_at = ?")
-	args = append(args, nowISO())
+	args = append(args, u.NowISO())
 	args = append(args, id)
 	_, err = db.Exec(fmt.Sprintf("UPDATE plans SET %s WHERE id = ?", strings.Join(setParts, ", ")), args...)
 	if err != nil {
 		return nil, err
 	}
-	return getPlan(id)
+	return GetPlan(id)
 }
 
 // ============================================================
 // Bugs
 // ============================================================
 
-func listBugs(status, severity, commitID string, limit int) ([]map[string]any, error) {
-	db, err := openDB()
+func ListBugs(status, severity, commitID string, limit int) ([]map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -524,18 +516,18 @@ func listBugs(status, severity, commitID string, limit int) ([]map[string]any, e
 		return nil, err
 	}
 	defer rows.Close()
-	return scanBugRows(rows)
+	return ScanBugRows(rows)
 }
 
-func getBug(id string) (map[string]any, error) {
-	db, err := openDB()
+func GetBug(id string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
 	b := map[string]any{}
 	row := db.QueryRow("SELECT * FROM bugs WHERE id = ?", id)
-	if err := scanBugRow(row, b); err != nil {
+	if err := ScanBugRow(row, b); err != nil {
 		return nil, err
 	}
 	if cid, _ := b["commit_id"].(string); cid != "" {
@@ -547,8 +539,8 @@ func getBug(id string) (map[string]any, error) {
 	return b, nil
 }
 
-func createBug(title, description, severity, status, commitID, errMsg, files, rootCause, fix, tags string) (map[string]any, error) {
-	db, err := openDB()
+func CreateBug(title, description, severity, status, commitID, errMsg, files, rootCause, fix, tags string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -559,17 +551,17 @@ func createBug(title, description, severity, status, commitID, errMsg, files, ro
 			return nil, fmt.Errorf("commit not found: %s", commitID)
 		}
 	}
-	id := slug("bug")
-	now := nowISO()
+	id := u.Slug("bug")
+	now := u.NowISO()
 	_, err = db.Exec("INSERT INTO bugs (id, title, description, severity, status, commit_id, error, files, root_cause, fix, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, title, description, severity, status, commitID, errMsg, files, rootCause, fix, tags, now, now)
 	if err != nil {
 		return nil, err
 	}
-	return getBug(id)
+	return GetBug(id)
 }
 
-func updateBug(id string, payload map[string]any) (map[string]any, error) {
-	db, err := openDB()
+func UpdateBug(id string, payload map[string]any) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -581,7 +573,7 @@ func updateBug(id string, payload map[string]any) (map[string]any, error) {
 	setParts := []string{}
 	args := []any{}
 	for k, v := range payload {
-		col := mapKeyToColumn(k)
+		col := MapKeyToColumn(k)
 		if col == "" {
 			continue
 		}
@@ -589,24 +581,24 @@ func updateBug(id string, payload map[string]any) (map[string]any, error) {
 		args = append(args, v)
 	}
 	if len(setParts) == 0 {
-		return getBug(id)
+		return GetBug(id)
 	}
 	setParts = append(setParts, "updated_at = ?")
-	args = append(args, nowISO())
+	args = append(args, u.NowISO())
 	args = append(args, id)
 	_, err = db.Exec(fmt.Sprintf("UPDATE bugs SET %s WHERE id = ?", strings.Join(setParts, ", ")), args...)
 	if err != nil {
 		return nil, err
 	}
-	return getBug(id)
+	return GetBug(id)
 }
 
 // ============================================================
 // Decisions
 // ============================================================
 
-func listDecisions() ([]map[string]any, error) {
-	db, err := openDB()
+func ListDecisions() ([]map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -616,54 +608,54 @@ func listDecisions() ([]map[string]any, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	return scanDecisionRows(rows)
+	return ScanDecisionRows(rows)
 }
 
-func getDecision(id string) (map[string]any, error) {
-	db, err := openDB()
+func GetDecision(id string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
 	d := map[string]any{}
 	row := db.QueryRow("SELECT * FROM decisions WHERE id = ?", id)
-	if err := scanDecisionRow(row, d); err != nil {
+	if err := ScanDecisionRow(row, d); err != nil {
 		return nil, err
 	}
 	return d, nil
 }
 
-func createDecision(title, background, decision, status string) (map[string]any, error) {
-	db, err := openDB()
+func CreateDecision(title, background, decision, status string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
-	id := slug("decision")
-	_, err = db.Exec("INSERT INTO decisions (id, title, date, status, background, decision_text, impact_json, alternatives_json, related_tasks_json, updates_canon) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, title, today(), status, background, decision, "[]", "[]", "[]", 0)
+	id := u.Slug("decision")
+	_, err = db.Exec("INSERT INTO decisions (id, title, date, status, background, decision_text, impact_json, alternatives_json, related_tasks_json, updates_canon) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, title, u.Today(), status, background, decision, "[]", "[]", "[]", 0)
 	if err != nil {
 		return nil, err
 	}
-		syncFTS5Entity(db, "decision", id, title, title+" "+background+" "+decision)
-	return getDecision(id)
+		pmdb.SyncFTS5Entity(db, "decision", id, title, title+" "+background+" "+decision)
+	return GetDecision(id)
 }
 
-func updateDecisionStatus(id, status string) (map[string]any, error) {
-	db, err := openDB()
+func UpdateDecisionStatus(id, status string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
 	db.Exec("UPDATE decisions SET status = ? WHERE id = ?", status, id)
-	return getDecision(id)
+	return GetDecision(id)
 }
 
 // ============================================================
 // Ideas
 // ============================================================
 
-func listIdeas(status string) ([]map[string]any, error) {
-	db, err := openDB()
+func ListIdeas(status string) ([]map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -680,31 +672,31 @@ func listIdeas(status string) ([]map[string]any, error) {
 		return nil, err
 	}
 	defer rows.Close()
-		ideas, err := scanIdeaRows(rows); if err != nil { return nil, err }; for _, idea := range ideas { var cc int; db.QueryRow("SELECT COUNT(*) FROM idea_comments WHERE idea_id = ?", idea["id"]).Scan(&cc); idea["comment_count"] = cc; idea["converted_to"] = nil }; return ideas, nil
+		ideas, err := ScanIdeaRows(rows); if err != nil { return nil, err }; for _, idea := range ideas { var cc int; db.QueryRow("SELECT COUNT(*) FROM idea_comments WHERE idea_id = ?", idea["id"]).Scan(&cc); idea["comment_count"] = cc; idea["converted_to"] = nil }; return ideas, nil
 }
 
-func getIdea(id string) (map[string]any, error) {
-	db, err := openDB()
+func GetIdea(id string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
 	idea := map[string]any{}
 	row := db.QueryRow("SELECT * FROM ideas WHERE id = ?", id)
-	if err := scanIdeaRow(row, idea); err != nil {
+	if err := ScanIdeaRow(row, idea); err != nil {
 		return nil, err
 	}
 	return idea, nil
 }
 
-func createIdea(title, summary, impact, source string, canonConflict bool, currentSummary, mainQuestion, recommendedNextAction string) (map[string]any, error) {
-	db, err := openDB()
+func CreateIdea(title, summary, impact, source string, canonConflict bool, currentSummary, mainQuestion, recommendedNextAction string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
-	id := slug("idea")
-	now := nowISO()
+	id := u.Slug("idea")
+	now := u.NowISO()
 	cc := 0
 	if canonConflict {
 		cc = 1
@@ -713,12 +705,12 @@ func createIdea(title, summary, impact, source string, canonConflict bool, curre
 	if err != nil {
 		return nil, err
 	}
-		syncFTS5Entity(db, "idea", id, title, title+" "+summary)
-	return getIdea(id)
+		pmdb.SyncFTS5Entity(db, "idea", id, title, title+" "+summary)
+	return GetIdea(id)
 }
 
-func updateIdea(id string, payload map[string]any) (map[string]any, error) {
-	db, err := openDB()
+func UpdateIdea(id string, payload map[string]any) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -726,7 +718,7 @@ func updateIdea(id string, payload map[string]any) (map[string]any, error) {
 	setParts := []string{}
 	args := []any{}
 	for k, v := range payload {
-		col := mapKeyToColumn(k)
+		col := MapKeyToColumn(k)
 		if col == "" {
 			continue
 		}
@@ -734,60 +726,60 @@ func updateIdea(id string, payload map[string]any) (map[string]any, error) {
 		args = append(args, v)
 	}
 	if len(setParts) == 0 {
-		return getIdea(id)
+		return GetIdea(id)
 	}
 	args = append(args, id)
 	_, err = db.Exec(fmt.Sprintf("UPDATE ideas SET %s WHERE id = ?", strings.Join(setParts, ", ")), args...)
 	if err != nil {
 		return nil, err
 	}
-	return getIdea(id)
+	return GetIdea(id)
 }
 
-func reviewIdea(id, status, note string) (map[string]any, error) {
-	db, err := openDB()
+func ReviewIdea(id, status, note string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
-	db.Exec("UPDATE ideas SET status = ?, updated_at = ? WHERE id = ?", status, nowISO(), id)
+	db.Exec("UPDATE ideas SET status = ?, updated_at = ? WHERE id = ?", status, u.NowISO(), id)
 	if note != "" {
-		db.Exec("INSERT INTO idea_comments (id, idea_id, author_type, author_name, kind, content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", slug("ic"), id, "human", "reviewer", "review", note, nowISO())
+		db.Exec("INSERT INTO idea_comments (id, idea_id, author_type, author_name, kind, content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", u.Slug("ic"), id, "human", "reviewer", "review", note, u.NowISO())
 	}
-	return getIdea(id)
+	return GetIdea(id)
 }
 
-func createIdeaComment(ideaID, content, kind, authorType, authorName string) (map[string]any, error) {
-	db, err := openDB()
+func CreateIdeaComment(ideaID, content, kind, authorType, authorName string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
-	id := slug("ic")
-	now := nowISO()
+	id := u.Slug("ic")
+	now := u.NowISO()
 	db.Exec("INSERT INTO idea_comments (id, idea_id, author_type, author_name, kind, content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", id, ideaID, authorType, authorName, kind, content, now)
 	return map[string]any{"id": id, "idea_id": ideaID, "kind": kind, "content": content, "created_at": now}, nil
 }
 
-func convertIdeaToTask(ideaID, planID string) (map[string]any, error) {
+func ConvertIdeaToTask(ideaID, planID string) (map[string]any, error) {
 	if planID == "" {
 		return nil, fmt.Errorf("idea convert --to task requires --plan-id. Find a plan: aipmc plan list")
 	}
-	idea, err := getIdea(ideaID)
+	idea, err := GetIdea(ideaID)
 	if err != nil {
 		return nil, err
 	}
-	task, err := createTask(idea["title"].(string), "P1", "todo", "general", planID, nil)
+	task, err := CreateTask(idea["title"].(string), "P1", "todo", "general", planID, nil)
 	if err != nil {
 		return nil, err
 	}
-	createLink("idea", ideaID, "converted_to", "task", task["id"].(string), "Converted from idea thread")
-	updateIdea(ideaID, map[string]any{"status": "under_review", "recommended_next_action": "converted_to_task"})
+	CreateLink("idea", ideaID, "converted_to", "task", task["id"].(string), "Converted from idea thread")
+	UpdateIdea(ideaID, map[string]any{"status": "under_review", "recommended_next_action": "converted_to_task"})
 	return map[string]any{"type": "task", "id": task["id"], "title": task["title"]}, nil
 }
 
-func convertIdeaToDecision(ideaID string) (map[string]any, error) {
-	idea, err := getIdea(ideaID)
+func ConvertIdeaToDecision(ideaID string) (map[string]any, error) {
+	idea, err := GetIdea(ideaID)
 	if err != nil {
 		return nil, err
 	}
@@ -795,12 +787,12 @@ func convertIdeaToDecision(ideaID string) (map[string]any, error) {
 	if cs, _ := idea["current_summary"].(string); cs != "" {
 		bg = cs
 	}
-	dec, err := createDecision(idea["title"].(string), bg, idea["title"].(string), "proposed")
+	dec, err := CreateDecision(idea["title"].(string), bg, idea["title"].(string), "proposed")
 	if err != nil {
 		return nil, err
 	}
-	createLink("idea", ideaID, "converted_to", "decision", dec["id"].(string), "Converted from idea thread")
-	updateIdea(ideaID, map[string]any{"status": "accepted", "recommended_next_action": "converted_to_decision"})
+	CreateLink("idea", ideaID, "converted_to", "decision", dec["id"].(string), "Converted from idea thread")
+	UpdateIdea(ideaID, map[string]any{"status": "accepted", "recommended_next_action": "converted_to_decision"})
 	return map[string]any{"type": "decision", "id": dec["id"], "title": dec["title"]}, nil
 }
 
@@ -808,8 +800,8 @@ func convertIdeaToDecision(ideaID string) (map[string]any, error) {
 // Roadmaps
 // ============================================================
 
-func listRoadmaps(visionID string) ([]map[string]any, error) {
-	db, err := openDB()
+func ListRoadmaps(visionID string) ([]map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -826,41 +818,41 @@ func listRoadmaps(visionID string) ([]map[string]any, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	return scanRoadmapRows(rows)
+	return ScanRoadmapRows(rows)
 }
 
-func getRoadmap(id string) (map[string]any, error) {
-	db, err := openDB()
+func GetRoadmap(id string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
 	r := map[string]any{}
 	row := db.QueryRow("SELECT * FROM roadmap WHERE id = ?", id)
-	if err := scanRoadmapRow(row, r); err != nil {
+	if err := ScanRoadmapRow(row, r); err != nil {
 		return nil, err
 	}
 	return r, nil
 }
 
-func createRoadmap(title, targetDate, visionID, status, priority string) (map[string]any, error) {
-	db, err := openDB()
+func CreateRoadmap(title, targetDate, visionID, status, priority string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
-	id := slug("rdm")
-	now := nowISO()
+	id := u.Slug("rdm")
+	now := u.NowISO()
 	_, err = db.Exec("INSERT INTO roadmap (id, vision_id, title, target_date, status, priority, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", id, visionID, title, targetDate, status, priority, now, now)
 	if err != nil {
 		return nil, err
 	}
-		syncFTS5Entity(db, "roadmap", id, title, title)
-	return getRoadmap(id)
+		pmdb.SyncFTS5Entity(db, "roadmap", id, title, title)
+	return GetRoadmap(id)
 }
 
-func updateRoadmap(id string, payload map[string]any) (map[string]any, error) {
-	db, err := openDB()
+func UpdateRoadmap(id string, payload map[string]any) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -868,7 +860,7 @@ func updateRoadmap(id string, payload map[string]any) (map[string]any, error) {
 	setParts := []string{}
 	args := []any{}
 	for k, v := range payload {
-		col := mapKeyToColumn(k)
+		col := MapKeyToColumn(k)
 		if col == "" {
 			continue
 		}
@@ -876,24 +868,24 @@ func updateRoadmap(id string, payload map[string]any) (map[string]any, error) {
 		args = append(args, v)
 	}
 	if len(setParts) == 0 {
-		return getRoadmap(id)
+		return GetRoadmap(id)
 	}
 	setParts = append(setParts, "updated_at = ?")
-	args = append(args, nowISO())
+	args = append(args, u.NowISO())
 	args = append(args, id)
 	_, err = db.Exec(fmt.Sprintf("UPDATE roadmap SET %s WHERE id = ?", strings.Join(setParts, ", ")), args...)
 	if err != nil {
 		return nil, err
 	}
-	return getRoadmap(id)
+	return GetRoadmap(id)
 }
 
 // ============================================================
 // Principles
 // ============================================================
 
-func listPrinciples(status, kind string) ([]map[string]any, error) {
-	db, err := openDB()
+func ListPrinciples(status, kind string) ([]map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -918,41 +910,41 @@ func listPrinciples(status, kind string) ([]map[string]any, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	return scanPrincipleRows(rows)
+	return ScanPrincipleRows(rows)
 }
 
-func getPrinciple(id string) (map[string]any, error) {
-	db, err := openDB()
+func GetPrinciple(id string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
 	p := map[string]any{}
 	row := db.QueryRow("SELECT * FROM principles WHERE id = ?", id)
-	if err := scanPrincipleRow(row, p); err != nil {
+	if err := ScanPrincipleRow(row, p); err != nil {
 		return nil, err
 	}
 	return p, nil
 }
 
-func createPrinciple(title, summary, kind, status string) (map[string]any, error) {
-	db, err := openDB()
+func CreatePrinciple(title, summary, kind, status string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
-	id := slug("prncpl")
-	now := nowISO()
+	id := u.Slug("prncpl")
+	now := u.NowISO()
 	_, err = db.Exec("INSERT INTO principles (id, title, summary, kind, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", id, title, summary, kind, status, now, now)
 	if err != nil {
 		return nil, err
 	}
-		syncFTS5Entity(db, "principle", id, title, title+" "+summary)
-	return getPrinciple(id)
+		pmdb.SyncFTS5Entity(db, "principle", id, title, title+" "+summary)
+	return GetPrinciple(id)
 }
 
-func updatePrinciple(id string, payload map[string]any) (map[string]any, error) {
-	db, err := openDB()
+func UpdatePrinciple(id string, payload map[string]any) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -960,7 +952,7 @@ func updatePrinciple(id string, payload map[string]any) (map[string]any, error) 
 	setParts := []string{}
 	args := []any{}
 	for k, v := range payload {
-		col := mapKeyToColumn(k)
+		col := MapKeyToColumn(k)
 		if col == "" {
 			continue
 		}
@@ -968,24 +960,24 @@ func updatePrinciple(id string, payload map[string]any) (map[string]any, error) 
 		args = append(args, v)
 	}
 	if len(setParts) == 0 {
-		return getPrinciple(id)
+		return GetPrinciple(id)
 	}
 	setParts = append(setParts, "updated_at = ?")
-	args = append(args, nowISO())
+	args = append(args, u.NowISO())
 	args = append(args, id)
 	_, err = db.Exec(fmt.Sprintf("UPDATE principles SET %s WHERE id = ?", strings.Join(setParts, ", ")), args...)
 	if err != nil {
 		return nil, err
 	}
-	return getPrinciple(id)
+	return GetPrinciple(id)
 }
 
 // ============================================================
 // Links
 // ============================================================
 
-func listLinks(sourceID, targetID, relation string) ([]map[string]any, error) {
-	db, err := openDB()
+func ListLinks(sourceID, targetID, relation string) ([]map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -1026,20 +1018,20 @@ func listLinks(sourceID, targetID, relation string) ([]map[string]any, error) {
 	return links, nil
 }
 
-func createLink(sourceType, sourceID, relation, targetType, targetID, note string) (map[string]any, error) {
-	db, err := openDB()
+func CreateLink(sourceType, sourceID, relation, targetType, targetID, note string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
-	id := slug("link")
-	now := nowISO()
+	id := u.Slug("link")
+	now := u.NowISO()
 	db.Exec("INSERT INTO links (id, source_type, source_id, relation, target_type, target_id, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", id, sourceType, sourceID, relation, targetType, targetID, note, now)
 	return map[string]any{"id": id, "source_type": sourceType, "source_id": sourceID, "relation": relation, "target_type": targetType, "target_id": targetID}, nil
 }
 
-func deleteLink(id string) error {
-	db, err := openDB()
+func DeleteLink(id string) error {
+	db, err := pmdb.Open()
 	if err != nil {
 		return err
 	}
@@ -1052,8 +1044,8 @@ func deleteLink(id string) error {
 // Docs
 // ============================================================
 
-func listDocRecords(status, layer string) ([]map[string]any, error) {
-	db, err := openDB()
+func ListDocRecords(status, layer string) ([]map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -1095,8 +1087,8 @@ func listDocRecords(status, layer string) ([]map[string]any, error) {
 	return docs, nil
 }
 
-func updateDocRecord(path string, payload map[string]any) (map[string]any, error) {
-	db, err := openDB()
+func UpdateDocRecord(path string, payload map[string]any) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -1104,7 +1096,7 @@ func updateDocRecord(path string, payload map[string]any) (map[string]any, error
 	setParts := []string{}
 	args := []any{}
 	for k, v := range payload {
-		col := mapKeyToColumn(k)
+		col := MapKeyToColumn(k)
 		if col == "" {
 			continue
 		}
@@ -1130,8 +1122,8 @@ func updateDocRecord(path string, payload map[string]any) (map[string]any, error
 }
 
 
-func readDocContent(path string) (string, error) {
-	dir, err := findRuntimeDir()
+func ReadDocContent(path string) (string, error) {
+	dir, err := pmdb.RuntimeDir()
 	if err != nil {
 		return "", err
 	}
@@ -1148,40 +1140,40 @@ func readDocContent(path string) (string, error) {
 // Daily Notes
 // ============================================================
 
-func getDailyNote(date string) (map[string]any, error) {
-	db, err := openDB()
+func GetDailyNote(date string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
 	if date == "" {
-		date = today()
+		date = u.Today()
 	}
 	row := db.QueryRow("SELECT * FROM daily_notes WHERE note_date = ?", date)
 	var noteDate, completedJSON, problemsJSON, risksJSON, nextJSON, updatedAt string
 	if err := row.Scan(&noteDate, &completedJSON, &problemsJSON, &risksJSON, &nextJSON, &updatedAt); err != nil {
 		return map[string]any{"note_date": date, "completed": []any{}, "problems": []any{}, "risks": []any{}, "next": []any{}}, nil
 	}
-	return map[string]any{"note_date": noteDate, "completed": parseJSONList(completedJSON), "problems": parseJSONList(problemsJSON), "risks": parseJSONList(risksJSON), "next": parseJSONList(nextJSON), "updated_at": updatedAt}, nil
+	return map[string]any{"note_date": noteDate, "completed": u.ParseJSONList(completedJSON), "problems": u.ParseJSONList(problemsJSON), "risks": u.ParseJSONList(risksJSON), "next": u.ParseJSONList(nextJSON), "updated_at": updatedAt}, nil
 }
 
-func appendDailyNote(date string, payload map[string][]string) (map[string]any, error) {
-	return upsertDaily(date, payload, true)
+func AppendDailyNote(date string, payload map[string][]string) (map[string]any, error) {
+	return UpsertDaily(date, payload, true)
 }
-func replaceDailyNote(date string, payload map[string][]string) (map[string]any, error) {
-	return upsertDaily(date, payload, false)
+func ReplaceDailyNote(date string, payload map[string][]string) (map[string]any, error) {
+	return UpsertDaily(date, payload, false)
 }
 
-func upsertDaily(date string, payload map[string][]string, append_ bool) (map[string]any, error) {
-	db, err := openDB()
+func UpsertDaily(date string, payload map[string][]string, append_ bool) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
 	if date == "" {
-		date = today()
+		date = u.Today()
 	}
-	existing, _ := getDailyNote(date)
+	existing, _ := GetDailyNote(date)
 	merge := func(key string, newItems []string) []any {
 		var base []any
 		if append_ {
@@ -1194,13 +1186,13 @@ func upsertDaily(date string, payload map[string][]string, append_ bool) (map[st
 		}
 		return base
 	}
-	now := nowISO()
-	db.Exec("INSERT OR REPLACE INTO daily_notes (note_date, completed_json, problems_json, risks_json, next_json, updated_at) VALUES (?, ?, ?, ?, ?, ?)", date, jsonStr(merge("completed", payload["completed"])), jsonStr(merge("problems", payload["problems"])), jsonStr(merge("risks", payload["risks"])), jsonStr(merge("next", payload["next"])), now)
-	return getDailyNote(date)
+	now := u.NowISO()
+	db.Exec("INSERT OR REPLACE INTO daily_notes (note_date, completed_json, problems_json, risks_json, next_json, updated_at) VALUES (?, ?, ?, ?, ?, ?)", date, u.JsonStr(merge("completed", payload["completed"])), u.JsonStr(merge("problems", payload["problems"])), u.JsonStr(merge("risks", payload["risks"])), u.JsonStr(merge("next", payload["next"])), now)
+	return GetDailyNote(date)
 }
 
-func listDailyNotes() ([]map[string]any, error) {
-	db, err := openDB()
+func ListDailyNotes() ([]map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -1214,7 +1206,7 @@ func listDailyNotes() ([]map[string]any, error) {
 	for rows.Next() {
 		var noteDate, completedJSON, problemsJSON, risksJSON, nextJSON, updatedAt string
 		rows.Scan(&noteDate, &completedJSON, &problemsJSON, &risksJSON, &nextJSON, &updatedAt)
-		notes = append(notes, map[string]any{"note_date": noteDate, "completed": parseJSONList(completedJSON), "problems": parseJSONList(problemsJSON), "risks": parseJSONList(risksJSON), "next": parseJSONList(nextJSON), "updated_at": updatedAt})
+		notes = append(notes, map[string]any{"note_date": noteDate, "completed": u.ParseJSONList(completedJSON), "problems": u.ParseJSONList(problemsJSON), "risks": u.ParseJSONList(risksJSON), "next": u.ParseJSONList(nextJSON), "updated_at": updatedAt})
 	}
 	if notes == nil {
 		notes = []map[string]any{}
@@ -1226,8 +1218,8 @@ func listDailyNotes() ([]map[string]any, error) {
 // Visions
 // ============================================================
 
-func listVisions() ([]map[string]any, error) {
-	db, err := openDB()
+func ListVisions() ([]map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -1237,11 +1229,11 @@ func listVisions() ([]map[string]any, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	return scanVisionRows(rows)
+	return ScanVisionRows(rows)
 }
 
-func getVision(id string) (map[string]any, error) {
-	db, err := openDB()
+func GetVision(id string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -1262,21 +1254,21 @@ func getVision(id string) (map[string]any, error) {
 	return v, nil
 }
 
-func createVision(title, summary, status, horizon string) (map[string]any, error) {
-	db, err := openDB()
+func CreateVision(title, summary, status, horizon string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
-	id := slug("vision")
-	now := nowISO()
+	id := u.Slug("vision")
+	now := u.NowISO()
 	db.Exec("INSERT INTO visions (id, title, summary, status, horizon, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", id, title, summary, status, horizon, now, now)
-		syncFTS5Entity(db, "vision", id, title, title+" "+summary)
-	return getVision(id)
+		pmdb.SyncFTS5Entity(db, "vision", id, title, title+" "+summary)
+	return GetVision(id)
 }
 
-func updateVision(id string, payload map[string]any) (map[string]any, error) {
-	db, err := openDB()
+func UpdateVision(id string, payload map[string]any) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -1284,7 +1276,7 @@ func updateVision(id string, payload map[string]any) (map[string]any, error) {
 	setParts := []string{}
 	args := []any{}
 	for k, v := range payload {
-		col := mapKeyToColumn(k)
+		col := MapKeyToColumn(k)
 		if col == "" {
 			continue
 		}
@@ -1292,24 +1284,24 @@ func updateVision(id string, payload map[string]any) (map[string]any, error) {
 		args = append(args, v)
 	}
 	if len(setParts) == 0 {
-		return getVision(id)
+		return GetVision(id)
 	}
 	setParts = append(setParts, "updated_at = ?")
-	args = append(args, nowISO())
+	args = append(args, u.NowISO())
 	args = append(args, id)
 	_, err = db.Exec(fmt.Sprintf("UPDATE visions SET %s WHERE id = ?", strings.Join(setParts, ", ")), args...)
 	if err != nil {
 		return nil, err
 	}
-	return getVision(id)
+	return GetVision(id)
 }
 
 // ============================================================
 // Canon
 // ============================================================
 
-func getCanon() (map[string]any, error) {
-	db, err := openDB()
+func GetCanon() (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -1347,13 +1339,13 @@ func getCanon() (map[string]any, error) {
 	}, nil
 }
 
-func updateCanon(decisionID, productGoal, engFocus, arch string, addScope, addAvoid []string) (map[string]any, error) {
-	db, err := openDB()
+func UpdateCanon(decisionID, productGoal, engFocus, arch string, addScope, addAvoid []string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
-	now := nowISO()
+	now := u.NowISO()
 	db.Exec("INSERT OR REPLACE INTO canon (id, updated_at, product_goal, engineering_focus, architecture) VALUES (1, ?, ?, ?, ?)", now, productGoal, engFocus, arch)
 	for i, s := range addScope {
 		db.Exec("INSERT OR REPLACE INTO canon_items (item_type, position, value) VALUES (?, ?, ?)", "scope", i, s)
@@ -1361,7 +1353,7 @@ func updateCanon(decisionID, productGoal, engFocus, arch string, addScope, addAv
 	for i, s := range addAvoid {
 		db.Exec("INSERT OR REPLACE INTO canon_items (item_type, position, value) VALUES (?, ?, ?)", "avoid", i, s)
 	}
-	return getCanon()
+	return GetCanon()
 }
 
 // ============================================================
@@ -1395,8 +1387,8 @@ type ThreadSuggestion struct {
 	Score          float64       `json:"score"`
 }
 
-func listThreads(status string) ([]map[string]any, error) {
-	db, err := openDB()
+func ListThreads(status string) ([]map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -1426,14 +1418,14 @@ func listThreads(status string) ([]map[string]any, error) {
 		threads = []map[string]any{}
 	}
 	for _, t := range threads {
-		items, _ := listThreadItems(str(t["id"]))
+		items, _ := ListThreadItems(u.Str(t["id"]))
 		t["items"] = items
 	}
 	return threads, nil
 }
 
-func getThread(id string) (map[string]any, error) {
-	db, err := openDB()
+func GetThread(id string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -1443,21 +1435,21 @@ func getThread(id string) (map[string]any, error) {
 	if err := row.Scan(&tid, &title, &summary, &status, &source, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
-	items, _ := listThreadItems(id)
+	items, _ := ListThreadItems(id)
 	return map[string]any{
 		"id": tid, "title": title, "summary": summary, "status": status,
 		"source": source, "items": items, "created_at": createdAt, "updated_at": updatedAt,
 	}, nil
 }
 
-func createThread(title, summary, source string) (map[string]any, error) {
-	db, err := openDB()
+func CreateThread(title, summary, source string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
-	id := slug("thread")
-	now := nowISO()
+	id := u.Slug("thread")
+	now := u.NowISO()
 	if source == "" {
 		source = "manual"
 	}
@@ -1465,12 +1457,12 @@ func createThread(title, summary, source string) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-		syncFTS5Entity(db, "thread", id, title, title+" "+summary)
-	return getThread(id)
+		pmdb.SyncFTS5Entity(db, "thread", id, title, title+" "+summary)
+	return GetThread(id)
 }
 
-func updateThread(id string, payload map[string]any) (map[string]any, error) {
-	db, err := openDB()
+func UpdateThread(id string, payload map[string]any) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -1478,7 +1470,7 @@ func updateThread(id string, payload map[string]any) (map[string]any, error) {
 	setParts := []string{}
 	args := []any{}
 	for k, v := range payload {
-		col := mapKeyToColumn(k)
+		col := MapKeyToColumn(k)
 		if col == "" {
 			continue
 		}
@@ -1486,20 +1478,20 @@ func updateThread(id string, payload map[string]any) (map[string]any, error) {
 		args = append(args, v)
 	}
 	if len(setParts) == 0 {
-		return getThread(id)
+		return GetThread(id)
 	}
 	setParts = append(setParts, "updated_at = ?")
-	args = append(args, nowISO())
+	args = append(args, u.NowISO())
 	args = append(args, id)
 	_, err = db.Exec(fmt.Sprintf("UPDATE threads SET %s WHERE id = ?", strings.Join(setParts, ", ")), args...)
 	if err != nil {
 		return nil, err
 	}
-	return getThread(id)
+	return GetThread(id)
 }
 
-func deleteThread(id string) error {
-	db, err := openDB()
+func DeleteThread(id string) error {
+	db, err := pmdb.Open()
 	if err != nil {
 		return err
 	}
@@ -1509,8 +1501,8 @@ func deleteThread(id string) error {
 	return err
 }
 
-func listThreadItems(threadID string) ([]map[string]any, error) {
-	db, err := openDB()
+func ListThreadItems(threadID string) ([]map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -1524,7 +1516,7 @@ func listThreadItems(threadID string) ([]map[string]any, error) {
 	for rows.Next() {
 		var etype, eid, note, addedAt string
 		rows.Scan(&etype, &eid, &note, &addedAt)
-		title, status := resolveEntityTitleStatus(etype, eid)
+		title, status := ResolveEntityTitleStatus(etype, eid)
 		items = append(items, map[string]any{
 			"entity_type": etype, "entity_id": eid, "title": title, "status": status,
 			"note": note, "added_at": addedAt,
@@ -1536,23 +1528,23 @@ func listThreadItems(threadID string) ([]map[string]any, error) {
 	return items, nil
 }
 
-func addToThread(threadID, entityType, entityID, note string) (map[string]any, error) {
-	db, err := openDB()
+func AddToThread(threadID, entityType, entityID, note string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
-	now := nowISO()
+	now := u.NowISO()
 	_, err = db.Exec("INSERT OR REPLACE INTO thread_items (thread_id, entity_type, entity_id, added_at, note) VALUES (?, ?, ?, ?, ?)", threadID, entityType, entityID, now, note)
 	if err != nil {
 		return nil, err
 	}
 	db.Exec("UPDATE threads SET updated_at = ? WHERE id = ?", now, threadID)
-	return getThread(threadID)
+	return GetThread(threadID)
 }
 
-func removeFromThread(threadID, entityType, entityID string) error {
-	db, err := openDB()
+func RemoveFromThread(threadID, entityType, entityID string) error {
+	db, err := pmdb.Open()
 	if err != nil {
 		return err
 	}
@@ -1561,35 +1553,35 @@ func removeFromThread(threadID, entityType, entityID string) error {
 	return err
 }
 
-func resolveEntityTitleStatus(entityType, entityID string) (string, string) {
+func ResolveEntityTitleStatus(entityType, entityID string) (string, string) {
 	switch entityType {
 	case "task":
-		if t, err := getTask(entityID); err == nil {
-			return str(t["title"]), str(t["status"])
+		if t, err := GetTask(entityID); err == nil {
+			return u.Str(t["title"]), u.Str(t["status"])
 		}
 	case "plan":
-		if p, err := getPlan(entityID); err == nil {
-			return str(p["title"]), str(p["status"])
+		if p, err := GetPlan(entityID); err == nil {
+			return u.Str(p["title"]), u.Str(p["status"])
 		}
 	case "commit":
-		if c, err := getCommit(entityID); err == nil {
-			return str(c["title"]), str(c["status"])
+		if c, err := GetCommit(entityID); err == nil {
+			return u.Str(c["title"]), u.Str(c["status"])
 		}
 	case "decision":
-		if d, err := getDecision(entityID); err == nil {
-			return str(d["title"]), str(d["status"])
+		if d, err := GetDecision(entityID); err == nil {
+			return u.Str(d["title"]), u.Str(d["status"])
 		}
 	case "idea":
-		if i, err := getIdea(entityID); err == nil {
-			return str(i["title"]), str(i["status"])
+		if i, err := GetIdea(entityID); err == nil {
+			return u.Str(i["title"]), u.Str(i["status"])
 		}
 	case "bug":
-		if b, err := getBug(entityID); err == nil {
-			return str(b["title"]), str(b["status"])
+		if b, err := GetBug(entityID); err == nil {
+			return u.Str(b["title"]), u.Str(b["status"])
 		}
 	case "roadmap":
-		if r, err := getRoadmap(entityID); err == nil {
-			return str(r["title"]), str(r["status"])
+		if r, err := GetRoadmap(entityID); err == nil {
+			return u.Str(r["title"]), u.Str(r["status"])
 		}
 	}
 	return "", ""
@@ -1610,13 +1602,13 @@ type CommitContext struct {
 
 // listRecentCommitsWithContext returns recent commits enriched with task/plan/file/thread
 // information, ready for the AI agent to review and organize into threads.
-func listRecentCommitsWithContext(limit int) ([]CommitContext, error) {
-	commits, err := listCommits("", "", "", "", limit)
+func ListRecentCommitsWithContext(limit int) ([]CommitContext, error) {
+	commits, err := ListCommits("", "", "", "", limit)
 	if err != nil {
 		return nil, err
 	}
 
-	db, err := openDB()
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -1628,10 +1620,10 @@ func listRecentCommitsWithContext(limit int) ([]CommitContext, error) {
 	var results []CommitContext
 	for _, c := range commits {
 		cc := CommitContext{
-			ID:        str(c["id"]),
-			Title:     str(c["title"]),
-			TaskID:    str(c["task_id"]),
-			CreatedAt: str(c["created_at"]),
+			ID:        u.Str(c["id"]),
+			Title:     u.Str(c["title"]),
+			TaskID:    u.Str(c["task_id"]),
+			CreatedAt: u.Str(c["created_at"]),
 		}
 
 		if rawFiles, ok := c["files"].([]any); ok {
@@ -1645,13 +1637,13 @@ func listRecentCommitsWithContext(limit int) ([]CommitContext, error) {
 		// Resolve task
 		if cc.TaskID != "" {
 			if t, ok := taskCache[cc.TaskID]; ok {
-				cc.TaskTitle = str(t["title"])
-				cc.PlanID = str(t["plan_id"])
+				cc.TaskTitle = u.Str(t["title"])
+				cc.PlanID = u.Str(t["plan_id"])
 			} else {
-				if t, err := getTaskSimple(cc.TaskID); err == nil {
+				if t, err := GetTaskSimple(cc.TaskID); err == nil {
 					taskCache[cc.TaskID] = t
-					cc.TaskTitle = str(t["title"])
-					cc.PlanID = str(t["plan_id"])
+					cc.TaskTitle = u.Str(t["title"])
+					cc.PlanID = u.Str(t["plan_id"])
 				}
 			}
 		}
@@ -1659,11 +1651,11 @@ func listRecentCommitsWithContext(limit int) ([]CommitContext, error) {
 		// Resolve plan
 		if cc.PlanID != "" {
 			if p, ok := planCache[cc.PlanID]; ok {
-				cc.PlanTitle = str(p["title"])
+				cc.PlanTitle = u.Str(p["title"])
 			} else {
-				if p, err := getPlan(cc.PlanID); err == nil && p != nil {
+				if p, err := GetPlan(cc.PlanID); err == nil && p != nil {
 					planCache[cc.PlanID] = p
-					cc.PlanTitle = str(p["title"])
+					cc.PlanTitle = u.Str(p["title"])
 				}
 			}
 		}
@@ -1693,7 +1685,7 @@ func listRecentCommitsWithContext(limit int) ([]CommitContext, error) {
 // Helpers
 // ============================================================
 
-func mapKeyToColumn(k string) string {
+func MapKeyToColumn(k string) string {
 	m := map[string]string{
 		"title": "title", "summary": "summary", "status": "status", "priority": "priority",
 		"phase": "phase", "goal": "goal", "roadmap_id": "roadmap_id", "plan_id": "plan_id",
@@ -1719,7 +1711,7 @@ func mapKeyToColumn(k string) string {
 // Row scanners
 // ============================================================
 
-func scanTasks(rows *sql.Rows, err error) ([]Task, error) {
+func ScanTasks(rows *sql.Rows, err error) ([]Task, error) {
 	if err != nil {
 		return nil, err
 	}
@@ -1732,9 +1724,9 @@ func scanTasks(rows *sql.Rows, err error) ([]Task, error) {
 		rows.Scan(&t.ID, &t.Title, &t.Status, &t.Priority, &t.Phase, &acceptanceJSON, &docsJSON, &decsJSON, &t.LastNote, &t.UpdatedAt, &roadmapID, &planID, &t.CreatedAt)
 		t.RoadmapID = roadmapID.String
 		t.PlanID = planID.String
-		t.Acceptance = parseJSONList(acceptanceJSON)
-		t.RelatedDocs = parseJSONList(docsJSON)
-		t.RelatedDecisions = parseJSONList(decsJSON)
+		t.Acceptance = u.ParseJSONList(acceptanceJSON)
+		t.RelatedDocs = u.ParseJSONList(docsJSON)
+		t.RelatedDecisions = u.ParseJSONList(decsJSON)
 		tasks = append(tasks, t)
 	}
 	if tasks == nil {
@@ -1743,7 +1735,7 @@ func scanTasks(rows *sql.Rows, err error) ([]Task, error) {
 	return tasks, nil
 }
 
-func scanTaskRow(row *sql.Row, m map[string]any) error {
+func ScanTaskRow(row *sql.Row, m map[string]any) error {
 	var id, title, status, priority, phase, accJSON, docsJSON, decsJSON, lastNote, updatedAt, createdAt string
 	var roadmapID, planID sql.NullString
 	if err := row.Scan(&id, &title, &status, &priority, &phase, &accJSON, &docsJSON, &decsJSON, &lastNote, &updatedAt, &roadmapID, &planID, &createdAt); err != nil {
@@ -1765,12 +1757,12 @@ func scanTaskRow(row *sql.Row, m map[string]any) error {
 	return nil
 }
 
-func scanCommitRows(rows *sql.Rows) ([]map[string]any, error) {
+func ScanCommitRows(rows *sql.Rows) ([]map[string]any, error) {
 	defer rows.Close()
 	var commits []map[string]any
 	for rows.Next() {
 		m := map[string]any{}
-		if err := scanCommitRow(rows, m); err != nil {
+		if err := ScanCommitRow(rows, m); err != nil {
 			return nil, err
 		}
 		commits = append(commits, m)
@@ -1781,7 +1773,7 @@ func scanCommitRows(rows *sql.Rows) ([]map[string]any, error) {
 	return commits, nil
 }
 
-func scanCommitRow(scanner interface{ Scan(...any) error }, m map[string]any) error {
+func ScanCommitRow(scanner interface{ Scan(...any) error }, m map[string]any) error {
 	var id, title, summary, evSum, revNotes, branch, chash, status, testStatus, reviewStatus, filesJSON, createdAt, updatedAt string
 	var taskID, decID sql.NullString
 	// Column order MUST match CREATE TABLE commits:
@@ -1802,19 +1794,19 @@ func scanCommitRow(scanner interface{ Scan(...any) error }, m map[string]any) er
 	m["status"] = status
 	m["test_status"] = testStatus
 	m["review_status"] = reviewStatus
-	m["files"] = parseJSONList(filesJSON)
+	m["files"] = u.ParseJSONList(filesJSON)
 	m["files_json"] = filesJSON
 	m["created_at"] = createdAt
 	m["updated_at"] = updatedAt
 	return nil
 }
 
-func scanPlanRows(rows *sql.Rows) ([]map[string]any, error) {
+func ScanPlanRows(rows *sql.Rows) ([]map[string]any, error) {
 	defer rows.Close()
 	var plans []map[string]any
 	for rows.Next() {
 		m := map[string]any{}
-		if err := scanPlanRow(rows, m); err != nil {
+		if err := ScanPlanRow(rows, m); err != nil {
 			return nil, err
 		}
 		plans = append(plans, m)
@@ -1825,7 +1817,7 @@ func scanPlanRows(rows *sql.Rows) ([]map[string]any, error) {
 	return plans, nil
 }
 
-func scanPlanRow(scanner interface{ Scan(...any) error }, m map[string]any) error {
+func ScanPlanRow(scanner interface{ Scan(...any) error }, m map[string]any) error {
 	var id, title, goal, status, priority, scopeJSON, risksJSON, assumptionsJSON, taskIDsJSON, source, createdAt, updatedAt string
 	var roadmapID, visionID sql.NullString
 	if err := scanner.Scan(&id, &roadmapID, &visionID, &title, &goal, &status, &priority, &scopeJSON, &risksJSON, &assumptionsJSON, &taskIDsJSON, &source, &createdAt, &updatedAt); err != nil {
@@ -1838,22 +1830,22 @@ func scanPlanRow(scanner interface{ Scan(...any) error }, m map[string]any) erro
 	m["goal"] = goal
 	m["status"] = status
 	m["priority"] = priority
-	m["scope"] = parseJSONList(scopeJSON)
-	m["risks"] = parseJSONList(risksJSON)
-	m["assumptions"] = parseJSONList(assumptionsJSON)
-	m["task_ids"] = parseJSONStrList(taskIDsJSON)
+	m["scope"] = u.ParseJSONList(scopeJSON)
+	m["risks"] = u.ParseJSONList(risksJSON)
+	m["assumptions"] = u.ParseJSONList(assumptionsJSON)
+	m["task_ids"] = u.ParseJSONStrList(taskIDsJSON)
 	m["source"] = source
 	m["created_at"] = createdAt
 	m["updated_at"] = updatedAt
 	return nil
 }
 
-func scanBugRows(rows *sql.Rows) ([]map[string]any, error) {
+func ScanBugRows(rows *sql.Rows) ([]map[string]any, error) {
 	defer rows.Close()
 	var bugs []map[string]any
 	for rows.Next() {
 		m := map[string]any{}
-		if err := scanBugRow(rows, m); err != nil {
+		if err := ScanBugRow(rows, m); err != nil {
 			return nil, err
 		}
 		bugs = append(bugs, m)
@@ -1864,7 +1856,7 @@ func scanBugRows(rows *sql.Rows) ([]map[string]any, error) {
 	return bugs, nil
 }
 
-func scanBugRow(scanner interface{ Scan(...any) error }, m map[string]any) error {
+func ScanBugRow(scanner interface{ Scan(...any) error }, m map[string]any) error {
 	var id, title, desc, severity, status, errMsg, files, rootCause, fix, tags, createdAt, updatedAt string
 	var commitID sql.NullString
 	if err := scanner.Scan(&id, &title, &desc, &severity, &status, &commitID, &errMsg, &files, &rootCause, &fix, &tags, &createdAt, &updatedAt); err != nil {
@@ -1886,12 +1878,12 @@ func scanBugRow(scanner interface{ Scan(...any) error }, m map[string]any) error
 	return nil
 }
 
-func scanDecisionRows(rows *sql.Rows) ([]map[string]any, error) {
+func ScanDecisionRows(rows *sql.Rows) ([]map[string]any, error) {
 	defer rows.Close()
 	var decisions []map[string]any
 	for rows.Next() {
 		m := map[string]any{}
-		if err := scanDecisionRow(rows, m); err != nil {
+		if err := ScanDecisionRow(rows, m); err != nil {
 			return nil, err
 		}
 		decisions = append(decisions, m)
@@ -1902,7 +1894,7 @@ func scanDecisionRows(rows *sql.Rows) ([]map[string]any, error) {
 	return decisions, nil
 }
 
-func scanDecisionRow(scanner interface{ Scan(...any) error }, m map[string]any) error {
+func ScanDecisionRow(scanner interface{ Scan(...any) error }, m map[string]any) error {
 	var id, title, date, status, background, decisionText, impactJSON, altJSON, relTasksJSON string
 	var updatesCanon int
 	if err := scanner.Scan(&id, &title, &date, &status, &background, &decisionText, &impactJSON, &altJSON, &relTasksJSON, &updatesCanon); err != nil {
@@ -1914,19 +1906,19 @@ func scanDecisionRow(scanner interface{ Scan(...any) error }, m map[string]any) 
 	m["status"] = status
 	m["background"] = background
 	m["decision"] = decisionText
-	m["impact"] = parseJSONList(impactJSON)
-	m["alternatives"] = parseJSONList(altJSON)
-	m["related_tasks"] = parseJSONList(relTasksJSON)
+	m["impact"] = u.ParseJSONList(impactJSON)
+	m["alternatives"] = u.ParseJSONList(altJSON)
+	m["related_tasks"] = u.ParseJSONList(relTasksJSON)
 	m["updates_canon"] = updatesCanon == 1
 	return nil
 }
 
-func scanIdeaRows(rows *sql.Rows) ([]map[string]any, error) {
+func ScanIdeaRows(rows *sql.Rows) ([]map[string]any, error) {
 	defer rows.Close()
 	var ideas []map[string]any
 	for rows.Next() {
 		m := map[string]any{}
-		if err := scanIdeaRow(rows, m); err != nil {
+		if err := ScanIdeaRow(rows, m); err != nil {
 			return nil, err
 		}
 		ideas = append(ideas, m)
@@ -1937,7 +1929,7 @@ func scanIdeaRows(rows *sql.Rows) ([]map[string]any, error) {
 	return ideas, nil
 }
 
-func scanIdeaRow(scanner interface{ Scan(...any) error }, m map[string]any) error {
+func ScanIdeaRow(scanner interface{ Scan(...any) error }, m map[string]any) error {
 	var id, title, summary, impact, source, status, currentSummary, mainQuestion, recommendedNextAction, updatedAt, createdAt string
 	var canonConflict int
 	if err := scanner.Scan(&id, &title, &summary, &impact, &source, &status, &canonConflict, &currentSummary, &mainQuestion, &recommendedNextAction, &updatedAt, &createdAt); err != nil {
@@ -1958,12 +1950,12 @@ func scanIdeaRow(scanner interface{ Scan(...any) error }, m map[string]any) erro
 	return nil
 }
 
-func scanRoadmapRows(rows *sql.Rows) ([]map[string]any, error) {
+func ScanRoadmapRows(rows *sql.Rows) ([]map[string]any, error) {
 	defer rows.Close()
 	var roadmaps []map[string]any
 	for rows.Next() {
 		m := map[string]any{}
-		if err := scanRoadmapRow(rows, m); err != nil {
+		if err := ScanRoadmapRow(rows, m); err != nil {
 			return nil, err
 		}
 		roadmaps = append(roadmaps, m)
@@ -1974,7 +1966,7 @@ func scanRoadmapRows(rows *sql.Rows) ([]map[string]any, error) {
 	return roadmaps, nil
 }
 
-func scanRoadmapRow(scanner interface{ Scan(...any) error }, m map[string]any) error {
+func ScanRoadmapRow(scanner interface{ Scan(...any) error }, m map[string]any) error {
 	var id, title, targetDate, status, priority, createdAt, updatedAt string
 	var visionID sql.NullString
 	if err := scanner.Scan(&id, &visionID, &title, &targetDate, &status, &priority, &createdAt, &updatedAt); err != nil {
@@ -1991,12 +1983,12 @@ func scanRoadmapRow(scanner interface{ Scan(...any) error }, m map[string]any) e
 	return nil
 }
 
-func scanPrincipleRows(rows *sql.Rows) ([]map[string]any, error) {
+func ScanPrincipleRows(rows *sql.Rows) ([]map[string]any, error) {
 	defer rows.Close()
 	var principles []map[string]any
 	for rows.Next() {
 		m := map[string]any{}
-		if err := scanPrincipleRow(rows, m); err != nil {
+		if err := ScanPrincipleRow(rows, m); err != nil {
 			return nil, err
 		}
 		principles = append(principles, m)
@@ -2007,7 +1999,7 @@ func scanPrincipleRows(rows *sql.Rows) ([]map[string]any, error) {
 	return principles, nil
 }
 
-func scanPrincipleRow(scanner interface{ Scan(...any) error }, m map[string]any) error {
+func ScanPrincipleRow(scanner interface{ Scan(...any) error }, m map[string]any) error {
 	var id, title, summary, kind, status, createdAt, updatedAt string
 	if err := scanner.Scan(&id, &title, &summary, &kind, &status, &createdAt, &updatedAt); err != nil {
 		return err
@@ -2022,7 +2014,7 @@ func scanPrincipleRow(scanner interface{ Scan(...any) error }, m map[string]any)
 	return nil
 }
 
-func scanVisionRows(rows *sql.Rows) ([]map[string]any, error) {
+func ScanVisionRows(rows *sql.Rows) ([]map[string]any, error) {
 	defer rows.Close()
 	var visions []map[string]any
 	for rows.Next() {
@@ -2044,18 +2036,18 @@ func scanVisionRows(rows *sql.Rows) ([]map[string]any, error) {
 	return visions, nil
 }
 
-func getTask(id string) (map[string]any, error) {
-	db, err := openDB()
+func GetTask(id string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
 	task := map[string]any{}
 	row := db.QueryRow("SELECT * FROM tasks WHERE id = ?", id)
-	if err := scanTaskRow(row, task); err != nil {
+	if err := ScanTaskRow(row, task); err != nil {
 		return nil, err
 	}
-	commits, _ := listCommitsByTask(id)
+	commits, _ := ListCommitsByTask(id)
 	approved, verified := 0, 0
 	for _, c := range commits {
 		s, _ := c["status"].(string)
@@ -2070,7 +2062,7 @@ func getTask(id string) (map[string]any, error) {
 	}
 	task["linked_commits"] = commits
 	task["closure"] = map[string]any{"linked_commit_count": len(commits), "approved_commit_count": approved, "verified_approved_commit_count": verified, "can_mark_done": verified > 0}
-	notes, _ := listTaskNotes(id, 20)
+	notes, _ := ListTaskNotes(id, 20)
 	task["note_history"] = notes
 	return task, nil
 }
@@ -2079,8 +2071,8 @@ func getTask(id string) (map[string]any, error) {
 // Delete operations
 // ============================================================
 
-func deleteTask(id string) error {
-	db, err := openDB()
+func DeleteTask(id string) error {
+	db, err := pmdb.Open()
 	if err != nil {
 		return err
 	}
@@ -2089,8 +2081,8 @@ func deleteTask(id string) error {
 	return err
 }
 
-func deletePlan(id string) error {
-	db, err := openDB()
+func DeletePlan(id string) error {
+	db, err := pmdb.Open()
 	if err != nil {
 		return err
 	}
@@ -2099,8 +2091,8 @@ func deletePlan(id string) error {
 	return err
 }
 
-func deleteBug(id string) error {
-	db, err := openDB()
+func DeleteBug(id string) error {
+	db, err := pmdb.Open()
 	if err != nil {
 		return err
 	}
@@ -2113,14 +2105,14 @@ func deleteBug(id string) error {
 // Events — PM intent change tracking (Phase 1)
 // ============================================================
 
-func createEvent(typ, entityType, entityID, summary string) (map[string]any, error) {
-	db, err := openDB()
+func CreateEvent(typ, entityType, entityID, summary string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
-	id := slug("evt")
-	now := nowISO()
+	id := u.Slug("evt")
+	now := u.NowISO()
 	_, err = db.Exec("INSERT INTO events (id, type, entity_type, entity_id, summary, created_at, consumed_by_agent) VALUES (?, ?, ?, ?, ?, ?, 0)", id, typ, entityType, entityID, summary, now)
 	if err != nil {
 		return nil, err
@@ -2128,8 +2120,8 @@ func createEvent(typ, entityType, entityID, summary string) (map[string]any, err
 	return map[string]any{"id": id, "type": typ, "entity_type": entityType, "entity_id": entityID, "summary": summary, "created_at": now, "consumed_by_agent": false}, nil
 }
 
-func listEvents(consumedOnly string) ([]map[string]any, error) {
-	db, err := openDB()
+func ListEvents(consumedOnly string) ([]map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -2160,8 +2152,8 @@ func listEvents(consumedOnly string) ([]map[string]any, error) {
 	return events, nil
 }
 
-func markEventsConsumed() error {
-	db, err := openDB()
+func MarkEventsConsumed() error {
+	db, err := pmdb.Open()
 	if err != nil {
 		return err
 	}
@@ -2170,8 +2162,8 @@ func markEventsConsumed() error {
 	return err
 }
 
-func getUnconsumedEvents() ([]map[string]any, error) {
-	return listEvents("unconsumed")
+func GetUnconsumedEvents() ([]map[string]any, error) {
+	return ListEvents("unconsumed")
 }
 
 // ============================================================
@@ -2183,14 +2175,14 @@ func getUnconsumedEvents() ([]map[string]any, error) {
 
 // ---- Agent Profiles ----
 
-func createAgentProfile(name, role, capabilities string) (map[string]any, error) {
-	db, err := openDB()
+func CreateAgentProfile(name, role, capabilities string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
-	id := slug("agent")
-	now := nowISO()
+	id := u.Slug("agent")
+	now := u.NowISO()
 	if role == "" {
 		role = "coder"
 	}
@@ -2201,12 +2193,12 @@ func createAgentProfile(name, role, capabilities string) (map[string]any, error)
 	if err != nil {
 		return nil, err
 	}
-	syncFTS5Entity(db, "agent", id, name, name+" "+role)
-	return getAgentProfile(id)
+	pmdb.SyncFTS5Entity(db, "agent", id, name, name+" "+role)
+	return GetAgentProfile(id)
 }
 
-func getAgentProfile(id string) (map[string]any, error) {
-	db, err := openDB()
+func GetAgentProfile(id string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -2217,12 +2209,12 @@ func getAgentProfile(id string) (map[string]any, error) {
 	var aid, aname, arole, astatus, acreatedAt, aupdatedAt string
 	row.Scan(&aid, &aname, &arole, &caps, &astatus, &acreatedAt, &aupdatedAt)
 	a["id"] = aid; a["name"] = aname; a["role"] = arole; a["status"] = astatus; a["created_at"] = acreatedAt; a["updated_at"] = aupdatedAt
-	a["capabilities"] = parseJSONList(caps)
+	a["capabilities"] = u.ParseJSONList(caps)
 	return a, nil
 }
 
-func listAgentProfiles() ([]map[string]any, error) {
-	db, err := openDB()
+func ListAgentProfiles() ([]map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -2239,7 +2231,7 @@ func listAgentProfiles() ([]map[string]any, error) {
 		var id, name, role, status, createdAt, updatedAt string
 		rows.Scan(&id, &name, &role, &caps, &status, &createdAt, &updatedAt)
 		a["id"] = id; a["name"] = name; a["role"] = role; a["status"] = status; a["created_at"] = createdAt; a["updated_at"] = updatedAt
-		a["capabilities"] = parseJSONList(caps)
+		a["capabilities"] = u.ParseJSONList(caps)
 		result = append(result, a)
 	}
 	if result == nil {
@@ -2248,8 +2240,8 @@ func listAgentProfiles() ([]map[string]any, error) {
 	return result, nil
 }
 
-func updateAgentProfile(id string, payload map[string]any) (map[string]any, error) {
-	db, err := openDB()
+func UpdateAgentProfile(id string, payload map[string]any) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -2270,16 +2262,16 @@ func updateAgentProfile(id string, payload map[string]any) (map[string]any, erro
 		}
 	}
 	if len(setParts) == 0 {
-		return getAgentProfile(id)
+		return GetAgentProfile(id)
 	}
 	setParts = append(setParts, "updated_at = ?")
-	args = append(args, nowISO())
+	args = append(args, u.NowISO())
 	args = append(args, id)
 	_, err = db.Exec("UPDATE agent_profiles SET "+strings.Join(setParts, ", ")+" WHERE id = ?", args...)
 	if err != nil {
 		return nil, err
 	}
-	a, _ := getAgentProfile(id)
-	syncFTS5Entity(db, "agent", id, str(a["name"]), str(a["name"])+" "+str(a["role"]))
+	a, _ := GetAgentProfile(id)
+	pmdb.SyncFTS5Entity(db, "agent", id, u.Str(a["name"]), u.Str(a["name"])+" "+u.Str(a["role"]))
 	return a, nil
 }

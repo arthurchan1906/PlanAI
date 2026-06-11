@@ -10,35 +10,18 @@ import (
 	"time"
 
 	"aipmc/ai"
+	pmdb "aipmc/db"
 )
-
-// ---- Discussion Log ----
-
-func logDiscussion(sessionID, role, source, content, metadataJSON string) (map[string]any, error) {
-	db, err := openDB()
-	if err != nil { return nil, err }
-	defer db.Close()
-	id := slug("disc")
-	now := nowISO()
-	sid := sessionID
-	if sid == "" { sid = "unknown" }
-	_, err = db.Exec("INSERT INTO discussion_log (id, session_id, role, source, content, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", id, sid, role, source, content, metadataJSON, now)
-	if err != nil { return nil, err }
-	preview := content
-	if len([]rune(preview)) > 80 { preview = string([]rune(preview)[:80]) }
-	syncFTS5Entity(db, "discussion", id, "["+role+"]["+source+"] "+preview, content)
-	return map[string]any{"id": id, "status": "created"}, nil
-}
 
 // embedDiscussions computes embeddings and stores them in pmai_vectors.db.
 // Skips messages < 30 chars. Returns the count of newly embedded records.
 func embedDiscussions(batchSize int) (int, error) {
 	if aiClient == nil || !aiClient.Enabled() { return 0, fmt.Errorf("AI not configured") }
-	db, err := openDB()
+	db, err := pmdb.Open()
 	if err != nil { return 0, err }
 	defer db.Close()
 
-	vdb, err := openVectorsDB()
+	vdb, err := pmdb.OpenVectors()
 	if err != nil { return 0, err }
 	defer vdb.Close()
 
@@ -89,7 +72,7 @@ func embedDiscussions(batchSize int) (int, error) {
 }
 
 func openProjectDB(projectPath string) (*sql.DB, error) {
-	if projectPath == "" { return openDB() }
+	if projectPath == "" { return pmdb.Open() }
 	dbPath := filepath.Join(projectPath, ".pmai", "data", "pmai.db")
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		return nil, fmt.Errorf("project not found at %s", projectPath)
@@ -188,7 +171,7 @@ func searchDiscussions(query, source, typeFilter, projectPath string, page, page
 func rerankDiscussions(query string, ids []string, db *sql.DB) []string {
 	if aiClient == nil || !aiClient.Enabled() { return nil }
 	// Fetch pre-computed embeddings from vectors DB
-	vdb, err := openVectorsDB()
+	vdb, err := pmdb.OpenVectors()
 	if err != nil { return nil }
 	defer vdb.Close()
 
@@ -235,7 +218,7 @@ func getDiscussionByID(db *sql.DB, id string) map[string]any {
 }
 
 func listDiscussionSources() ([]string, error) {
-	db, err := openDB()
+	db, err := pmdb.Open()
 	if err != nil { return nil, err }
 	defer db.Close()
 	rows, err := db.Query("SELECT DISTINCT source FROM discussion_log WHERE source != '' ORDER BY source")

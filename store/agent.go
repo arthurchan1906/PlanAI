@@ -1,30 +1,33 @@
-package main
+package store
 
 import (
 	"database/sql"
 	"strings"
+
+	pmdb "aipmc/db"
+	"aipmc/u"
 )
 
 // ---- Meeting Rooms ----
 
-func createMeetingRoom(title, topic, context, createdBy string) (map[string]any, error) {
-	db, err := openDB()
+func CreateMeetingRoom(title, topic, context, createdBy string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
-	id := slug("meeting")
-	now := nowISO()
+	id := u.Slug("meeting")
+	now := u.NowISO()
 	_, err = db.Exec("INSERT INTO meeting_rooms (id, title, topic, context, status, created_by, created_at) VALUES (?, ?, ?, ?, 'active', ?, ?)", id, title, topic, context, createdBy, now)
 	if err != nil {
 		return nil, err
 	}
-	syncFTS5Entity(db, "meeting", id, title, title+" "+topic)
-	return getMeetingRoom(id)
+	pmdb.SyncFTS5Entity(db, "meeting", id, title, title+" "+topic)
+	return GetMeetingRoom(id)
 }
 
-func getMeetingRoom(id string) (map[string]any, error) {
-	db, err := openDB()
+func GetMeetingRoom(id string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -39,15 +42,15 @@ func getMeetingRoom(id string) (map[string]any, error) {
 	if closedAt.Valid {
 		m["closed_at"] = closedAt.String
 	}
-	turns, _ := listMeetingTurns(id)
+	turns, _ := ListMeetingTurns(id)
 	m["turns"] = turns
-	parts, _ := listMeetingParticipants(id)
+	parts, _ := ListMeetingParticipants(id)
 	m["participants"] = parts
 	return m, nil
 }
 
-func listMeetingRooms(status string) ([]map[string]any, error) {
-	db, err := openDB()
+func ListMeetingRooms(status string) ([]map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -80,40 +83,40 @@ func listMeetingRooms(status string) ([]map[string]any, error) {
 	return result, nil
 }
 
-func closeMeetingRoom(id string) (map[string]any, error) {
-	db, err := openDB()
+func CloseMeetingRoom(id string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
-	db.Exec("UPDATE meeting_rooms SET status = 'closed', closed_at = ? WHERE id = ?", nowISO(), id)
-	return getMeetingRoom(id)
+	db.Exec("UPDATE meeting_rooms SET status = 'closed', closed_at = ? WHERE id = ?", u.NowISO(), id)
+	return GetMeetingRoom(id)
 }
 
 // ---- Meeting Turns ----
 
-func createMeetingTurn(roomID string, turnNumber int, speakerType, speakerID, question string) (map[string]any, error) {
-	return createMeetingTurnEx(roomID, turnNumber, speakerType, speakerID, question, "", "")
+func CreateMeetingTurn(roomID string, turnNumber int, speakerType, speakerID, question string) (map[string]any, error) {
+	return CreateMeetingTurnEx(roomID, turnNumber, speakerType, speakerID, question, "", "")
 }
 
-func createMeetingTurnEx(roomID string, turnNumber int, speakerType, speakerID, question, replyTo, addressTo string) (map[string]any, error) {
-	db, err := openDB()
+func CreateMeetingTurnEx(roomID string, turnNumber int, speakerType, speakerID, question, replyTo, addressTo string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
-	id := slug("turn")
-	now := nowISO()
+	id := u.Slug("turn")
+	now := u.NowISO()
 	tn := turnNumber
 	_, err = db.Exec("INSERT INTO meeting_turns (id, room_id, turn_number, speaker_type, speaker_id, question, response, status, reply_to, address_to, created_at) VALUES (?, ?, ?, ?, ?, ?, '', 'waiting', ?, ?, ?)", id, roomID, tn, speakerType, speakerID, question, replyTo, addressTo, now)
 	if err != nil {
 		return nil, err
 	}
-	return getMeetingTurn(id)
+	return GetMeetingTurn(id)
 }
 
-func getMeetingTurn(id string) (map[string]any, error) {
-	db, err := openDB()
+func GetMeetingTurn(id string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -126,8 +129,8 @@ func getMeetingTurn(id string) (map[string]any, error) {
 	return t, nil
 }
 
-func listMeetingTurns(roomID string) ([]map[string]any, error) {
-	db, err := openDB()
+func ListMeetingTurns(roomID string) ([]map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -151,31 +154,31 @@ func listMeetingTurns(roomID string) ([]map[string]any, error) {
 	return result, nil
 }
 
-func respondMeetingTurn(id, response string) (map[string]any, error) {
-	db, err := openDB()
+func RespondMeetingTurn(id, response string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
 	db.Exec("UPDATE meeting_turns SET response = ?, status = 'responded' WHERE id = ?", response, id)
-	return getMeetingTurn(id)
+	return GetMeetingTurn(id)
 }
 
 // ---- Meeting Participants ----
 
-func confirmMeetingAttendance(meetingID, agentID string) (map[string]any, error) {
-	db, err := openDB()
+func ConfirmMeetingAttendance(meetingID, agentID string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
-	now := nowISO()
+	now := u.NowISO()
 	db.Exec("INSERT OR REPLACE INTO meeting_participants (meeting_id, agent_id, status, confirmed_at) VALUES (?, ?, 'ready', ?)", meetingID, agentID, now)
 	return map[string]any{"meeting_id": meetingID, "agent_id": agentID, "status": "ready"}, nil
 }
 
-func listMeetingParticipants(meetingID string) ([]map[string]any, error) {
-	db, err := openDB()
+func ListMeetingParticipants(meetingID string) ([]map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -199,14 +202,14 @@ func listMeetingParticipants(meetingID string) ([]map[string]any, error) {
 
 // ---- Agent Assignments ----
 
-func createAssignment(agentID, taskID, role, scope, assignedBy string) (map[string]any, error) {
-	db, err := openDB()
+func CreateAssignment(agentID, taskID, role, scope, assignedBy string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
-	id := slug("asgn")
-	now := nowISO()
+	id := u.Slug("asgn")
+	now := u.NowISO()
 	var tid any
 	if taskID != "" {
 		tid = taskID
@@ -215,11 +218,11 @@ func createAssignment(agentID, taskID, role, scope, assignedBy string) (map[stri
 	if err != nil {
 		return nil, err
 	}
-	return getAssignment(id)
+	return GetAssignment(id)
 }
 
-func getAssignment(id string) (map[string]any, error) {
-	db, err := openDB()
+func GetAssignment(id string) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -243,8 +246,8 @@ func getAssignment(id string) (map[string]any, error) {
 	return a, nil
 }
 
-func listAssignments(agentID, status string) ([]map[string]any, error) {
-	db, err := openDB()
+func ListAssignments(agentID, status string) ([]map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -287,8 +290,8 @@ func listAssignments(agentID, status string) ([]map[string]any, error) {
 	return result, nil
 }
 
-func updateAssignment(id string, payload map[string]any) (map[string]any, error) {
-	db, err := openDB()
+func UpdateAssignment(id string, payload map[string]any) (map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -302,32 +305,32 @@ func updateAssignment(id string, payload map[string]any) (map[string]any, error)
 			args = append(args, v)
 		case "claimed":
 			setParts = append(setParts, "claimed_at = ?")
-			args = append(args, nowISO())
+			args = append(args, u.NowISO())
 		case "completed":
 			setParts = append(setParts, "completed_at = ?")
-			args = append(args, nowISO())
+			args = append(args, u.NowISO())
 		}
 	}
 	if len(setParts) == 0 {
-		return getAssignment(id)
+		return GetAssignment(id)
 	}
 	args = append(args, id)
 	_, err = db.Exec("UPDATE agent_assignments SET "+strings.Join(setParts, ", ")+" WHERE id = ?", args...)
 	if err != nil {
 		return nil, err
 	}
-	return getAssignment(id)
+	return GetAssignment(id)
 }
 
-func updateLastSeenTurn(meetingID, agentID string, turnNumber int) {
-	db, err := openDB()
+func UpdateLastSeenTurn(meetingID, agentID string, turnNumber int) {
+	db, err := pmdb.Open()
 	if err != nil { return }
 	defer db.Close()
 	db.Exec("UPDATE meeting_participants SET last_seen_turn = ? WHERE meeting_id = ? AND agent_id = ?", turnNumber, meetingID, agentID)
 }
 
-func markTurnProcessing(turnID string) {
-	db, err := openDB()
+func MarkTurnProcessing(turnID string) {
+	db, err := pmdb.Open()
 	if err != nil { return }
 	defer db.Close()
 	db.Exec("UPDATE meeting_turns SET status = 'processing' WHERE id = ?", turnID)

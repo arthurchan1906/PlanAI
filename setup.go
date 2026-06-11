@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	pmdb "aipmc/db"
 )
 
 // ============================================================
@@ -86,7 +88,7 @@ func listPlatforms() {
 // setupMCP configures MCP for all supported platforms, or a specific one.
 // targetPlatform can be a display name, short key, alias, "" (empty = all), or "all".
 func setupMCP(targetPlatform string) error {
-	runtimeDir, err := findRuntimeDir()
+	runtimeDir, err := pmdb.RuntimeDir()
 	if err != nil {
 		return fmt.Errorf("cannot find project root — run aipmc init first: %w", err)
 	}
@@ -288,7 +290,7 @@ func resolveBinaryPath() string {
 
 // checkMCPSetup verifies which platforms have MCP configured.
 func checkMCPSetup() map[string]any {
-	runtimeDir, err := findRuntimeDir()
+	runtimeDir, err := pmdb.RuntimeDir()
 	if err != nil {
 		return map[string]any{"configured": false, "reason": "project not initialized"}
 	}

@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"aipmc/ai"
+	"aipmc/store"
+	pmdb "aipmc/db"
 )
 
 // registerAgentTools adds meeting + assignment MCP tools.
@@ -122,11 +124,11 @@ func (s *mcpServer) handleConfirmAttendance(args map[string]interface{}) mcpTool
 	if meetingID == "" || agentID == "" {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "请提供 meeting_id 和 agent_id"}}, IsError: true}
 	}
-	result, err := confirmMeetingAttendance(meetingID, agentID)
+	result, err := store.ConfirmMeetingAttendance(meetingID, agentID)
 	if err != nil {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("确认参会失败: %v", err)}}, IsError: true}
 	}
-	recordAudit("agent", agentID, "confirm_attendance", "meeting", meetingID, "Agent confirmed attendance")
+	store.RecordAudit("agent", agentID, "confirm_attendance", "meeting", meetingID, "Agent confirmed attendance")
 	return mcpToolResult{
 		Content:        []mcpContent{{Type: "text", Text: "✅ 已确认参会"}},
 		RelatedContext: result,
@@ -144,11 +146,11 @@ func (s *mcpServer) handleGetMeetingTurn(args map[string]interface{}) mcpToolRes
 	if st := getStr(args, "since_turn", ""); st != "" {
 		fmt.Sscanf(st, "%d", &sinceTurn)
 	}
-	room, err := getMeetingRoom(roomID)
+	room, err := store.GetMeetingRoom(roomID)
 	if err != nil {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("会议不存在: %v", err)}}, IsError: true}
 	}
-	turn, err := getMeetingTurn(turnID)
+	turn, err := store.GetMeetingTurn(turnID)
 	if err != nil {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("轮次不存在: %v", err)}}, IsError: true}
 	}
@@ -163,7 +165,7 @@ func (s *mcpServer) handleGetMeetingTurn(args map[string]interface{}) mcpToolRes
 	if roles := str(room["agent_roles_context"]); roles != "" {
 		b.WriteString(fmt.Sprintf("### 参会角色\n%s\n\n", roles))
 	}
-	allTurns, _ := listMeetingTurns(roomID)
+	allTurns, _ := store.ListMeetingTurns(roomID)
 	incremental := sinceTurn > 0
 	b.WriteString(fmt.Sprintf("### PM/仲裁对你的提问 (Turn %d)\n%s\n\n", currentTurnNum, str(turn["question"])))
 	b.WriteString("### 之前的发言")
@@ -209,8 +211,8 @@ func (s *mcpServer) handleGetMeetingTurn(args map[string]interface{}) mcpToolRes
 		}
 	}
 	if agentID != "" {
-		updateLastSeenTurn(roomID, agentID, currentTurnNum)
-		markTurnProcessing(turnID)
+		store.UpdateLastSeenTurn(roomID, agentID, currentTurnNum)
+		store.MarkTurnProcessing(turnID)
 	}
 	reflection := "请在理解上下文后，使用 aipm_respond_in_meeting 提交你的意见。"
 	if incremental {
@@ -229,11 +231,11 @@ func (s *mcpServer) handleRespondInMeeting(args map[string]interface{}) mcpToolR
 	if turnID == "" || response == "" {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "请提供 turn_id 和 response"}}, IsError: true}
 	}
-	turn, err := respondMeetingTurn(turnID, response)
+	turn, err := store.RespondMeetingTurn(turnID, response)
 	if err != nil {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("回应失败: %v", err)}}, IsError: true}
 	}
-	recordAudit("agent", str(turn["speaker_id"]), "respond_meeting", "meeting_turn", turnID, "Agent responded in meeting")
+	store.RecordAudit("agent", str(turn["speaker_id"]), "respond_meeting", "meeting_turn", turnID, "Agent responded in meeting")
 	return mcpToolResult{
 		Content:        []mcpContent{{Type: "text", Text: "✅ 回应已提交"}},
 		RelatedContext: map[string]interface{}{"turn": turn},
@@ -246,7 +248,7 @@ func (s *mcpServer) handleGetMyAssignments(args map[string]interface{}) mcpToolR
 	if agentID == "" {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "请提供 agent_id"}}, IsError: true}
 	}
-	assignments, err := listAssignments(agentID, "")
+	assignments, err := store.ListAssignments(agentID, "")
 	if err != nil {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("获取分配失败: %v", err)}}, IsError: true}
 	}
@@ -281,11 +283,11 @@ func (s *mcpServer) handleClaimAssignment(args map[string]interface{}) mcpToolRe
 	if assignmentID == "" {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "请提供 assignment_id"}}, IsError: true}
 	}
-	a, err := updateAssignment(assignmentID, map[string]any{"status": "in_progress", "claimed": true})
+	a, err := store.UpdateAssignment(assignmentID, map[string]any{"status": "in_progress", "claimed": true})
 	if err != nil {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("认领失败: %v", err)}}, IsError: true}
 	}
-	recordAudit("agent", str(a["agent_id"]), "claim_assignment", "assignment", assignmentID, "Agent claimed assignment")
+	store.RecordAudit("agent", str(a["agent_id"]), "claim_assignment", "assignment", assignmentID, "Agent claimed assignment")
 	return mcpToolResult{
 		Content:        []mcpContent{{Type: "text", Text: fmt.Sprintf("✅ 已认领: %s (%s)", str(a["role"]), str(a["scope"]))}},
 		RelatedContext: map[string]interface{}{"assignment": a},
@@ -302,11 +304,11 @@ func (s *mcpServer) handleCompleteAssignment(args map[string]interface{}) mcpToo
 	if summary != "" {
 		payload["scope"] = summary
 	}
-	a, err := updateAssignment(assignmentID, payload)
+	a, err := store.UpdateAssignment(assignmentID, payload)
 	if err != nil {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("完成标记失败: %v", err)}}, IsError: true}
 	}
-	recordAudit("agent", str(a["agent_id"]), "complete_assignment", "assignment", assignmentID, "Agent completed assignment")
+	store.RecordAudit("agent", str(a["agent_id"]), "complete_assignment", "assignment", assignmentID, "Agent completed assignment")
 	return mcpToolResult{
 		Content:        []mcpContent{{Type: "text", Text: fmt.Sprintf("✅ 分配已完成: %s", str(a["role"]))}},
 		RelatedContext: map[string]interface{}{"assignment": a},
@@ -323,18 +325,18 @@ func (s *mcpServer) handleSpeakInMeeting(args map[string]interface{}) mcpToolRes
 	if roomID == "" || agentID == "" || content == "" {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "请提供 room_id, agent_id, content"}}, IsError: true}
 	}
-	existing, _ := listMeetingTurns(roomID)
+	existing, _ := store.ListMeetingTurns(roomID)
 	nextNum := len(existing) + 1
 	id := slug("turn")
 	now := nowISO()
-	db, err := openDB()
+	db, err := pmdb.Open()
 	if err != nil {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("数据库错误: %v", err)}}, IsError: true}
 	}
 	defer db.Close()
 	tn := fmt.Sprintf("%d", nextNum)
 	db.Exec("INSERT INTO meeting_turns (id, room_id, turn_number, speaker_type, speaker_id, question, response, status, reply_to, address_to, created_at) VALUES (?, ?, ?, 'agent', ?, '[主动发言]', ?, 'responded', ?, ?, ?)", id, roomID, tn, agentID, content, replyTo, addressTo, now)
-	recordAudit("agent", agentID, "speak_meeting", "meeting_turn", id, "Agent spoke voluntarily in meeting")
+	store.RecordAudit("agent", agentID, "speak_meeting", "meeting_turn", id, "Agent spoke voluntarily in meeting")
 	return mcpToolResult{
 		Content:        []mcpContent{{Type: "text", Text: "✅ 你的发言已提交到会议"}},
 		RelatedContext: map[string]interface{}{"meeting_id": roomID, "turn_id": id, "reply_to": replyTo, "address_to": addressTo},
@@ -347,7 +349,7 @@ func (s *mcpServer) handleArbitrateNext(args map[string]interface{}) mcpToolResu
 	if roomID == "" {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "请提供 room_id"}}, IsError: true}
 	}
-	room, err := getMeetingRoom(roomID)
+	room, err := store.GetMeetingRoom(roomID)
 	if err != nil {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("会议不存在: %v", err)}}, IsError: true}
 	}
@@ -358,7 +360,7 @@ func (s *mcpServer) handleArbitrateNext(args map[string]interface{}) mcpToolResu
 			Reflection: "配置 AI_ENDPOINT 后可使用自动仲裁功能。",
 		}
 	}
-	turns, _ := listMeetingTurns(roomID)
+	turns, _ := store.ListMeetingTurns(roomID)
 	var recent []ai.ArbitrationTurn
 	start := 0
 	if len(turns) > 8 {
@@ -388,11 +390,11 @@ func (s *mcpServer) handleArbitrateNext(args map[string]interface{}) mcpToolResu
 			IsError: true,
 		}
 	}
-	existing, _ := listMeetingTurns(roomID)
+	existing, _ := store.ListMeetingTurns(roomID)
 	nextNum := len(existing) + 1
 	id := slug("turn")
 	now := nowISO()
-	db, err2 := openDB()
+	db, err2 := pmdb.Open()
 	if err2 == nil {
 		defer db.Close()
 		tn2 := fmt.Sprintf("%d", nextNum)

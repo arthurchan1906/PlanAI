@@ -9,6 +9,9 @@ import (
 	"runtime/debug"
 	"strings"
 	"time"
+
+	pmdb "aipmc/db"
+	"aipmc/store"
 )
 
 // processCodexHook reads the Codex CLI hook stdin JSON and saves to discussion_log.
@@ -91,7 +94,7 @@ func processCodexHook() {
 	case "UserPromptSubmit":
 		if userPrompt != "" {
 			meta := buildFullMeta("user_prompt", data)
-			if _, err := logDiscussion(raw.SessionID, "user", "codex-cli", userPrompt, meta); err != nil {
+			if _, err := store.LogDiscussion(raw.SessionID, "user", "codex-cli", userPrompt, meta); err != nil {
 				logf("UserPromptSubmit log FAILED: %v", err)
 			} else {
 				logf("UserPromptSubmit logged (%d chars)", len(userPrompt))
@@ -122,7 +125,7 @@ func processCodexHook() {
 		meta := buildFullMeta("post_tool", data)
 
 		if content != "" {
-			if _, err := logDiscussion(raw.SessionID, "assistant", "codex-cli", content, meta); err != nil {
+			if _, err := store.LogDiscussion(raw.SessionID, "assistant", "codex-cli", content, meta); err != nil {
 				logf("PostToolUse %s log FAILED: %v", raw.ToolName, err)
 			} else {
 				logf("PostToolUse %s logged", raw.ToolName)
@@ -136,14 +139,14 @@ func processCodexHook() {
 		respText := firstNonEmpty(raw.Response, raw.Output, raw.Text, raw.LastAssistantMessage, raw.AssistantMsg, raw.Reply)
 		if respText != "" {
 			meta := buildFullMeta("stop", data)
-			if _, err := logDiscussion(raw.SessionID, "assistant", "codex-cli", respText, meta); err != nil {
+			if _, err := store.LogDiscussion(raw.SessionID, "assistant", "codex-cli", respText, meta); err != nil {
 				logf("Stop log FAILED: %v", err)
 			} else {
 				logf("Stop logged (%d chars)", len(respText))
 			}
 		} else {
 			meta := buildFullMeta("stop", data)
-			if _, err := logDiscussion(raw.SessionID, "assistant", "codex-cli", "(turn stopped)", meta); err != nil {
+			if _, err := store.LogDiscussion(raw.SessionID, "assistant", "codex-cli", "(turn stopped)", meta); err != nil {
 				logf("Stop (no-text) log FAILED: %v", err)
 			} else {
 				logf("Stop logged (no response text)")
@@ -197,7 +200,7 @@ func dumpRawHook(platform, timestamp string, data []byte) {
 // hookLogDir returns the .pmai/logs directory for the current project,
 // or os.TempDir() as a fallback.
 func hookLogDir() string {
-	dir, err := findRuntimeDir()
+	dir, err := pmdb.RuntimeDir()
 	if err == nil && dir != "" {
 		return filepath.Join(dir, "logs")
 	}
@@ -651,7 +654,7 @@ func extractLastBare(cmd string) string {
 // setupCodexHooks writes Codex CLI hook configuration to .codex/hooks.json.
 // Hooks are enabled by default in Codex CLI — no feature flag needed.
 func setupCodexHooks(commandPath string) error {
-	runtimeDir, _ := findRuntimeDir()
+	runtimeDir, _ := pmdb.RuntimeDir()
 	projectRoot := filepath.Dir(runtimeDir)
 	codexDir := filepath.Join(projectRoot, ".codex")
 	hooksPath := filepath.Join(codexDir, "hooks.json")
@@ -764,7 +767,7 @@ func buildCodexPlanContent(sessionID string, toolInput json.RawMessage) string {
 // getPreviousPlan retrieves the plan steps from the most recent update_plan
 // discussion_log entry in the given session. Returns nil if none found.
 func getPreviousPlan(sessionID string) []codexPlanStep {
-	db, err := openDB()
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil
 	}

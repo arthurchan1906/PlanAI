@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"aipmc/ai"
+	"aipmc/store"
+	pmdb "aipmc/db"
 )
 
 // searchFTS5WithDB queries FTS5 using the provided DB connection (for cross-project search).
@@ -44,7 +46,7 @@ func searchFTS5WithDB(db *sql.DB, query string, limit int) []searchHit {
 // searchFTS5 queries the FTS5 index with BM25 ranking.
 // Returns nil if the index is unavailable, so callers can fall back.
 func searchFTS5(query string, limit int) []searchHit {
-	db, err := openDB()
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil
 	}
@@ -146,7 +148,7 @@ func searchLinear(query string) []searchHit {
 	}
 
 	// Search plans
-	if plans, err := listPlans("", ""); err == nil {
+	if plans, err := store.ListPlans("", ""); err == nil {
 		for _, p := range plans {
 			haystack := strings.ToLower(str(p["title"]) + " " + str(p["goal"]) + " " + str(p["status"]))
 			score := matchScore(haystack, terms)
@@ -158,7 +160,7 @@ func searchLinear(query string) []searchHit {
 	}
 
 	// Search commits
-	if commits, err := listCommits("", "", "", "", 0); err == nil {
+	if commits, err := store.ListCommits("", "", "", "", 0); err == nil {
 		for _, c := range commits {
 			haystack := strings.ToLower(str(c["title"]) + " " + str(c["summary"]) + " " + str(c["commit_hash"]))
 			score := matchScore(haystack, terms)
@@ -170,7 +172,7 @@ func searchLinear(query string) []searchHit {
 	}
 
 	// Search bugs
-	if bugs, err := listBugs("", "", "", 0); err == nil {
+	if bugs, err := store.ListBugs("", "", "", 0); err == nil {
 		for _, b := range bugs {
 			haystack := strings.ToLower(str(b["title"]) + " " + str(b["description"]) + " " + str(b["error"]) + " " + str(b["root_cause"]) + " " + str(b["fix"]) + " " + str(b["tags"]) + " " + str(b["files"]))
 			score := matchScore(haystack, terms)
@@ -182,7 +184,7 @@ func searchLinear(query string) []searchHit {
 	}
 
 	// Search decisions
-	if decs, err := listDecisions(); err == nil {
+	if decs, err := store.ListDecisions(); err == nil {
 		for _, d := range decs {
 			haystack := strings.ToLower(str(d["title"]) + " " + str(d["status"]) + " " + str(d["background"]) + " " + str(d["decision"]))
 			score := matchScore(haystack, terms)
@@ -194,7 +196,7 @@ func searchLinear(query string) []searchHit {
 	}
 
 	// Search ideas
-	if ideas, err := listIdeas(""); err == nil {
+	if ideas, err := store.ListIdeas(""); err == nil {
 		for _, i := range ideas {
 			haystack := strings.ToLower(str(i["title"]) + " " + str(i["summary"]) + " " + str(i["current_summary"]) + " " + str(i["status"]))
 			score := matchScore(haystack, terms)
@@ -206,7 +208,7 @@ func searchLinear(query string) []searchHit {
 	}
 
 	// Search roadmaps
-	if rds, err := listRoadmaps(""); err == nil {
+	if rds, err := store.ListRoadmaps(""); err == nil {
 		for _, r := range rds {
 			haystack := strings.ToLower(str(r["title"]) + " " + str(r["status"]) + " " + str(r["priority"]))
 			score := matchScore(haystack, terms)
@@ -218,7 +220,7 @@ func searchLinear(query string) []searchHit {
 	}
 
 	// Search threads
-	if threads, err := listThreads(""); err == nil {
+	if threads, err := store.ListThreads(""); err == nil {
 		for _, t := range threads {
 			haystack := strings.ToLower(str(t["title"]) + " " + str(t["summary"]))
 			score := matchScore(haystack, terms)
@@ -230,7 +232,7 @@ func searchLinear(query string) []searchHit {
 	}
 
 	// Search principles
-	if prs, err := listPrinciples("", ""); err == nil {
+	if prs, err := store.ListPrinciples("", ""); err == nil {
 		for _, p := range prs {
 			haystack := strings.ToLower(str(p["title"]) + " " + str(p["summary"]))
 			score := matchScore(haystack, terms)
@@ -302,8 +304,8 @@ func matchScore(haystack string, terms []string) int {
 	return score
 }
 
-func mustListTasks() []Task {
-	tasks, _ := listTasks("", "")
+func mustListTasks() []store.Task {
+	tasks, _ := store.ListTasks("", "")
 	return tasks
 }
 
@@ -320,12 +322,12 @@ func str(v any) string {
 // ---- Agent Runtime ----
 
 func buildAgentStartPacket() map[string]any {
-	tasks, _ := listTasks("in_progress", "")
-	plans, _ := listPlans("", "active")
-	threads, _ := listThreads("active")
+	tasks, _ := store.ListTasks("in_progress", "")
+	plans, _ := store.ListPlans("", "active")
+	threads, _ := store.ListThreads("active")
 
 	// Fetch unconsumed PM events to inject into Agent's context
-	events, _ := getUnconsumedEvents()
+	events, _ := store.GetUnconsumedEvents()
 	alerts := []map[string]any{}
 	for _, e := range events {
 		alerts = append(alerts, map[string]any{
@@ -364,7 +366,7 @@ func buildAgentStartPacket() map[string]any {
 }
 
 func buildNextActionPacket() map[string]any {
-	tasks, _ := listTasks("in_progress", "")
+	tasks, _ := store.ListTasks("in_progress", "")
 	if len(tasks) > 0 {
 		t := tasks[0]
 		return map[string]any{
@@ -386,9 +388,9 @@ func buildNextActionPacket() map[string]any {
 }
 
 func buildContextPack() map[string]any {
-	tasks, _ := listTasks("in_progress", "")
-	plans, _ := listPlans("", "active")
-	docs, _ := listDocRecords("", "")
+	tasks, _ := store.ListTasks("in_progress", "")
+	plans, _ := store.ListPlans("", "active")
+	docs, _ := store.ListDocRecords("", "")
 
 	sotDocs := []any{}
 	for _, d := range docs {
@@ -399,7 +401,7 @@ func buildContextPack() map[string]any {
 
 	// Include analysis results for Agent awareness
 	report := runFullAnalysis()
-	events, _ := getUnconsumedEvents()
+	events, _ := store.GetUnconsumedEvents()
 	alerts := []map[string]any{}
 	for _, e := range events {
 		alerts = append(alerts, map[string]any{
@@ -428,8 +430,8 @@ func buildContextPack() map[string]any {
 }
 
 func getStatusSnapshot() map[string]any {
-	tasks, _ := listTasks("", "")
-	bugs, _ := listBugs("open", "", "", 0)
+	tasks, _ := store.ListTasks("", "")
+	bugs, _ := store.ListBugs("open", "", "", 0)
 	inProgress := 0
 	for _, t := range tasks {
 		if t.Status == "in_progress" {
@@ -444,7 +446,7 @@ func getStatusSnapshot() map[string]any {
 }
 
 func getInboxSummary() map[string]any {
-	ideas, _ := listIdeas("new")
+	ideas, _ := store.ListIdeas("new")
 	return map[string]any{
 		"new_ideas": len(ideas),
 		"ideas":     ideas[:min(10, len(ideas))],

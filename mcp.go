@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"aipmc/ai"
+	"aipmc/store"
 )
 
 // ============================================================
@@ -469,7 +470,7 @@ func (s *mcpServer) handleRecordCommit(args map[string]interface{}) mcpToolResul
 		}
 	}
 
-	commit, err := createCommit(title, summary, "", "", branch, "", taskID, "", status, "not_run", "pending", files)
+	commit, err := store.CreateCommit(title, summary, "", "", branch, "", taskID, "", status, "not_run", "pending", files)
 	if err != nil {
 		return mcpToolResult{
 			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("创建 commit 失败: %v", err)}},
@@ -487,7 +488,7 @@ func (s *mcpServer) handleRecordCommit(args map[string]interface{}) mcpToolResul
 	}
 
 	// Get related commits for the same task
-	allCommits, _ := listCommitsByTask(taskID)
+	allCommits, _ := store.ListCommitsByTask(taskID)
 	related := map[string]interface{}{
 		"commit":        commit,
 		"task_commits":  len(allCommits),
@@ -529,7 +530,7 @@ func (s *mcpServer) handleCreateTask(args map[string]interface{}) mcpToolResult 
 		}
 	}
 
-	task, err := createTask(title, priority, status, phase, planID, nil)
+	task, err := store.CreateTask(title, priority, status, phase, planID, nil)
 	if err != nil {
 		return mcpToolResult{
 			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("创建 task 失败: %v", err)}},
@@ -538,7 +539,7 @@ func (s *mcpServer) handleCreateTask(args map[string]interface{}) mcpToolResult 
 	}
 
 	// Get the plan to check status
-	plan, _ := getPlan(planID)
+	plan, _ := store.GetPlan(planID)
 	related := map[string]interface{}{
 		"task":           task,
 		"plan_title":     str(plan["title"]),
@@ -579,7 +580,7 @@ func (s *mcpServer) handleRecordBug(args map[string]interface{}) mcpToolResult {
 		}
 	}
 
-	bug, err := createBug(title, errMsg, severity, "open", commitID, errMsg, files, rootCause, fix, tags)
+	bug, err := store.CreateBug(title, errMsg, severity, "open", commitID, errMsg, files, rootCause, fix, tags)
 	if err != nil {
 		return mcpToolResult{
 			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("创建 bug 失败: %v", err)}},
@@ -610,7 +611,7 @@ func (s *mcpServer) handleAppendTaskNote(args map[string]interface{}) mcpToolRes
 			IsError: true,
 		}
 	}
-	result, err := appendTaskNote(taskID, content)
+	result, err := store.AppendTaskNote(taskID, content)
 	if err != nil {
 		return mcpToolResult{
 			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("追加备注失败: %v", err)}},
@@ -640,7 +641,7 @@ func (s *mcpServer) handleLinkEntities(args map[string]interface{}) mcpToolResul
 		}
 	}
 
-	link, err := createLink(sourceType, sourceID, relation, targetType, targetID, note)
+	link, err := store.CreateLink(sourceType, sourceID, relation, targetType, targetID, note)
 	if err != nil {
 		return mcpToolResult{
 			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("创建关联失败: %v", err)}},
@@ -669,7 +670,7 @@ func (s *mcpServer) handleRecordDecision(args map[string]interface{}) mcpToolRes
 		}
 	}
 
-	dec, err := createDecision(title, background, decision, status)
+	dec, err := store.CreateDecision(title, background, decision, status)
 	if err != nil {
 		return mcpToolResult{
 			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("创建决策失败: %v", err)}},
@@ -700,7 +701,7 @@ func (s *mcpServer) handleUpdateTaskStatus(args map[string]interface{}) mcpToolR
 		}
 	}
 
-	_, err := updateTask(taskID, status, note, false, false)
+	_, err := store.UpdateTask(taskID, status, note, false, false)
 	if err != nil {
 		return mcpToolResult{
 			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("更新失败: %v", err)}},
@@ -752,7 +753,7 @@ func (s *mcpServer) handleSubmitFeedback(args map[string]interface{}) mcpToolRes
 }
 
 func (s *mcpServer) handleMarkConsumed(args map[string]interface{}) mcpToolResult {
-	if err := markEventsConsumed(); err != nil {
+	if err := store.MarkEventsConsumed(); err != nil {
 		return mcpToolResult{
 			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("标记失败: %v", err)}},
 			IsError: true,
@@ -835,7 +836,7 @@ func (s *mcpServer) handleRegisterAgent(args map[string]interface{}) mcpToolResu
 	caps := getStr(args, "capabilities", "")
 
 	// Always create a new agent identity — temporary, per-session
-	profile, err := createAgentProfile(name, role, caps)
+	profile, err := store.CreateAgentProfile(name, role, caps)
 	if err != nil {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("注册 Agent 失败: %v", err)}}, IsError: true}
 	}
@@ -876,7 +877,7 @@ func (s *mcpServer) handleLogDiscussion(args map[string]interface{}) mcpToolResu
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "content 为必填项"}}, IsError: true}
 	}
 
-	res, err := logDiscussion(session, role, "mcp", content, "")
+	res, err := store.LogDiscussion(session, role, "mcp", content, "")
 	if err != nil {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("记录讨论失败: %v", err)}}, IsError: true}
 	}
@@ -936,7 +937,7 @@ func (s *mcpServer) handleCreateThread(args map[string]interface{}) mcpToolResul
 		}
 	}
 
-	t, err := createThread(title, summary, "agent")
+	t, err := store.CreateThread(title, summary, "agent")
 	if err != nil {
 		return mcpToolResult{
 			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("创建线索失败: %v", err)}},
@@ -966,7 +967,7 @@ func (s *mcpServer) handleAddToThread(args map[string]interface{}) mcpToolResult
 		}
 	}
 
-	t, err := addToThread(threadID, entityType, entityID, note)
+	t, err := store.AddToThread(threadID, entityType, entityID, note)
 	if err != nil {
 		return mcpToolResult{
 			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("添加失败: %v", err)}},
@@ -984,7 +985,7 @@ func (s *mcpServer) handleAddToThread(args map[string]interface{}) mcpToolResult
 }
 
 func (s *mcpServer) handleDailyReview(args map[string]interface{}) mcpToolResult {
-	commits, err := listRecentCommitsWithContext(100)
+	commits, err := store.ListRecentCommitsWithContext(100)
 	if err != nil {
 		return mcpToolResult{
 			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("获取 commit 失败: %v", err)}},
@@ -992,7 +993,7 @@ func (s *mcpServer) handleDailyReview(args map[string]interface{}) mcpToolResult
 		}
 	}
 
-	threads, _ := listThreads("active")
+	threads, _ := store.ListThreads("active")
 	suggestions := analyzeThreadSuggestions()
 	status := analyzeThreadStatus()
 
@@ -1296,7 +1297,7 @@ func mcpLogDiscussion(toolName string, args map[string]interface{}, result mcpTo
 		}
 	}
 
-	logDiscussion("", "assistant", "claude-code", summary, metaJSON)
+	store.LogDiscussion("", "assistant", "claude-code", summary, metaJSON)
 }
 
 // ---- Helpers ----

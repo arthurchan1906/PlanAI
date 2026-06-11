@@ -14,6 +14,8 @@ import (
 	"aipmc/agent"
 	"aipmc/ai"
 	"aipmc/cli"
+	pmdb "aipmc/db"
+	"aipmc/store"
 	"aipmc/web"
 )
 
@@ -26,7 +28,7 @@ var uiFS embed.FS
 var aiClient *ai.Client
 
 func initAI() {
-	cfg := loadConfig()
+	cfg := pmdb.LoadConfig()
 	endpoint := cfg.AIEndpoint
 	if endpoint == "" {
 		endpoint = os.Getenv("AI_ENDPOINT")
@@ -61,7 +63,7 @@ func main() {
 
 	switch cmd {
 	case "init":
-		path, err := bootstrapDB()
+		path, err := pmdb.Bootstrap()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "init failed: %v\n", err)
 			os.Exit(1)
@@ -142,7 +144,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "Usage: aipmc log --role <user|assistant> --source <name> (--content <text> | --stdin) [--session <id>]")
 			os.Exit(1)
 		}
-		r, err := logDiscussion(sid, role, source, content, "")
+		r, err := store.LogDiscussion(sid, role, source, content, "")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "log error: %v\n", err)
 			os.Exit(1)
@@ -233,10 +235,10 @@ func main() {
 	case "inbox":
 		cli.PrintJSON(getInboxSummary())
 	case "doctor":
-		dbPath, _ := findDBPath()
+		dbPath, _ := pmdb.FindPath()
 		cli.PrintJSON(runDoctor(dbPath))
 	case "info":
-		dbPath, _ := findDBPath()
+		dbPath, _ := pmdb.FindPath()
 		cli.RunInfo(dbPath)
 	case "task":
 		dispatchTask(subcmd, args)
@@ -283,7 +285,7 @@ func main() {
 }
 
 func writeSkillFile() {
-	dir, err := findRuntimeDir()
+	dir, err := pmdb.RuntimeDir()
 	if err != nil {
 		dir, _ = os.Getwd()
 	}
@@ -302,7 +304,7 @@ func runDoctor(dbPath string) map[string]any {
 	if dbPath == "" {
 		problems = append(problems, "No .pmai directory found. Run aipmc init first.")
 	} else {
-		db, err := openDB()
+		db, err := pmdb.Open()
 		if err != nil {
 			problems = append(problems, fmt.Sprintf("Cannot open database: %v", err))
 		} else {
@@ -324,7 +326,7 @@ func runChat() {
 	}
 
 	// Resolve project root (parent of .pmai/)
-	runtimeDir, err := findRuntimeDir()
+	runtimeDir, err := pmdb.RuntimeDir()
 	workDir := "."
 	if err == nil && runtimeDir != "" {
 		workDir = filepath.Dir(runtimeDir)

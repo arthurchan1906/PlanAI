@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"time"
+
+	pmdb "aipmc/db"
 )
 
 // waitForTurn blocks until a pending meeting turn is found for the agent.
@@ -42,7 +44,7 @@ func waitForTurnCmd(rawArgs []string) {
 		}
 
 		// Check if there's a pending turn for this agent
-		db, err := openDB()
+		db, err := pmdb.Open()
 		if err == nil {
 			rows, err := db.Query(`
 				SELECT mt.id, mt.room_id, mt.turn_number, mt.question, mr.title

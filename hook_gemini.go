@@ -10,6 +10,9 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	pmdb "aipmc/db"
+	"aipmc/store"
 )
 
 // processGeminiHook reads the Gemini CLI hook stdin JSON and saves to discussion_log.
@@ -68,7 +71,7 @@ func processGeminiHook() {
 	case "BeforeAgent":
 		if raw.Prompt != "" {
 			meta := buildFullMeta("before_agent", data)
-			if _, err := logDiscussion(raw.SessionID, "user", "gemini-cli", raw.Prompt, meta); err != nil {
+			if _, err := store.LogDiscussion(raw.SessionID, "user", "gemini-cli", raw.Prompt, meta); err != nil {
 				logf("BeforeAgent log FAILED: %v", err)
 			} else {
 				logf("BeforeAgent logged (%d chars)", len(raw.Prompt))
@@ -82,7 +85,7 @@ func processGeminiHook() {
 				clean = clean[:idx]
 			}
 			meta := buildFullMeta("after_agent", data)
-			if _, err := logDiscussion(raw.SessionID, "assistant", "gemini-cli", clean, meta); err != nil {
+			if _, err := store.LogDiscussion(raw.SessionID, "assistant", "gemini-cli", clean, meta); err != nil {
 				logf("AfterAgent log FAILED: %v", err)
 			} else {
 				logf("AfterAgent logged (%d/%d chars)", len(clean), len(raw.Response))
@@ -106,7 +109,7 @@ func processGeminiHook() {
 		meta := buildFullMeta("after_tool", data)
 
 		if content != "" {
-			if _, err := logDiscussion(raw.SessionID, "assistant", "gemini-cli", content, meta); err != nil {
+			if _, err := store.LogDiscussion(raw.SessionID, "assistant", "gemini-cli", content, meta); err != nil {
 				logf("AfterTool %s log FAILED: %v", raw.ToolName, err)
 			} else {
 				logf("AfterTool %s logged", raw.ToolName)
@@ -632,7 +635,7 @@ func parseDiffToHunks(diff string) []PatchHunk {
 
 // setupGeminiHooks writes Gemini CLI hook configuration to .gemini/settings.json.
 func setupGeminiHooks(commandPath string) error {
-	runtimeDir, _ := findRuntimeDir()
+	runtimeDir, _ := pmdb.RuntimeDir()
 	projectRoot := filepath.Dir(runtimeDir)
 	settingsPath := filepath.Join(projectRoot, ".gemini", "settings.json")
 

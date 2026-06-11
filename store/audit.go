@@ -1,21 +1,26 @@
-package main
+package store
+
+import (
+	pmdb "aipmc/db"
+	"aipmc/u"
+)
 
 // ---- Audit Log ----
 
-func recordAudit(actorType, actorID, action, entityType, entityID, summary string) {
-	db, err := openDB()
+func RecordAudit(actorType, actorID, action, entityType, entityID, summary string) {
+	d, err := pmdb.Open()
 	if err != nil {
 		return
 	}
-	defer db.Close()
-	id := slug("audit")
-	now := nowISO()
-	db.Exec("INSERT INTO audit_log (id, actor_type, actor_id, action, entity_type, entity_id, summary, detail_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, '{}', ?)",
+	defer d.Close()
+	id := u.Slug("audit")
+	now := u.NowISO()
+	d.Exec("INSERT INTO audit_log (id, actor_type, actor_id, action, entity_type, entity_id, summary, detail_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, '{}', ?)",
 		id, actorType, actorID, action, entityType, entityID, summary, now)
 }
 
-func listAuditLog(actorType, entityType string, limit int) ([]map[string]any, error) {
-	db, err := openDB()
+func ListAuditLog(actorType, entityType string, limit int) ([]map[string]any, error) {
+	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
 	}

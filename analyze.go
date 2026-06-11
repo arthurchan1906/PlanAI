@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"aipmc/store"
 )
 
 // ============================================================
@@ -107,7 +109,7 @@ type AnalyzeReport struct {
 
 // analyzeScopeDrift checks all commits for files that may fall outside their plan's scope.
 func analyzeScopeDrift() []DriftResult {
-	commits, err := listCommits("", "", "", "", 0)
+	commits, err := store.ListCommits("", "", "", "", 0)
 	if err != nil {
 		return nil
 	}
@@ -127,7 +129,7 @@ func analyzeScopeDrift() []DriftResult {
 		}
 
 		// Get the task to find its plan
-		task, err := getTaskSimple(taskID)
+		task, err := store.GetTaskSimple(taskID)
 		if err != nil {
 			continue
 		}
@@ -137,7 +139,7 @@ func analyzeScopeDrift() []DriftResult {
 		}
 
 		// Get the plan to check its scope
-		plan, err := getPlan(planID)
+		plan, err := store.GetPlan(planID)
 		if err != nil {
 			continue
 		}
@@ -206,14 +208,14 @@ func analyzeScopeDrift() []DriftResult {
 
 // analyzeOrphanTasks finds tasks that are in_progress but have no linked commits.
 func analyzeOrphanTasks() []OrphanResult {
-	tasks, err := listTasks("in_progress", "")
+	tasks, err := store.ListTasks("in_progress", "")
 	if err != nil {
 		return nil
 	}
 
 	var results []OrphanResult
 	for _, t := range tasks {
-		commits, err := listCommitsByTask(t.ID)
+		commits, err := store.ListCommitsByTask(t.ID)
 		if err != nil {
 			continue
 		}
@@ -234,7 +236,7 @@ func analyzeOrphanTasks() []OrphanResult {
 
 // analyzeDuplicatePlans finds plans with similar titles that may be duplicates.
 func analyzeDuplicatePlans() []DuplicateResult {
-	plans, err := listPlans("", "")
+	plans, err := store.ListPlans("", "")
 	if err != nil {
 		return nil
 	}
@@ -274,7 +276,7 @@ func analyzeDuplicatePlans() []DuplicateResult {
 
 // analyzeBlockedTasks finds tasks that have been blocked for too long.
 func analyzeBlockedTasks() []BlockedResult {
-	tasks, err := listTasks("blocked", "")
+	tasks, err := store.ListTasks("blocked", "")
 	if err != nil {
 		return nil
 	}
@@ -351,7 +353,7 @@ func runFullAnalysis() AnalyzeReport {
 
 // analyzeConflicts detects tasks under the same plan with potentially conflicting approaches.
 func analyzeConflicts() []ConflictResult {
-	plans, err := listPlans("", "active")
+	plans, err := store.ListPlans("", "active")
 	if err != nil {
 		return nil
 	}
@@ -359,13 +361,13 @@ func analyzeConflicts() []ConflictResult {
 	var results []ConflictResult
 	for _, p := range plans {
 		planID := str(p["id"])
-		tasks, err := listTasks("", planID)
+		tasks, err := store.ListTasks("", planID)
 		if err != nil || len(tasks) < 2 {
 			continue
 		}
 
 		// Compare task phases — tasks in different phases under same plan may conflict
-		phases := make(map[string][]Task)
+		phases := make(map[string][]store.Task)
 		for _, t := range tasks {
 			phases[t.Phase] = append(phases[t.Phase], t)
 		}
@@ -398,7 +400,7 @@ func analyzeConflicts() []ConflictResult {
 
 // analyzeProgress checks plan completion rate against elapsed time.
 func analyzeProgress() []ProgressResult {
-	plans, err := listPlans("", "active")
+	plans, err := store.ListPlans("", "active")
 	if err != nil {
 		return nil
 	}
@@ -408,7 +410,7 @@ func analyzeProgress() []ProgressResult {
 		planID := str(p["id"])
 		planTitle := str(p["title"])
 
-		tasks, err := listTasks("", planID)
+		tasks, err := store.ListTasks("", planID)
 		if err != nil || len(tasks) == 0 {
 			continue
 		}
@@ -450,7 +452,7 @@ func analyzeProgress() []ProgressResult {
 
 // analyzeCrossTaskFiles detects commits whose changed files overlap with other active tasks.
 func analyzeCrossTaskFiles() []CrossTaskResult {
-	commits, err := listCommits("", "", "", "", 50)
+	commits, err := store.ListCommits("", "", "", "", 50)
 	if err != nil {
 		return nil
 	}
@@ -506,8 +508,8 @@ func analyzeCrossTaskFiles() []CrossTaskResult {
 	// Enrich with task titles
 	var results []CrossTaskResult
 	for _, r := range taskPairs {
-		t1, _ := getTaskSimple(r.TaskID)
-		t2, _ := getTaskSimple(r.OtherTaskID)
+		t1, _ := store.GetTaskSimple(r.TaskID)
+		t2, _ := store.GetTaskSimple(r.OtherTaskID)
 		if t1 != nil {
 			r.TaskTitle = str(t1["title"])
 		}
@@ -524,7 +526,7 @@ func analyzeCrossTaskFiles() []CrossTaskResult {
 
 // analyzeDecisionImpact finds tasks linked to recently changed decisions.
 func analyzeDecisionImpact() []ImpactResult {
-	decisions, err := listDecisions()
+	decisions, err := store.ListDecisions()
 	if err != nil {
 		return nil
 	}
@@ -541,7 +543,7 @@ func analyzeDecisionImpact() []ImpactResult {
 		}
 
 		// Find links from this decision to tasks
-		links, err := listLinks(decisionID, "", "")
+		links, err := store.ListLinks(decisionID, "", "")
 		if err != nil {
 			continue
 		}
@@ -623,7 +625,7 @@ func titleSimilarity(a, b string) float64 {
 type ThreadSuggestResult struct {
 	SuggestedTitle string          `json:"suggested_title"`
 	Rationale      string          `json:"rationale"`
-	SourceEntities []ThreadItem    `json:"source_entities"`
+	SourceEntities []store.ThreadItem    `json:"source_entities"`
 	Score          float64         `json:"score"`
 }
 
@@ -642,7 +644,7 @@ type ThreadStatusResult struct {
 // file path affinity, plan membership, and time proximity — so work that
 // spans multiple plans or evolves organically can still be recognized.
 func analyzeThreadSuggestions() []ThreadSuggestResult {
-	commits, err := listCommits("", "", "", "", 100)
+	commits, err := store.ListCommits("", "", "", "", 100)
 	if err != nil || len(commits) < 2 {
 		return nil
 	}
@@ -730,7 +732,7 @@ func parseCommitItems(commits []map[string]any) ([]commitItem, map[string]string
 			if tc, ok := taskCache[ci.taskID]; ok {
 				ci.planID = tc.planID
 			} else {
-				if t, err := getTaskSimple(ci.taskID); err == nil {
+				if t, err := store.GetTaskSimple(ci.taskID); err == nil {
 					taskCache[ci.taskID] = &taskMeta{str(t["plan_id"])}
 					ci.planID = str(t["plan_id"])
 				}
@@ -739,7 +741,7 @@ func parseCommitItems(commits []map[string]any) ([]commitItem, map[string]string
 		// Cache plan title
 		if ci.planID != "" {
 			if _, ok := planTitles[ci.planID]; !ok {
-				if p, err := getPlan(ci.planID); err == nil && p != nil {
+				if p, err := store.GetPlan(ci.planID); err == nil && p != nil {
 					planTitles[ci.planID] = str(p["title"])
 				}
 			}
@@ -930,13 +932,13 @@ func buildThreadSuggestion(items []commitItem, indices []int, planTitles map[str
 	}
 
 	// Build source entities (top 8)
-	entities := []ThreadItem{}
+	entities := []store.ThreadItem{}
 	for i, idx := range indices {
 		if i >= 8 {
 			break
 		}
 		ci := items[idx]
-		entities = append(entities, ThreadItem{
+		entities = append(entities, store.ThreadItem{
 			EntityType: "commit",
 			EntityID:   ci.id,
 			Title:      ci.title,
@@ -1080,7 +1082,7 @@ func generateThreadRationale(n int, planSet map[string]bool, planTitles map[stri
 
 // analyzeThreadStatus checks existing threads for activity gaps.
 func analyzeThreadStatus() []ThreadStatusResult {
-	threads, err := listThreads("active")
+	threads, err := store.ListThreads("active")
 	if err != nil {
 		return nil
 	}
@@ -1132,8 +1134,8 @@ func daysSince(dateStr string) int {
 // BuildBriefing generates a structured Markdown briefing for the Agent.
 func BuildBriefing() string {
 	report := runFullAnalysis()
-	tasks, _ := listTasks("in_progress", "")
-	events, _ := getUnconsumedEvents()
+	tasks, _ := store.ListTasks("in_progress", "")
+	events, _ := store.GetUnconsumedEvents()
 	threadSummary := buildThreadSummary()
 	suggestions := analyzeThreadSuggestions()
 	threadStatus := analyzeThreadStatus()
@@ -1310,7 +1312,7 @@ func BuildBriefing() string {
 // BuildBriefingForAgent generates a personalized briefing for a specific agent.
 func BuildBriefingForAgent(agentID string) string {
 	base := BuildBriefing()
-	assignments, _ := listAssignments(agentID, "")
+	assignments, _ := store.ListAssignments(agentID, "")
 
 	var b strings.Builder
 	b.WriteString(base)
@@ -1340,10 +1342,10 @@ func BuildBriefingForAgent(agentID string) string {
 	}
 
 	// Active meetings involving this agent
-	rooms, _ := listMeetingRooms("active")
+	rooms, _ := store.ListMeetingRooms("active")
 	hasMeetings := false
 	for _, r := range rooms {
-		parts, _ := listMeetingParticipants(str(r["id"]))
+		parts, _ := store.ListMeetingParticipants(str(r["id"]))
 		for _, p := range parts {
 			if str(p["agent_id"]) == agentID {
 				if !hasMeetings {
@@ -1360,7 +1362,7 @@ func BuildBriefingForAgent(agentID string) string {
 					}
 				}
 				// Count waiting turns for this agent
-				turns, _ := listMeetingTurns(str(r["id"]))
+				turns, _ := store.ListMeetingTurns(str(r["id"]))
 				waitingForMe := 0
 				latestTurn := 0
 				for _, t := range turns {
@@ -1395,7 +1397,7 @@ func BuildBriefingForAgent(agentID string) string {
 }
 
 // getActionableSuggestion returns a context-aware suggestion for a task.
-func getActionableSuggestion(task Task) string {
+func getActionableSuggestion(task store.Task) string {
 	switch task.Status {
 	case "blocked":
 		return "确认: 此任务是否仍需阻塞？联系 PM 或检查 blocker 状态"
@@ -1410,7 +1412,7 @@ func getActionableSuggestion(task Task) string {
 }
 
 func buildThreadSummary() string {
-	threads, err := listThreads("active")
+	threads, err := store.ListThreads("active")
 	if err != nil || len(threads) == 0 {
 		return ""
 	}

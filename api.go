@@ -12,91 +12,93 @@ import (
 
 	"aipmc/agent"
 	"aipmc/ai"
+	pmdb "aipmc/db"
+	"aipmc/store"
 	"aipmc/web"
 )
 
 func handleGetEntity(w http.ResponseWriter, entity, id string) {
 	switch entity {
 	case "tasks":
-		t, err := getTask(id)
+		t, err := store.GetTask(id)
 		if err != nil {
 			web.SendError(w, 404, err.Error())
 			return
 		}
 		web.SendJSON(w, t)
 	case "commits":
-		c, err := getCommit(id)
+		c, err := store.GetCommit(id)
 		if err != nil {
 			web.SendError(w, 404, err.Error())
 			return
 		}
 		web.SendJSON(w, c)
 	case "plans":
-		p, err := getPlan(id)
+		p, err := store.GetPlan(id)
 		if err != nil {
 			web.SendError(w, 404, err.Error())
 			return
 		}
 		web.SendJSON(w, p)
 	case "bugs":
-		b, err := getBug(id)
+		b, err := store.GetBug(id)
 		if err != nil {
 			web.SendError(w, 404, err.Error())
 			return
 		}
 		web.SendJSON(w, b)
 	case "decisions":
-		d, err := getDecision(id)
+		d, err := store.GetDecision(id)
 		if err != nil {
 			web.SendError(w, 404, err.Error())
 			return
 		}
 		web.SendJSON(w, d)
 	case "ideas":
-		i, err := getIdea(id)
+		i, err := store.GetIdea(id)
 		if err != nil {
 			web.SendError(w, 404, err.Error())
 			return
 		}
 		web.SendJSON(w, i)
 	case "roadmaps":
-		r, err := getRoadmap(id)
+		r, err := store.GetRoadmap(id)
 		if err != nil {
 			web.SendError(w, 404, err.Error())
 			return
 		}
 		web.SendJSON(w, r)
 	case "principles":
-		p, err := getPrinciple(id)
+		p, err := store.GetPrinciple(id)
 		if err != nil {
 			web.SendError(w, 404, err.Error())
 			return
 		}
 		web.SendJSON(w, p)
 	case "visions":
-		v, err := getVision(id)
+		v, err := store.GetVision(id)
 		if err != nil {
 			web.SendError(w, 404, err.Error())
 			return
 		}
 		web.SendJSON(w, v)
 	case "threads":
-		t, err := getThread(id)
+		t, err := store.GetThread(id)
 		if err != nil {
 			web.SendError(w, 404, err.Error())
 			return
 		}
 		web.SendJSON(w, t)
 	case "agents":
-		a, err := getAgentProfile(id)
+		a, err := store.GetAgentProfile(id)
 		if err != nil { web.SendError(w, 404, err.Error()); return }
 		web.SendJSON(w, a)
 	case "meetings":
-		m, err := getMeetingRoom(id)
+		m, err := store.GetMeetingRoom(id)
 		if err != nil { web.SendError(w, 404, err.Error()); return }
 		web.SendJSON(w, m)
 	case "assignments":
-		a, err := getAssignment(id)
+		a, err := store.GetAssignment(id)
 		if err != nil { web.SendError(w, 404, err.Error()); return }
 		web.SendJSON(w, a)
 	default:
@@ -107,35 +109,35 @@ func handleGetEntity(w http.ResponseWriter, entity, id string) {
 func handlePatchEntity(w http.ResponseWriter, entity, id string, body map[string]any) {
 	switch entity {
 	case "tasks":
-		task, err := updateTask(id, pstr(body, "status", ""), pstr(body, "note", ""), false, false)
+		task, err := store.UpdateTask(id, pstr(body, "status", ""), pstr(body, "note", ""), false, false)
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
 		}
 		web.SendJSON(w, task)
 	case "commits":
-		c, err := updateCommit(id, body)
+		c, err := store.UpdateCommit(id, body)
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
 		}
 		web.SendJSON(w, c)
 	case "plans":
-		p, err := updatePlan(id, body)
+		p, err := store.UpdatePlan(id, body)
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
 		}
 		web.SendJSON(w, p)
 	case "bugs":
-		b, err := updateBug(id, body)
+		b, err := store.UpdateBug(id, body)
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
 		}
 		web.SendJSON(w, b)
 	case "decisions":
-		d, err := updateDecisionStatus(id, pstr(body, "status", ""))
+		d, err := store.UpdateDecisionStatus(id, pstr(body, "status", ""))
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
@@ -143,14 +145,14 @@ func handlePatchEntity(w http.ResponseWriter, entity, id string, body map[string
 		web.SendJSON(w, d)
 	case "ideas":
 		if _, hasNote := body["note"]; hasNote {
-			idea, err := reviewIdea(id, str(body["status"]), str(body["note"]))
+			idea, err := store.ReviewIdea(id, str(body["status"]), str(body["note"]))
 			if err != nil {
 				web.SendError(w, 400, err.Error())
 				return
 			}
 			web.SendJSON(w, idea)
 		} else {
-			idea, err := updateIdea(id, body)
+			idea, err := store.UpdateIdea(id, body)
 			if err != nil {
 				web.SendError(w, 400, err.Error())
 				return
@@ -158,39 +160,39 @@ func handlePatchEntity(w http.ResponseWriter, entity, id string, body map[string
 			web.SendJSON(w, idea)
 		}
 	case "roadmaps":
-		r, err := updateRoadmap(id, body)
+		r, err := store.UpdateRoadmap(id, body)
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
 		}
 		web.SendJSON(w, r)
 	case "principles":
-		p, err := updatePrinciple(id, body)
+		p, err := store.UpdatePrinciple(id, body)
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
 		}
 		web.SendJSON(w, p)
 	case "visions":
-		v, err := updateVision(id, body)
+		v, err := store.UpdateVision(id, body)
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
 		}
 		web.SendJSON(w, v)
 	case "threads":
-		t, err := updateThread(id, body)
+		t, err := store.UpdateThread(id, body)
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
 		}
 		web.SendJSON(w, t)
 	case "agents":
-		a, err := updateAgentProfile(id, body)
+		a, err := store.UpdateAgentProfile(id, body)
 		if err != nil { web.SendError(w, 400, err.Error()); return }
 		web.SendJSON(w, a)
 	case "assignments":
-		a, err := updateAssignment(id, body)
+		a, err := store.UpdateAssignment(id, body)
 		if err != nil { web.SendError(w, 400, err.Error()); return }
 		web.SendJSON(w, a)
 	default:
@@ -226,7 +228,7 @@ func pstr(m map[string]any, key, def string) string {
 
 
 func runGit(args ...string) string {
-	d, err := findRuntimeDir()
+	d, err := pmdb.RuntimeDir()
 	if err != nil { return "" }
 	projectRoot := filepath.Dir(d)
 	cmd := exec.Command("git", args...)
@@ -271,40 +273,40 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case method == "GET" && path == "tasks":
-		tasks, _ := listTasks(q.Get("status"), q.Get("plan_id"))
+		tasks, _ := store.ListTasks(q.Get("status"), q.Get("plan_id"))
 		web.SendJSON(w, map[string]any{"tasks": tasks})
 	case method == "GET" && path == "commits":
-		commits, _ := listCommits(q.Get("status"), q.Get("task_id"), q.Get("decision_id"), "", 0)
+		commits, _ := store.ListCommits(q.Get("status"), q.Get("task_id"), q.Get("decision_id"), "", 0)
 		web.SendJSON(w, map[string]any{"commits": commits})
 	case method == "GET" && path == "plans":
-		plans, _ := listPlans(q.Get("roadmap_id"), q.Get("status"))
+		plans, _ := store.ListPlans(q.Get("roadmap_id"), q.Get("status"))
 		web.SendJSON(w, map[string]any{"plans": plans})
 	case method == "GET" && path == "bugs":
-		bugs, _ := listBugs(q.Get("status"), q.Get("severity"), q.Get("commit_id"), 0)
+		bugs, _ := store.ListBugs(q.Get("status"), q.Get("severity"), q.Get("commit_id"), 0)
 		web.SendJSON(w, map[string]any{"bugs": bugs})
 	case method == "GET" && path == "decisions":
-		decs, _ := listDecisions()
+		decs, _ := store.ListDecisions()
 		web.SendJSON(w, map[string]any{"decisions": decs})
 	case method == "GET" && path == "ideas":
-		ideas, _ := listIdeas(q.Get("status"))
+		ideas, _ := store.ListIdeas(q.Get("status"))
 		web.SendJSON(w, map[string]any{"ideas": ideas})
 	case method == "GET" && path == "roadmaps":
-		rds, _ := listRoadmaps(q.Get("vision_id"))
+		rds, _ := store.ListRoadmaps(q.Get("vision_id"))
 		web.SendJSON(w, map[string]any{"roadmaps": rds})
 	case method == "GET" && path == "principles":
-		prs, _ := listPrinciples(q.Get("status"), q.Get("kind"))
+		prs, _ := store.ListPrinciples(q.Get("status"), q.Get("kind"))
 		web.SendJSON(w, map[string]any{"principles": prs})
 	case method == "GET" && path == "docs":
-		docs, _ := listDocRecords(q.Get("status"), q.Get("layer"))
+		docs, _ := store.ListDocRecords(q.Get("status"), q.Get("layer"))
 		web.SendJSON(w, map[string]any{"docs": docs})
 	case method == "GET" && path == "visions":
-		visions, _ := listVisions()
+		visions, _ := store.ListVisions()
 		web.SendJSON(w, map[string]any{"visions": visions})
 	case method == "GET" && path == "links":
-		links, _ := listLinks(q.Get("source_id"), q.Get("target_id"), q.Get("relation"))
+		links, _ := store.ListLinks(q.Get("source_id"), q.Get("target_id"), q.Get("relation"))
 		web.SendJSON(w, map[string]any{"links": links})
 	case method == "GET" && path == "threads":
-		threads, _ := listThreads(q.Get("status"))
+		threads, _ := store.ListThreads(q.Get("status"))
 		web.SendJSON(w, map[string]any{"threads": threads})
 	case method == "GET" && path == "thread-suggestions":
 		web.SendJSON(w, map[string]any{"suggestions": analyzeThreadSuggestions(), "thread_status": analyzeThreadStatus()})
@@ -317,7 +319,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 	case method == "GET" && path == "next":
 		web.SendJSON(w, buildNextActionPacket())
 	case method == "GET" && path == "events":
-		events, _ := listEvents(q.Get("filter"))
+		events, _ := store.ListEvents(q.Get("filter"))
 		web.SendJSON(w, map[string]any{"events": events})
 	case method == "GET" && path == "feedbacks":
 		fbs, _ := listFeedbacks(q.Get("label"))
@@ -332,37 +334,37 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		web.SendJSON(w, fb)
 	case method == "POST" && path == "events":
 		body := readBody()
-		evt, _ := createEvent(str(body["type"]), str(body["entity_type"]), str(body["entity_id"]), str(body["summary"]))
+		evt, _ := store.CreateEvent(str(body["type"]), str(body["entity_type"]), str(body["entity_id"]), str(body["summary"]))
 		web.SendJSON(w, evt)
 	case method == "GET" && path == "inbox":
 		web.SendJSON(w, getInboxSummary())
 	case method == "GET" && path == "canon":
-		c, _ := getCanon()
+		c, _ := store.GetCanon()
 		web.SendJSON(w, c)
 	case method == "GET" && path == "daily":
-		d, _ := getDailyNote(q.Get("date"))
+		d, _ := store.GetDailyNote(q.Get("date"))
 		web.SendJSON(w, d)
 	case method == "GET" && path == "daily/history":
-		d, _ := listDailyNotes()
+		d, _ := store.ListDailyNotes()
 		web.SendJSON(w, map[string]any{"daily_notes": d})
 	case method == "GET" && path == "docs/content":
-		c, err := readDocContent(q.Get("path"))
+		c, err := store.ReadDocContent(q.Get("path"))
 		if err != nil { web.SendError(w, 404, err.Error()); return }
 		web.SendJSON(w, map[string]any{"content": c, "path": q.Get("path")})
 	case method == "POST" && path == "daily":
-		d, _ := appendDailyNote(q.Get("date"), map[string][]string{})
+		d, _ := store.AppendDailyNote(q.Get("date"), map[string][]string{})
 		web.SendJSON(w, d)
 	case method == "PUT" && path == "daily":
-		d, _ := replaceDailyNote(q.Get("date"), map[string][]string{})
+		d, _ := store.ReplaceDailyNote(q.Get("date"), map[string][]string{})
 		web.SendJSON(w, d)
 	case method == "GET" && path == "web/bootstrap":
-		tasks, _ := listTasks("", ""); commits, _ := listCommits("", "", "", "", 0); bugs, _ := listBugs("", "", "", 0)
-		ideas, _ := listIdeas(""); docs, _ := listDocRecords("", ""); decisions, _ := listDecisions()
-		visions, _ := listVisions(); roadmaps, _ := listRoadmaps(""); plans, _ := listPlans("", "")
-		principles, _ := listPrinciples("", ""); canon, _ := getCanon(); daily, _ := getDailyNote("")
+		tasks, _ := store.ListTasks("", ""); commits, _ := store.ListCommits("", "", "", "", 0); bugs, _ := store.ListBugs("", "", "", 0)
+		ideas, _ := store.ListIdeas(""); docs, _ := store.ListDocRecords("", ""); decisions, _ := store.ListDecisions()
+		visions, _ := store.ListVisions(); roadmaps, _ := store.ListRoadmaps(""); plans, _ := store.ListPlans("", "")
+		principles, _ := store.ListPrinciples("", ""); canon, _ := store.GetCanon(); daily, _ := store.GetDailyNote("")
 
 		allTaskNotes := []map[string]any{}
-		for _, t := range tasks { n, _ := listTaskNotes(t.ID, 999); allTaskNotes = append(allTaskNotes, n...) }
+		for _, t := range tasks { n, _ := store.ListTaskNotes(t.ID, 999); allTaskNotes = append(allTaskNotes, n...) }
 		taskTitles := map[string]string{}; for _, t := range tasks { taskTitles[t.ID] = t.Title }
 		decisionTitles := map[string]string{}; for _, d := range decisions { decisionTitles[d["id"].(string)] = str(d["title"]) }
 		commitTitles := map[string]string{}; for _, c := range commits { commitTitles[str(c["id"])] = str(c["title"]) }
@@ -416,7 +418,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		for _, d := range docs { wd := map[string]any{}; for k, v := range d { wd[k] = v }; wd["issues"] = []string{}; wd["links"] = map[string]any{"outgoing":[]any{},"incoming":[]any{}}; webDocs = append(webDocs, wd) }
 
 		docAudit := map[string]any{"total_managed_docs":len(docs),"active_records":0,"tracked_files_in_fs":0,"sot_conflicts":map[string]any{},"invalid_truth_records":[]any{},"obsolete_without_replacement":[]any{},"missing_from_fs":[]any{},"path_not_normalized":[]any{},"stale_active_records":[]any{},"source_of_truth_records":[]any{},"untracked_in_fs":[]any{}}
-		if dr, err := findRuntimeDir(); err == nil {
+		if dr, err := pmdb.RuntimeDir(); err == nil {
 			pr := filepath.Dir(dr); dp := map[string]bool{}; for _, doc := range docs { dp[str(doc["path"])] = true }
 			tf := []string{}; ac, sot := 0, 0
 			for _, doc := range docs { if str(doc["status"]) == "active" { ac++ }; if b, ok := doc["source_of_truth"].(bool); ok && b { sot++; docAudit["source_of_truth_records"] = append(docAudit["source_of_truth_records"].([]any), str(doc["path"])) } }
@@ -429,7 +431,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 			docAudit["active_records"] = ac; docAudit["tracked_files_in_fs"] = len(tf)
 		}
 
-		threads, _ := listThreads("")
+		threads, _ := store.ListThreads("")
 		threadSuggestions := analyzeThreadSuggestions()
 		threadStatus := analyzeThreadStatus()
 
@@ -440,19 +442,19 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 			"inbox":func() map[string]any {
 				ib := getInboxSummary()
 				ib["recommended_actions"] = []any{}
-				decisions, _ := listDecisions()
+				decisions, _ := store.ListDecisions()
 				pc := 0; for _, d := range decisions { if str(d["status"]) == "proposed" { pc++ } }
-				canonForInbox, _ := getCanon(); cfCount := 0; if canonForInbox != nil { cfCount = len(canonForInbox["version_scope"].([]any)) }
+				canonForInbox, _ := store.GetCanon(); cfCount := 0; if canonForInbox != nil { cfCount = len(canonForInbox["version_scope"].([]any)) }
 				ideasList := ib["ideas"]; totalIdeas := 0; if ideasList != nil { if sl, ok := ideasList.([]map[string]any); ok { totalIdeas = len(sl) } }
 				ib["counts"] = map[string]any{"total":totalIdeas,"proposed_decisions":pc,"canon_followups":cfCount}
 				ib["canon"] = canon; ib["pending_items"] = []any{}
 				return ib
 			}(),"canon":canon,"visions":visions,
 			"roadmaps":webRoadmaps,"plans":enhancedPlans,"principles":principles,
-			"agents":func() []map[string]any { a, _ := listAgentProfiles(); if a == nil { a = []map[string]any{} }; return a }(),
-			"meetings":func() []map[string]any { m, _ := listMeetingRooms(""); if m == nil { m = []map[string]any{} }; return m }(),
-			"assignments":func() []map[string]any { as, _ := listAssignments("", ""); if as == nil { as = []map[string]any{} }; return as }(),
-			"audit_logs":func() []map[string]any { l, _ := listAuditLog("", "", 100); if l == nil { l = []map[string]any{} }; return l }(),
+			"agents":func() []map[string]any { a, _ := store.ListAgentProfiles(); if a == nil { a = []map[string]any{} }; return a }(),
+			"meetings":func() []map[string]any { m, _ := store.ListMeetingRooms(""); if m == nil { m = []map[string]any{} }; return m }(),
+			"assignments":func() []map[string]any { as, _ := store.ListAssignments("", ""); if as == nil { as = []map[string]any{} }; return as }(),
+			"audit_logs":func() []map[string]any { l, _ := store.ListAuditLog("", "", 100); if l == nil { l = []map[string]any{} }; return l }(),
 			"code_status":func() map[string]any {
 		branch := runGit("rev-parse", "--abbrev-ref", "HEAD")
 		if branch == "" { branch = "main" }
@@ -508,7 +510,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 
 	case method == "POST" && path == "tasks":
 		body := readBody()
-		task, err := createTask(str(body["title"]), pstr(body, "priority", "P1"), pstr(body, "status", "todo"), pstr(body, "phase", "general"), str(body["plan_id"]), nil)
+		task, err := store.CreateTask(str(body["title"]), pstr(body, "priority", "P1"), pstr(body, "status", "todo"), pstr(body, "phase", "general"), str(body["plan_id"]), nil)
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
@@ -516,7 +518,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		web.SendJSON(w, task)
 	case method == "POST" && path == "commits":
 		body := readBody()
-		c, err := createCommit(str(body["title"]), pstr(body, "summary", ""), pstr(body, "evidence_summary", ""), pstr(body, "review_notes", ""), pstr(body, "branch", ""), pstr(body, "commit_hash", ""), str(body["task_id"]), pstr(body, "decision_id", ""), pstr(body, "status", "draft"), pstr(body, "test_status", "not_run"), pstr(body, "review_status", "pending"), nil)
+		c, err := store.CreateCommit(str(body["title"]), pstr(body, "summary", ""), pstr(body, "evidence_summary", ""), pstr(body, "review_notes", ""), pstr(body, "branch", ""), pstr(body, "commit_hash", ""), str(body["task_id"]), pstr(body, "decision_id", ""), pstr(body, "status", "draft"), pstr(body, "test_status", "not_run"), pstr(body, "review_status", "pending"), nil)
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
@@ -524,7 +526,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		web.SendJSON(w, c)
 	case method == "POST" && path == "plans":
 		body := readBody()
-		plan, err := createPlan(str(body["title"]), pstr(body, "goal", ""), str(body["roadmap_id"]), pstr(body, "vision_id", ""), pstr(body, "priority", "P1"), pstr(body, "status", "draft"), nil, nil, nil, nil)
+		plan, err := store.CreatePlan(str(body["title"]), pstr(body, "goal", ""), str(body["roadmap_id"]), pstr(body, "vision_id", ""), pstr(body, "priority", "P1"), pstr(body, "status", "draft"), nil, nil, nil, nil)
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
@@ -532,7 +534,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		web.SendJSON(w, plan)
 	case method == "POST" && path == "bugs":
 		body := readBody()
-		bug, err := createBug(str(body["title"]), pstr(body, "description", ""), pstr(body, "severity", "minor"), pstr(body, "status", "open"), pstr(body, "commit_id", ""), pstr(body, "error", ""), pstr(body, "files", ""), pstr(body, "root_cause", ""), pstr(body, "fix", ""), pstr(body, "tags", ""))
+		bug, err := store.CreateBug(str(body["title"]), pstr(body, "description", ""), pstr(body, "severity", "minor"), pstr(body, "status", "open"), pstr(body, "commit_id", ""), pstr(body, "error", ""), pstr(body, "files", ""), pstr(body, "root_cause", ""), pstr(body, "fix", ""), pstr(body, "tags", ""))
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
@@ -540,7 +542,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		web.SendJSON(w, bug)
 	case method == "POST" && path == "decisions":
 		body := readBody()
-		d, err := createDecision(str(body["title"]), str(body["background"]), str(body["decision"]), pstr(body, "status", "proposed"))
+		d, err := store.CreateDecision(str(body["title"]), str(body["background"]), str(body["decision"]), pstr(body, "status", "proposed"))
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
@@ -548,7 +550,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		web.SendJSON(w, d)
 	case method == "POST" && path == "ideas":
 		body := readBody()
-		idea, err := createIdea(str(body["title"]), str(body["summary"]), pstr(body, "impact", ""), pstr(body, "source", "manual"), false, pstr(body, "current_summary", ""), pstr(body, "main_question", ""), pstr(body, "recommended_next_action", "continue_discussion"))
+		idea, err := store.CreateIdea(str(body["title"]), str(body["summary"]), pstr(body, "impact", ""), pstr(body, "source", "manual"), false, pstr(body, "current_summary", ""), pstr(body, "main_question", ""), pstr(body, "recommended_next_action", "continue_discussion"))
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
@@ -556,7 +558,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		web.SendJSON(w, idea)
 	case method == "POST" && path == "roadmaps":
 		body := readBody()
-		r, err := createRoadmap(str(body["title"]), pstr(body, "target_date", ""), pstr(body, "vision_id", ""), pstr(body, "status", "planned"), pstr(body, "priority", "P1"))
+		r, err := store.CreateRoadmap(str(body["title"]), pstr(body, "target_date", ""), pstr(body, "vision_id", ""), pstr(body, "status", "planned"), pstr(body, "priority", "P1"))
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
@@ -564,7 +566,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		web.SendJSON(w, r)
 	case method == "POST" && path == "principles":
 		body := readBody()
-		p, err := createPrinciple(str(body["title"]), pstr(body, "summary", ""), pstr(body, "kind", "governance"), pstr(body, "status", "active"))
+		p, err := store.CreatePrinciple(str(body["title"]), pstr(body, "summary", ""), pstr(body, "kind", "governance"), pstr(body, "status", "active"))
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
@@ -572,7 +574,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		web.SendJSON(w, p)
 	case method == "POST" && path == "visions":
 		body := readBody()
-		v, err := createVision(str(body["title"]), pstr(body, "summary", ""), pstr(body, "status", "active"), pstr(body, "horizon", "long_term"))
+		v, err := store.CreateVision(str(body["title"]), pstr(body, "summary", ""), pstr(body, "status", "active"), pstr(body, "horizon", "long_term"))
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
@@ -580,7 +582,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		web.SendJSON(w, v)
 	case method == "POST" && path == "threads":
 		body := readBody()
-		t, err := createThread(str(body["title"]), pstr(body, "summary", ""), pstr(body, "source", "manual"))
+		t, err := store.CreateThread(str(body["title"]), pstr(body, "summary", ""), pstr(body, "source", "manual"))
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
@@ -589,7 +591,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 	case method == "POST" && strings.HasPrefix(path, "threads/") && strings.HasSuffix(path, "/items"):
 		id := extractID(path, "threads/", "/items")
 		body := readBody()
-		t, err := addToThread(id, str(body["entity_type"]), str(body["entity_id"]), pstr(body, "note", ""))
+		t, err := store.AddToThread(id, str(body["entity_type"]), str(body["entity_id"]), pstr(body, "note", ""))
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
@@ -603,7 +605,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 			threadID := parts[0]
 			itemParts := strings.SplitN(parts[1], "/", 2)
 			if len(itemParts) == 2 {
-				removeFromThread(threadID, itemParts[0], itemParts[1])
+				store.RemoveFromThread(threadID, itemParts[0], itemParts[1])
 				web.SendJSON(w, map[string]any{"ok": true})
 				return
 			}
@@ -611,7 +613,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		web.SendError(w, 400, "invalid thread item path")
 	case method == "POST" && path == "links":
 		body := readBody()
-		link, err := createLink(str(body["source_type"]), str(body["source_id"]), str(body["relation"]), str(body["target_type"]), str(body["target_id"]), pstr(body, "note", ""))
+		link, err := store.CreateLink(str(body["source_type"]), str(body["source_id"]), str(body["relation"]), str(body["target_type"]), str(body["target_id"]), pstr(body, "note", ""))
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
@@ -620,7 +622,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 	case method == "POST" && strings.HasPrefix(path, "tasks/") && strings.HasSuffix(path, "/notes"):
 		id := extractID(path, "tasks/", "/notes")
 		body := readBody()
-		result, err := appendTaskNote(id, str(body["content"]))
+		result, err := store.AppendTaskNote(id, str(body["content"]))
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
@@ -629,7 +631,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 	case method == "POST" && strings.HasPrefix(path, "ideas/") && strings.HasSuffix(path, "/comments"):
 		id := extractID(path, "ideas/", "/comments")
 		body := readBody()
-		comment, err := createIdeaComment(id, str(body["content"]), pstr(body, "kind", "comment"), pstr(body, "author_type", "ai"), pstr(body, "author_name", "aipmc"))
+		comment, err := store.CreateIdeaComment(id, str(body["content"]), pstr(body, "kind", "comment"), pstr(body, "author_type", "ai"), pstr(body, "author_name", "aipmc"))
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
@@ -639,14 +641,14 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		id := extractID(path, "ideas/", "/convert")
 		body := readBody()
 		if str(body["to"]) == "task" {
-			result, err := convertIdeaToTask(id, str(body["plan_id"]))
+			result, err := store.ConvertIdeaToTask(id, str(body["plan_id"]))
 			if err != nil {
 				web.SendError(w, 400, err.Error())
 				return
 			}
 			web.SendJSON(w, result)
 		} else {
-			result, err := convertIdeaToDecision(id)
+			result, err := store.ConvertIdeaToDecision(id)
 			if err != nil {
 				web.SendError(w, 400, err.Error())
 				return
@@ -655,61 +657,61 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		}
 	// ---- Agent Profiles ----
 	case method == "GET" && path == "agents":
-		agents, _ := listAgentProfiles()
+		agents, _ := store.ListAgentProfiles()
 		web.SendJSON(w, map[string]any{"agents": agents})
 	case method == "POST" && path == "agents":
 		body := readBody()
-		profile, err := createAgentProfile(str(body["name"]), str(body["role"]), str(body["capabilities"]))
+		profile, err := store.CreateAgentProfile(str(body["name"]), str(body["role"]), str(body["capabilities"]))
 		if err != nil { web.SendError(w, 400, err.Error()); return }
 		web.SendJSON(w, profile)
 	case method == "PATCH" && strings.HasPrefix(path, "agents/"):
 		id := strings.TrimPrefix(path, "agents/")
-		a, err := updateAgentProfile(id, readBody())
+		a, err := store.UpdateAgentProfile(id, readBody())
 		if err != nil { web.SendError(w, 400, err.Error()); return }
 		web.SendJSON(w, a)
 	// ---- Meeting Rooms ----
 	case method == "GET" && path == "meetings":
-		rooms, _ := listMeetingRooms(q.Get("status"))
+		rooms, _ := store.ListMeetingRooms(q.Get("status"))
 		web.SendJSON(w, map[string]any{"meetings": rooms})
 	case method == "POST" && path == "meetings":
 		body := readBody()
-		room, err := createMeetingRoom(str(body["title"]), str(body["topic"]), str(body["context"]), str(body["created_by"]))
+		room, err := store.CreateMeetingRoom(str(body["title"]), str(body["topic"]), str(body["context"]), str(body["created_by"]))
 		if err != nil { web.SendError(w, 400, err.Error()); return }
 		web.SendJSON(w, room)
 	case method == "POST" && strings.HasPrefix(path, "meetings/") && strings.HasSuffix(path, "/close"):
 		id := extractID(path, "meetings/", "/close")
-		r, err := closeMeetingRoom(id)
+		r, err := store.CloseMeetingRoom(id)
 		if err != nil { web.SendError(w, 400, err.Error()); return }
 		web.SendJSON(w, r)
 	case method == "POST" && strings.HasPrefix(path, "meetings/") && strings.HasSuffix(path, "/turns"):
 		body := readBody()
 		roomID := extractID(path, "meetings/", "/turns")
-		turn, err := createMeetingTurn(roomID, 0, str(body["speaker_type"]), str(body["speaker_id"]), str(body["question"]))
+		turn, err := store.CreateMeetingTurn(roomID, 0, str(body["speaker_type"]), str(body["speaker_id"]), str(body["question"]))
 		if err != nil { web.SendError(w, 400, err.Error()); return }
 		web.SendJSON(w, turn)
 	case method == "POST" && strings.HasPrefix(path, "meetings/") && strings.HasSuffix(path, "/participants"):
 		body := readBody()
 		roomID := extractID(path, "meetings/", "/participants")
-		p, err := confirmMeetingAttendance(roomID, str(body["agent_id"]))
+		p, err := store.ConfirmMeetingAttendance(roomID, str(body["agent_id"]))
 		if err != nil { web.SendError(w, 400, err.Error()); return }
 		web.SendJSON(w, p)
 	// ---- Assignments ----
 	case method == "GET" && path == "assignments":
-		asgns, _ := listAssignments(q.Get("agent_id"), q.Get("status"))
+		asgns, _ := store.ListAssignments(q.Get("agent_id"), q.Get("status"))
 		web.SendJSON(w, map[string]any{"assignments": asgns})
 	case method == "POST" && path == "assignments":
 		body := readBody()
-		a, err := createAssignment(str(body["agent_id"]), str(body["task_id"]), str(body["role"]), str(body["scope"]), str(body["assigned_by"]))
+		a, err := store.CreateAssignment(str(body["agent_id"]), str(body["task_id"]), str(body["role"]), str(body["scope"]), str(body["assigned_by"]))
 		if err != nil { web.SendError(w, 400, err.Error()); return }
 		web.SendJSON(w, a)
 	case method == "PATCH" && strings.HasPrefix(path, "assignments/"):
 		id := strings.TrimPrefix(path, "assignments/")
-		a, err := updateAssignment(id, readBody())
+		a, err := store.UpdateAssignment(id, readBody())
 		if err != nil { web.SendError(w, 400, err.Error()); return }
 		web.SendJSON(w, a)
 	// ---- Audit Log ----
 	case method == "GET" && path == "audit":
-		logs, _ := listAuditLog(q.Get("actor_type"), q.Get("entity_type"), 200)
+		logs, _ := store.ListAuditLog(q.Get("actor_type"), q.Get("entity_type"), 200)
 		web.SendJSON(w, map[string]any{"audit_logs": logs})
 	// ---- AI Search ----
 	case method == "POST" && strings.HasPrefix(path, "meetings/") && strings.HasSuffix(path, "/typing"):
@@ -720,15 +722,15 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 			if b, ok := v.(bool); ok && b { typing = 1 }
 			if f, ok := v.(float64); ok && f > 0 { typing = 1 }
 		}
-		db, err := openDB()
+		db, err := pmdb.Open()
 		if err == nil { defer db.Close(); db.Exec("UPDATE meeting_rooms SET pm_typing = ? WHERE id = ?", typing, roomID) }
 		web.SendJSON(w, map[string]any{"ok": true, "pm_typing": typing})
 	case method == "POST" && path == "arbitrate":
 		body := readBody()
 		roomID := str(body["room_id"])
-		room, err := getMeetingRoom(roomID)
+		room, err := store.GetMeetingRoom(roomID)
 		if err != nil { web.SendError(w, 404, err.Error()); return }
-		turns, _ := listMeetingTurns(roomID)
+		turns, _ := store.ListMeetingTurns(roomID)
 		var recent []ai.ArbitrationTurn
 		start := 0
 		if len(turns) > 8 { start = len(turns) - 8 }
@@ -743,13 +745,13 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		next, reason, err := aiClient.ArbitrateNextSpeaker(str(room["topic"]), str(room["agent_roles_context"]), recent)
 		if err != nil { web.SendError(w, 500, err.Error()); return }
-		existing, _ := listMeetingTurns(roomID)
+		existing, _ := store.ListMeetingTurns(roomID)
 		nextNum := len(existing) + 1
-		createMeetingTurn(roomID, nextNum, "agent", next, fmt.Sprintf("[AI 仲裁] %s。请就此发表意见。", reason))
+		store.CreateMeetingTurn(roomID, nextNum, "agent", next, fmt.Sprintf("[AI 仲裁] %s。请就此发表意见。", reason))
 		web.SendJSON(w, map[string]any{"next_agent": next, "reason": reason})
 	case method == "POST" && path == "discussions":
 		body := readBody()
-		d, err := logDiscussion(str(body["session_id"]), str(body["role"]), str(body["source"]), str(body["content"]), "")
+		d, err := store.LogDiscussion(str(body["session_id"]), str(body["role"]), str(body["source"]), str(body["content"]), "")
 		if err != nil { web.SendError(w, 400, err.Error()); return }
 		web.SendJSON(w, d)
 		case method == "GET" && path == "discussions":
@@ -764,7 +766,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		sources, _ := listDiscussionSources()
 		web.SendJSON(w, map[string]any{"sources": sources})
 	case method == "GET" && path == "config":
-		cfg := loadConfig()
+		cfg := pmdb.LoadConfig()
 		web.SendJSON(w, map[string]any{
 			"ai_endpoint":           cfg.AIEndpoint,
 			"ai_embedding_endpoint": cfg.AIEmbeddingEndpoint,
@@ -775,7 +777,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 			"web_port":              cfg.WebPort,
 		})
 	case method == "POST" && path == "config":
-		cfg := loadConfig()
+		cfg := pmdb.LoadConfig()
 		body := readBody()
 		if v := str(body["ai_endpoint"]); v != "" { cfg.AIEndpoint = v }
 		if v := str(body["ai_embedding_endpoint"]); v != "" { cfg.AIEmbeddingEndpoint = v }
@@ -785,7 +787,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		if v, ok := body["web_port"]; ok {
 			if f, ok := v.(float64); ok { cfg.WebPort = int(f) }
 		}
-		if err := saveConfig(cfg); err != nil {
+		if err := pmdb.SaveConfig(cfg); err != nil {
 			web.SendError(w, 500, err.Error())
 			return
 		}
@@ -818,7 +820,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		handlePatchEntity(w, entity, id, readBody())
 	case method == "POST" && path == "canon/update":
 		body := readBody()
-		c, _ := updateCanon(str(body["decision_id"]), pstr(body, "product_goal", ""), pstr(body, "engineering_focus", ""), pstr(body, "architecture", ""), nil, nil)
+		c, _ := store.UpdateCanon(str(body["decision_id"]), pstr(body, "product_goal", ""), pstr(body, "engineering_focus", ""), pstr(body, "architecture", ""), nil, nil)
 		web.SendJSON(w, c)
 	case method == "DELETE" && strings.HasPrefix(path, "task-notes/"):
 		web.SendJSON(w, map[string]any{"ok": true})
@@ -832,7 +834,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		web.SendJSON(w, map[string]any{"ok": true, "message": "docs pruned"})
 	case method == "DELETE" && strings.HasPrefix(path, "links/"):
 		id := strings.TrimPrefix(path, "links/")
-		err := deleteLink(id)
+		err := store.DeleteLink(id)
 		if err != nil {
 			web.SendError(w, 500, err.Error())
 			return
@@ -840,28 +842,28 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		web.SendJSON(w, map[string]any{"ok": true})
 	case method == "DELETE" && strings.HasPrefix(path, "tasks/"):
 		id := strings.TrimPrefix(path, "tasks/")
-		if err := deleteTask(id); err != nil {
+		if err := store.DeleteTask(id); err != nil {
 			web.SendError(w, 500, err.Error())
 			return
 		}
 		web.SendJSON(w, map[string]any{"ok": true})
 	case method == "DELETE" && strings.HasPrefix(path, "plans/"):
 		id := strings.TrimPrefix(path, "plans/")
-		if err := deletePlan(id); err != nil {
+		if err := store.DeletePlan(id); err != nil {
 			web.SendError(w, 500, err.Error())
 			return
 		}
 		web.SendJSON(w, map[string]any{"ok": true})
 	case method == "DELETE" && strings.HasPrefix(path, "bugs/"):
 		id := strings.TrimPrefix(path, "bugs/")
-		if err := deleteBug(id); err != nil {
+		if err := store.DeleteBug(id); err != nil {
 			web.SendError(w, 500, err.Error())
 			return
 		}
 		web.SendJSON(w, map[string]any{"ok": true})
 	// ── Chat API ─────────────────────────────────────────────────
 	case method == "GET" && path == "chat/sessions":
-		runtimeDir, _ := findRuntimeDir()
+		runtimeDir, _ := pmdb.RuntimeDir()
 		workDir := "."
 		if runtimeDir != "" {
 			workDir = filepath.Dir(runtimeDir)
@@ -900,7 +902,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 			web.SendError(w, 400, "缺少 id 参数")
 			return
 		}
-		runtimeDir, _ := findRuntimeDir()
+		runtimeDir, _ := pmdb.RuntimeDir()
 		workDir := "."
 		if runtimeDir != "" {
 			workDir = filepath.Dir(runtimeDir)
@@ -930,7 +932,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 			web.SendError(w, 400, "缺少 message 参数")
 			return
 		}
-		runtimeDir, _ := findRuntimeDir()
+		runtimeDir, _ := pmdb.RuntimeDir()
 		workDir := "."
 		if runtimeDir != "" {
 			workDir = filepath.Dir(runtimeDir)
