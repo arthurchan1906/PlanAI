@@ -16,6 +16,7 @@ import (
 	"aipmc/analyze"
 	"aipmc/cli"
 	pmdb "aipmc/db"
+	"aipmc/hook"
 	"aipmc/store"
 	"aipmc/web"
 )
@@ -102,7 +103,7 @@ func main() {
 		// Also setup hooks for platforms that support them
 		if resolved == "Claude Code" || target == "claude" || resolved == "Gemini CLI" || target == "gemini" || resolved == "Codex (OpenAI)" || target == "codex" {
 			// Auto-detect binary path and configure Claude Code / Gemini hooks
-			if err := setupHooksCmd(resolved); err != nil {
+			if err := hook.SetupHooksCmd(resolveCommandPath(), resolved); err != nil {
 				fmt.Fprintf(os.Stderr, "hook setup failed: %v\n", err)
 			}
 		}
@@ -167,13 +168,13 @@ func main() {
 		waitForTurnCmd(os.Args[2:])
 		return
 	case "hook-process":
-		processClaudeHook()
+		hook.ProcessClaudeHook()
 		return
 	case "hook-gemini":
-		processGeminiHook()
+		hook.ProcessGeminiHook()
 		return
 	case "hook-codex":
-		processCodexHook()
+		hook.ProcessCodexHook()
 		return
 	case "mcp":
 		server := newMCPServer(aiClient)

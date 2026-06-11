@@ -1,4 +1,4 @@
-package main
+package hook
 
 import (
 	"encoding/json"
@@ -20,7 +20,7 @@ import (
 //
 // Strategy: store the COMPLETE raw JSON as metadata so nothing is lost.
 // The UI / analysis layer can parse and display it later.
-func processGeminiHook() {
+func ProcessGeminiHook() {
 	now := time.Now().Format("2006-01-02T15:04:05.000")
 	data, _ := io.ReadAll(os.Stdin)
 
@@ -634,7 +634,7 @@ func parseDiffToHunks(diff string) []PatchHunk {
 // ---- Gemini CLI hook setup ----
 
 // setupGeminiHooks writes Gemini CLI hook configuration to .gemini/settings.json.
-func setupGeminiHooks(commandPath string) error {
+func SetupGeminiHooks(commandPath string) error {
 	runtimeDir, _ := pmdb.RuntimeDir()
 	projectRoot := filepath.Dir(runtimeDir)
 	settingsPath := filepath.Join(projectRoot, ".gemini", "settings.json")

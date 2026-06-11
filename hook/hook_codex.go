@@ -1,4 +1,4 @@
-package main
+package hook
 
 import (
 	"encoding/json"
@@ -21,7 +21,7 @@ import (
 //   - UserPromptSubmit → user message (like Gemini's BeforeAgent)
 //   - PostToolUse      → assistant tool use (like Gemini's AfterTool)
 //   - Stop             → assistant response (like Gemini's AfterAgent)
-func processCodexHook() {
+func ProcessCodexHook() {
 	now := time.Now().Format("2006-01-02T15:04:05.000")
 	data, _ := io.ReadAll(os.Stdin)
 
@@ -653,7 +653,7 @@ func extractLastBare(cmd string) string {
 
 // setupCodexHooks writes Codex CLI hook configuration to .codex/hooks.json.
 // Hooks are enabled by default in Codex CLI — no feature flag needed.
-func setupCodexHooks(commandPath string) error {
+func SetupCodexHooks(commandPath string) error {
 	runtimeDir, _ := pmdb.RuntimeDir()
 	projectRoot := filepath.Dir(runtimeDir)
 	codexDir := filepath.Join(projectRoot, ".codex")

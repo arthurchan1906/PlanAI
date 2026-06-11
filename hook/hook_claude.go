@@ -1,4 +1,4 @@
-package main
+package hook
 
 import (
 	"encoding/json"
@@ -19,7 +19,7 @@ import (
 // JSON and saves to discussion_log with structuredPatch hunks as metadata.
 // Uses Go's encoding/json — 100% reliable, zero shell dependency.
 // Called via: aipmc hook-process
-func processClaudeHook() {
+func ProcessClaudeHook() {
 	now := time.Now().Format("2006-01-02T15:04:05.000")
 	data, _ := io.ReadAll(os.Stdin)
 
@@ -246,7 +246,7 @@ func fmtExitCode(code int) string {
 // setupClaudeHooks writes Claude Code hook configuration to settings.local.json.
 // Configures Stop, StopFailure, UserPromptSubmit, and PostToolUse hooks
 // that all call "aipmc hook-process" (processClaudeHook).
-func setupClaudeHooks(commandPath string) error {
+func SetupClaudeHooks(commandPath string) error {
 	runtimeDir, err := pmdb.RuntimeDir()
 	if err != nil {
 		return fmt.Errorf("find runtime dir: %w", err)
