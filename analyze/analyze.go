@@ -1,4 +1,4 @@
-package main
+package analyze
 
 import (
 	"fmt"
@@ -6,7 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"aipmc/ai"
 	"aipmc/store"
+	"aipmc/u"
 )
 
 // ============================================================
@@ -108,7 +110,7 @@ type AnalyzeReport struct {
 }
 
 // analyzeScopeDrift checks all commits for files that may fall outside their plan's scope.
-func analyzeScopeDrift() []DriftResult {
+func AnalyzeScopeDrift() []DriftResult {
 	commits, err := store.ListCommits("", "", "", "", 0)
 	if err != nil {
 		return nil
@@ -116,7 +118,7 @@ func analyzeScopeDrift() []DriftResult {
 
 	var results []DriftResult
 	for _, c := range commits {
-		taskID := str(c["task_id"])
+		taskID := u.Str(c["task_id"])
 		if taskID == "" {
 			continue
 		}
@@ -133,7 +135,7 @@ func analyzeScopeDrift() []DriftResult {
 		if err != nil {
 			continue
 		}
-		planID := str(task["plan_id"])
+		planID := u.Str(task["plan_id"])
 		if planID == "" {
 			continue
 		}
@@ -188,12 +190,12 @@ func analyzeScopeDrift() []DriftResult {
 				}
 			}
 			results = append(results, DriftResult{
-				CommitID:     str(c["id"]),
-				CommitTitle:  str(c["title"]),
+				CommitID:     u.Str(c["id"]),
+				CommitTitle:  u.Str(c["title"]),
 				TaskID:       taskID,
-				TaskTitle:    str(task["title"]),
+				TaskTitle:    u.Str(task["title"]),
 				PlanID:       planID,
-				PlanTitle:    str(plan["title"]),
+				PlanTitle:    u.Str(plan["title"]),
 				ChangedFiles: changedFiles,
 				OutOfScope:   outOfScope,
 				Severity:     "warn",
@@ -207,7 +209,7 @@ func analyzeScopeDrift() []DriftResult {
 }
 
 // analyzeOrphanTasks finds tasks that are in_progress but have no linked commits.
-func analyzeOrphanTasks() []OrphanResult {
+func AnalyzeOrphanTasks() []OrphanResult {
 	tasks, err := store.ListTasks("in_progress", "")
 	if err != nil {
 		return nil
@@ -235,7 +237,7 @@ func analyzeOrphanTasks() []OrphanResult {
 }
 
 // analyzeDuplicatePlans finds plans with similar titles that may be duplicates.
-func analyzeDuplicatePlans() []DuplicateResult {
+func AnalyzeDuplicatePlans() []DuplicateResult {
 	plans, err := store.ListPlans("", "")
 	if err != nil {
 		return nil
@@ -244,7 +246,7 @@ func analyzeDuplicatePlans() []DuplicateResult {
 	// Filter out inactive plans for duplicate detection
 	var activePlans []map[string]any
 	for _, p := range plans {
-		s := str(p["status"])
+		s := u.Str(p["status"])
 		if s != "cancelled" && s != "archived" {
 			activePlans = append(activePlans, p)
 		}
@@ -253,15 +255,15 @@ func analyzeDuplicatePlans() []DuplicateResult {
 	var results []DuplicateResult
 	for i := 0; i < len(activePlans); i++ {
 		for j := i + 1; j < len(activePlans); j++ {
-			title1 := str(activePlans[i]["title"])
-			title2 := str(activePlans[j]["title"])
-			sim := titleSimilarity(title1, title2)
+			title1 := u.Str(activePlans[i]["title"])
+			title2 := u.Str(activePlans[j]["title"])
+			sim := TitleSimilarity(title1, title2)
 			if sim > 0.7 {
 				results = append(results, DuplicateResult{
 					EntityType: "plan",
-					ID1:        str(activePlans[i]["id"]),
+					ID1:        u.Str(activePlans[i]["id"]),
 					Title1:     title1,
-					ID2:        str(activePlans[j]["id"]),
+					ID2:        u.Str(activePlans[j]["id"]),
 					Title2:     title2,
 					Similarity: sim,
 				})
@@ -275,7 +277,7 @@ func analyzeDuplicatePlans() []DuplicateResult {
 }
 
 // analyzeBlockedTasks finds tasks that have been blocked for too long.
-func analyzeBlockedTasks() []BlockedResult {
+func AnalyzeBlockedTasks() []BlockedResult {
 	tasks, err := store.ListTasks("blocked", "")
 	if err != nil {
 		return nil
@@ -297,34 +299,34 @@ func analyzeBlockedTasks() []BlockedResult {
 }
 
 // runFullAnalysis runs all analysis checks and returns a report.
-func runFullAnalysis() AnalyzeReport {
+func RunFullAnalysis() AnalyzeReport {
 	report := AnalyzeReport{
-		Drifts:     analyzeScopeDrift(),
-		Orphans:    analyzeOrphanTasks(),
-		Duplicates: analyzeDuplicatePlans(),
-		Blocked:    analyzeBlockedTasks(),
-		Conflicts:   analyzeConflicts(),
-		Progress:    analyzeProgress(),
-		Impacts:     analyzeDecisionImpact(),
-		CrossTasks:  analyzeCrossTaskFiles(),
+		Drifts:     AnalyzeScopeDrift(),
+		Orphans:    AnalyzeOrphanTasks(),
+		Duplicates: AnalyzeDuplicatePlans(),
+		Blocked:    AnalyzeBlockedTasks(),
+		Conflicts:   AnalyzeConflicts(),
+		Progress:    AnalyzeProgress(),
+		Impacts:     AnalyzeDecisionImpact(),
+		CrossTasks:  AnalyzeCrossTaskFiles(),
 	}
 
 	// Build summary
 	parts := []string{}
 	if len(report.Drifts) > 0 {
-		parts = append(parts, plural(len(report.Drifts), "scope drift", "scope drifts"))
+		parts = append(parts, Plural(len(report.Drifts), "scope drift", "scope drifts"))
 	}
 	if len(report.Orphans) > 0 {
-		parts = append(parts, plural(len(report.Orphans), "orphan task", "orphan tasks"))
+		parts = append(parts, Plural(len(report.Orphans), "orphan task", "orphan tasks"))
 	}
 	if len(report.Duplicates) > 0 {
-		parts = append(parts, plural(len(report.Duplicates), "duplicate", "duplicates"))
+		parts = append(parts, Plural(len(report.Duplicates), "duplicate", "duplicates"))
 	}
 	if len(report.Blocked) > 0 {
-		parts = append(parts, plural(len(report.Blocked), "blocked task", "blocked tasks"))
+		parts = append(parts, Plural(len(report.Blocked), "blocked task", "blocked tasks"))
 	}
 	if len(report.Conflicts) > 0 {
-		parts = append(parts, plural(len(report.Conflicts), "conflict", "conflicts"))
+		parts = append(parts, Plural(len(report.Conflicts), "conflict", "conflicts"))
 	}
 	atRisk := 0
 	for _, p := range report.Progress {
@@ -333,13 +335,13 @@ func runFullAnalysis() AnalyzeReport {
 		}
 	}
 	if atRisk > 0 {
-		parts = append(parts, plural(atRisk, "at-risk plan", "at-risk plans"))
+		parts = append(parts, Plural(atRisk, "at-risk plan", "at-risk plans"))
 	}
 	if len(report.CrossTasks) > 0 {
-		parts = append(parts, plural(len(report.CrossTasks), "cross-task link", "cross-task links"))
+		parts = append(parts, Plural(len(report.CrossTasks), "cross-task link", "cross-task links"))
 	}
 	if len(report.Impacts) > 0 {
-		parts = append(parts, plural(len(report.Impacts), "decision impact", "decision impacts"))
+		parts = append(parts, Plural(len(report.Impacts), "decision impact", "decision impacts"))
 	}
 
 	if len(parts) == 0 {
@@ -352,7 +354,7 @@ func runFullAnalysis() AnalyzeReport {
 }
 
 // analyzeConflicts detects tasks under the same plan with potentially conflicting approaches.
-func analyzeConflicts() []ConflictResult {
+func AnalyzeConflicts() []ConflictResult {
 	plans, err := store.ListPlans("", "active")
 	if err != nil {
 		return nil
@@ -360,7 +362,7 @@ func analyzeConflicts() []ConflictResult {
 
 	var results []ConflictResult
 	for _, p := range plans {
-		planID := str(p["id"])
+		planID := u.Str(p["id"])
 		tasks, err := store.ListTasks("", planID)
 		if err != nil || len(tasks) < 2 {
 			continue
@@ -399,7 +401,7 @@ func analyzeConflicts() []ConflictResult {
 }
 
 // analyzeProgress checks plan completion rate against elapsed time.
-func analyzeProgress() []ProgressResult {
+func AnalyzeProgress() []ProgressResult {
 	plans, err := store.ListPlans("", "active")
 	if err != nil {
 		return nil
@@ -407,8 +409,8 @@ func analyzeProgress() []ProgressResult {
 
 	var results []ProgressResult
 	for _, p := range plans {
-		planID := str(p["id"])
-		planTitle := str(p["title"])
+		planID := u.Str(p["id"])
+		planTitle := u.Str(p["title"])
 
 		tasks, err := store.ListTasks("", planID)
 		if err != nil || len(tasks) == 0 {
@@ -451,7 +453,7 @@ func analyzeProgress() []ProgressResult {
 }
 
 // analyzeCrossTaskFiles detects commits whose changed files overlap with other active tasks.
-func analyzeCrossTaskFiles() []CrossTaskResult {
+func AnalyzeCrossTaskFiles() []CrossTaskResult {
 	commits, err := store.ListCommits("", "", "", "", 50)
 	if err != nil {
 		return nil
@@ -460,7 +462,7 @@ func analyzeCrossTaskFiles() []CrossTaskResult {
 	// Build a map: file path → list of tasks that have modified it
 	fileTaskMap := make(map[string]map[string]bool)
 	for _, c := range commits {
-		taskID := str(c["task_id"])
+		taskID := u.Str(c["task_id"])
 		if taskID == "" {
 			continue
 		}
@@ -511,10 +513,10 @@ func analyzeCrossTaskFiles() []CrossTaskResult {
 		t1, _ := store.GetTaskSimple(r.TaskID)
 		t2, _ := store.GetTaskSimple(r.OtherTaskID)
 		if t1 != nil {
-			r.TaskTitle = str(t1["title"])
+			r.TaskTitle = u.Str(t1["title"])
 		}
 		if t2 != nil {
-			r.OtherTitle = str(t2["title"])
+			r.OtherTitle = u.Str(t2["title"])
 		}
 		results = append(results, r)
 	}
@@ -525,7 +527,7 @@ func analyzeCrossTaskFiles() []CrossTaskResult {
 }
 
 // analyzeDecisionImpact finds tasks linked to recently changed decisions.
-func analyzeDecisionImpact() []ImpactResult {
+func AnalyzeDecisionImpact() []ImpactResult {
 	decisions, err := store.ListDecisions()
 	if err != nil {
 		return nil
@@ -533,9 +535,9 @@ func analyzeDecisionImpact() []ImpactResult {
 
 	var results []ImpactResult
 	for _, d := range decisions {
-		decisionID := str(d["id"])
-		decisionTitle := str(d["title"])
-		status := str(d["status"])
+		decisionID := u.Str(d["id"])
+		decisionTitle := u.Str(d["title"])
+		status := u.Str(d["status"])
 
 		// Only check recently proposed/changed decisions
 		if status != "proposed" && status != "recently_accepted" {
@@ -551,11 +553,11 @@ func analyzeDecisionImpact() []ImpactResult {
 		var affectedTasks []string
 		var affectedPlans []string
 		for _, l := range links {
-			if str(l["target_type"]) == "task" {
-				affectedTasks = append(affectedTasks, str(l["target_id"]))
+			if u.Str(l["target_type"]) == "task" {
+				affectedTasks = append(affectedTasks, u.Str(l["target_id"]))
 			}
-			if str(l["target_type"]) == "plan" {
-				affectedPlans = append(affectedPlans, str(l["target_id"]))
+			if u.Str(l["target_type"]) == "plan" {
+				affectedPlans = append(affectedPlans, u.Str(l["target_id"]))
 			}
 		}
 
@@ -584,7 +586,7 @@ func analyzeDecisionImpact() []ImpactResult {
 }
 
 // titleSimilarity computes a simple word-overlap similarity between two titles.
-func titleSimilarity(a, b string) float64 {
+func TitleSimilarity(a, b string) float64 {
 	a = strings.ToLower(a)
 	b = strings.ToLower(b)
 	if a == b {
@@ -643,25 +645,25 @@ type ThreadStatusResult struct {
 // related commits and suggest threads. It considers title keyword overlap,
 // file path affinity, plan membership, and time proximity — so work that
 // spans multiple plans or evolves organically can still be recognized.
-func analyzeThreadSuggestions() []ThreadSuggestResult {
+func AnalyzeThreadSuggestions() []ThreadSuggestResult {
 	commits, err := store.ListCommits("", "", "", "", 100)
 	if err != nil || len(commits) < 2 {
 		return nil
 	}
 
-	items, planTitles := parseCommitItems(commits)
+	items, planTitles := ParseCommitItems(commits)
 	if len(items) < 2 {
 		return nil
 	}
 
-	clusters := clusterBySimilarity(items, 0.2)
+	clusters := ClusterBySimilarity(items, 0.2)
 
 	var results []ThreadSuggestResult
 	for _, cl := range clusters {
 		if len(cl) < 2 {
 			continue
 		}
-		sug := buildThreadSuggestion(items, cl, planTitles, len(items))
+		sug := BuildThreadSuggestion(items, cl, planTitles, len(items))
 		results = append(results, sug)
 	}
 
@@ -705,7 +707,7 @@ var stopWords = map[string]bool{
 
 // parseCommitItems converts raw commit maps into enriched commitItem structs,
 // resolving task → plan relationships via a local cache.
-func parseCommitItems(commits []map[string]any) ([]commitItem, map[string]string) {
+func ParseCommitItems(commits []map[string]any) ([]commitItem, map[string]string) {
 	type taskMeta struct{ planID string }
 	taskCache := map[string]*taskMeta{}
 	planTitles := map[string]string{}
@@ -713,11 +715,11 @@ func parseCommitItems(commits []map[string]any) ([]commitItem, map[string]string
 	var items []commitItem
 	for _, c := range commits {
 		ci := commitItem{
-			id:     str(c["id"]),
-			title:  str(c["title"]),
-			taskID: str(c["task_id"]),
+			id:     u.Str(c["id"]),
+			title:  u.Str(c["title"]),
+			taskID: u.Str(c["task_id"]),
 		}
-		if t, err := time.Parse("2006-01-02T15:04:05", str(c["created_at"])); err == nil {
+		if t, err := time.Parse("2006-01-02T15:04:05", u.Str(c["created_at"])); err == nil {
 			ci.ts = t
 		}
 		if rawFiles, ok := c["files"].([]any); ok {
@@ -733,8 +735,8 @@ func parseCommitItems(commits []map[string]any) ([]commitItem, map[string]string
 				ci.planID = tc.planID
 			} else {
 				if t, err := store.GetTaskSimple(ci.taskID); err == nil {
-					taskCache[ci.taskID] = &taskMeta{str(t["plan_id"])}
-					ci.planID = str(t["plan_id"])
+					taskCache[ci.taskID] = &taskMeta{u.Str(t["plan_id"])}
+					ci.planID = u.Str(t["plan_id"])
 				}
 			}
 		}
@@ -742,11 +744,11 @@ func parseCommitItems(commits []map[string]any) ([]commitItem, map[string]string
 		if ci.planID != "" {
 			if _, ok := planTitles[ci.planID]; !ok {
 				if p, err := store.GetPlan(ci.planID); err == nil && p != nil {
-					planTitles[ci.planID] = str(p["title"])
+					planTitles[ci.planID] = u.Str(p["title"])
 				}
 			}
 		}
-		ci.keywords = extractKeywords(ci.title)
+		ci.keywords = ExtractKeywords(ci.title)
 		items = append(items, ci)
 	}
 	return items, planTitles
@@ -754,7 +756,7 @@ func parseCommitItems(commits []map[string]any) ([]commitItem, map[string]string
 
 // extractKeywords splits a title into meaningful lowercase tokens, filtering
 // out stop words and single characters.
-func extractKeywords(title string) []string {
+func ExtractKeywords(title string) []string {
 	title = strings.ToLower(title)
 	// Split on common delimiters including CJK-unfriendly ones
 	words := strings.FieldsFunc(title, func(r rune) bool {
@@ -775,18 +777,18 @@ func extractKeywords(title string) []string {
 
 // commitPairSim computes a weighted multi-dimensional similarity between two commits.
 // Weights: title keywords 0.30, file overlap 0.35, same plan 0.15, time proximity 0.20.
-func commitPairSim(a, b commitItem) float64 {
+func CommitPairSim(a, b commitItem) float64 {
 	const wtTitle, wtFiles, wtPlan, wtTime = 0.30, 0.35, 0.15, 0.20
 	var score float64
 
 	// 1. Title keyword overlap (Jaccard)
 	if len(a.keywords) > 0 && len(b.keywords) > 0 {
-		score += wtTitle * jaccardStrings(a.keywords, b.keywords)
+		score += wtTitle * JaccardStrings(a.keywords, b.keywords)
 	}
 
 	// 2. File path overlap (Jaccard) — strongest signal for related work
 	if len(a.files) > 0 && len(b.files) > 0 {
-		score += wtFiles * jaccardStrings(a.files, b.files)
+		score += wtFiles * JaccardStrings(a.files, b.files)
 	}
 
 	// 3. Same plan membership — soft signal (work can span multiple plans)
@@ -809,7 +811,7 @@ func commitPairSim(a, b commitItem) float64 {
 }
 
 // jaccardStrings computes Jaccard similarity: |A ∩ B| / |A ∪ B|.
-func jaccardStrings(a, b []string) float64 {
+func JaccardStrings(a, b []string) float64 {
 	setA := make(map[string]bool, len(a))
 	for _, s := range a {
 		setA[s] = true
@@ -833,7 +835,7 @@ func jaccardStrings(a, b []string) float64 {
 
 // clusterBySimilarity groups commits into clusters using union-find on the
 // similarity graph. Two commits are connected if their similarity ≥ threshold.
-func clusterBySimilarity(items []commitItem, threshold float64) [][]int {
+func ClusterBySimilarity(items []commitItem, threshold float64) [][]int {
 	n := len(items)
 	parent := make([]int, n)
 	for i := range parent {
@@ -852,7 +854,7 @@ func clusterBySimilarity(items []commitItem, threshold float64) [][]int {
 
 	for i := 0; i < n; i++ {
 		for j := i + 1; j < n; j++ {
-			if commitPairSim(items[i], items[j]) >= threshold {
+			if CommitPairSim(items[i], items[j]) >= threshold {
 				union(i, j)
 			}
 		}
@@ -873,7 +875,7 @@ func clusterBySimilarity(items []commitItem, threshold float64) [][]int {
 }
 
 // buildThreadSuggestion generates a ThreadSuggestResult from a cluster of commits.
-func buildThreadSuggestion(items []commitItem, indices []int, planTitles map[string]string, total int) ThreadSuggestResult {
+func BuildThreadSuggestion(items []commitItem, indices []int, planTitles map[string]string, total int) ThreadSuggestResult {
 	// Collect cluster stats
 	planSet := map[string]bool{}
 	fileCounts := map[string]int{}
@@ -905,10 +907,10 @@ func buildThreadSuggestion(items []commitItem, indices []int, planTitles map[str
 	}
 
 	// Generate title
-	title := generateThreadTitle(items, indices, planSet, planTitles, fileCounts, keywordCounts)
+	title := GenerateThreadTitle(items, indices, planSet, planTitles, fileCounts, keywordCounts)
 
 	// Generate rationale
-	rationale := generateThreadRationale(len(indices), planSet, planTitles, fileCounts, keywordCounts, firstTime, lastTime)
+	rationale := GenerateThreadRationale(len(indices), planSet, planTitles, fileCounts, keywordCounts, firstTime, lastTime)
 
 	// Score: cluster size / total * cross-plan bonus * file-concentration bonus
 	sizeScore := float64(len(indices)) / float64(total)
@@ -955,7 +957,7 @@ func buildThreadSuggestion(items []commitItem, indices []int, planTitles map[str
 }
 
 // generateThreadTitle produces a human-readable title for a cluster.
-func generateThreadTitle(items []commitItem, indices []int, planSet map[string]bool, planTitles map[string]string, fileCounts map[string]int, keywordCounts map[string]int) string {
+func GenerateThreadTitle(items []commitItem, indices []int, planSet map[string]bool, planTitles map[string]string, fileCounts map[string]int, keywordCounts map[string]int) string {
 	// Strategy 1: If cluster is dominated by a single plan (>60% of commits), use plan title as base
 	planVotes := map[string]int{}
 	for _, idx := range indices {
@@ -1028,7 +1030,7 @@ func generateThreadTitle(items []commitItem, indices []int, planSet map[string]b
 }
 
 // generateThreadRationale explains why this cluster forms a meaningful thread.
-func generateThreadRationale(n int, planSet map[string]bool, planTitles map[string]string, fileCounts map[string]int, keywordCounts map[string]int, firstTime, lastTime time.Time) string {
+func GenerateThreadRationale(n int, planSet map[string]bool, planTitles map[string]string, fileCounts map[string]int, keywordCounts map[string]int, firstTime, lastTime time.Time) string {
 	parts := []string{fmt.Sprintf("%d 条 commit", n)}
 
 	// Plans
@@ -1081,7 +1083,7 @@ func generateThreadRationale(n int, planSet map[string]bool, planTitles map[stri
 }
 
 // analyzeThreadStatus checks existing threads for activity gaps.
-func analyzeThreadStatus() []ThreadStatusResult {
+func AnalyzeThreadStatus() []ThreadStatusResult {
 	threads, err := store.ListThreads("active")
 	if err != nil {
 		return nil
@@ -1089,7 +1091,7 @@ func analyzeThreadStatus() []ThreadStatusResult {
 
 	var results []ThreadStatusResult
 	for _, t := range threads {
-		tid := str(t["id"])
+		tid := u.Str(t["id"])
 		items, ok := t["items"].([]map[string]any)
 		if !ok || len(items) == 0 {
 			continue
@@ -1097,18 +1099,18 @@ func analyzeThreadStatus() []ThreadStatusResult {
 		// Find the most recent activity date from thread items
 		latestAdded := ""
 		for _, item := range items {
-			if at := str(item["added_at"]); at > latestAdded {
+			if at := u.Str(item["added_at"]); at > latestAdded {
 				latestAdded = at
 			}
 		}
 		tr := ThreadStatusResult{
 			ThreadID:    tid,
-			ThreadTitle: str(t["title"]),
-			Status:      str(t["status"]),
+			ThreadTitle: u.Str(t["title"]),
+			Status:      u.Str(t["status"]),
 			ItemCount:   len(items),
 		}
 		if latestAdded != "" {
-			tr.DaysSinceLastActivity = daysSince(latestAdded)
+			tr.DaysSinceLastActivity = DaysSince(latestAdded)
 			tr.Paused = tr.DaysSinceLastActivity > 7
 		}
 		results = append(results, tr)
@@ -1119,7 +1121,7 @@ func analyzeThreadStatus() []ThreadStatusResult {
 	return results
 }
 
-func daysSince(dateStr string) int {
+func DaysSince(dateStr string) int {
 	t, err := time.Parse("2006-01-02T15:04:05", dateStr)
 	if err != nil {
 		t2, err2 := time.Parse("2006-01-02", dateStr)
@@ -1132,13 +1134,13 @@ func daysSince(dateStr string) int {
 }
 
 // BuildBriefing generates a structured Markdown briefing for the Agent.
-func BuildBriefing() string {
-	report := runFullAnalysis()
+func BuildBriefing(aiClient *ai.Client) string {
+	report := RunFullAnalysis()
 	tasks, _ := store.ListTasks("in_progress", "")
 	events, _ := store.GetUnconsumedEvents()
-	threadSummary := buildThreadSummary()
-	suggestions := analyzeThreadSuggestions()
-	threadStatus := analyzeThreadStatus()
+	threadSummary := BuildThreadSummary()
+	suggestions := AnalyzeThreadSuggestions()
+	threadStatus := AnalyzeThreadStatus()
 
 	var b strings.Builder
 	b.WriteString("🏗️ 项目简报 — AIPM\n\n")
@@ -1206,7 +1208,7 @@ func BuildBriefing() string {
 		b.WriteString("### 当前进行中的任务\n")
 		for _, t := range tasks[:min(5, len(tasks))] {
 			b.WriteString(fmt.Sprintf("- **%s** [%s] _%s_\n", t.Title, t.ID, t.Status))
-			sug := getActionableSuggestion(t)
+			sug := GetActionableSuggestion(t)
 			if sug != "" {
 				b.WriteString(fmt.Sprintf("  → %s\n", sug))
 			}
@@ -1310,8 +1312,9 @@ func BuildBriefing() string {
 }
 
 // BuildBriefingForAgent generates a personalized briefing for a specific agent.
-func BuildBriefingForAgent(agentID string) string {
-	base := BuildBriefing()
+// aiClient can be nil — AI summary is skipped when unavailable.
+func BuildBriefingForAgent(agentID string, aiClient *ai.Client) string {
+	base := BuildBriefing(aiClient)
 	assignments, _ := store.ListAssignments(agentID, "")
 
 	var b strings.Builder
@@ -1321,9 +1324,9 @@ func BuildBriefingForAgent(agentID string) string {
 	if len(assignments) > 0 {
 		b.WriteString("\n## 🎯 你的任务\n\n")
 		for _, a := range assignments {
-			status := str(a["status"])
-			role := str(a["role"])
-			scope := str(a["scope"])
+			status := u.Str(a["status"])
+			role := u.Str(a["role"])
+			scope := u.Str(a["scope"])
 			icon := "⬜"
 			switch status {
 			case "in_progress":
@@ -1334,7 +1337,7 @@ func BuildBriefingForAgent(agentID string) string {
 				icon = "📋"
 			}
 			b.WriteString(fmt.Sprintf("- %s [%s] **%s**: %s\n", icon, status, role, scope))
-			if tid := str(a["task_id"]); tid != "" {
+			if tid := u.Str(a["task_id"]); tid != "" {
 				b.WriteString(fmt.Sprintf("  → task: aipmc task show --id %s\n", tid))
 			}
 		}
@@ -1345,9 +1348,9 @@ func BuildBriefingForAgent(agentID string) string {
 	rooms, _ := store.ListMeetingRooms("active")
 	hasMeetings := false
 	for _, r := range rooms {
-		parts, _ := store.ListMeetingParticipants(str(r["id"]))
+		parts, _ := store.ListMeetingParticipants(u.Str(r["id"]))
 		for _, p := range parts {
-			if str(p["agent_id"]) == agentID {
+			if u.Str(p["agent_id"]) == agentID {
 				if !hasMeetings {
 					b.WriteString("## 📞 待参与的会议\n\n")
 					hasMeetings = true
@@ -1362,7 +1365,7 @@ func BuildBriefingForAgent(agentID string) string {
 					}
 				}
 				// Count waiting turns for this agent
-				turns, _ := store.ListMeetingTurns(str(r["id"]))
+				turns, _ := store.ListMeetingTurns(u.Str(r["id"]))
 				waitingForMe := 0
 				latestTurn := 0
 				for _, t := range turns {
@@ -1373,7 +1376,7 @@ func BuildBriefingForAgent(agentID string) string {
 							latestTurn = n
 						}
 					}
-					if str(t["speaker_id"]) == agentID && str(t["status"]) == "waiting" {
+					if u.Str(t["speaker_id"]) == agentID && u.Str(t["status"]) == "waiting" {
 						waitingForMe++
 					}
 				}
@@ -1385,7 +1388,7 @@ func BuildBriefingForAgent(agentID string) string {
 				if newSince > 0 && lastSeen > 0 {
 					info += fmt.Sprintf(", %d 条新发言", newSince)
 				}
-				b.WriteString(fmt.Sprintf("- **%s** [%s] — %s\n", str(r["title"]), str(r["id"]), info))
+				b.WriteString(fmt.Sprintf("- **%s** [%s] — %s\n", u.Str(r["title"]), u.Str(r["id"]), info))
 			}
 		}
 	}
@@ -1397,7 +1400,7 @@ func BuildBriefingForAgent(agentID string) string {
 }
 
 // getActionableSuggestion returns a context-aware suggestion for a task.
-func getActionableSuggestion(task store.Task) string {
+func GetActionableSuggestion(task store.Task) string {
 	switch task.Status {
 	case "blocked":
 		return "确认: 此任务是否仍需阻塞？联系 PM 或检查 blocker 状态"
@@ -1411,7 +1414,7 @@ func getActionableSuggestion(task store.Task) string {
 	return ""
 }
 
-func buildThreadSummary() string {
+func BuildThreadSummary() string {
 	threads, err := store.ListThreads("active")
 	if err != nil || len(threads) == 0 {
 		return ""
@@ -1425,19 +1428,19 @@ func buildThreadSummary() string {
 		if items != nil {
 			itemCount = len(items)
 		}
-		b.WriteString(fmt.Sprintf("- **%s** _(%d items, since %s)_\n", str(t["title"]), itemCount, str(t["created_at"])))
+		b.WriteString(fmt.Sprintf("- **%s** _(%d items, since %s)_\n", u.Str(t["title"]), itemCount, u.Str(t["created_at"])))
 	}
 	return b.String()
 }
 
-func plural(n int, singular, plural string) string {
+func Plural(n int, singular, plural string) string {
 	if n == 1 {
 		return "1 " + singular
 	}
-	return itoa(n) + " " + plural
+	return Itoa(n) + " " + plural
 }
 
-func itoa(n int) string {
+func Itoa(n int) string {
 	if n == 0 {
 		return "0"
 	}

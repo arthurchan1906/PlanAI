@@ -7,8 +7,9 @@ import (
 	"strings"
 
 	"aipmc/ai"
-	"aipmc/store"
+	"aipmc/analyze"
 	pmdb "aipmc/db"
+	"aipmc/store"
 )
 
 // searchFTS5WithDB queries FTS5 using the provided DB connection (for cross-project search).
@@ -338,7 +339,7 @@ func buildAgentStartPacket() map[string]any {
 	}
 
 	// Thread suggestions
-	threadSugs := analyzeThreadSuggestions()
+	threadSugs := analyze.AnalyzeThreadSuggestions()
 
 	return map[string]any{
 		"role":    "ai_start",
@@ -354,7 +355,7 @@ func buildAgentStartPacket() map[string]any {
 			"active_threads":    threads[:min(3, len(threads))],
 		},
 		"thread_suggestions": threadSugs,
-		"briefing": BuildBriefing(), // Markdown briefing for Agent consumption
+		"briefing": analyze.BuildBriefing(aiClient), // Markdown briefing for Agent consumption
 		"pm_alerts": alerts,          // Unconsumed PM intent changes
 		"recommended_flow": []map[string]any{
 			{"when": "Before coding or creating anything new", "command": "aipmc start"},
@@ -400,7 +401,7 @@ func buildContextPack() map[string]any {
 	}
 
 	// Include analysis results for Agent awareness
-	report := runFullAnalysis()
+	report := analyze.RunFullAnalysis()
 	events, _ := store.GetUnconsumedEvents()
 	alerts := []map[string]any{}
 	for _, e := range events {

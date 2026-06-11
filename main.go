@@ -13,6 +13,7 @@ import (
 	"bufio"
 	"aipmc/agent"
 	"aipmc/ai"
+	"aipmc/analyze"
 	"aipmc/cli"
 	pmdb "aipmc/db"
 	"aipmc/store"
@@ -229,9 +230,9 @@ func main() {
 	case "context":
 		cli.PrintJSON(buildContextPack())
 	case "analyze":
-		cli.PrintJSON(runFullAnalysis())
+		cli.PrintJSON(analyze.RunFullAnalysis())
 	case "briefing":
-		fmt.Println(BuildBriefing())
+		fmt.Println(analyze.BuildBriefing(aiClient))
 	case "inbox":
 		cli.PrintJSON(getInboxSummary())
 	case "doctor":

@@ -12,6 +12,7 @@ import (
 
 	pmdb "aipmc/db"
 	"aipmc/store"
+	"aipmc/u"
 )
 
 // processClaudeHook reads the Claude Code PostToolUse/Stop/UserPromptSubmit hook stdin
@@ -167,8 +168,8 @@ func processClaudeHook() {
 					Stdout   string `json:"stdout,omitempty"`
 					Stderr   string `json:"stderr,omitempty"`
 				}
-				stdout := truncateStr(tr.Stdout, 2000)
-				stderr := truncateStr(tr.Stderr, 500)
+				stdout := u.TruncateStr(tr.Stdout, 2000)
+				stderr := u.TruncateStr(tr.Stderr, 500)
 				meta := bashMeta{
 					Type:     "bash",
 					Command:  ti.Command,
@@ -182,10 +183,10 @@ func processClaudeHook() {
 
 				// Append a preview of the output to the description
 				if stdout != "" {
-					outputPreview := truncateStr(stdout, 120)
+					outputPreview := u.TruncateStr(stdout, 120)
 					desc += "\n  → " + strings.TrimSpace(outputPreview)
 				} else if stderr != "" {
-					errPreview := truncateStr(stderr, 120)
+					errPreview := u.TruncateStr(stderr, 120)
 					desc += "\n  ⚠ " + strings.TrimSpace(errPreview)
 				}
 				if tr.ExitCode != 0 {
@@ -196,7 +197,7 @@ func processClaudeHook() {
 			if ti.FilePath != "" {
 				desc = "👁 " + ti.FilePath
 				if tr.LinesCount > 0 {
-					desc += " (" + itoa(tr.LinesCount) + " lines)"
+					desc += " (" + u.Itoa(tr.LinesCount) + " lines)"
 				}
 				// Store content preview in metadata
 				if tr.Content != "" || tr.LinesCount > 0 {
@@ -210,7 +211,7 @@ func processClaudeHook() {
 						Type:       "read",
 						FilePath:   ti.FilePath,
 						LinesCount: tr.LinesCount,
-						Preview:    truncateStr(tr.Content, 150),
+						Preview:    u.TruncateStr(tr.Content, 150),
 					}
 					if b, err := json.Marshal(meta); err == nil {
 						metadataJSON = string(b)
@@ -234,20 +235,12 @@ func processClaudeHook() {
 	os.Exit(0)
 }
 
-// truncateStr returns s truncated to maxLen characters, adding "..." if truncated.
-func truncateStr(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
-}
-
 // fmtExitCode returns a human-readable exit code suffix.
 func fmtExitCode(code int) string {
 	if code == 0 {
 		return ""
 	}
-	return " [exit:" + itoa(code) + "]"
+	return " [exit:" + u.Itoa(code) + "]"
 }
 
 // setupClaudeHooks writes Claude Code hook configuration to settings.local.json.

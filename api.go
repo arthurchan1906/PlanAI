@@ -12,6 +12,7 @@ import (
 
 	"aipmc/agent"
 	"aipmc/ai"
+	"aipmc/analyze"
 	pmdb "aipmc/db"
 	"aipmc/store"
 	"aipmc/web"
@@ -309,7 +310,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		threads, _ := store.ListThreads(q.Get("status"))
 		web.SendJSON(w, map[string]any{"threads": threads})
 	case method == "GET" && path == "thread-suggestions":
-		web.SendJSON(w, map[string]any{"suggestions": analyzeThreadSuggestions(), "thread_status": analyzeThreadStatus()})
+		web.SendJSON(w, map[string]any{"suggestions": analyze.AnalyzeThreadSuggestions(), "thread_status": analyze.AnalyzeThreadStatus()})
 	case method == "GET" && path == "search":
 		web.SendJSON(w, searchProjectContext(q.Get("q"), 8))
 	case method == "GET" && path == "dashboard":
@@ -432,8 +433,8 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		}
 
 		threads, _ := store.ListThreads("")
-		threadSuggestions := analyzeThreadSuggestions()
-		threadStatus := analyzeThreadStatus()
+		threadSuggestions := analyze.AnalyzeThreadSuggestions()
+		threadStatus := analyze.AnalyzeThreadStatus()
 
 		web.SendJSON(w, map[string]any{
 			"dashboard":dashboard,"ai_context":ctx,
@@ -504,7 +505,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 			"bugs":webBugs,"ideas":ideas,"docs":webDocs,
 			"doc_audit":docAudit,"decisions":webDecisions,
 			"daily":daily,"module_progress":map[string]any{},
-			"analysis":runFullAnalysis(),"briefing":BuildBriefing(),
+			"analysis":analyze.RunFullAnalysis(),"briefing":analyze.BuildBriefing(aiClient),
 			"threads":threads,"thread_suggestions":threadSuggestions,"thread_status":threadStatus,
 		})
 

@@ -7,6 +7,7 @@ import (
 
 	"aipmc/cli"
 	"aipmc/store"
+	"aipmc/analyze"
 )
 
 func dispatchTask(subcmd string, args *cli.Args) {
@@ -490,7 +491,7 @@ func dispatchThread(subcmd string, args *cli.Args) {
 		store.DeleteThread(args.Get("id"))
 		cli.PrintJSON(map[string]any{"ok": true})
 	case "suggest":
-		suggestions := analyzeThreadSuggestions()
+		suggestions := analyze.AnalyzeThreadSuggestions()
 		cli.PrintJSON(map[string]any{"suggestions": suggestions})
 	default:
 		fmt.Fprintf(os.Stderr, "unknown thread subcommand: %s\n", subcmd)

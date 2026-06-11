@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"aipmc/ai"
+	"aipmc/analyze"
 	"aipmc/store"
 )
 
@@ -381,11 +382,11 @@ func (s *mcpServer) handleBriefing(args map[string]interface{}) mcpToolResult {
 	agentID := getStr(args, "agent_id", "")
 	var briefing string
 	if agentID != "" {
-		briefing = BuildBriefingForAgent(agentID)
+		briefing = analyze.BuildBriefingForAgent(agentID, aiClient)
 	} else {
-		briefing = BuildBriefing()
+		briefing = analyze.BuildBriefing(aiClient)
 	}
-	report := runFullAnalysis()
+	report := analyze.RunFullAnalysis()
 
 	related := map[string]interface{}{
 		"analysis_summary": report.Summary,
@@ -479,7 +480,7 @@ func (s *mcpServer) handleRecordCommit(args map[string]interface{}) mcpToolResul
 	}
 
 	// Analyze scope drift for this commit
-	report := runFullAnalysis()
+	report := analyze.RunFullAnalysis()
 	var driftWarnings []string
 	for _, d := range report.Drifts {
 		if d.CommitID == commit["id"] {
@@ -521,7 +522,7 @@ func (s *mcpServer) handleCreateTask(args map[string]interface{}) mcpToolResult 
 	phase := getStr(args, "phase", "general")
 
 	// Duplicate check before creating
-	report := runFullAnalysis()
+	report := analyze.RunFullAnalysis()
 	hasDuplicate := false
 	for _, d := range report.Duplicates {
 		if d.Title1 == title || d.Title2 == title {
@@ -765,7 +766,7 @@ func (s *mcpServer) handleMarkConsumed(args map[string]interface{}) mcpToolResul
 }
 
 func (s *mcpServer) handleAnalyze(args map[string]interface{}) mcpToolResult {
-	report := runFullAnalysis()
+	report := analyze.RunFullAnalysis()
 	text := fmt.Sprintf("分析完成: %s", report.Summary)
 
 	return mcpToolResult{
@@ -891,8 +892,8 @@ func (s *mcpServer) handleLogDiscussion(args map[string]interface{}) mcpToolResu
 // ---- Thread (线索) Handlers ----
 
 func (s *mcpServer) handleSuggestThreads(args map[string]interface{}) mcpToolResult {
-	suggestions := analyzeThreadSuggestions()
-	status := analyzeThreadStatus()
+	suggestions := analyze.AnalyzeThreadSuggestions()
+	status := analyze.AnalyzeThreadStatus()
 
 	var text string
 	if len(suggestions) == 0 {
@@ -994,8 +995,8 @@ func (s *mcpServer) handleDailyReview(args map[string]interface{}) mcpToolResult
 	}
 
 	threads, _ := store.ListThreads("active")
-	suggestions := analyzeThreadSuggestions()
-	status := analyzeThreadStatus()
+	suggestions := analyze.AnalyzeThreadSuggestions()
+	status := analyze.AnalyzeThreadStatus()
 
 	var text strings.Builder
 	text.WriteString(fmt.Sprintf("## 每日复盘 — 共 %d 条 commit\n\n", len(commits)))

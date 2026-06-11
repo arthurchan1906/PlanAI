@@ -5,8 +5,8 @@ import (
 	"strings"
 
 	"aipmc/ai"
-	"aipmc/store"
 	pmdb "aipmc/db"
+	"aipmc/store"
 )
 
 // registerAgentTools adds meeting + assignment MCP tools.
