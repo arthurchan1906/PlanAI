@@ -1,15 +1,24 @@
 package main
 
 import (
+	"embed"
 	"fmt"
 	"io"
+	"io/fs"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"bufio"
+	"aipmc/agent"
 	"aipmc/ai"
 	"aipmc/cli"
+	"aipmc/web"
 )
+
+//go:embed frontend/dist
+var uiFS embed.FS
 
 // aiClient is the global AI client, initialized in main().
 // nil when AI is not configured — all AI-dependent code paths
@@ -181,7 +190,18 @@ func main() {
 				if i+1 < len(os.Args) { host = os.Args[i+1]; i++ }
 			}
 		}
-		runWebServer(port, host)
+		if host == "" { host = "127.0.0.1" }
+		if port == 0 { port = 8720 }
+		staticFS, err := fs.Sub(uiFS, "frontend/dist")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to load embedded UI: %v\n", err)
+			os.Exit(1)
+		}
+		srv := web.NewServer(staticFS, handleAPIHandler(), host, port)
+		srv.Listen()
+		return
+	case "chat":
+		runChat()
 		return
 	}
 
@@ -272,6 +292,11 @@ func writeSkillFile() {
 	os.WriteFile(filepath.Join(skillDir, "pmai.md"), []byte(skillMD), 0644)
 }
 
+// handleAPIHandler wraps handleAPI as an http.Handler.
+func handleAPIHandler() http.Handler {
+	return http.HandlerFunc(handleAPI)
+}
+
 func runDoctor(dbPath string) map[string]any {
 	problems := []string{}
 	if dbPath == "" {
@@ -285,4 +310,201 @@ func runDoctor(dbPath string) map[string]any {
 		}
 	}
 	return map[string]any{"ok": len(problems) == 0, "problems": problems, "db_path": dbPath, "binary": os.Args[0]}
+}
+
+// ── chat command ──────────────────────────────────────────────────────
+
+func runChat() {
+	if aiClient == nil || !aiClient.Enabled() {
+		fmt.Fprintln(os.Stderr, "AI 未配置。请设置以下环境变量:")
+		fmt.Fprintln(os.Stderr, "  AI_ENDPOINT   — LLM API 地址")
+		fmt.Fprintln(os.Stderr, "  AI_MODEL      — 模型名称（或 AI_CHAT_MODEL）")
+		fmt.Fprintln(os.Stderr, "  AI_API_KEY    — API 密钥（如需要）")
+		os.Exit(1)
+	}
+
+	// Resolve project root (parent of .pmai/)
+	runtimeDir, err := findRuntimeDir()
+	workDir := "."
+	if err == nil && runtimeDir != "" {
+		workDir = filepath.Dir(runtimeDir)
+	}
+
+	// Build agent
+	a := agent.New(aiClient, workDir)
+
+	// Resolve session
+	sessionDir := agent.SessionDir(workDir)
+
+	// Check for --new flag or --session flag
+	newSession := false
+	sessionID := ""
+	for _, arg := range os.Args[2:] {
+		if arg == "--new" {
+			newSession = true
+		}
+		if strings.HasPrefix(arg, "--session=") {
+			sessionID = strings.TrimPrefix(arg, "--session=")
+		}
+	}
+
+	var sess *agent.Session
+
+	// Try to load existing session
+	if !newSession {
+		if sessionID != "" {
+			// Load by ID
+			sessPath := filepath.Join(sessionDir, sessionID+".json")
+			if s, err := agent.LoadSession(sessPath); err == nil {
+				sess = s
+			}
+		} else {
+			// Load the most recent session
+			sess = loadLatestSession(sessionDir)
+		}
+	}
+
+	if sess == nil {
+		sess = agent.NewSession()
+	}
+
+	// Save path
+	sessPath := filepath.Join(sessionDir, sess.ID+".json")
+
+	fmt.Println()
+	fmt.Println("╔══════════════════════════════════════════╗")
+	fmt.Println("║  AIPM Coding Agent                       ║")
+	fmt.Printf("║  Session: %s               ║\n", sess.ID)
+	fmt.Println("║  /exit 退出  /new 新会话  /history 历史  ║")
+	fmt.Println("╚══════════════════════════════════════════╝")
+	fmt.Println()
+
+	// If resuming, show recent context
+	if len(sess.Events) > 0 {
+		recent := sess.Events
+		if len(recent) > 6 {
+			recent = recent[len(recent)-6:]
+		}
+		for _, e := range recent {
+			switch e.Role {
+			case "user":
+				fmt.Printf("▸ %s\n", truncateLine(e.Content, 120))
+			case "assistant":
+				if e.Content != "" {
+					fmt.Printf("  %s\n", truncateLine(e.Content, 120))
+				}
+				for _, tc := range e.ToolCalls {
+					fmt.Printf("  [tool: %s]\n", tc.Name)
+				}
+			case "tool":
+				resultPreview := truncateLine(e.ToolResult, 80)
+				fmt.Printf("  ← %s\n", resultPreview)
+			}
+		}
+		fmt.Println()
+	}
+
+	scanner := bufio.NewScanner(os.Stdin)
+
+	for {
+		fmt.Print("▸ ")
+		if !scanner.Scan() {
+			break
+		}
+		input := strings.TrimSpace(scanner.Text())
+		if input == "" {
+			continue
+		}
+
+		// Handle slash commands
+		switch input {
+		case "/exit":
+			sess.Save(sessPath)
+			fmt.Printf("会话已保存: %s\n", sessPath)
+			return
+		case "/new":
+			sess.Save(sessPath)
+			sess = agent.NewSession()
+			sessPath = filepath.Join(sessionDir, sess.ID+".json")
+			fmt.Printf("新会话: %s\n\n", sess.ID)
+			continue
+		case "/history":
+			fmt.Println()
+			for _, e := range sess.Events {
+				switch e.Role {
+				case "user":
+					fmt.Printf("▸ %s\n", e.Content)
+				case "assistant":
+					if e.Content != "" {
+						fmt.Printf("  %s\n", e.Content)
+					}
+					for _, tc := range e.ToolCalls {
+						fmt.Printf("  [tool: %s(%v)]\n", tc.Name, tc.Args)
+					}
+				case "tool":
+					fmt.Printf("  ← %s\n", truncateLine(e.ToolResult, 200))
+				}
+			}
+			fmt.Println()
+			continue
+		}
+
+		// Run agent
+		response, err := a.Run(sess, input)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "错误: %v\n", err)
+			continue
+		}
+
+		fmt.Println()
+		fmt.Println(response)
+		fmt.Println()
+
+		// Save after each turn
+		sess.Save(sessPath)
+	}
+
+	// Save on Ctrl+C / EOF
+	sess.Save(sessPath)
+	fmt.Printf("\n会话已保存: %s\n", sessPath)
+}
+
+// loadLatestSession returns the most recently modified session from sessionDir.
+func loadLatestSession(dir string) *agent.Session {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var latest string
+	var latestTime int64
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().Unix() > latestTime {
+			latestTime = info.ModTime().Unix()
+			latest = e.Name()
+		}
+	}
+	if latest == "" {
+		return nil
+	}
+	s, err := agent.LoadSession(filepath.Join(dir, latest))
+	if err != nil {
+		return nil
+	}
+	return s
+}
+
+// truncateLine truncates s to maxLen runes.
+func truncateLine(s string, maxLen int) string {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
+		return s
+	}
+	return string(runes[:maxLen]) + "..."
 }

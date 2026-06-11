@@ -53,6 +53,7 @@ import AssignmentsView from "./views/AssignmentsView";
 import AuditView from "./views/AuditView";
 import DiscussionsView from "./views/DiscussionsView";
 import SettingsView from "./views/SettingsView";
+import ChatView from "./views/ChatView";
 
 const { Header, Sider, Content } = Layout;
 const { Title, Text } = Typography;
@@ -285,7 +286,7 @@ function ConsoleApp() {
             children: group.children.map(item => ({
               key: item.key,
               label: item.label,
-              icon: ({ planning: <AppstoreOutlined />, commits: <BranchesOutlined />, bugs: <BugOutlined />, threads: <NodeIndexOutlined />, decisions: <FundProjectionScreenOutlined />, visions: <CompassOutlined />, discussions: <TeamOutlined />, ideas: <BulbOutlined />, docs: <FileTextOutlined />, daily: <ProjectOutlined />, code: <CodeOutlined />, agents: <RobotOutlined />, meetings: <MessageOutlined />, assignments: <ScheduleOutlined />, audit: <SafetyCertificateOutlined />, settings: <SettingOutlined /> })[item.key] || null,
+              icon: ({ chat: <MessageOutlined />, planning: <AppstoreOutlined />, commits: <BranchesOutlined />, bugs: <BugOutlined />, threads: <NodeIndexOutlined />, decisions: <FundProjectionScreenOutlined />, visions: <CompassOutlined />, discussions: <TeamOutlined />, ideas: <BulbOutlined />, docs: <FileTextOutlined />, daily: <ProjectOutlined />, code: <CodeOutlined />, agents: <RobotOutlined />, meetings: <MessageOutlined />, assignments: <ScheduleOutlined />, audit: <SafetyCertificateOutlined />, settings: <SettingOutlined /> })[item.key] || null,
             }))
           }))}
           onClick={({ key }) => setView(key)} 
@@ -384,6 +385,7 @@ function ConsoleApp() {
           {view === "assignments" && <AssignmentsView assignments={assignments} agents={agents} tasks={tasks} loading={loading} loadAll={loadAll} busy={busy} />}
           {view === "audit" && <AuditView auditLogs={auditLogs} loading={loading} loadAll={loadAll} />}
           {view === "discussions" && <DiscussionsView />}
+          {view === "chat" && <ChatView />}
           {view === "settings" && <SettingsView />}
           {view === "daily" && <DailyViewHuman daily={daily} dailyForm={dailyForm} setDailyForm={setDailyForm} busy={busy} onAppendDaily={() => runDailyAction("POST", "Daily note updated")} onReplaceDaily={() => runDailyAction("PUT", "Daily note replaced")} tasks={tasks} commits={commits} onCreateTaskFromDaily={handleCreateTaskFromDaily} />}
         </Content>

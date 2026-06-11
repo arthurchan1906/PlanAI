@@ -11,3 +11,19 @@ export async function api(path, options = {}) {
   }
   return response.json();
 }
+
+// Chat API helpers
+export async function chatSend(message, sessionId) {
+  return api("/pmai/chat/send", {
+    method: "POST",
+    body: JSON.stringify({ message, session_id: sessionId }),
+  });
+}
+
+export async function chatGetSessions() {
+  return api("/pmai/chat/sessions");
+}
+
+export async function chatGetSession(id) {
+  return api(`/pmai/chat/session?id=${encodeURIComponent(id)}`);
+}

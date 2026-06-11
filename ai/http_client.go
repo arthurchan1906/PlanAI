@@ -102,6 +102,122 @@ func (c *Client) RankSimilarity(query string, candidates []string) ([]RankedResu
 	return results, nil
 }
 
+// ── Chat (agent loop support) ──────────────────────────────────────────
+
+// ChatMessage is a single message in a chat conversation.
+type ChatMessage struct {
+	Role       string        `json:"role"`
+	Content    string        `json:"content,omitempty"`
+	ToolCalls  []ToolCallMsg `json:"tool_calls,omitempty"`
+	ToolCallID string        `json:"tool_call_id,omitempty"`
+	Name       string        `json:"name,omitempty"`
+}
+
+// ToolCallMsg represents a tool call inside an assistant message.
+type ToolCallMsg struct {
+	ID       string           `json:"id"`
+	Type     string           `json:"type"` // "function"
+	Function ToolCallFunction `json:"function"`
+}
+
+// ToolCallFunction holds the name and JSON-encoded arguments.
+type ToolCallFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+// ToolDef describes a tool available to the model.
+type ToolDef struct {
+	Type     string           `json:"type"` // "function"
+	Function ToolDefFunction  `json:"function"`
+}
+
+// ToolDefFunction is the function-level definition.
+type ToolDefFunction struct {
+	Name        string       `json:"name"`
+	Description string       `json:"description"`
+	Parameters  map[string]any `json:"parameters"`
+}
+
+// ToolCall is a parsed tool call returned from Chat().
+type ToolCall struct {
+	ID   string
+	Name string
+	Args map[string]any
+}
+
+// ChatResponse is the decoded result of a chat completion.
+type ChatResponse struct {
+	Content   string
+	ToolCalls []ToolCall
+}
+
+// Chat sends messages to the /chat/completions endpoint with optional tool definitions.
+func (c *Client) Chat(messages []ChatMessage, tools []ToolDef) (*ChatResponse, error) {
+	if !c.Enabled() {
+		return nil, fmt.Errorf("AI not configured: set AI_ENDPOINT")
+	}
+
+	body := map[string]any{
+		"model":    c.chatModel,
+		"messages": messages,
+	}
+	if len(tools) > 0 {
+		body["tools"] = tools
+	}
+
+	resp, err := c.post(c.endpoint, "/chat/completions", body)
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Choices []struct {
+			Message struct {
+				Content   string `json:"content"`
+				ToolCalls []struct {
+					ID       string `json:"id"`
+					Type     string `json:"type"`
+					Function struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					} `json:"function"`
+				} `json:"tool_calls"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("parse chat response: %w", err)
+	}
+	if len(result.Choices) == 0 {
+		return nil, fmt.Errorf("no choices in response")
+	}
+
+	msg := result.Choices[0].Message
+	out := &ChatResponse{
+		Content: msg.Content,
+	}
+
+	for _, tc := range msg.ToolCalls {
+		var args map[string]any
+		if tc.Function.Arguments != "" {
+			if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+				args = map[string]any{"_raw": tc.Function.Arguments}
+			}
+		}
+		if args == nil {
+			args = map[string]any{}
+		}
+		out.ToolCalls = append(out.ToolCalls, ToolCall{
+			ID:   tc.ID,
+			Name: tc.Function.Name,
+			Args: args,
+		})
+	}
+
+	return out, nil
+}
+
 // post sends a JSON POST request to the given URL and returns the raw body.
 func (c *Client) post(baseURL, path string, body any) ([]byte, error) {
 	payload, err := json.Marshal(body)

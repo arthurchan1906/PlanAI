@@ -39,6 +39,7 @@ export const NAV_GROUPS = [
     key: "collab",
     label: "Collab",
     children: [
+      { key: "chat", label: "Chat" },
       { key: "agents", label: "Agents" },
       { key: "meetings", label: "Meetings" },
       { key: "assignments", label: "Assignments" },
