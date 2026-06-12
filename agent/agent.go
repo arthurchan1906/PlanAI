@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -13,6 +14,13 @@ type Agent struct {
 	tools   []Tool
 	maxIter int
 	workDir string
+
+	// Source identifier for hook logging (e.g. "aipmc-chat", "aipmc-web").
+	Source string
+
+	// OnEvent is called after each event is appended to the session.
+	// sessionID, role, source, content, metadataJSON
+	OnEvent func(sessionID, role, source, content, metadataJSON string)
 }
 
 // New creates a new Agent.
@@ -24,6 +32,7 @@ func New(llm *ai.Client, workDir string) *Agent {
 		tools:   DefaultTools(),
 		maxIter: 30,
 		workDir: workDir,
+		Source:  "aipmc",
 	}
 }
 
@@ -35,7 +44,9 @@ func (a *Agent) Run(s *Session, userInput string) (string, error) {
 	}
 
 	// 1. Record user message
-	s.Append(Event{Role: "user", Content: userInput})
+	evt := Event{Role: "user", Content: userInput}
+	s.Append(evt)
+	a.emitEvent(s.ID, evt)
 
 	// 2. Main loop
 	for i := 0; i < a.maxIter; i++ {
@@ -55,7 +66,9 @@ func (a *Agent) Run(s *Session, userInput string) (string, error) {
 
 		// 4. Text response — done
 		if resp.Content != "" {
-			s.Append(Event{Role: "assistant", Content: resp.Content})
+			evt := Event{Role: "assistant", Content: resp.Content}
+			s.Append(evt)
+			a.emitEvent(s.ID, evt)
 			return resp.Content, nil
 		}
 
@@ -76,17 +89,21 @@ func (a *Agent) executeToolCalls(s *Session, calls []ai.ToolCall) {
 			Args: c.Args,
 		}
 	}
-	s.Append(Event{Role: "assistant", ToolCalls: agentCalls})
+	evt := Event{Role: "assistant", ToolCalls: agentCalls}
+	s.Append(evt)
+	a.emitEvent(s.ID, evt)
 
 	// Execute each tool
 	for _, c := range calls {
 		result := a.execTool(c.Name, c.Args)
-		s.Append(Event{
+		tev := Event{
 			Role:       "tool",
 			ToolCallID: c.ID,
 			ToolName:   c.Name,
 			ToolResult: result,
-		})
+		}
+		s.Append(tev)
+		a.emitEvent(s.ID, tev)
 	}
 }
 
@@ -97,7 +114,6 @@ func (a *Agent) execTool(name string, args map[string]any) string {
 			return t.Exec(args, a.workDir)
 		}
 	}
-	// Suggest similar tool names
 	suggestions := []string{}
 	for _, t := range a.tools {
 		if strings.Contains(t.Name, name) || strings.Contains(name, t.Name) {
@@ -108,4 +124,92 @@ func (a *Agent) execTool(name string, args map[string]any) string {
 		return fmt.Sprintf("未知工具: %s。可用的相似工具: %s", name, strings.Join(suggestions, ", "))
 	}
 	return fmt.Sprintf("未知工具: %s。可用工具: read_file, write_file, edit_file, bash", name)
+}
+
+// ── Event emission (hook integration) ────────────────────────────────
+
+// emitEvent formats an event for discussion_log and calls OnEvent if set.
+func (a *Agent) emitEvent(sessionID string, e Event) {
+	if a.OnEvent == nil {
+		return
+	}
+
+	role := e.Role
+	content := ""
+	meta := map[string]any{"type": e.Role}
+
+	switch e.Role {
+	case "user":
+		content = e.Content
+
+	case "assistant":
+		if len(e.ToolCalls) > 0 {
+			// Format tool calls like existing hooks: 📝 path, 🔧 cmd, etc.
+			meta["tool_calls"] = e.ToolCalls
+			parts := []string{}
+			for _, tc := range e.ToolCalls {
+				parts = append(parts, formatToolCall(tc))
+			}
+			content = strings.Join(parts, "\n")
+		} else {
+			content = e.Content
+		}
+
+	case "tool":
+		content = e.ToolResult
+		meta["tool_name"] = e.ToolName
+		meta["tool_call_id"] = e.ToolCallID
+		// Truncate long results for readability
+		if len(content) > 500 {
+			content = content[:500] + "..."
+		}
+	}
+
+	if content == "" {
+		return
+	}
+
+	metaJSON, _ := json.Marshal(meta)
+	a.OnEvent(sessionID, role, a.Source, content, string(metaJSON))
+}
+
+// formatToolCall returns a human-readable description of a tool call,
+// using the same icon convention as the external agent hooks.
+func formatToolCall(tc ToolCall) string {
+	switch tc.Name {
+	case "read_file":
+		fp := getStr(tc.Args, "file_path")
+		if fp != "" {
+			return "👁 " + fp
+		}
+	case "write_file":
+		fp := getStr(tc.Args, "file_path")
+		if fp != "" {
+			return "🆕 " + fp
+		}
+	case "edit_file":
+		fp := getStr(tc.Args, "file_path")
+		oldStr := getStr(tc.Args, "old_string")
+		newStr := getStr(tc.Args, "new_string")
+		if fp != "" {
+			s := "📝 " + fp
+			if oldStr != "" {
+				s += "\n- " + strings.TrimSpace(oldStr)
+			}
+			if newStr != "" {
+				s += "\n+ " + strings.TrimSpace(newStr)
+			}
+			return s
+		}
+	case "bash":
+		cmd := getStr(tc.Args, "command")
+		if cmd != "" {
+			preview := cmd
+			if len(preview) > 150 {
+				preview = preview[:150] + "..."
+			}
+			return "🔧 " + preview
+		}
+	}
+	return "🛠 " + tc.Name
 }

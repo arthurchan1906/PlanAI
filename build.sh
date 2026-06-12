@@ -1,12 +1,20 @@
 #!/bin/bash
 set -euo pipefail
 
+SKIP_FRONTEND=false
+for arg in "$@"; do
+  case $arg in
+    -f|--skip-frontend) SKIP_FRONTEND=true ;;
+    *) echo "用法: ./build.sh [-f]  (-f 跳过前端编译)"; exit 1 ;;
+  esac
+done
+
 echo "=== Building aipmc ==="
 OUTDIR="./dist"
 mkdir -p "$OUTDIR"
 
 # Build frontend
-if [ -f "./frontend/package.json" ]; then
+if [ "$SKIP_FRONTEND" = false ] && [ -f "./frontend/package.json" ]; then
   echo ""
   echo "Building frontend..."
   cd ./frontend && npm install --silent && npm run build && cd ..

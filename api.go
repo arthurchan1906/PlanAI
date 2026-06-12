@@ -941,6 +941,10 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 			workDir = filepath.Dir(runtimeDir)
 		}
 		a := agent.New(aiClient, workDir)
+			a.Source = "aipmc-web"
+			a.OnEvent = func(sessionID, role, source, content, metadataJSON string) {
+				store.LogDiscussion(sessionID, role, source, content, metadataJSON)
+			}
 		sessionDir := agent.SessionDir(workDir)
 		var sess *agent.Session
 		if sid != "" {
