@@ -36,12 +36,25 @@ type ToolCall struct {
 	Args map[string]any `json:"args"`
 }
 
+// TraceTurn records the raw LLM request and response for one iteration.
+type TraceTurn struct {
+	Turn     int    `json:"turn"`
+	Request  string `json:"request"`  // JSON: [{role, content, tool_calls?...}, ...]
+	Response string `json:"response"` // JSON: {content, tool_calls:[...]}
+}
+
 // Session holds the full conversation history for an agent session.
 type Session struct {
-	ID        string  `json:"id"`
-	Events    []Event `json:"events"`
-	CreatedAt string  `json:"created_at"`
-	UpdatedAt string  `json:"updated_at"`
+	ID        string      `json:"id"`
+	Events    []Event     `json:"events"`
+	Traces    []TraceTurn `json:"traces,omitempty"`
+	CreatedAt string      `json:"created_at"`
+	UpdatedAt string      `json:"updated_at"`
+}
+
+// AddTrace appends a trace turn to the session.
+func (s *Session) AddTrace(t TraceTurn) {
+	s.Traces = append(s.Traces, t)
 }
 
 // NewSession creates a session with a unique ID.

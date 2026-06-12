@@ -369,6 +369,7 @@ func runChat() {
 	// Build agent
 	a := agent.New(aiClient, workDir)
 	a.Source = "aipmc-chat"
+	a.CaptureTraces = true
 	a.OnEvent = func(sessionID, role, source, content, metadataJSON string) {
 		store.LogDiscussion(sessionID, role, source, content, metadataJSON)
 	}

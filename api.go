@@ -919,6 +919,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		web.SendJSON(w, map[string]any{
 			"id":         sess.ID,
 			"events":     sess.Events,
+				"traces":     sess.Traces,
 			"created_at": sess.CreatedAt,
 			"updated_at": sess.UpdatedAt,
 		})
@@ -942,6 +943,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		a := agent.New(aiClient, workDir)
 			a.Source = "aipmc-web"
+			a.CaptureTraces = true
 			a.OnEvent = func(sessionID, role, source, content, metadataJSON string) {
 				store.LogDiscussion(sessionID, role, source, content, metadataJSON)
 			}
@@ -967,6 +969,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 			"session_id": sess.ID,
 			"response":   response,
 			"events":     sess.Events,
+				"traces":     sess.Traces,
 		})
 
 	default:

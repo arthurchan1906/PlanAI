@@ -21,6 +21,9 @@ type Agent struct {
 	// OnEvent is called after each event is appended to the session.
 	// sessionID, role, source, content, metadataJSON
 	OnEvent func(sessionID, role, source, content, metadataJSON string)
+
+	// CaptureTraces enables recording raw LLM request/response per turn.
+	CaptureTraces bool
 }
 
 // New creates a new Agent.
@@ -57,6 +60,17 @@ func (a *Agent) Run(s *Session, userInput string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("LLM 调用失败: %w", err)
 		}
+
+			// Trace: capture raw request/response for debugging
+			if a.CaptureTraces {
+				reqJSON, _ := json.Marshal(messages)
+				respJSON, _ := json.Marshal(resp)
+				s.AddTrace(TraceTurn{
+					Turn:     i,
+					Request:  string(reqJSON),
+					Response: string(respJSON),
+				})
+			}
 
 		// 3. Tool calls — execute and loop
 		if len(resp.ToolCalls) > 0 {
