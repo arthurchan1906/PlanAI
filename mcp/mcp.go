@@ -757,7 +757,7 @@ func (s *mcpServer) handleSubmitFeedback(args map[string]interface{}) mcpToolRes
 		}
 	}
 
-	fb, err := addFeedback(label, content)
+	fb, err := AddFeedback(label, content)
 	if err != nil {
 		return mcpToolResult{
 			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("反馈服务器不可达，但已本地记录: %v", err)}},

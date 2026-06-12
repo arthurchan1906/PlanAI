@@ -30,7 +30,7 @@ type feedbackPayload struct {
 }
 
 // addFeedback sends feedback to the remote pmai feedback server.
-func addFeedback(label, content string) (map[string]any, error) {
+func AddFeedback(label, content string) (map[string]any, error) {
 	baseURL := getFeedbackBaseURL()
 	payload := feedbackPayload{Label: label, Content: content}
 	body, _ := json.Marshal(payload)
@@ -67,7 +67,7 @@ func addFeedback(label, content string) (map[string]any, error) {
 }
 
 // listFeedbacks fetches all feedback from the remote server.
-func listFeedbacks(label string) ([]map[string]any, error) {
+func ListFeedbacks(label string) ([]map[string]any, error) {
 	baseURL := getFeedbackBaseURL()
 
 	req, err := http.NewRequest("GET", baseURL+"/pmai/list", nil)

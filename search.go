@@ -10,6 +10,7 @@ import (
 	"aipmc/analyze"
 	pmdb "aipmc/db"
 	"aipmc/store"
+	"aipmc/u"
 )
 
 // searchFTS5WithDB queries FTS5 using the provided DB connection (for cross-project search).
@@ -151,11 +152,11 @@ func searchLinear(query string) []searchHit {
 	// Search plans
 	if plans, err := store.ListPlans("", ""); err == nil {
 		for _, p := range plans {
-			haystack := strings.ToLower(str(p["title"]) + " " + str(p["goal"]) + " " + str(p["status"]))
+			haystack := strings.ToLower(u.Str(p["title"]) + " " + u.Str(p["goal"]) + " " + u.Str(p["status"]))
 			score := matchScore(haystack, terms)
 			if score > 0 {
-				results = append(results, searchHit{Type: "plan", ID: str(p["id"]), Title: str(p["title"]), Status: str(p["status"]), Score: score,
-					Command: fmt.Sprintf("aipmc plan show --id %s", str(p["id"]))})
+				results = append(results, searchHit{Type: "plan", ID: u.Str(p["id"]), Title: u.Str(p["title"]), Status: u.Str(p["status"]), Score: score,
+					Command: fmt.Sprintf("aipmc plan show --id %s", u.Str(p["id"]))})
 			}
 		}
 	}
@@ -163,11 +164,11 @@ func searchLinear(query string) []searchHit {
 	// Search commits
 	if commits, err := store.ListCommits("", "", "", "", 0); err == nil {
 		for _, c := range commits {
-			haystack := strings.ToLower(str(c["title"]) + " " + str(c["summary"]) + " " + str(c["commit_hash"]))
+			haystack := strings.ToLower(u.Str(c["title"]) + " " + u.Str(c["summary"]) + " " + u.Str(c["commit_hash"]))
 			score := matchScore(haystack, terms)
 			if score > 0 {
-				results = append(results, searchHit{Type: "commit", ID: str(c["id"]), Title: str(c["title"]), Status: str(c["status"]), Score: score,
-					Command: fmt.Sprintf("aipmc commit show --id %s", str(c["id"]))})
+				results = append(results, searchHit{Type: "commit", ID: u.Str(c["id"]), Title: u.Str(c["title"]), Status: u.Str(c["status"]), Score: score,
+					Command: fmt.Sprintf("aipmc commit show --id %s", u.Str(c["id"]))})
 			}
 		}
 	}
@@ -175,11 +176,11 @@ func searchLinear(query string) []searchHit {
 	// Search bugs
 	if bugs, err := store.ListBugs("", "", "", 0); err == nil {
 		for _, b := range bugs {
-			haystack := strings.ToLower(str(b["title"]) + " " + str(b["description"]) + " " + str(b["error"]) + " " + str(b["root_cause"]) + " " + str(b["fix"]) + " " + str(b["tags"]) + " " + str(b["files"]))
+			haystack := strings.ToLower(u.Str(b["title"]) + " " + u.Str(b["description"]) + " " + u.Str(b["error"]) + " " + u.Str(b["root_cause"]) + " " + u.Str(b["fix"]) + " " + u.Str(b["tags"]) + " " + u.Str(b["files"]))
 			score := matchScore(haystack, terms)
 			if score > 0 {
-				results = append(results, searchHit{Type: "bug", ID: str(b["id"]), Title: str(b["title"]), Status: str(b["status"]), Score: score,
-					Command: fmt.Sprintf("aipmc bug show --id %s", str(b["id"]))})
+				results = append(results, searchHit{Type: "bug", ID: u.Str(b["id"]), Title: u.Str(b["title"]), Status: u.Str(b["status"]), Score: score,
+					Command: fmt.Sprintf("aipmc bug show --id %s", u.Str(b["id"]))})
 			}
 		}
 	}
@@ -187,11 +188,11 @@ func searchLinear(query string) []searchHit {
 	// Search decisions
 	if decs, err := store.ListDecisions(); err == nil {
 		for _, d := range decs {
-			haystack := strings.ToLower(str(d["title"]) + " " + str(d["status"]) + " " + str(d["background"]) + " " + str(d["decision"]))
+			haystack := strings.ToLower(u.Str(d["title"]) + " " + u.Str(d["status"]) + " " + u.Str(d["background"]) + " " + u.Str(d["decision"]))
 			score := matchScore(haystack, terms)
 			if score > 0 {
-				results = append(results, searchHit{Type: "decision", ID: str(d["id"]), Title: str(d["title"]), Status: str(d["status"]), Score: score,
-					Command: fmt.Sprintf("aipmc decision show --id %s", str(d["id"]))})
+				results = append(results, searchHit{Type: "decision", ID: u.Str(d["id"]), Title: u.Str(d["title"]), Status: u.Str(d["status"]), Score: score,
+					Command: fmt.Sprintf("aipmc decision show --id %s", u.Str(d["id"]))})
 			}
 		}
 	}
@@ -199,11 +200,11 @@ func searchLinear(query string) []searchHit {
 	// Search ideas
 	if ideas, err := store.ListIdeas(""); err == nil {
 		for _, i := range ideas {
-			haystack := strings.ToLower(str(i["title"]) + " " + str(i["summary"]) + " " + str(i["current_summary"]) + " " + str(i["status"]))
+			haystack := strings.ToLower(u.Str(i["title"]) + " " + u.Str(i["summary"]) + " " + u.Str(i["current_summary"]) + " " + u.Str(i["status"]))
 			score := matchScore(haystack, terms)
 			if score > 0 {
-				results = append(results, searchHit{Type: "idea", ID: str(i["id"]), Title: str(i["title"]), Status: str(i["status"]), Score: score,
-					Command: fmt.Sprintf("aipmc idea show --id %s", str(i["id"]))})
+				results = append(results, searchHit{Type: "idea", ID: u.Str(i["id"]), Title: u.Str(i["title"]), Status: u.Str(i["status"]), Score: score,
+					Command: fmt.Sprintf("aipmc idea show --id %s", u.Str(i["id"]))})
 			}
 		}
 	}
@@ -211,11 +212,11 @@ func searchLinear(query string) []searchHit {
 	// Search roadmaps
 	if rds, err := store.ListRoadmaps(""); err == nil {
 		for _, r := range rds {
-			haystack := strings.ToLower(str(r["title"]) + " " + str(r["status"]) + " " + str(r["priority"]))
+			haystack := strings.ToLower(u.Str(r["title"]) + " " + u.Str(r["status"]) + " " + u.Str(r["priority"]))
 			score := matchScore(haystack, terms)
 			if score > 0 {
-				results = append(results, searchHit{Type: "roadmap", ID: str(r["id"]), Title: str(r["title"]), Status: str(r["status"]), Score: score,
-					Command: fmt.Sprintf("aipmc roadmap show --id %s", str(r["id"]))})
+				results = append(results, searchHit{Type: "roadmap", ID: u.Str(r["id"]), Title: u.Str(r["title"]), Status: u.Str(r["status"]), Score: score,
+					Command: fmt.Sprintf("aipmc roadmap show --id %s", u.Str(r["id"]))})
 			}
 		}
 	}
@@ -223,11 +224,11 @@ func searchLinear(query string) []searchHit {
 	// Search threads
 	if threads, err := store.ListThreads(""); err == nil {
 		for _, t := range threads {
-			haystack := strings.ToLower(str(t["title"]) + " " + str(t["summary"]))
+			haystack := strings.ToLower(u.Str(t["title"]) + " " + u.Str(t["summary"]))
 			score := matchScore(haystack, terms)
 			if score > 0 {
-				results = append(results, searchHit{Type: "thread", ID: str(t["id"]), Title: str(t["title"]), Status: str(t["status"]), Score: score,
-					Command: fmt.Sprintf("aipmc thread show --id %s", str(t["id"]))})
+				results = append(results, searchHit{Type: "thread", ID: u.Str(t["id"]), Title: u.Str(t["title"]), Status: u.Str(t["status"]), Score: score,
+					Command: fmt.Sprintf("aipmc thread show --id %s", u.Str(t["id"]))})
 			}
 		}
 	}
@@ -235,10 +236,10 @@ func searchLinear(query string) []searchHit {
 	// Search principles
 	if prs, err := store.ListPrinciples("", ""); err == nil {
 		for _, p := range prs {
-			haystack := strings.ToLower(str(p["title"]) + " " + str(p["summary"]))
+			haystack := strings.ToLower(u.Str(p["title"]) + " " + u.Str(p["summary"]))
 			score := matchScore(haystack, terms)
 			if score > 0 {
-				results = append(results, searchHit{Type: "principle", ID: str(p["id"]), Title: str(p["title"]), Status: str(p["status"]), Score: score})
+				results = append(results, searchHit{Type: "principle", ID: u.Str(p["id"]), Title: u.Str(p["title"]), Status: u.Str(p["status"]), Score: score})
 			}
 		}
 	}
@@ -310,15 +311,6 @@ func mustListTasks() []store.Task {
 	return tasks
 }
 
-func str(v any) string {
-	if v == nil {
-		return ""
-	}
-	if s, ok := v.(string); ok {
-		return s
-	}
-	return ""
-}
 
 // ---- Agent Runtime ----
 

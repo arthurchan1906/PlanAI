@@ -14,6 +14,7 @@ import (
 	"aipmc/ai"
 	"aipmc/analyze"
 	pmdb "aipmc/db"
+	"aipmc/mcp"
 	"aipmc/store"
 	"aipmc/u"
 	"aipmc/web"
@@ -147,7 +148,7 @@ func handlePatchEntity(w http.ResponseWriter, entity, id string, body map[string
 		web.SendJSON(w, d)
 	case "ideas":
 		if _, hasNote := body["note"]; hasNote {
-			idea, err := store.ReviewIdea(id, str(body["status"]), str(body["note"]))
+			idea, err := store.ReviewIdea(id, u.Str(body["status"]), u.Str(body["note"]))
 			if err != nil {
 				web.SendError(w, 400, err.Error())
 				return
@@ -324,11 +325,11 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		events, _ := store.ListEvents(q.Get("filter"))
 		web.SendJSON(w, map[string]any{"events": events})
 	case method == "GET" && path == "feedbacks":
-		fbs, _ := listFeedbacks(q.Get("label"))
+		fbs, _ := mcp.ListFeedbacks(q.Get("label"))
 		web.SendJSON(w, map[string]any{"feedbacks": fbs})
 	case method == "POST" && path == "feedbacks":
 		body := readBody()
-		fb, err := addFeedback(str(body["label"]), str(body["content"]))
+		fb, err := mcp.AddFeedback(u.Str(body["label"]), u.Str(body["content"]))
 		if err != nil {
 			web.SendJSON(w, map[string]any{"status": "stored_locally", "detail": err.Error()})
 			return
@@ -336,7 +337,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		web.SendJSON(w, fb)
 	case method == "POST" && path == "events":
 		body := readBody()
-		evt, _ := store.CreateEvent(str(body["type"]), str(body["entity_type"]), str(body["entity_id"]), str(body["summary"]))
+		evt, _ := store.CreateEvent(u.Str(body["type"]), u.Str(body["entity_type"]), u.Str(body["entity_id"]), u.Str(body["summary"]))
 		web.SendJSON(w, evt)
 	case method == "GET" && path == "inbox":
 		web.SendJSON(w, getInboxSummary())
@@ -368,25 +369,25 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		allTaskNotes := []map[string]any{}
 		for _, t := range tasks { n, _ := store.ListTaskNotes(t.ID, 999); allTaskNotes = append(allTaskNotes, n...) }
 		taskTitles := map[string]string{}; for _, t := range tasks { taskTitles[t.ID] = t.Title }
-		decisionTitles := map[string]string{}; for _, d := range decisions { decisionTitles[d["id"].(string)] = str(d["title"]) }
-		commitTitles := map[string]string{}; for _, c := range commits { commitTitles[str(c["id"])] = str(c["title"]) }
+		decisionTitles := map[string]string{}; for _, d := range decisions { decisionTitles[d["id"].(string)] = u.Str(d["title"]) }
+		commitTitles := map[string]string{}; for _, c := range commits { commitTitles[u.Str(c["id"])] = u.Str(c["title"]) }
 		commitsByTask := map[string][]map[string]any{}
-		for _, c := range commits { if tid := str(c["task_id"]); tid != "" { commitsByTask[tid] = append(commitsByTask[tid], c) } }
+		for _, c := range commits { if tid := u.Str(c["task_id"]); tid != "" { commitsByTask[tid] = append(commitsByTask[tid], c) } }
 
 		snap := getStatusSnapshot()
 		doneC, blockedC, todoC := 0, 0, 0
 		for _, t := range tasks { if t.Status == "done" { doneC++ } else if t.Status == "blocked" { blockedC++ } else if t.Status == "todo" { todoC++ } }
 		dashboard := map[string]any{"task_counts": map[string]any{"in_progress":snap["in_progress_tasks"],"total":snap["total_tasks"],"done":doneC,"blocked":blockedC,"todo":todoC}}
-		pcA, pcD := 0, 0; for _, p := range plans { if str(p["status"]) == "active" { pcA++ } else { pcD++ } }
+		pcA, pcD := 0, 0; for _, p := range plans { if u.Str(p["status"]) == "active" { pcA++ } else { pcD++ } }
 		dashboard["plan_counts"] = map[string]any{"active":pcA,"draft":pcD,"total":len(plans)}
 		ccD, ccM, ccNR := 0, 0, 0
-		for _, c := range commits { switch str(c["status"]) { case "draft": ccD++; case "merged","committed": ccM++ }; if str(c["review_status"]) != "approved" || str(c["test_status"]) != "passed" { ccNR++ } }
+		for _, c := range commits { switch u.Str(c["status"]) { case "draft": ccD++; case "merged","committed": ccM++ }; if u.Str(c["review_status"]) != "approved" || u.Str(c["test_status"]) != "passed" { ccNR++ } }
 		dashboard["commit_counts"] = map[string]any{"draft":ccD,"merged":ccM,"needs_review":ccNR,"total":len(commits)}
-		bo, bt := 0, 0; for _, b := range bugs { if str(b["status"]) == "open" || str(b["status"]) == "in_progress" { bo++ }; bt++ }
+		bo, bt := 0, 0; for _, b := range bugs { if u.Str(b["status"]) == "open" || u.Str(b["status"]) == "in_progress" { bo++ }; bt++ }
 		dashboard["bug_counts"] = map[string]any{"open":bo,"total":bt}
-		pa := []map[string]any{}; for _, p := range plans { if str(p["status"]) == "active" { pa = append(pa, map[string]any{"id":str(p["id"]),"title":str(p["title"]),"state":"active"}); if len(pa) >= 5 { break } } }
+		pa := []map[string]any{}; for _, p := range plans { if u.Str(p["status"]) == "active" { pa = append(pa, map[string]any{"id":u.Str(p["id"]),"title":u.Str(p["title"]),"state":"active"}); if len(pa) >= 5 { break } } }
 		dashboard["plan_attention"] = pa
-		rq := []map[string]any{}; for _, c := range commits { if str(c["review_status"]) != "approved" || str(c["test_status"]) != "passed" { rq = append(rq, map[string]any{"id":str(c["id"]),"title":str(c["title"]),"task_id":str(c["task_id"]),"review_status":str(c["review_status"]),"test_status":str(c["test_status"]),"attention":"needs_review"}); if len(rq) >= 5 { break } } }
+		rq := []map[string]any{}; for _, c := range commits { if u.Str(c["review_status"]) != "approved" || u.Str(c["test_status"]) != "passed" { rq = append(rq, map[string]any{"id":u.Str(c["id"]),"title":u.Str(c["title"]),"task_id":u.Str(c["task_id"]),"review_status":u.Str(c["review_status"]),"test_status":u.Str(c["test_status"]),"attention":"needs_review"}); if len(rq) >= 5 { break } } }
 		dashboard["review_queue"] = rq
 		cb := []map[string]any{}; for _, t := range tasks { if t.Status != "done" && len(commitsByTask[t.ID]) == 0 { cb = append(cb, map[string]any{"id":t.ID,"title":t.Title,"status":t.Status,"reasons":[]string{"no_linked_commit"}}); if len(cb) >= 5 { break } } }
 		dashboard["closure_blockers"] = cb
@@ -400,30 +401,30 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		if prj, ok := ctx["project"]; ok { if prjm, ok := prj.(map[string]any); ok { prjm["vision"],prjm["canon"] = map[string]any{},map[string]any{}; if len(visions) > 0 { prjm["vision"] = visions[0] }; if canon != nil { prjm["canon"] = canon } } }
 
 		webTasks := []map[string]any{}
-		for _, t := range tasks { lc := commitsByTask[t.ID]; appr, verf := 0, 0; var lev string; for _, c := range lc { if str(c["review_status"]) == "approved" { appr++ }; if str(c["test_status"]) == "passed" { verf++ }; if s := str(c["evidence_summary"]); s != "" { lev = s } }; sh := "needs_commit"; if t.Status == "done" { sh = "completed" } else if len(lc) > 0 && appr == 0 { sh = "needs_review" } else if len(lc) > 0 && verf == 0 { sh = "needs_verification" } else if len(lc) > 0 { sh = "ready" }; webTasks = append(webTasks, map[string]any{"id":t.ID,"title":t.Title,"status":t.Status,"priority":t.Priority,"phase":t.Phase,"roadmap_id":t.RoadmapID,"plan_id":t.PlanID,"acceptance":t.Acceptance,"related_docs":t.RelatedDocs,"related_decisions":t.RelatedDecisions,"last_note":t.LastNote,"updated_at":t.UpdatedAt,"created_at":t.CreatedAt,"acceptance_json":u.JsonStr(t.Acceptance),"related_docs_json":u.JsonStr(t.RelatedDocs),"related_decisions_json":u.JsonStr(t.RelatedDecisions),"progress":t.Progress,"linked_commit_count":len(lc),"approved_commit_count":appr,"verified_commit_count":verf,"latest_evidence_summary":lev,"status_hint":sh,"source_idea":nil,"related_decision_titles":[]string{},"closure_reasons":[]string{}}) }
+		for _, t := range tasks { lc := commitsByTask[t.ID]; appr, verf := 0, 0; var lev string; for _, c := range lc { if u.Str(c["review_status"]) == "approved" { appr++ }; if u.Str(c["test_status"]) == "passed" { verf++ }; if s := u.Str(c["evidence_summary"]); s != "" { lev = s } }; sh := "needs_commit"; if t.Status == "done" { sh = "completed" } else if len(lc) > 0 && appr == 0 { sh = "needs_review" } else if len(lc) > 0 && verf == 0 { sh = "needs_verification" } else if len(lc) > 0 { sh = "ready" }; webTasks = append(webTasks, map[string]any{"id":t.ID,"title":t.Title,"status":t.Status,"priority":t.Priority,"phase":t.Phase,"roadmap_id":t.RoadmapID,"plan_id":t.PlanID,"acceptance":t.Acceptance,"related_docs":t.RelatedDocs,"related_decisions":t.RelatedDecisions,"last_note":t.LastNote,"updated_at":t.UpdatedAt,"created_at":t.CreatedAt,"acceptance_json":u.JsonStr(t.Acceptance),"related_docs_json":u.JsonStr(t.RelatedDocs),"related_decisions_json":u.JsonStr(t.RelatedDecisions),"progress":t.Progress,"linked_commit_count":len(lc),"approved_commit_count":appr,"verified_commit_count":verf,"latest_evidence_summary":lev,"status_hint":sh,"source_idea":nil,"related_decision_titles":[]string{},"closure_reasons":[]string{}}) }
 		webCommits := []map[string]any{}
-		for _, c := range commits { wc := map[string]any{}; for k, v := range c { wc[k] = v }; wc["task_title"] = taskTitles[str(c["task_id"])]; wc["decision_title"] = decisionTitles[str(c["decision_id"])]; if h := str(c["commit_hash"]); len(h) > 0 { wc["short_hash"] = h }; if files, ok := c["files"].([]any); ok { wc["file_count"] = len(files) }; sh := "draft"; if str(c["review_status"]) != "approved" { sh = "needs_review" } else if str(c["test_status"]) != "passed" { sh = "needs_verification" } else if str(c["status"]) != "draft" { sh = "ready" }; wc["status_hint"] = sh; webCommits = append(webCommits, wc) }
+		for _, c := range commits { wc := map[string]any{}; for k, v := range c { wc[k] = v }; wc["task_title"] = taskTitles[u.Str(c["task_id"])]; wc["decision_title"] = decisionTitles[u.Str(c["decision_id"])]; if h := u.Str(c["commit_hash"]); len(h) > 0 { wc["short_hash"] = h }; if files, ok := c["files"].([]any); ok { wc["file_count"] = len(files) }; sh := "draft"; if u.Str(c["review_status"]) != "approved" { sh = "needs_review" } else if u.Str(c["test_status"]) != "passed" { sh = "needs_verification" } else if u.Str(c["status"]) != "draft" { sh = "ready" }; wc["status_hint"] = sh; webCommits = append(webCommits, wc) }
 		webBugs := []map[string]any{}
-		for _, b := range bugs { wb := map[string]any{}; for k, v := range b { wb[k] = v }; wb["commit_title"] = commitTitles[str(b["commit_id"])]; webBugs = append(webBugs, wb) }
-		ccByDec := map[string]int{}; for _, c := range commits { if did := str(c["decision_id"]); did != "" { ccByDec[did]++ } }
+		for _, b := range bugs { wb := map[string]any{}; for k, v := range b { wb[k] = v }; wb["commit_title"] = commitTitles[u.Str(b["commit_id"])]; webBugs = append(webBugs, wb) }
+		ccByDec := map[string]int{}; for _, c := range commits { if did := u.Str(c["decision_id"]); did != "" { ccByDec[did]++ } }
 		webDecisions := []map[string]any{}
-		for _, d := range decisions { wd := map[string]any{}; for k, v := range d { wd[k] = v }; wd["linked_commit_count"] = ccByDec[str(d["id"])]; wd["source_idea"] = nil; wd["related_task_titles"] = []string{}; webDecisions = append(webDecisions, wd) }
+		for _, d := range decisions { wd := map[string]any{}; for k, v := range d { wd[k] = v }; wd["linked_commit_count"] = ccByDec[u.Str(d["id"])]; wd["source_idea"] = nil; wd["related_task_titles"] = []string{}; webDecisions = append(webDecisions, wd) }
 		tcByRdm, dcByRdm := map[string]int{}, map[string]int{}
 		for _, t := range tasks { if t.RoadmapID != "" { tcByRdm[t.RoadmapID]++; if t.Status == "done" { dcByRdm[t.RoadmapID]++ } } }
-		pcByRdm := map[string]int{}; for _, p := range plans { if rid := str(p["roadmap_id"]); rid != "" { pcByRdm[rid]++ } }
+		pcByRdm := map[string]int{}; for _, p := range plans { if rid := u.Str(p["roadmap_id"]); rid != "" { pcByRdm[rid]++ } }
 		webRoadmaps := []map[string]any{}
-		for _, r := range roadmaps { wr := map[string]any{}; for k, v := range r { wr[k] = v }; rid := str(r["id"]); tc, pc := tcByRdm[rid], pcByRdm[rid]; wr["task_count"],wr["plan_count"] = tc, pc; if tc > 0 { wr["progress"] = (dcByRdm[rid] * 100) / tc } else { wr["progress"] = 0 }; webRoadmaps = append(webRoadmaps, wr) }
+		for _, r := range roadmaps { wr := map[string]any{}; for k, v := range r { wr[k] = v }; rid := u.Str(r["id"]); tc, pc := tcByRdm[rid], pcByRdm[rid]; wr["task_count"],wr["plan_count"] = tc, pc; if tc > 0 { wr["progress"] = (dcByRdm[rid] * 100) / tc } else { wr["progress"] = 0 }; webRoadmaps = append(webRoadmaps, wr) }
 		tpc := map[string]int{}; for _, t := range tasks { if t.PlanID != "" { tpc[t.PlanID]++ } }
 		enhancedPlans := []map[string]any{}
-		for _, p := range plans { pid := str(p["id"]); np := map[string]any{}; for k, v := range p { np[k] = v }; np["task_count"] = tpc[pid]; np["health"] = map[string]any{"state":"active","issues":[]string{},"needs_manager_attention":false}; np["manager_summary"] = map[string]any{}; np["execution_packet"] = map[string]any{}; np["recommendations"] = []any{}; np["linked_tasks"] = []any{}; enhancedPlans = append(enhancedPlans, np) }
+		for _, p := range plans { pid := u.Str(p["id"]); np := map[string]any{}; for k, v := range p { np[k] = v }; np["task_count"] = tpc[pid]; np["health"] = map[string]any{"state":"active","issues":[]string{},"needs_manager_attention":false}; np["manager_summary"] = map[string]any{}; np["execution_packet"] = map[string]any{}; np["recommendations"] = []any{}; np["linked_tasks"] = []any{}; enhancedPlans = append(enhancedPlans, np) }
 		webDocs := []map[string]any{}
 		for _, d := range docs { wd := map[string]any{}; for k, v := range d { wd[k] = v }; wd["issues"] = []string{}; wd["links"] = map[string]any{"outgoing":[]any{},"incoming":[]any{}}; webDocs = append(webDocs, wd) }
 
 		docAudit := map[string]any{"total_managed_docs":len(docs),"active_records":0,"tracked_files_in_fs":0,"sot_conflicts":map[string]any{},"invalid_truth_records":[]any{},"obsolete_without_replacement":[]any{},"missing_from_fs":[]any{},"path_not_normalized":[]any{},"stale_active_records":[]any{},"source_of_truth_records":[]any{},"untracked_in_fs":[]any{}}
 		if dr, err := pmdb.RuntimeDir(); err == nil {
-			pr := filepath.Dir(dr); dp := map[string]bool{}; for _, doc := range docs { dp[str(doc["path"])] = true }
+			pr := filepath.Dir(dr); dp := map[string]bool{}; for _, doc := range docs { dp[u.Str(doc["path"])] = true }
 			tf := []string{}; ac, sot := 0, 0
-			for _, doc := range docs { if str(doc["status"]) == "active" { ac++ }; if b, ok := doc["source_of_truth"].(bool); ok && b { sot++; docAudit["source_of_truth_records"] = append(docAudit["source_of_truth_records"].([]any), str(doc["path"])) } }
+			for _, doc := range docs { if u.Str(doc["status"]) == "active" { ac++ }; if b, ok := doc["source_of_truth"].(bool); ok && b { sot++; docAudit["source_of_truth_records"] = append(docAudit["source_of_truth_records"].([]any), u.Str(doc["path"])) } }
 			for _, dir := range []string{"/doc", ""} {
 				if entries, e := os.ReadDir(pr + dir); e == nil {
 					for _, f := range entries { if !f.IsDir() && (strings.HasSuffix(f.Name(),".md")||strings.HasSuffix(f.Name(),".txt")) { rp := f.Name(); if dir != "" { rp = "doc/"+f.Name() }; tf = append(tf, rp); if !dp[rp] { docAudit["untracked_in_fs"] = append(docAudit["untracked_in_fs"].([]any), rp) } } }
@@ -445,7 +446,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 				ib := getInboxSummary()
 				ib["recommended_actions"] = []any{}
 				decisions, _ := store.ListDecisions()
-				pc := 0; for _, d := range decisions { if str(d["status"]) == "proposed" { pc++ } }
+				pc := 0; for _, d := range decisions { if u.Str(d["status"]) == "proposed" { pc++ } }
 				canonForInbox, _ := store.GetCanon(); cfCount := 0; if canonForInbox != nil { cfCount = len(canonForInbox["version_scope"].([]any)) }
 				ideasList := ib["ideas"]; totalIdeas := 0; if ideasList != nil { if sl, ok := ideasList.([]map[string]any); ok { totalIdeas = len(sl) } }
 				ib["counts"] = map[string]any{"total":totalIdeas,"proposed_decisions":pc,"canon_followups":cfCount}
@@ -512,7 +513,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 
 	case method == "POST" && path == "tasks":
 		body := readBody()
-		task, err := store.CreateTask(str(body["title"]), pstr(body, "priority", "P1"), pstr(body, "status", "todo"), pstr(body, "phase", "general"), str(body["plan_id"]), nil)
+		task, err := store.CreateTask(u.Str(body["title"]), pstr(body, "priority", "P1"), pstr(body, "status", "todo"), pstr(body, "phase", "general"), u.Str(body["plan_id"]), nil)
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
@@ -520,7 +521,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		web.SendJSON(w, task)
 	case method == "POST" && path == "commits":
 		body := readBody()
-		c, err := store.CreateCommit(str(body["title"]), pstr(body, "summary", ""), pstr(body, "evidence_summary", ""), pstr(body, "review_notes", ""), pstr(body, "branch", ""), pstr(body, "commit_hash", ""), str(body["task_id"]), pstr(body, "decision_id", ""), pstr(body, "status", "draft"), pstr(body, "test_status", "not_run"), pstr(body, "review_status", "pending"), nil)
+		c, err := store.CreateCommit(u.Str(body["title"]), pstr(body, "summary", ""), pstr(body, "evidence_summary", ""), pstr(body, "review_notes", ""), pstr(body, "branch", ""), pstr(body, "commit_hash", ""), u.Str(body["task_id"]), pstr(body, "decision_id", ""), pstr(body, "status", "draft"), pstr(body, "test_status", "not_run"), pstr(body, "review_status", "pending"), nil)
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
@@ -528,7 +529,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		web.SendJSON(w, c)
 	case method == "POST" && path == "plans":
 		body := readBody()
-		plan, err := store.CreatePlan(str(body["title"]), pstr(body, "goal", ""), str(body["roadmap_id"]), pstr(body, "vision_id", ""), pstr(body, "priority", "P1"), pstr(body, "status", "draft"), nil, nil, nil, nil)
+		plan, err := store.CreatePlan(u.Str(body["title"]), pstr(body, "goal", ""), u.Str(body["roadmap_id"]), pstr(body, "vision_id", ""), pstr(body, "priority", "P1"), pstr(body, "status", "draft"), nil, nil, nil, nil)
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
@@ -536,7 +537,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		web.SendJSON(w, plan)
 	case method == "POST" && path == "bugs":
 		body := readBody()
-		bug, err := store.CreateBug(str(body["title"]), pstr(body, "description", ""), pstr(body, "severity", "minor"), pstr(body, "status", "open"), pstr(body, "commit_id", ""), pstr(body, "error", ""), pstr(body, "files", ""), pstr(body, "root_cause", ""), pstr(body, "fix", ""), pstr(body, "tags", ""))
+		bug, err := store.CreateBug(u.Str(body["title"]), pstr(body, "description", ""), pstr(body, "severity", "minor"), pstr(body, "status", "open"), pstr(body, "commit_id", ""), pstr(body, "error", ""), pstr(body, "files", ""), pstr(body, "root_cause", ""), pstr(body, "fix", ""), pstr(body, "tags", ""))
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
@@ -544,7 +545,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		web.SendJSON(w, bug)
 	case method == "POST" && path == "decisions":
 		body := readBody()
-		d, err := store.CreateDecision(str(body["title"]), str(body["background"]), str(body["decision"]), pstr(body, "status", "proposed"))
+		d, err := store.CreateDecision(u.Str(body["title"]), u.Str(body["background"]), u.Str(body["decision"]), pstr(body, "status", "proposed"))
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
@@ -552,7 +553,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		web.SendJSON(w, d)
 	case method == "POST" && path == "ideas":
 		body := readBody()
-		idea, err := store.CreateIdea(str(body["title"]), str(body["summary"]), pstr(body, "impact", ""), pstr(body, "source", "manual"), false, pstr(body, "current_summary", ""), pstr(body, "main_question", ""), pstr(body, "recommended_next_action", "continue_discussion"))
+		idea, err := store.CreateIdea(u.Str(body["title"]), u.Str(body["summary"]), pstr(body, "impact", ""), pstr(body, "source", "manual"), false, pstr(body, "current_summary", ""), pstr(body, "main_question", ""), pstr(body, "recommended_next_action", "continue_discussion"))
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
@@ -560,7 +561,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		web.SendJSON(w, idea)
 	case method == "POST" && path == "roadmaps":
 		body := readBody()
-		r, err := store.CreateRoadmap(str(body["title"]), pstr(body, "target_date", ""), pstr(body, "vision_id", ""), pstr(body, "status", "planned"), pstr(body, "priority", "P1"))
+		r, err := store.CreateRoadmap(u.Str(body["title"]), pstr(body, "target_date", ""), pstr(body, "vision_id", ""), pstr(body, "status", "planned"), pstr(body, "priority", "P1"))
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
@@ -568,7 +569,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		web.SendJSON(w, r)
 	case method == "POST" && path == "principles":
 		body := readBody()
-		p, err := store.CreatePrinciple(str(body["title"]), pstr(body, "summary", ""), pstr(body, "kind", "governance"), pstr(body, "status", "active"))
+		p, err := store.CreatePrinciple(u.Str(body["title"]), pstr(body, "summary", ""), pstr(body, "kind", "governance"), pstr(body, "status", "active"))
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
@@ -576,7 +577,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		web.SendJSON(w, p)
 	case method == "POST" && path == "visions":
 		body := readBody()
-		v, err := store.CreateVision(str(body["title"]), pstr(body, "summary", ""), pstr(body, "status", "active"), pstr(body, "horizon", "long_term"))
+		v, err := store.CreateVision(u.Str(body["title"]), pstr(body, "summary", ""), pstr(body, "status", "active"), pstr(body, "horizon", "long_term"))
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
@@ -584,7 +585,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		web.SendJSON(w, v)
 	case method == "POST" && path == "threads":
 		body := readBody()
-		t, err := store.CreateThread(str(body["title"]), pstr(body, "summary", ""), pstr(body, "source", "manual"))
+		t, err := store.CreateThread(u.Str(body["title"]), pstr(body, "summary", ""), pstr(body, "source", "manual"))
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
@@ -593,7 +594,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 	case method == "POST" && strings.HasPrefix(path, "threads/") && strings.HasSuffix(path, "/items"):
 		id := extractID(path, "threads/", "/items")
 		body := readBody()
-		t, err := store.AddToThread(id, str(body["entity_type"]), str(body["entity_id"]), pstr(body, "note", ""))
+		t, err := store.AddToThread(id, u.Str(body["entity_type"]), u.Str(body["entity_id"]), pstr(body, "note", ""))
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
@@ -615,7 +616,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		web.SendError(w, 400, "invalid thread item path")
 	case method == "POST" && path == "links":
 		body := readBody()
-		link, err := store.CreateLink(str(body["source_type"]), str(body["source_id"]), str(body["relation"]), str(body["target_type"]), str(body["target_id"]), pstr(body, "note", ""))
+		link, err := store.CreateLink(u.Str(body["source_type"]), u.Str(body["source_id"]), u.Str(body["relation"]), u.Str(body["target_type"]), u.Str(body["target_id"]), pstr(body, "note", ""))
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
@@ -624,7 +625,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 	case method == "POST" && strings.HasPrefix(path, "tasks/") && strings.HasSuffix(path, "/notes"):
 		id := extractID(path, "tasks/", "/notes")
 		body := readBody()
-		result, err := store.AppendTaskNote(id, str(body["content"]))
+		result, err := store.AppendTaskNote(id, u.Str(body["content"]))
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
@@ -633,7 +634,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 	case method == "POST" && strings.HasPrefix(path, "ideas/") && strings.HasSuffix(path, "/comments"):
 		id := extractID(path, "ideas/", "/comments")
 		body := readBody()
-		comment, err := store.CreateIdeaComment(id, str(body["content"]), pstr(body, "kind", "comment"), pstr(body, "author_type", "ai"), pstr(body, "author_name", "aipmc"))
+		comment, err := store.CreateIdeaComment(id, u.Str(body["content"]), pstr(body, "kind", "comment"), pstr(body, "author_type", "ai"), pstr(body, "author_name", "aipmc"))
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
@@ -642,8 +643,8 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 	case method == "POST" && strings.HasPrefix(path, "ideas/") && strings.HasSuffix(path, "/convert"):
 		id := extractID(path, "ideas/", "/convert")
 		body := readBody()
-		if str(body["to"]) == "task" {
-			result, err := store.ConvertIdeaToTask(id, str(body["plan_id"]))
+		if u.Str(body["to"]) == "task" {
+			result, err := store.ConvertIdeaToTask(id, u.Str(body["plan_id"]))
 			if err != nil {
 				web.SendError(w, 400, err.Error())
 				return
@@ -663,7 +664,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		web.SendJSON(w, map[string]any{"agents": agents})
 	case method == "POST" && path == "agents":
 		body := readBody()
-		profile, err := store.CreateAgentProfile(str(body["name"]), str(body["role"]), str(body["capabilities"]))
+		profile, err := store.CreateAgentProfile(u.Str(body["name"]), u.Str(body["role"]), u.Str(body["capabilities"]))
 		if err != nil { web.SendError(w, 400, err.Error()); return }
 		web.SendJSON(w, profile)
 	case method == "PATCH" && strings.HasPrefix(path, "agents/"):
@@ -677,7 +678,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		web.SendJSON(w, map[string]any{"meetings": rooms})
 	case method == "POST" && path == "meetings":
 		body := readBody()
-		room, err := store.CreateMeetingRoom(str(body["title"]), str(body["topic"]), str(body["context"]), str(body["created_by"]))
+		room, err := store.CreateMeetingRoom(u.Str(body["title"]), u.Str(body["topic"]), u.Str(body["context"]), u.Str(body["created_by"]))
 		if err != nil { web.SendError(w, 400, err.Error()); return }
 		web.SendJSON(w, room)
 	case method == "POST" && strings.HasPrefix(path, "meetings/") && strings.HasSuffix(path, "/close"):
@@ -688,13 +689,13 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 	case method == "POST" && strings.HasPrefix(path, "meetings/") && strings.HasSuffix(path, "/turns"):
 		body := readBody()
 		roomID := extractID(path, "meetings/", "/turns")
-		turn, err := store.CreateMeetingTurn(roomID, 0, str(body["speaker_type"]), str(body["speaker_id"]), str(body["question"]))
+		turn, err := store.CreateMeetingTurn(roomID, 0, u.Str(body["speaker_type"]), u.Str(body["speaker_id"]), u.Str(body["question"]))
 		if err != nil { web.SendError(w, 400, err.Error()); return }
 		web.SendJSON(w, turn)
 	case method == "POST" && strings.HasPrefix(path, "meetings/") && strings.HasSuffix(path, "/participants"):
 		body := readBody()
 		roomID := extractID(path, "meetings/", "/participants")
-		p, err := store.ConfirmMeetingAttendance(roomID, str(body["agent_id"]))
+		p, err := store.ConfirmMeetingAttendance(roomID, u.Str(body["agent_id"]))
 		if err != nil { web.SendError(w, 400, err.Error()); return }
 		web.SendJSON(w, p)
 	// ---- Assignments ----
@@ -703,7 +704,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		web.SendJSON(w, map[string]any{"assignments": asgns})
 	case method == "POST" && path == "assignments":
 		body := readBody()
-		a, err := store.CreateAssignment(str(body["agent_id"]), str(body["task_id"]), str(body["role"]), str(body["scope"]), str(body["assigned_by"]))
+		a, err := store.CreateAssignment(u.Str(body["agent_id"]), u.Str(body["task_id"]), u.Str(body["role"]), u.Str(body["scope"]), u.Str(body["assigned_by"]))
 		if err != nil { web.SendError(w, 400, err.Error()); return }
 		web.SendJSON(w, a)
 	case method == "PATCH" && strings.HasPrefix(path, "assignments/"):
@@ -729,7 +730,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		web.SendJSON(w, map[string]any{"ok": true, "pm_typing": typing})
 	case method == "POST" && path == "arbitrate":
 		body := readBody()
-		roomID := str(body["room_id"])
+		roomID := u.Str(body["room_id"])
 		room, err := store.GetMeetingRoom(roomID)
 		if err != nil { web.SendError(w, 404, err.Error()); return }
 		turns, _ := store.ListMeetingTurns(roomID)
@@ -738,14 +739,14 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		if len(turns) > 8 { start = len(turns) - 8 }
 		for i := start; i < len(turns); i++ {
 			t := turns[i]
-			txt := str(t["question"])
-			if r := str(t["response"]); r != "" { txt = r }
+			txt := u.Str(t["question"])
+			if r := u.Str(t["response"]); r != "" { txt = r }
 			recent = append(recent, ai.ArbitrationTurn{
-				SpeakerType: str(t["speaker_type"]), SpeakerID: str(t["speaker_id"]),
-				Content: txt, AddressTo: str(t["address_to"]),
+				SpeakerType: u.Str(t["speaker_type"]), SpeakerID: u.Str(t["speaker_id"]),
+				Content: txt, AddressTo: u.Str(t["address_to"]),
 			})
 		}
-		next, reason, err := aiClient.ArbitrateNextSpeaker(str(room["topic"]), str(room["agent_roles_context"]), recent)
+		next, reason, err := aiClient.ArbitrateNextSpeaker(u.Str(room["topic"]), u.Str(room["agent_roles_context"]), recent)
 		if err != nil { web.SendError(w, 500, err.Error()); return }
 		existing, _ := store.ListMeetingTurns(roomID)
 		nextNum := len(existing) + 1
@@ -753,7 +754,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		web.SendJSON(w, map[string]any{"next_agent": next, "reason": reason})
 	case method == "POST" && path == "discussions":
 		body := readBody()
-		d, err := store.LogDiscussion(str(body["session_id"]), str(body["role"]), str(body["source"]), str(body["content"]), "")
+		d, err := store.LogDiscussion(u.Str(body["session_id"]), u.Str(body["role"]), u.Str(body["source"]), u.Str(body["content"]), "")
 		if err != nil { web.SendError(w, 400, err.Error()); return }
 		web.SendJSON(w, d)
 		case method == "GET" && path == "discussions":
@@ -781,11 +782,11 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 	case method == "POST" && path == "config":
 		cfg := pmdb.LoadConfig()
 		body := readBody()
-		if v := str(body["ai_endpoint"]); v != "" { cfg.AIEndpoint = v }
-		if v := str(body["ai_embedding_endpoint"]); v != "" { cfg.AIEmbeddingEndpoint = v }
-		if v := str(body["ai_model"]); v != "" { cfg.AIModel = v }
-		if v := str(body["ai_chat_model"]); v != "" { cfg.AIChatModel = v }
-		if v := str(body["web_host"]); v != "" { cfg.WebHost = v }
+		if v := u.Str(body["ai_endpoint"]); v != "" { cfg.AIEndpoint = v }
+		if v := u.Str(body["ai_embedding_endpoint"]); v != "" { cfg.AIEmbeddingEndpoint = v }
+		if v := u.Str(body["ai_model"]); v != "" { cfg.AIModel = v }
+		if v := u.Str(body["ai_chat_model"]); v != "" { cfg.AIChatModel = v }
+		if v := u.Str(body["web_host"]); v != "" { cfg.WebHost = v }
 		if v, ok := body["web_port"]; ok {
 			if f, ok := v.(float64); ok { cfg.WebPort = int(f) }
 		}
@@ -822,7 +823,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		handlePatchEntity(w, entity, id, readBody())
 	case method == "POST" && path == "canon/update":
 		body := readBody()
-		c, _ := store.UpdateCanon(str(body["decision_id"]), pstr(body, "product_goal", ""), pstr(body, "engineering_focus", ""), pstr(body, "architecture", ""), nil, nil)
+		c, _ := store.UpdateCanon(u.Str(body["decision_id"]), pstr(body, "product_goal", ""), pstr(body, "engineering_focus", ""), pstr(body, "architecture", ""), nil, nil)
 		web.SendJSON(w, c)
 	case method == "DELETE" && strings.HasPrefix(path, "task-notes/"):
 		web.SendJSON(w, map[string]any{"ok": true})
@@ -979,8 +980,8 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		var filtered []map[string]any
 		for _, r := range results {
-			role := str(r["role"])
-			content := str(r["content"])
+			role := u.Str(r["role"])
+			content := u.Str(r["content"])
 			isTool := len(content) > 0 && strings.ContainsRune("🔧📝👁🔍🆕🛠📡", []rune(content)[0])
 			msgType := role
 			if role == "assistant" && isTool {

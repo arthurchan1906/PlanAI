@@ -6,8 +6,10 @@ import (
 	"strings"
 
 	"aipmc/cli"
+	"aipmc/mcp"
 	"aipmc/store"
 	"aipmc/analyze"
+	"aipmc/u"
 )
 
 func dispatchTask(subcmd string, args *cli.Args) {
@@ -65,7 +67,7 @@ func dispatchCommit(subcmd string, args *cli.Args) {
 				if files, ok := c["files"].([]any); ok {
 					fc = len(files)
 				}
-				cc = append(cc, compact{ID: str(c["id"]), Title: str(c["title"]), Status: str(c["status"]), TaskID: str(c["task_id"]), FileCount: fc})
+				cc = append(cc, compact{ID: u.Str(c["id"]), Title: u.Str(c["title"]), Status: u.Str(c["status"]), TaskID: u.Str(c["task_id"]), FileCount: fc})
 			}
 			cli.PrintJSON(map[string]any{"commits": cc, "count": len(cc)})
 			return
@@ -502,10 +504,10 @@ func dispatchThread(subcmd string, args *cli.Args) {
 func dispatchFeedback(subcmd string, args *cli.Args) {
 	switch subcmd {
 	case "list":
-		fbs, _ := listFeedbacks(args.Str("label", ""))
+		fbs, _ := mcp.ListFeedbacks(args.Str("label", ""))
 		cli.PrintJSON(fbs)
 	case "add":
-		fb, err := addFeedback(args.Str("label", "suggestion"), args.Get("content"))
+		fb, err := mcp.AddFeedback(args.Str("label", "suggestion"), args.Get("content"))
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "feedback server unreachable, saved locally: %v\n", err)
 			// Fallback: store as idea in local DB
