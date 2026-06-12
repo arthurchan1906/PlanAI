@@ -200,7 +200,7 @@ function renderLCSFallback(oldStr, newStr) {
 
 function renderContent(c, role, metadata) {
   const text = (c || "").replace(/\\n/g, "\n").trim();
-  const isTool = /^[🔧✏️👁🔍📂🌐🔎🛠]/.test(text);
+  const isTool = /^[🔧📝👁🔍📂🌐🛠🆕🤖❓📋📡]/.test(text);
   const isEdit = isTool && /^📝/.test(text);
   const md = !isTool && role === "assistant";
 
@@ -246,7 +246,17 @@ function renderContent(c, role, metadata) {
   // Fallback: plain text diff (no metadata at all)
   function renderPlainDiff(content) {
     const lines = content.split("\n");
-    const hasHeader = lines.length > 0 && !lines[0].startsWith("-") && !lines[0].startsWith("+");
+    // Detect file path header: "📝 path/to/file" or "📄 path/to/file"
+    let fileHeader = null;
+    let diffStart = 0;
+    if (lines.length > 0) {
+      const m = lines[0].match(/^([📝🆕📄])\s*(.+)$/);
+      if (m) {
+        fileHeader = { icon: m[1], path: m[2].trim() };
+        diffStart = 1;
+      }
+    }
+    const hasHeader = !fileHeader && lines.length > 0 && !lines[0].startsWith("-") && !lines[0].startsWith("+");
     const numW = 40;
     const numStyle = {
       display: "inline-block", width: numW, minWidth: numW,
@@ -255,14 +265,24 @@ function renderContent(c, role, metadata) {
       lineHeight: "20px", minHeight: 20,
     };
     let lineNum = 1;
-    return lines.map((line, i) => {
+    const rows = [];
+    // Render file header if detected
+    if (fileHeader) {
+      rows.push(
+        <div key="header" style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", background: "#fafafa", borderBottom: "1px solid #e8e8e8" }}>
+          <span style={{ fontSize: 15 }}>{fileHeader.icon}</span>
+          <span style={{ fontSize: 12, fontFamily: "monospace", color: "#2f6fec", fontWeight: 500 }}>{fileHeader.path}</span>
+        </div>
+      );
+    }
+    for (let i = diffStart; i < lines.length; i++) {
+      const line = lines[i];
       let bg, color;
       if (line.startsWith("-")) { bg = "#fff1f0"; color = "#cf1322"; }
       else if (line.startsWith("+")) { bg = "#f6ffed"; color = "#389e0d"; }
       else { bg = "transparent"; color = "#555"; }
       const isHeader = hasHeader && i === 0;
-      const prefix = line.length > 0 ? line[0] : "";
-      return (
+      rows.push(
         <div key={i} style={{ display: "flex", borderBottom: "1px solid #f5f5f5", minHeight: 20, background: bg }}>
           <span style={numStyle}>{isHeader ? "" : lineNum++}</span>
           <span style={{ padding: "0 6px", fontSize: 11, fontFamily: "Consolas, \'Courier New\', monospace", whiteSpace: "pre", lineHeight: "20px", color }}>
@@ -270,7 +290,8 @@ function renderContent(c, role, metadata) {
           </span>
         </div>
       );
-    });
+    }
+    return rows;
   }
 
 
