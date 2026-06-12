@@ -56,6 +56,7 @@ ui/dist/
 ui/node_modules/
 frontend/node_modules/
 frontend/dist/aipmc.exe~
-.opencode/node_modules/
+.opencode/
 aipmc.exe~
 .opencode/plugins/test.js
+opencode.json

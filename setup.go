@@ -35,8 +35,8 @@ var platforms = []platformConfig{
 	{Name: "Gemini CLI", Key: "gemini", ConfigDir: ".gemini", ConfigFile: "settings.json", Aliases: []string{"gc"}},
 	// TOML-format configs
 	{Name: "Codex (OpenAI)", Key: "codex", ConfigDir: "", ConfigFile: "", Aliases: []string{"openai", "openai-codex"}},
-	// Hook + MCP platforms
-	{Name: "OpenCode", Key: "opencode", ConfigDir: "", ConfigFile: "opencode.json", Aliases: []string{"oc"}},
+	// Hook + MCP (custom format)
+	{Name: "OpenCode", Key: "opencode", ConfigDir: "", ConfigFile: "", Aliases: []string{"oc"}},
 }
 
 // platformByKey maps lowercase short keys/aliases to platform configs.
@@ -111,6 +111,17 @@ func setupMCP(targetPlatform string) error {
 				fmt.Fprintf(os.Stderr, "  ⚠️  Codex: %v\n", err)
 			} else {
 				fmt.Printf("  ✅ Codex (OpenAI) → ~/.codex/config.toml\n")
+				configured++
+			}
+			continue
+		}
+
+		// OpenCode uses its own JSON format
+		if p.Name == "OpenCode" {
+			if err := setupOpencodeMCP(projectRoot, commandPath); err != nil {
+				fmt.Fprintf(os.Stderr, "  ⚠️  OpenCode: %v\n", err)
+			} else {
+				fmt.Printf("  ✅ OpenCode → opencode.json\n")
 				configured++
 			}
 			continue
@@ -209,12 +220,6 @@ func setupMCP(targetPlatform string) error {
 }
 
 // setupCodexMCP writes the MCP server entry to Codex's user-level TOML config.
-// Codex config: ~/.codex/config.toml
-// Format:
-//
-//	[mcp_servers.aipm]
-//	command = "path/to/aipmc"
-//	args = ["mcp"]
 func setupCodexMCP(binaryPath string) error {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -227,23 +232,60 @@ func setupCodexMCP(binaryPath string) error {
 		return fmt.Errorf("cannot create .codex dir: %w", err)
 	}
 
-	// Read existing config
 	existing := ""
 	if data, err := os.ReadFile(configPath); err == nil {
 		existing = string(data)
 	}
 
-	// The TOML entry to add
 	entry := fmt.Sprintf("[mcp_servers.aipm]\ncommand = \"%s\"\nargs = [\"mcp\"]\n\n", binaryPath)
-
-	// Check if already configured
 	if containsStrIn(existing, "[mcp_servers.aipm]") {
-		return nil // already configured
+		return nil
 	}
 
-	// Append to existing config
 	newConfig := existing + entry
 	return os.WriteFile(configPath, []byte(newConfig), 0644)
+}
+
+// setupOpencodeMCP writes the MCP server entry to opencode.json.
+// OpenCode uses {"mcp": {"name": {"type":"local","command":["cmd","arg"],"enabled":true}}}
+func setupOpencodeMCP(projectRoot, binaryPath string) error {
+	configPath := filepath.Join(projectRoot, "opencode.json")
+
+	cfg := map[string]any{}
+	if data, err := os.ReadFile(configPath); err == nil && len(data) > 0 {
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			cfg = map[string]any{}
+		}
+	}
+
+	mcpRaw, _ := cfg["mcp"]
+	mcp, _ := mcpRaw.(map[string]any)
+	if mcp == nil {
+		mcp = map[string]any{}
+	}
+
+	// Check if already configured
+	if existing, ok := mcp["aipm"]; ok {
+		if em, ok := existing.(map[string]any); ok {
+			if cmd, ok := em["command"]; ok {
+				if cmdArr, ok := cmd.([]any); ok && len(cmdArr) > 0 {
+					if cmdStr, ok := cmdArr[0].(string); ok && cmdStr == binaryPath {
+						return nil
+					}
+				}
+			}
+		}
+	}
+
+	mcp["aipm"] = map[string]any{
+		"type":    "local",
+		"command": []any{binaryPath, "mcp"},
+		"enabled": true,
+	}
+	cfg["mcp"] = mcp
+
+	data, _ := json.MarshalIndent(cfg, "", "  ")
+	return os.WriteFile(configPath, data, 0644)
 }
 
 func containsStrIn(s, substr string) bool {
@@ -256,13 +298,8 @@ func containsStrIn(s, substr string) bool {
 }
 
 func resolveCommandPath() string {
-	// Prefer a simple "aipmc" command name if the binary is on PATH — this makes
-	// MCP configs portable across machines and directory layouts. Otherwise fall
-	// back to the full executable path so the config still works.
 	bin := resolveBinaryPath()
 	if lp, err := exec.LookPath("aipmc"); err == nil {
-		// Resolve symlinks on both paths before comparing — handles the case
-		// where aipmc is on PATH via a symlink.
 		lpReal, err1 := filepath.EvalSymlinks(lp)
 		binReal, err2 := filepath.EvalSymlinks(bin)
 		if err1 == nil && err2 == nil && lpReal == binReal {
@@ -273,11 +310,8 @@ func resolveCommandPath() string {
 }
 
 func resolveBinaryPath() string {
-	// Use os.Executable() to find the real binary — handles PATH lookups,
-	// symlinks, and relative invocations correctly.
 	binaryPath, err := os.Executable()
 	if err != nil {
-		// Fallback to os.Args[0] resolved against CWD
 		binaryPath = os.Args[0]
 		if !filepath.IsAbs(binaryPath) {
 			binaryPath, _ = filepath.Abs(binaryPath)
@@ -304,7 +338,6 @@ func checkMCPSetup() map[string]any {
 
 	configuredCount := 0
 	for _, p := range platforms {
-		// Skip Codex — TOML format not checked here
 		if p.ConfigDir == "" && p.ConfigFile == "" {
 			continue
 		}
