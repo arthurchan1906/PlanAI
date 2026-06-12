@@ -73,10 +73,7 @@ func main() {
 		}
 		writeSkillFile()
 		fmt.Printf("Initialized .pmai at %s\n", filepath.Dir(filepath.Dir(path)))
-		// Auto-configure MCP for all platforms
-		if err := setupMCP("all"); err != nil {
-			fmt.Fprintf(os.Stderr, "MCP setup skipped: %v (run 'aipmc setup' manually)\n", err)
-		}
+		fmt.Println("Run 'aipmc setup <platform>' to configure platform hooks.")
 		return
 	case "help":
 		cli.PrintHelp()
@@ -108,6 +105,7 @@ func main() {
 				fmt.Fprintf(os.Stderr, "hook setup failed: %v\n", err)
 			}
 		}
+		fmt.Println("Run 'aipmc setup <platform>' to configure platform hooks.")
 		return
 	case "log":
 		role := ""
@@ -157,6 +155,7 @@ func main() {
 			preview = string([]rune(preview)[:80])
 		}
 		fmt.Printf("logged %s [%s][%s] %s\n", r["id"].(string), role, source, preview)
+		fmt.Println("Run 'aipmc setup <platform>' to configure platform hooks.")
 		return
 	case "embed":
 		n := 0 // 0 = all
@@ -164,21 +163,27 @@ func main() {
 		count, err := embedDiscussions(n)
 		if err != nil { fmt.Fprintf(os.Stderr, "embed error: %v\n", err); os.Exit(1) }
 		fmt.Printf("embedded %d discussions\n", count)
+		fmt.Println("Run 'aipmc setup <platform>' to configure platform hooks.")
 		return
 	case "wait":
 		waitForTurnCmd(os.Args[2:])
+		fmt.Println("Run 'aipmc setup <platform>' to configure platform hooks.")
 		return
 	case "hook-process":
 		hook.ProcessClaudeHook()
+		fmt.Println("Run 'aipmc setup <platform>' to configure platform hooks.")
 		return
 	case "hook-gemini":
 		hook.ProcessGeminiHook()
+		fmt.Println("Run 'aipmc setup <platform>' to configure platform hooks.")
 		return
 	case "hook-codex":
 		hook.ProcessCodexHook()
+		fmt.Println("Run 'aipmc setup <platform>' to configure platform hooks.")
 		return
 	case "hook-opencode":
 		hook.ProcessOpencodeHook()
+		fmt.Println("Run 'aipmc setup <platform>' to configure platform hooks.")
 		return
 	case "mcp":
 		server := mcp.NewServer(aiClient,
@@ -217,6 +222,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "MCP server error: %v\n", err)
 			os.Exit(1)
 		}
+		fmt.Println("Run 'aipmc setup <platform>' to configure platform hooks.")
 		return
 	case "web":
 		port := 0
@@ -238,9 +244,11 @@ func main() {
 		}
 		srv := web.NewServer(staticFS, handleAPIHandler(), host, port)
 		srv.Listen()
+		fmt.Println("Run 'aipmc setup <platform>' to configure platform hooks.")
 		return
 	case "chat":
 		runChat()
+		fmt.Println("Run 'aipmc setup <platform>' to configure platform hooks.")
 		return
 	}
 
