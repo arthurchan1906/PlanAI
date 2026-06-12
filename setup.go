@@ -35,6 +35,7 @@ var platforms = []platformConfig{
 	{Name: "Gemini CLI", Key: "gemini", ConfigDir: ".gemini", ConfigFile: "settings.json", Aliases: []string{"gc"}},
 	// TOML-format configs
 	{Name: "Codex (OpenAI)", Key: "codex", ConfigDir: "", ConfigFile: "", Aliases: []string{"openai", "openai-codex"}},
+	{Name: "OpenCode", Key: "opencode", ConfigDir: "", ConfigFile: "", Aliases: []string{"oc"}},
 }
 
 // platformByKey maps lowercase short keys/aliases to platform configs.

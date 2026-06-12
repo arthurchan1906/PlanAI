@@ -102,7 +102,7 @@ func main() {
 			os.Exit(1)
 		}
 		// Also setup hooks for platforms that support them
-		if resolved == "Claude Code" || target == "claude" || resolved == "Gemini CLI" || target == "gemini" || resolved == "Codex (OpenAI)" || target == "codex" {
+		if resolved == "Claude Code" || target == "claude" || resolved == "Gemini CLI" || target == "gemini" || resolved == "Codex (OpenAI)" || target == "codex" || resolved == "OpenCode" || target == "opencode" {
 			// Auto-detect binary path and configure Claude Code / Gemini hooks
 			if err := hook.SetupHooksCmd(resolveCommandPath(), resolved); err != nil {
 				fmt.Fprintf(os.Stderr, "hook setup failed: %v\n", err)
@@ -176,6 +176,9 @@ func main() {
 		return
 	case "hook-codex":
 		hook.ProcessCodexHook()
+		return
+	case "hook-opencode":
+		hook.ProcessOpenCodeHook()
 		return
 	case "mcp":
 		server := mcp.NewServer(aiClient,
