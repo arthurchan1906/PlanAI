@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	pmdb "aipmc/db"
+	"aipmc/hook"
 )
 
 // ============================================================
@@ -111,6 +112,16 @@ func setupMCP(targetPlatform string) error {
 				fmt.Fprintf(os.Stderr, "  ⚠️  Codex: %v\n", err)
 			} else {
 				fmt.Printf("  ✅ Codex (OpenAI) → ~/.codex/config.toml\n")
+				configured++
+			}
+			continue
+		}
+
+		// OpenCode is hooks-only (no MCP JSON config)
+		if p.Name == "OpenCode" {
+			if err := hook.SetupOpenCodeHooks(commandPath); err != nil {
+				fmt.Fprintf(os.Stderr, "  ⚠️  OpenCode: %v\n", err)
+			} else {
 				configured++
 			}
 			continue
