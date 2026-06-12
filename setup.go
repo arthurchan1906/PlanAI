@@ -35,8 +35,8 @@ var platforms = []platformConfig{
 	{Name: "Gemini CLI", Key: "gemini", ConfigDir: ".gemini", ConfigFile: "settings.json", Aliases: []string{"gc"}},
 	// TOML-format configs
 	{Name: "Codex (OpenAI)", Key: "codex", ConfigDir: "", ConfigFile: "", Aliases: []string{"openai", "openai-codex"}},
-	// Hook-only platforms (no MCP config)
-	{Name: "OpenCode", Key: "opencode", ConfigDir: "", ConfigFile: "", Aliases: []string{"oc"}},
+	// Hook + MCP platforms
+	{Name: "OpenCode", Key: "opencode", ConfigDir: "", ConfigFile: ".mcp.json", Aliases: []string{"oc"}},
 }
 
 // platformByKey maps lowercase short keys/aliases to platform configs.
@@ -105,12 +105,6 @@ func setupMCP(targetPlatform string) error {
 		if targetPlatform != "" && targetPlatform != "all" && p.Name != targetPlatform {
 			continue
 		}
-
-		// Hook-only platforms — no MCP config file, handled by hook setup
-		if p.Name == "OpenCode" {
-			continue
-		}
-
 		// Codex uses TOML format at user level
 		if p.Name == "Codex (OpenAI)" {
 			if err := setupCodexMCP(commandPath); err != nil {
@@ -196,9 +190,6 @@ func setupMCP(targetPlatform string) error {
 	}
 
 	if configured == 0 && skipped == 0 {
-		if targetPlatform == "OpenCode" {
-			return nil // hook-only platform, no MCP config needed
-		}
 		return fmt.Errorf("no platforms configured")
 	}
 
