@@ -10,7 +10,7 @@ func SetupHooksCmd(commandPath, targetPlatform string) error {
 	case "Codex CLI", "codex", "Codex (OpenAI)":
 		return SetupCodexHooks(commandPath)
 	case "OpenCode", "opencode":
-		return SetupOpenCodeHooks(commandPath)
+		return SetupOpencodeHooks(commandPath)
 	default:
 		// Claude Code and all other platforms
 		return SetupClaudeHooks(commandPath)

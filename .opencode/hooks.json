@@ -4,18 +4,8 @@
       {
         "hooks": [
           {
-            "type": "command",
-            "command": "aipmc hook-opencode"
-          }
-        ]
-      }
-    ],
-    "tool.execute.after": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "aipmc hook-opencode"
+            "command": "D:/Projects/src/DZ/47.99.244.14/chenzhiguo/PlanAI/aipmc.exe hook-opencode",
+            "type": "command"
           }
         ]
       }
@@ -24,8 +14,18 @@
       {
         "hooks": [
           {
-            "type": "command",
-            "command": "aipmc hook-opencode"
+            "command": "D:/Projects/src/DZ/47.99.244.14/chenzhiguo/PlanAI/aipmc.exe hook-opencode",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "tool.execute.after": [
+      {
+        "hooks": [
+          {
+            "command": "D:/Projects/src/DZ/47.99.244.14/chenzhiguo/PlanAI/aipmc.exe hook-opencode",
+            "type": "command"
           }
         ]
       }

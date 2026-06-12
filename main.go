@@ -178,7 +178,7 @@ func main() {
 		hook.ProcessCodexHook()
 		return
 	case "hook-opencode":
-		hook.ProcessOpenCodeHook()
+		hook.ProcessOpencodeHook()
 		return
 	case "mcp":
 		server := mcp.NewServer(aiClient,

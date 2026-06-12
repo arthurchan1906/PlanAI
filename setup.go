@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	pmdb "aipmc/db"
-	"aipmc/hook"
 )
 
 // ============================================================
@@ -36,6 +35,7 @@ var platforms = []platformConfig{
 	{Name: "Gemini CLI", Key: "gemini", ConfigDir: ".gemini", ConfigFile: "settings.json", Aliases: []string{"gc"}},
 	// TOML-format configs
 	{Name: "Codex (OpenAI)", Key: "codex", ConfigDir: "", ConfigFile: "", Aliases: []string{"openai", "openai-codex"}},
+	// Hook-only platforms (no MCP config)
 	{Name: "OpenCode", Key: "opencode", ConfigDir: "", ConfigFile: "", Aliases: []string{"oc"}},
 }
 
@@ -106,22 +106,17 @@ func setupMCP(targetPlatform string) error {
 			continue
 		}
 
+		// Hook-only platforms — no MCP config file, handled by hook setup
+		if p.Name == "OpenCode" {
+			continue
+		}
+
 		// Codex uses TOML format at user level
 		if p.Name == "Codex (OpenAI)" {
 			if err := setupCodexMCP(commandPath); err != nil {
 				fmt.Fprintf(os.Stderr, "  ⚠️  Codex: %v\n", err)
 			} else {
 				fmt.Printf("  ✅ Codex (OpenAI) → ~/.codex/config.toml\n")
-				configured++
-			}
-			continue
-		}
-
-		// OpenCode is hooks-only (no MCP JSON config)
-		if p.Name == "OpenCode" {
-			if err := hook.SetupOpenCodeHooks(commandPath); err != nil {
-				fmt.Fprintf(os.Stderr, "  ⚠️  OpenCode: %v\n", err)
-			} else {
 				configured++
 			}
 			continue
@@ -201,6 +196,9 @@ func setupMCP(targetPlatform string) error {
 	}
 
 	if configured == 0 && skipped == 0 {
+		if targetPlatform == "OpenCode" {
+			return nil // hook-only platform, no MCP config needed
+		}
 		return fmt.Errorf("no platforms configured")
 	}
 
