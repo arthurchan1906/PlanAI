@@ -51,17 +51,15 @@ export const HookRecorder = async ({ $ }) => {
         const sid = props?.sessionID || evt?.sessionID || ""
         if (!role || !sid) return
 
-        // Track this role for future flushes
         lastRole[sid] = role
 
         const flushed = flushSession(sid, role)
-        const content = flushed.content
-        if (content) {
+        if (flushed.content) {
           await sendHook({
             hook_event_name: "message.updated",
             session_id: sid,
             role: role,
-            content: content,
+            content: flushed.content,
             _raw: evt,
           })
         }

@@ -871,27 +871,9 @@ func SetupOpencodeHooks(commandPath string) error {
 	}
 	fmt.Printf("  ✅ Plugin → %s\n", pluginPath)
 
-	// 2. Clean up hooks.json — remove command hooks for events that the
-	//    plugin now handles (was causing double-capture in earlier versions).
+	// 2. Remove old hooks.json if present — not needed, plugin auto-discovery
+	//    handles everything. Was causing double-capture in earlier versions.
 	hooksPath := filepath.Join(opencodeDir, "hooks.json")
-	cfg := map[string]any{}
-	if data, err := os.ReadFile(hooksPath); err == nil && len(data) > 0 {
-		json.Unmarshal(data, &cfg)
-	}
-	// Remove old per-event command hooks if present
-	if h, ok := cfg["hooks"].(map[string]any); ok {
-		delete(h, "message.updated")
-		delete(h, "tool.execute.after")
-		delete(h, "session.idle")
-		if len(h) == 0 {
-			delete(cfg, "hooks")
-		}
-	}
-	os.MkdirAll(opencodeDir, 0755)
-	data, _ := json.MarshalIndent(cfg, "", "  ")
-	if err := os.WriteFile(hooksPath, data, 0644); err != nil {
-		return fmt.Errorf("write hooks.json: %w", err)
-	}
-	fmt.Printf("  ✅ Config → %s\n", hooksPath)
+	os.Remove(hooksPath)
 	return nil
 }
