@@ -36,7 +36,7 @@ var platforms = []platformConfig{
 	// TOML-format configs
 	{Name: "Codex (OpenAI)", Key: "codex", ConfigDir: "", ConfigFile: "", Aliases: []string{"openai", "openai-codex"}},
 	// Hook + MCP platforms
-	{Name: "OpenCode", Key: "opencode", ConfigDir: "", ConfigFile: ".mcp.json", Aliases: []string{"oc"}},
+	{Name: "OpenCode", Key: "opencode", ConfigDir: "", ConfigFile: "opencode.json", Aliases: []string{"oc"}},
 }
 
 // platformByKey maps lowercase short keys/aliases to platform configs.
