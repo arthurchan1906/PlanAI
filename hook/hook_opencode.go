@@ -204,7 +204,7 @@ func ProcessOpencodeHook() {
 		}
 
 		content := buildOpencodeToolContent(normalizedName, raw.ToolInput, toolResp)
-		meta := buildFullMeta("tool_execute_after", data)
+		meta := buildOpencodeToolMeta(normalizedName, raw.ToolInput, toolResp, data)
 
 		if content != "" {
 			if _, err := store.LogDiscussion(sid, "assistant", "opencode", content, meta); err != nil {
@@ -520,6 +520,138 @@ func isNewFileFromContent(content string, toolResp json.RawMessage) bool {
 // uitoa converts int to string without importing strconv (uses fmt).
 func uitoa(n int) string {
 	return fmt.Sprintf("%d", n)
+}
+
+// buildOpencodeToolMeta builds clean diff metadata for OpenCode tool events.
+// Unlike buildFullMeta which stores the entire raw JSON, this extracts only
+// the structured diff hunks (file_path + patch hunks), matching the format
+// that the frontend DiffPanel expects.
+func buildOpencodeToolMeta(toolName string, toolInput, toolResp, rawData json.RawMessage) string {
+	ti := parseToolInput(toolInput)
+
+	// Resolve file path — OpenCode uses camelCase
+	fp := firstNonEmpty(ti["file_path"], ti["filePath"], ti["path"])
+	if fp == "" {
+		// Try from tool_response
+		var tr struct {
+			Title    string `json:"title"`
+			FilePath string `json:"filePath"`
+		}
+		if json.Unmarshal(toolResp, &tr) == nil {
+			fp = firstNonEmpty(tr.Title, tr.FilePath)
+		}
+	}
+
+	switch toolName {
+	case "edit", "Edit", "EditTool":
+		return buildEditMeta(fp, toolResp, toolInput)
+
+	case "write", "Write", "WriteTool":
+		return buildWriteMeta(fp, toolResp, ti)
+
+	case "bash", "Bash", "BashTool":
+		meta, _ := json.Marshal(map[string]any{
+			"type":    "bash",
+			"command": ti["command"],
+		})
+		return string(meta)
+
+	default:
+		// For other tools, store minimal metadata
+		meta, _ := json.Marshal(map[string]any{
+			"type":      "tool",
+			"tool_name": toolName,
+		})
+		return string(meta)
+	}
+}
+
+// buildEditMeta extracts unified diff hunks from OpenCode's edit tool response.
+func buildEditMeta(filePath string, toolResp, toolInput json.RawMessage) string {
+	meta := map[string]any{"type": "edit"}
+	if filePath != "" {
+		meta["file_path"] = filePath
+	}
+
+	// Parse unified diff from OpenCode's tool_response.metadata.filediff.patch
+	var resp struct {
+		Metadata struct {
+			Diff     string `json:"diff"`
+			FileDiff struct {
+				File       string `json:"file"`
+				Patch      string `json:"patch"`
+				Additions  int    `json:"additions"`
+				Deletions  int    `json:"deletions"`
+			} `json:"filediff"`
+		} `json:"metadata"`
+	}
+	if json.Unmarshal(toolResp, &resp) == nil {
+		diffText := resp.Metadata.FileDiff.Patch
+		if diffText == "" {
+			diffText = resp.Metadata.Diff
+		}
+		if diffText != "" {
+			hunks := parseDiffToHunks(diffText)
+			if len(hunks) > 0 {
+				meta["hunks"] = hunks
+			}
+		}
+		if filePath == "" && resp.Metadata.FileDiff.File != "" {
+			meta["file_path"] = resp.Metadata.FileDiff.File
+		}
+	}
+
+	// Fallback: if no structured diff, use old_string/new_string from tool_input
+	if _, hasHunks := meta["hunks"]; !hasHunks {
+		ti := parseToolInput(toolInput)
+		oldStr := firstNonEmpty(ti["old_string"], ti["oldString"], ti["old_str"])
+		newStr := firstNonEmpty(ti["new_string"], ti["newString"], ti["new_str"])
+		if oldStr != "" {
+			meta["old_string"] = oldStr
+		}
+		if newStr != "" {
+			meta["new_string"] = newStr
+		}
+	}
+
+	b, _ := json.Marshal(meta)
+	return string(b)
+}
+
+// buildWriteMeta extracts file metadata from OpenCode's write tool response.
+func buildWriteMeta(filePath string, toolResp json.RawMessage, ti map[string]string) string {
+	meta := map[string]any{}
+	if filePath != "" {
+		meta["file_path"] = filePath
+	}
+
+	// Check if file is new or existing
+	var resp struct {
+		Metadata struct {
+			Exists   bool `json:"exists"`
+			IsNew    bool `json:"isNew"`
+			Created  bool `json:"created"`
+		} `json:"metadata"`
+		Created    bool `json:"created"`
+		IsNewFile  bool `json:"isNewFile"`
+	}
+	isNew := false
+	if json.Unmarshal(toolResp, &resp) == nil {
+		isNew = resp.Created || resp.IsNewFile || resp.Metadata.Created || resp.Metadata.IsNew || !resp.Metadata.Exists
+	}
+	// Fallback: check tool_input content vs existing file
+	if !isNew && ti["content"] != "" {
+		isNew = true // default to new if we can't determine
+	}
+
+	if isNew {
+		meta["type"] = "new_file"
+	} else {
+		meta["type"] = "edit"
+	}
+
+	b, _ := json.Marshal(meta)
+	return string(b)
 }
 
 // extractOpencodeMessageID extracts the message ID from an OpenCode _raw event.

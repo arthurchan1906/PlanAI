@@ -8,8 +8,9 @@ export const HookRecorder = async ({ $ }) => {
 
   // Buffer pending text parts keyed by messageID, with age tracking
   const pending = {}
+  const lastRole = {}  // sessionID → last known role
 
-  const flushSession = (sid) => {
+  const flushSession = (sid, fallbackRole) => {
     const texts = []
     for (const [key, part] of Object.entries(pending)) {
       if (part.sid === sid && part.text) {
@@ -17,7 +18,7 @@ export const HookRecorder = async ({ $ }) => {
       }
       delete pending[key]
     }
-    return texts.join("\n")
+    return { content: texts.join("\n"), role: fallbackRole || lastRole[sid] || "" }
   }
 
   // Cleanup stale buffers every 30s
@@ -29,7 +30,7 @@ export const HookRecorder = async ({ $ }) => {
           sendHook({
             hook_event_name: "message.part.updated",
             session_id: part.sid,
-            role: "assistant",
+            role: lastRole[part.sid] || "assistant",
             content: part.text,
           })
         }
@@ -50,8 +51,11 @@ export const HookRecorder = async ({ $ }) => {
         const sid = props?.sessionID || evt?.sessionID || ""
         if (!role || !sid) return
 
-        const content = flushSession(sid)
-        // Only send if we have content (skip diff-only updates)
+        // Track this role for future flushes
+        lastRole[sid] = role
+
+        const flushed = flushSession(sid, role)
+        const content = flushed.content
         if (content) {
           await sendHook({
             hook_event_name: "message.updated",
@@ -70,7 +74,7 @@ export const HookRecorder = async ({ $ }) => {
         if (!part?.text || part?.type !== "text") return
 
         if (part?.role) {
-          // Has role — send immediately
+          lastRole[sid] = part.role
           await sendHook({
             hook_event_name: "message.part.updated",
             session_id: sid,
@@ -79,7 +83,6 @@ export const HookRecorder = async ({ $ }) => {
             _raw: evt,
           })
         } else {
-          // No role — buffer until message.updated arrives
           const key = msgId + "-" + (part?.id || Math.random())
           pending[key] = { sid, text: part.text, ts: Date.now() }
         }
@@ -103,14 +106,13 @@ export const HookRecorder = async ({ $ }) => {
     "session.idle": async (...args) => {
       const evt = args[0] || {}
       const sid = evt.sessionID || evt.session?.id || evt.id || evt.session_id || ""
-      // Flush remaining buffer
-      const content = flushSession(sid)
-      if (content) {
+      const flushed = flushSession(sid, lastRole[sid] || "assistant")
+      if (flushed.content) {
         await sendHook({
           hook_event_name: "message.part.updated",
           session_id: sid,
-          role: "assistant",
-          content: content,
+          role: flushed.role,
+          content: flushed.content,
         })
       }
       await sendHook({
