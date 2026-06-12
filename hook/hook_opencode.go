@@ -76,21 +76,22 @@ func ProcessOpenCodeHook() {
 	}
 
 	switch raw.Event {
-	case "UserPromptSubmit":
+	// Claude Code compat names (when opencode-claude-hooks plugin is installed)
+	case "UserPromptSubmit", "message.updated":
 		if raw.Prompt != "" {
 			if _, err := store.LogDiscussion(raw.SessionID, "user", "opencode", raw.Prompt, ""); err != nil {
-				fmt.Fprintf(os.Stderr, "[aipm-opencode %s] UserPromptSubmit log FAILED: %v\n", now, err)
+				fmt.Fprintf(os.Stderr, "[aipm-opencode %s] user log FAILED: %v\n", now, err)
 			}
 		}
 
-	case "Stop", "StopFailure":
+	case "Stop", "StopFailure", "session.idle":
 		if raw.LastAssistantMessage != "" {
 			if _, err := store.LogDiscussion(raw.SessionID, "assistant", "opencode", raw.LastAssistantMessage, ""); err != nil {
-				fmt.Fprintf(os.Stderr, "[aipm-opencode %s] Stop log FAILED: %v\n", now, err)
+				fmt.Fprintf(os.Stderr, "[aipm-opencode %s] stop log FAILED: %v\n", now, err)
 			}
 		}
 
-	case "PostToolUse":
+	case "PostToolUse", "tool.execute.after":
 		desc := raw.ToolName
 		ti := raw.ToolInput
 		tr := raw.ToolResponse
@@ -221,7 +222,10 @@ func ProcessOpenCodeHook() {
 	os.Exit(0)
 }
 
-// SetupOpenCodeHooks writes OpenCode hook configuration to .opencode/hooks.json.
+// SetupOpenCodeHooks writes OpenCode hook configuration.
+// Uses native TypeScript plugin (.opencode/plugin/aipm-hook.ts) which is
+// the most reliable hook mechanism for OpenCode.
+// Also writes a simple hooks.json for the opencode-claude-hooks compat plugin.
 func SetupOpenCodeHooks(commandPath string) error {
 	runtimeDir, err := pmdb.RuntimeDir()
 	if err != nil {
@@ -229,47 +233,92 @@ func SetupOpenCodeHooks(commandPath string) error {
 	}
 	projectRoot := filepath.Dir(runtimeDir)
 	opencodeDir := filepath.Join(projectRoot, ".opencode")
-	hooksPath := filepath.Join(opencodeDir, "hooks.json")
 
+	// 1. TypeScript plugin (native, most reliable)
+	pluginDir := filepath.Join(opencodeDir, "plugin")
+	os.MkdirAll(pluginDir, 0755)
+	pluginPath := filepath.Join(pluginDir, "aipm-hook.ts")
+
+	pluginSource := `// AIPM Hook Plugin for OpenCode
+// Captures conversation and tool use to AIPM discussion_log.
+// Requires: npm install @opencode-ai/plugin
+import type { Plugin } from "@opencode-ai/plugin"
+import { spawnSync } from "node:child_process"
+
+export const AipmHook: Plugin = async () => {
+  return {
+    event: async ({ event }) => {
+      const { type, data } = event as { type: string; data: Record<string, unknown> }
+      const payload: Record<string, unknown> = {
+        hook_event_name: type,
+        session_id: data.sessionID || data.session_id || "",
+      }
+      switch (type) {
+        case "message.updated": {
+          const msg = data.message as { role: string; content: string } | undefined
+          if (msg?.role === "user") {
+            payload.prompt = msg.content || ""
+          } else { return }
+          break
+        }
+        case "session.idle": {
+          const lastMsg = data.lastAssistantMessage || data.response || ""
+          if (!lastMsg) return
+          payload.last_assistant_message = lastMsg
+          break
+        }
+        case "tool.execute.after": {
+          payload.tool_name = data.tool || data.tool_name || ""
+          payload.tool_input = data.input || data.args || {}
+          payload.tool_response = data.output || data.result || {}
+          break
+        }
+        default: return
+      }
+      try {
+        spawnSync("aipmc", ["hook-opencode"], {
+          input: JSON.stringify(payload),
+          timeout: 10000,
+          stdio: ["pipe", "ignore", "pipe"],
+        })
+      } catch { /* never crash OpenCode */ }
+    },
+  }
+}
+`
+	if err := os.WriteFile(pluginPath, []byte(pluginSource), 0644); err != nil {
+		return fmt.Errorf("write plugin: %w", err)
+	}
+	fmt.Printf("  ✅ OpenCode plugin → %s\n", pluginPath)
+
+	// 2. Also write hooks.json for opencode-claude-hooks compat
+	hooksPath := filepath.Join(opencodeDir, "hooks.json")
 	cfg := map[string]any{}
 	if data, err := os.ReadFile(hooksPath); err == nil && len(data) > 0 {
 		json.Unmarshal(data, &cfg)
 	}
-
 	hooks, _ := cfg["hooks"].(map[string]any)
 	if hooks == nil {
 		hooks = map[string]any{}
 	}
-
-	hookCmd := commandPath + " hook-opencode"
-	// Only quote if path contains spaces
-	if strings.Contains(commandPath, " ") {
-		hookCmd = "\"" + commandPath + "\" hook-opencode"
-	}
-
 	makeEntry := func() []any {
 		return []any{
 			map[string]any{
 				"hooks": []any{
-					map[string]any{
-						"type":    "command",
-						"command": hookCmd,
-					},
+					map[string]any{"type": "command", "command": commandPath + " hook-opencode"},
 				},
 			},
 		}
 	}
-
-	hooks["UserPromptSubmit"] = makeEntry()
-	hooks["PostToolUse"] = makeEntry()
-	hooks["Stop"] = makeEntry()
+	hooks["message.updated"] = makeEntry()
+	hooks["tool.execute.after"] = makeEntry()
+	hooks["session.idle"] = makeEntry()
 	cfg["hooks"] = hooks
-
 	os.MkdirAll(opencodeDir, 0755)
-	data, _ := json.MarshalIndent(cfg, "", "  ")
-	if err := os.WriteFile(hooksPath, data, 0644); err != nil {
-		return fmt.Errorf("write hooks.json: %w", err)
+	if data, err := json.MarshalIndent(cfg, "", "  "); err == nil {
+		os.WriteFile(hooksPath, data, 0644)
 	}
-	fmt.Printf("  ✅ OpenCode hooks configured → %s\n", hooksPath)
+
+	fmt.Println("  ℹ️  请确保已安装 npm 包: npm install @opencode-ai/plugin")
 	return nil
 }

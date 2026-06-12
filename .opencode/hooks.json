@@ -1,0 +1,34 @@
+{
+  "hooks": {
+    "message.updated": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "aipmc hook-opencode"
+          }
+        ]
+      }
+    ],
+    "tool.execute.after": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "aipmc hook-opencode"
+          }
+        ]
+      }
+    ],
+    "session.idle": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "aipmc hook-opencode"
+          }
+        ]
+      }
+    ]
+  }
+}
