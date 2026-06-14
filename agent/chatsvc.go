@@ -42,6 +42,36 @@ type SendResult struct {
 
 // Send runs one user message against an existing or new session.
 func (c *ChatService) Send(sessionID, message string) (*SendResult, error) {
+	return c.send(sessionID, message, nil)
+}
+
+// StreamEmit sends one SSE event: event name + JSON payload.
+type StreamEmit func(event string, data map[string]any)
+
+// SendStream runs the agent with streaming callbacks for web SSE.
+func (c *ChatService) SendStream(sessionID, message string, emit StreamEmit) (*SendResult, error) {
+	var cb *StreamCallbacks
+	if emit != nil {
+		cb = &StreamCallbacks{
+			OnToken: func(token string) {
+				emit("token", map[string]any{"content": token})
+			},
+			OnToolStart: func(id, name string, args map[string]any) {
+				emit("tool_start", map[string]any{"id": id, "name": name, "args": args})
+			},
+			OnToolResult: func(id, name, result string) {
+				preview := result
+				if len(preview) > 200 {
+					preview = preview[:200] + "..."
+				}
+				emit("tool_result", map[string]any{"id": id, "name": name, "result": preview})
+			},
+		}
+	}
+	return c.send(sessionID, message, cb)
+}
+
+func (c *ChatService) send(sessionID, message string, cb *StreamCallbacks) (*SendResult, error) {
 	if c.LLM == nil || !c.LLM.Enabled() {
 		return nil, fmt.Errorf("AI 未配置。请设置 AI_ENDPOINT 环境变量。")
 	}
@@ -71,7 +101,13 @@ func (c *ChatService) Send(sessionID, message string) (*SendResult, error) {
 		sess = NewSession()
 	}
 
-	response, err := a.Run(sess, message)
+	var response string
+	var err error
+	if cb != nil {
+		response, err = a.RunStream(sess, message, cb)
+	} else {
+		response, err = a.Run(sess, message)
+	}
 	if err != nil {
 		return nil, err
 	}

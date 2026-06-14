@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -16,6 +17,8 @@ func (s *Server) handleChatRoutes(w http.ResponseWriter, method, path string, q 
 		s.handleChatListSessions(w)
 	case method == "GET" && path == "chat/session":
 		s.handleChatGetSession(w, q.Get("id"))
+	case method == "POST" && path == "chat/send/stream":
+		s.handleChatSendStream(w, body)
 	case method == "POST" && path == "chat/send":
 		s.handleChatSend(w, body)
 	default:
@@ -75,6 +78,50 @@ func (s *Server) handleChatSend(w http.ResponseWriter, body map[string]any) {
 		return
 	}
 	web.SendJSON(w, map[string]any{
+		"session_id": result.SessionID,
+		"response":   result.Response,
+		"events":     result.Events,
+		"traces":     result.Traces,
+	})
+}
+
+func (s *Server) handleChatSendStream(w http.ResponseWriter, body map[string]any) {
+	if s.deps.App.AI == nil || !s.deps.App.AI.Enabled() {
+		web.SendError(w, 503, "AI 未配置。请设置 AI_ENDPOINT 环境变量。")
+		return
+	}
+	msg, _ := body["message"].(string)
+	sid, _ := body["session_id"].(string)
+	if msg == "" {
+		web.SendError(w, 400, "缺少 message 参数")
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		web.SendError(w, 500, "streaming not supported")
+		return
+	}
+
+	web.CORS(w)
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+
+	writeSSE := func(event string, data map[string]any) {
+		b, _ := json.Marshal(data)
+		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
+		flusher.Flush()
+	}
+
+	svc := agent.NewChatService(s.deps.App.AI, agent.ProjectWorkDir(), "aipmc-web")
+	result, err := svc.SendStream(sid, msg, writeSSE)
+	if err != nil {
+		writeSSE("error", map[string]any{"message": err.Error()})
+		return
+	}
+	writeSSE("done", map[string]any{
 		"session_id": result.SessionID,
 		"response":   result.Response,
 		"events":     result.Events,

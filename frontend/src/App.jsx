@@ -305,7 +305,7 @@ function ConsoleApp() {
             <Title level={3} className="header-title">{NAV_ITEMS.find(i => i.key === view)?.label}</Title>
           </div>
         </Header>
-        <Content className="console-content">
+        <Content className={`console-content${view === "chat" ? " console-content-fill" : ""}`}>
           {false && <DashboardView visions={visions} principles={principles} ideas={ideas} bugs={bugs} dashboard={dashboard} aiContext={aiContext} nextPacket={nextPacket} handoff={handoff} inbox={inbox} canon={canon} loading={loading} onOpenCanon={id => { setCanonForm({...canonForm, decisionId: id || ""}); setView("canon"); }} onOpenDecisions={() => setView("decisions")} onOpenPlans={() => setView("planning")} onOpenCommits={() => setView("commits")} onOpenCommitAttention={handleOpenCommitAttention} onOpenIdeas={() => setView("ideas")} onOpenDocs={() => setView("docs")} onOpenDaily={() => setView("daily")} onOpenPrinciples={() => setView("principles")} />}
           {view === "planning" && (
             <RoadmapView

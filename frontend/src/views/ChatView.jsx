@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
-  Layout,
   Input,
   Button,
   Card,
@@ -19,7 +18,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/github.css";
-import { chatSend, chatGetSessions, chatGetSession } from "../utils/api";
+import { chatSendStream, chatGetSessions, chatGetSession } from "../utils/api";
 
 const { TextArea } = Input;
 const { Text, Title } = Typography;
@@ -155,7 +154,11 @@ export default function ChatView() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [showTraces, setShowTraces] = useState(true);
+  const [streamingText, setStreamingText] = useState("");
+  const [liveTools, setLiveTools] = useState([]);
   const messagesEndRef = useRef(null);
+  const streamRef = useRef("");       // accumulates full text without re-render
+  const rafRef = useRef(null);        // throttles display updates
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -169,7 +172,14 @@ export default function ChatView() {
     }).catch(() => {});
   }, []);
 
-  useEffect(() => { scrollToBottom(); }, [events]);
+  useEffect(() => { scrollToBottom(); }, [events, streamingText, liveTools]);
+
+  // Clean up rAF on unmount.
+  useEffect(() => {
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
+  }, []);
 
   function handleSelectSession(id) {
     setCurrentSessionId(id);
@@ -186,23 +196,68 @@ export default function ChatView() {
     setInput("");
   }
 
+  // flush the accumulator to display state, throttled via rAF.
+  function flushStreamRef() {
+    if (rafRef.current) return;
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null;
+      setStreamingText(streamRef.current);
+    });
+  }
+
   async function handleSend() {
     const text = input.trim();
     if (!text) return;
+    console.log("[ChatView] handleSend → calling chatSendStream");
     setInput("");
     setLoading(true);
+    streamRef.current = "";
+    setStreamingText("");
+    setLiveTools([]);
     setEvents((prev) => [...prev, { role: "user", content: text }]);
     try {
-      const data = await chatSend(text, currentSessionId);
-      if (data.session_id && data.session_id !== currentSessionId) {
-        setCurrentSessionId(data.session_id);
-        chatGetSessions().then((d) => setSessions(d.sessions || [])).catch(() => {});
-      }
-      setEvents(data.events || []);
-      setTraces(data.traces || []);
+      await chatSendStream(text, currentSessionId, {
+        onToken: (chunk) => {
+          streamRef.current += chunk;
+          flushStreamRef();
+        },
+        onToolStart: (payload) => {
+          setStreamingText("");
+          setLiveTools((prev) => [
+            ...prev,
+            { id: payload.id, name: payload.name, args: payload.args, status: "running" },
+          ]);
+        },
+        onToolResult: (payload) => {
+          setLiveTools((prev) =>
+            prev.map((t) =>
+              t.id === payload.id
+                ? { ...t, status: "done", result: payload.result }
+                : t
+            )
+          );
+        },
+        onDone: (data) => {
+          if (data.session_id && data.session_id !== currentSessionId) {
+            setCurrentSessionId(data.session_id);
+            chatGetSessions().then((d) => setSessions(d.sessions || [])).catch(() => {});
+          }
+          setEvents(data.events || []);
+          setTraces(data.traces || []);
+          streamRef.current = "";
+          setStreamingText("");
+          setLiveTools([]);
+        },
+        onError: (msg) => message.error(`发送失败: ${msg}`),
+      });
     } catch (err) {
       message.error(`发送失败: ${err.message}`);
+      streamRef.current = "";
+      setStreamingText("");
+      setLiveTools([]);
     } finally {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
       setLoading(false);
     }
   }
@@ -217,9 +272,9 @@ export default function ChatView() {
   const sidebarW = showTraces ? "50%" : 0;
 
   return (
-    <Layout style={{ height: "100%", background: "#fff" }}>
+    <div className="chat-view-root">
       {/* Top bar: session selector */}
-      <div style={{ padding: "12px 16px", borderBottom: "1px solid #f0f0f0", display: "flex", alignItems: "center", gap: 12 }}>
+      <div className="chat-view-toolbar">
         <Select
           style={{ flex: 1 }}
           placeholder="选择会话..."
@@ -240,16 +295,44 @@ export default function ChatView() {
       </div>
 
       {/* Main area: chat + trace */}
-      <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+      <div className="chat-view-body">
         {/* Left: Chat messages */}
-        <div style={{ flex: showTraces ? "1 1 50%" : "1 1 100%", overflow: "auto", padding: "16px 24px", borderRight: showTraces ? "1px solid #f0f0f0" : "none" }}>
+        <div className="chat-view-messages" style={{ borderRight: showTraces ? "1px solid #f0f0f0" : "none" }}>
           {events.length === 0 && !loading && (
             <Empty description="开始一个新会话，与 AI 编程助手对话" style={{ marginTop: 80 }} />
           )}
           {events.map((evt, i) => (
             <MessageBubble key={i} evt={evt} />
           ))}
-          {loading && (
+          {streamingText && (
+            <div style={{ marginBottom: 16, display: "flex", justifyContent: "flex-start" }}>
+              <RobotOutlined style={{ marginRight: 8, marginTop: 8, color: "#52c41a" }} />
+              <Card size="small" bodyStyle={{ padding: "8px 14px" }}>
+                <div style={{ fontSize: 14, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                  {streamingText}
+                  <span className="cursor-blink" style={{
+                    display: "inline-block", width: 8, height: 16,
+                    background: "#52c41a", marginLeft: 2, verticalAlign: "text-bottom",
+                    animation: "blink 1s step-end infinite",
+                  }} />
+                </div>
+              </Card>
+            </div>
+          )}
+          {liveTools.map((tool) => (
+            <div key={tool.id} style={{ marginBottom: 8, marginLeft: 32 }}>
+              <Tag color={tool.status === "running" ? "processing" : "success"} style={{ fontSize: 11 }}>
+                <ToolOutlined /> {tool.name}
+                {tool.status === "running" ? " …" : ""}
+              </Tag>
+              {tool.result && (
+                <Text type="secondary" style={{ fontSize: 11, marginLeft: 4 }}>
+                  {tool.result}
+                </Text>
+              )}
+            </div>
+          ))}
+          {loading && !streamingText && liveTools.length === 0 && (
             <div style={{ textAlign: "center", padding: 16 }}>
               <Spin tip="思考中..." />
             </div>
@@ -259,7 +342,7 @@ export default function ChatView() {
 
         {/* Right: Trace viewer */}
         {showTraces && (
-          <div style={{ flex: "1 1 50%", overflow: "auto", padding: "12px 16px", background: "#fafafa" }}>
+          <div className="chat-view-trace">
             <Title level={5} style={{ marginBottom: 12 }}>
               <BugOutlined /> Agent-LLM 交互 Trace
               <Tag style={{ marginLeft: 8 }}>{traces.length} 轮</Tag>
@@ -275,7 +358,7 @@ export default function ChatView() {
       </div>
 
       {/* Bottom: Input */}
-      <div style={{ padding: "12px 24px", borderTop: "1px solid #f0f0f0" }}>
+      <div className="chat-view-input">
         <Space.Compact style={{ width: "100%" }}>
           <TextArea
             value={input}
@@ -298,6 +381,6 @@ export default function ChatView() {
           </Button>
         </Space.Compact>
       </div>
-    </Layout>
+    </div>
   );
 }
