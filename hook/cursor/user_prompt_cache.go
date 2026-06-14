@@ -24,6 +24,45 @@ type deferredUserPromptFile struct {
 
 var deferredUserMu sync.Mutex
 
+// withDeferredUserPromptLock serializes access to the deferred prompt cache
+// across concurrent hook processes using a lock file.
+func withDeferredUserPromptLock(fn func()) {
+	deferredUserMu.Lock()
+	defer deferredUserMu.Unlock()
+
+	lockPath := deferredUserPromptLockPath()
+	if lockPath == "" {
+		fn()
+		return
+	}
+	var release func()
+	for i := 0; i < 200; i++ {
+		f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if err == nil {
+			release = func() {
+				f.Close()
+				_ = os.Remove(lockPath)
+			}
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if release != nil {
+		defer release()
+	}
+	fn()
+}
+
+func deferredUserPromptLockPath() string {
+	dir, err := pmdb.RuntimeDir()
+	if err != nil {
+		return ""
+	}
+	cacheDir := filepath.Join(dir, "cache")
+	_ = os.MkdirAll(cacheDir, 0755)
+	return filepath.Join(cacheDir, "cursor-user-prompts.lock")
+}
+
 func deferredUserPromptCachePath() (string, error) {
 	runtimeDir, err := pmdb.RuntimeDir()
 	if err != nil {
@@ -47,29 +86,28 @@ func cacheDeferredUserPrompt(sessionID, generationID, transcriptPath, hookPrompt
 	if sessionID == "" {
 		return
 	}
-	deferredUserMu.Lock()
-	defer deferredUserMu.Unlock()
-
-	path, err := deferredUserPromptCachePath()
-	if err != nil {
-		return
-	}
-	data, _ := os.ReadFile(path)
-	var cache deferredUserPromptFile
-	if len(data) > 0 {
-		json.Unmarshal(data, &cache)
-	}
-	if cache.Entries == nil {
-		cache.Entries = map[string]deferredUserPrompt{}
-	}
-	key := deferredUserKey(sessionID, generationID)
-	cache.Entries[key] = deferredUserPrompt{
-		TranscriptPath: transcriptPath,
-		HookPrompt:     hookPrompt,
-		CreatedAt:      time.Now().Unix(),
-	}
-	out, _ := json.Marshal(cache)
-	_ = os.WriteFile(path, out, 0644)
+	withDeferredUserPromptLock(func() {
+		path, err := deferredUserPromptCachePath()
+		if err != nil {
+			return
+		}
+		data, _ := os.ReadFile(path)
+		var cache deferredUserPromptFile
+		if len(data) > 0 {
+			json.Unmarshal(data, &cache)
+		}
+		if cache.Entries == nil {
+			cache.Entries = map[string]deferredUserPrompt{}
+		}
+		key := deferredUserKey(sessionID, generationID)
+		cache.Entries[key] = deferredUserPrompt{
+			TranscriptPath: transcriptPath,
+			HookPrompt:     hookPrompt,
+			CreatedAt:      time.Now().Unix(),
+		}
+		out, _ := json.Marshal(cache)
+		_ = os.WriteFile(path, out, 0644)
+	})
 }
 
 func resolveDeferredUserPrompt(sessionID, transcriptPath, hookPrompt string) (prompt string, fromTranscript bool) {
@@ -100,10 +138,8 @@ func flushDeferredUserPrompt(sessionID, generationID, transcriptPath string, raw
 	if sessionID == "" {
 		return
 	}
-	deferredUserMu.Lock()
-	defer deferredUserMu.Unlock()
-
-	path, err := deferredUserPromptCachePath()
+	withDeferredUserPromptLock(func() {
+		path, err := deferredUserPromptCachePath()
 	if err != nil {
 		return
 	}
@@ -144,16 +180,16 @@ func flushDeferredUserPrompt(sessionID, generationID, transcriptPath string, raw
 	delete(cache.Entries, key)
 	out, _ := json.Marshal(cache)
 	_ = os.WriteFile(path, out, 0644)
+	})
 }
 
 func shouldDeferUserPrompt(hookPrompt, resolved string) bool {
 	if strings.TrimSpace(hookPrompt) == "" && resolved == "" {
 		return true
 	}
-	// Garbled hook payloads must wait for transcript backfill — never log stale transcript at submit.
-	if looksLikeMojibake(hookPrompt) {
-		return true
-	}
+	// Defer only when the resolved text is still mojibake or empty.
+	// FixHookText now recovers most cases with segment-based GBK reversal;
+	// those that remain broken need transcript backfill at flush time.
 	if resolved == "" || looksLikeMojibake(resolved) {
 		return true
 	}

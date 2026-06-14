@@ -10,14 +10,14 @@ import (
 	"path/filepath"
 	"strings"
 
-	"bufio"
-	"aipmc/agent"
-	"aipmc/ai"
+	apipkg "aipmc/api"
+	"aipmc/app"
 	"aipmc/analyze"
+	"aipmc/chatcli"
 	"aipmc/cli"
 	pmdb "aipmc/db"
 	"aipmc/hook"
-	"aipmc/mcp"
+	"aipmc/search"
 	"aipmc/store"
 	"aipmc/web"
 )
@@ -25,35 +25,10 @@ import (
 //go:embed frontend/dist
 var uiFS embed.FS
 
-// aiClient is the global AI client, initialized in main().
-// nil when AI is not configured — all AI-dependent code paths
-// gracefully degrade.
-var aiClient *ai.Client
-
-func initAI() {
-	cfg := pmdb.LoadConfig()
-	endpoint := cfg.AIEndpoint
-	if endpoint == "" {
-		endpoint = os.Getenv("AI_ENDPOINT")
-	}
-	model := cfg.AIModel
-	if model == "" {
-		model = os.Getenv("AI_MODEL")
-	}
-	chatModel := cfg.AIChatModel
-	if chatModel == "" {
-		chatModel = os.Getenv("AI_CHAT_MODEL")
-	}
-	if endpoint != "" {
-		apiKey := os.Getenv("AI_API_KEY")
-		embEndpoint := cfg.AIEmbeddingEndpoint
-		if embEndpoint == "" { embEndpoint = os.Getenv("AI_EMBEDDING_ENDPOINT") }
-		aiClient = ai.NewClient(endpoint, embEndpoint, model, chatModel, apiKey)
-	}
-}
+var application = app.New()
 
 func main() {
-	initAI()
+	application.ReloadAI()
 
 	if len(os.Args) < 2 {
 		fmt.Println("AIPM CLI — AI Project Manager")
@@ -166,7 +141,7 @@ func main() {
 	case "embed":
 		n := 0 // 0 = all
 		if len(os.Args) > 2 { fmt.Sscanf(os.Args[2], "%d", &n) }
-		count, err := embedDiscussions(n)
+		count, err := application.EmbedDiscussions(n)
 		if err != nil { fmt.Fprintf(os.Stderr, "embed error: %v\n", err); os.Exit(1) }
 		fmt.Printf("embedded %d discussions\n", count)
 		return
@@ -189,39 +164,7 @@ func main() {
 		hook.ProcessCursorHook()
 		return
 	case "mcp":
-		server := mcp.NewServer(aiClient,
-			searchProjectContext,
-			func(q string, l int) interface{} {
-				hits := searchFTS5(q, l)
-				if hits == nil { return nil }
-				out := make([]map[string]interface{}, len(hits))
-				for i, h := range hits {
-					out[i] = map[string]interface{}{"type": h.Type, "id": h.ID, "title": h.Title, "status": h.Status, "score": h.Score, "command": h.Command}
-				}
-				return out
-			},
-			func(q string) interface{} {
-				hits := searchLinear(q)
-				out := make([]map[string]interface{}, len(hits))
-				for i, h := range hits {
-					out[i] = map[string]interface{}{"type": h.Type, "id": h.ID, "title": h.Title, "status": h.Status, "score": h.Score, "command": h.Command}
-				}
-				return out
-			},
-			func(q string, l int, hits interface{}) interface{} {
-				if raw, ok := hits.([]map[string]interface{}); ok {
-					reranked := aiSearchRerank(q, l, searchHitFromMaps(raw))
-					out := make([]map[string]interface{}, len(reranked))
-					for i, h := range reranked {
-						out[i] = map[string]interface{}{"type": h.Type, "id": h.ID, "title": h.Title, "status": h.Status, "score": h.Score, "command": h.Command}
-					}
-					return out
-				}
-				return nil
-			},
-			searchDiscussions,
-		)
-		if err := server.Run(); err != nil {
+		if err := application.RunMCP(); err != nil {
 			fmt.Fprintf(os.Stderr, "MCP server error: %v\n", err)
 			os.Exit(1)
 		}
@@ -244,11 +187,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "failed to load embedded UI: %v\n", err)
 			os.Exit(1)
 		}
-		srv := web.NewServer(staticFS, handleAPIHandler(), host, port)
+		srv := web.NewServer(staticFS, newAPIHandler(), host, port)
 		srv.Listen()
 		return
 	case "chat":
-		runChat()
+		chatcli.Run(application)
 		return
 	}
 
@@ -264,21 +207,21 @@ func main() {
 	case "search":
 		query := os.Args[2]
 		limit := args.Int("limit", 8)
-		cli.PrintJSON(searchProjectContext(query, limit))
+		cli.PrintJSON(search.ProjectContext(query, limit))
 	case "status":
-		cli.PrintJSON(getStatusSnapshot())
+		cli.PrintJSON(application.StatusSnapshot())
 	case "start":
-		cli.PrintJSON(buildAgentStartPacket())
+		cli.PrintJSON(application.AgentStartPacket())
 	case "next":
-		cli.PrintJSON(buildNextActionPacket())
+		cli.PrintJSON(application.NextActionPacket())
 	case "context":
-		cli.PrintJSON(buildContextPack())
+		cli.PrintJSON(application.ContextPack())
 	case "analyze":
 		cli.PrintJSON(analyze.RunFullAnalysis())
 	case "briefing":
-		fmt.Println(analyze.BuildBriefing(aiClient))
+		fmt.Println(analyze.BuildBriefing(application.AI))
 	case "inbox":
-		cli.PrintJSON(getInboxSummary())
+		cli.PrintJSON(application.InboxSummary())
 	case "doctor":
 		dbPath, _ := pmdb.FindPath()
 		cli.PrintJSON(runDoctor(dbPath))
@@ -329,6 +272,10 @@ func main() {
 	}
 }
 
+func newAPIHandler() http.Handler {
+	return apipkg.New(apipkg.Deps{App: application}).Handler()
+}
+
 func writeSkillFile() {
 	dir, err := pmdb.RuntimeDir()
 	if err != nil {
@@ -337,11 +284,6 @@ func writeSkillFile() {
 	skillDir := filepath.Join(dir, "..", ".claude", "skills")
 	os.MkdirAll(skillDir, 0755)
 	os.WriteFile(filepath.Join(skillDir, "pmai.md"), []byte(skillMD), 0644)
-}
-
-// handleAPIHandler wraps handleAPI as an http.Handler.
-func handleAPIHandler() http.Handler {
-	return http.HandlerFunc(handleAPI)
 }
 
 func runDoctor(dbPath string) map[string]any {
@@ -357,236 +299,4 @@ func runDoctor(dbPath string) map[string]any {
 		}
 	}
 	return map[string]any{"ok": len(problems) == 0, "problems": problems, "db_path": dbPath, "binary": os.Args[0]}
-}
-
-// ── chat command ──────────────────────────────────────────────────────
-
-func runChat() {
-	if aiClient == nil || !aiClient.Enabled() {
-		fmt.Fprintln(os.Stderr, "AI 未配置。请设置以下环境变量:")
-		fmt.Fprintln(os.Stderr, "  AI_ENDPOINT   — LLM API 地址")
-		fmt.Fprintln(os.Stderr, "  AI_MODEL      — 模型名称（或 AI_CHAT_MODEL）")
-		fmt.Fprintln(os.Stderr, "  AI_API_KEY    — API 密钥（如需要）")
-		os.Exit(1)
-	}
-
-	// Resolve project root (parent of .pmai/)
-	runtimeDir, err := pmdb.RuntimeDir()
-	workDir := "."
-	if err == nil && runtimeDir != "" {
-		workDir = filepath.Dir(runtimeDir)
-	}
-
-	// Build agent
-	a := agent.New(aiClient, workDir)
-	a.Source = "aipmc-chat"
-	a.CaptureTraces = true
-	a.OnEvent = func(sessionID, role, source, content, metadataJSON string) {
-		store.LogDiscussion(sessionID, role, source, content, metadataJSON)
-	}
-
-	// Resolve session
-	sessionDir := agent.SessionDir(workDir)
-
-	// Check for --new flag or --session flag
-	newSession := false
-	sessionID := ""
-	for _, arg := range os.Args[2:] {
-		if arg == "--new" {
-			newSession = true
-		}
-		if strings.HasPrefix(arg, "--session=") {
-			sessionID = strings.TrimPrefix(arg, "--session=")
-		}
-	}
-
-	var sess *agent.Session
-
-	// Try to load existing session
-	if !newSession {
-		if sessionID != "" {
-			// Load by ID
-			sessPath := filepath.Join(sessionDir, sessionID+".json")
-			if s, err := agent.LoadSession(sessPath); err == nil {
-				sess = s
-			}
-		} else {
-			// Load the most recent session
-			sess = loadLatestSession(sessionDir)
-		}
-	}
-
-	if sess == nil {
-		sess = agent.NewSession()
-	}
-
-	// Save path
-	sessPath := filepath.Join(sessionDir, sess.ID+".json")
-
-	fmt.Println()
-	fmt.Println("╔══════════════════════════════════════════╗")
-	fmt.Println("║  AIPM Coding Agent                       ║")
-	fmt.Printf("║  Session: %s               ║\n", sess.ID)
-	fmt.Println("║  /exit 退出  /new 新会话  /history 历史  ║")
-	fmt.Println("╚══════════════════════════════════════════╝")
-	fmt.Println()
-
-	// If resuming, show recent context
-	if len(sess.Events) > 0 {
-		recent := sess.Events
-		if len(recent) > 6 {
-			recent = recent[len(recent)-6:]
-		}
-		for _, e := range recent {
-			switch e.Role {
-			case "user":
-				fmt.Printf("▸ %s\n", truncateLine(e.Content, 120))
-			case "assistant":
-				if e.Content != "" {
-					fmt.Printf("  %s\n", truncateLine(e.Content, 120))
-				}
-				for _, tc := range e.ToolCalls {
-					fmt.Printf("  [tool: %s]\n", tc.Name)
-				}
-			case "tool":
-				resultPreview := truncateLine(e.ToolResult, 80)
-				fmt.Printf("  ← %s\n", resultPreview)
-			}
-		}
-		fmt.Println()
-	}
-
-	scanner := bufio.NewScanner(os.Stdin)
-
-	for {
-		fmt.Print("▸ ")
-		if !scanner.Scan() {
-			break
-		}
-		input := strings.TrimSpace(scanner.Text())
-		if input == "" {
-			continue
-		}
-
-		// Handle slash commands
-		switch input {
-		case "/exit":
-			sess.Save(sessPath)
-			fmt.Printf("会话已保存: %s\n", sessPath)
-			return
-		case "/new":
-			sess.Save(sessPath)
-			sess = agent.NewSession()
-			sessPath = filepath.Join(sessionDir, sess.ID+".json")
-			fmt.Printf("新会话: %s\n\n", sess.ID)
-			continue
-		case "/history":
-			fmt.Println()
-			for _, e := range sess.Events {
-				switch e.Role {
-				case "user":
-					fmt.Printf("▸ %s\n", e.Content)
-				case "assistant":
-					if e.Content != "" {
-						fmt.Printf("  %s\n", e.Content)
-					}
-					for _, tc := range e.ToolCalls {
-						fmt.Printf("  [tool: %s(%v)]\n", tc.Name, tc.Args)
-					}
-				case "tool":
-					fmt.Printf("  ← %s\n", truncateLine(e.ToolResult, 200))
-				}
-			}
-			fmt.Println()
-			continue
-		}
-
-		// Run agent
-		response, err := a.Run(sess, input)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "错误: %v\n", err)
-			continue
-		}
-
-		fmt.Println()
-		fmt.Println(response)
-		fmt.Println()
-
-		// Save after each turn
-		sess.Save(sessPath)
-	}
-
-	// Save on Ctrl+C / EOF
-	sess.Save(sessPath)
-	fmt.Printf("\n会话已保存: %s\n", sessPath)
-}
-
-// loadLatestSession returns the most recently modified session from sessionDir.
-func loadLatestSession(dir string) *agent.Session {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil
-	}
-	var latest string
-	var latestTime int64
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
-			continue
-		}
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		if info.ModTime().Unix() > latestTime {
-			latestTime = info.ModTime().Unix()
-			latest = e.Name()
-		}
-	}
-	if latest == "" {
-		return nil
-	}
-	s, err := agent.LoadSession(filepath.Join(dir, latest))
-	if err != nil {
-		return nil
-	}
-	return s
-}
-
-// truncateLine truncates s to maxLen runes.
-func truncateLine(s string, maxLen int) string {
-	runes := []rune(s)
-	if len(runes) <= maxLen {
-		return s
-	}
-	return string(runes[:maxLen]) + "..."
-}
-
-// searchHitFromMaps converts []map[string]interface{} to []searchHit.
-// Used as a bridge between mcp package's generic types and root's concrete searchHit type.
-func searchHitFromMaps(maps []map[string]interface{}) []searchHit {
-	out := make([]searchHit, len(maps))
-	for i, m := range maps {
-		out[i] = searchHit{
-			Type:    strVal(m["type"]),
-			ID:      strVal(m["id"]),
-			Title:   strVal(m["title"]),
-			Status:  strVal(m["status"]),
-			Score:   intVal(m["score"]),
-			Command: strVal(m["command"]),
-		}
-	}
-	return out
-}
-
-func strVal(v interface{}) string {
-	if s, ok := v.(string); ok { return s }
-	return ""
-}
-
-func intVal(v interface{}) int {
-	switch n := v.(type) {
-	case int: return n
-	case float64: return int(n)
-	default: return 0
-	}
 }

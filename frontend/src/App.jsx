@@ -82,7 +82,7 @@ function ConsoleApp() {
     threads, threadSuggestions, threadStatus,
     agents, meetings, assignments, auditLogs,
     loadAll, runAction,
-  } = useBootstrap(api, message);
+  } = useBootstrap(api, message, view);
 
   // 搜索/过滤状态
   const [commitSearch, setCommitSearch] = useState("");
