@@ -76,7 +76,7 @@ func Open() (*sql.DB, error) {
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		return nil, fmt.Errorf("PMAI database not found: %s — run aipmc init first", dbPath)
 	}
-	d, err := sql.Open("sqlite", dbPath+"?_journal_mode=MEMORY&_synchronous=NORMAL")
+	d, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL")
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +101,7 @@ func OpenVectors() (*sql.DB, error) {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
 		return nil, err
 	}
-	d, err := sql.Open("sqlite", dbPath+"?_journal_mode=MEMORY&_synchronous=NORMAL")
+	d, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL")
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +122,7 @@ func Bootstrap() (string, error) {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
 		return "", err
 	}
-	d, err := sql.Open("sqlite", dbPath+"?_journal_mode=MEMORY&_synchronous=NORMAL")
+	d, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL")
 	if err != nil {
 		return "", err
 	}

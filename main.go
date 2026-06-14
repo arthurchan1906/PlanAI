@@ -98,10 +98,19 @@ func main() {
 			os.Exit(1)
 		}
 		// Also setup hooks for platforms that support them
-		if resolved == "Claude Code" || target == "claude" || resolved == "Gemini CLI" || target == "gemini" || resolved == "Codex (OpenAI)" || target == "codex" || resolved == "OpenCode" || target == "opencode" || resolved == "Cursor" || target == "cursor" {
-			// Auto-detect binary path and configure Claude Code / Gemini hooks
-			if err := hook.SetupHooksCmd(resolveCommandPath(), resolved); err != nil {
-				fmt.Fprintf(os.Stderr, "hook setup failed: %v\n", err)
+		hookPlatforms := []string{}
+		if target == "all" || resolved == "all" {
+			hookPlatforms = []string{"Claude Code", "Gemini CLI", "Codex (OpenAI)", "OpenCode", "Cursor"}
+		} else if resolved == "Claude Code" || target == "claude" ||
+			resolved == "Gemini CLI" || target == "gemini" ||
+			resolved == "Codex (OpenAI)" || target == "codex" ||
+			resolved == "OpenCode" || target == "opencode" ||
+			resolved == "Cursor" || target == "cursor" {
+			hookPlatforms = []string{resolved}
+		}
+		for _, platform := range hookPlatforms {
+			if err := hook.SetupHooksCmd(resolveCommandPath(), platform); err != nil {
+				fmt.Fprintf(os.Stderr, "hook setup failed (%s): %v\n", platform, err)
 			}
 		}
 		return

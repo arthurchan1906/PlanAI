@@ -386,9 +386,70 @@ func buildCodexToolContent(toolName string, toolInput, toolResp json.RawMessage)
 // structured diff data directly. This parser extracts file paths and operation
 // types from raw shell commands so Codex file changes get comparable visibility.
 
+// ParseBashFileOp extracts file operation metadata from a shell command.
+func ParseBashFileOp(cmd string) *FileOp {
+	f := parseBashFileOp(cmd)
+	if f == nil {
+		return nil
+	}
+	return &FileOp{Op: f.Op, File: f.File}
+}
+
+type FileOp struct {
+	Op   string
+	File string
+}
+
 type fileOp struct {
 	Op   string // "create", "modify", "append", "read"
 	File string // extracted file path
+}
+
+func makeFileOp(op, path string) *fileOp {
+	path = strings.TrimSpace(strings.TrimRight(path, ",;"))
+	if !isValidFileOpPath(path) {
+		return nil
+	}
+	return &fileOp{Op: op, File: path}
+}
+
+// IsValidFileOpPath reports whether a token looks like a real file path (not e.g. &1).
+func IsValidFileOpPath(path string) bool {
+	return isValidFileOpPath(path)
+}
+
+// isValidFileOpPath rejects shell redirect targets and other non-path tokens
+// mis-parsed from commands like `go build 2>&1`.
+func isValidFileOpPath(path string) bool {
+	path = strings.TrimSpace(strings.TrimRight(path, ",;"))
+	if path == "" {
+		return false
+	}
+	if strings.HasPrefix(path, "&") {
+		return false
+	}
+	lower := strings.ToLower(path)
+	if lower == "/dev/null" || lower == "nul" || lower == "con" {
+		return false
+	}
+	// Require path-like tokens; bare words (Write, edit.json) are not useful.
+	if !looksLikeFilePath(path) {
+		return false
+	}
+	return true
+}
+
+func looksLikeFilePath(path string) bool {
+	if strings.Contains(path, "/") || strings.Contains(path, "\\") {
+		return true
+	}
+	if len(path) >= 2 && path[1] == ':' {
+		return true
+	}
+	if strings.HasPrefix(path, "./") || strings.HasPrefix(path, "../") {
+		return true
+	}
+	return false
 }
 
 func fileOpIcon(f *fileOp) string {
@@ -434,7 +495,7 @@ func parseBashFileOp(cmd string) *fileOp {
 			if path != "" {
 				// Set-Content always writes/overwrites — 📝 like Claude Write / Gemini write_file.
 				// Only New-Item gets 🆕 because we know it explicitly creates.
-				return &fileOp{Op: "modify", File: path}
+				return makeFileOp("modify", path)
 			}
 	}
 
@@ -442,7 +503,7 @@ func parseBashFileOp(cmd string) *fileOp {
 	if strings.Contains(cmd, "Add-Content") {
 		path := extractPSPath(cmd, "-Path")
 		if path != "" {
-			return &fileOp{Op: "append", File: path}
+			return makeFileOp("append", path)
 		}
 	}
 
@@ -450,7 +511,7 @@ func parseBashFileOp(cmd string) *fileOp {
 	if strings.Contains(cmd, "New-Item") {
 		path := extractPSPath(cmd, "-Path")
 		if path != "" {
-			return &fileOp{Op: "create", File: path}
+			return makeFileOp("create", path)
 		}
 	}
 
@@ -461,7 +522,7 @@ func parseBashFileOp(cmd string) *fileOp {
 			path = extractBareArg(cmd, "Remove-Item")
 		}
 		if path != "" {
-			return &fileOp{Op: "modify", File: path}
+			return makeFileOp("modify", path)
 		}
 	}
 
@@ -475,7 +536,7 @@ func parseBashFileOp(cmd string) *fileOp {
 			path = extractBareArg(cmd, "Get-Content")
 		}
 		if path != "" {
-			return &fileOp{Op: "read", File: path}
+			return makeFileOp("read", path)
 		}
 	}
 
@@ -483,7 +544,7 @@ func parseBashFileOp(cmd string) *fileOp {
 	if strings.Contains(cmd, "Out-File") {
 		path := extractPSPath(cmd, "-FilePath")
 		if path != "" {
-			return &fileOp{Op: "modify", File: path}
+			return makeFileOp("modify", path)
 		}
 	}
 
@@ -493,7 +554,7 @@ func parseBashFileOp(cmd string) *fileOp {
 		if path := extractLastQuoted(cmd); path != "" {
 			// Only if it looks like a file path
 			if strings.Contains(path, ".") || strings.Contains(path, "/") || strings.Contains(path, "\\") {
-				return &fileOp{Op: "modify", File: path}
+			return makeFileOp("modify", path)
 			}
 		}
 	}
@@ -505,9 +566,9 @@ func parseBashFileOp(cmd string) *fileOp {
 		path := extractFirstQuoted(cmd)
 		if path != "" && (strings.Contains(path, ".") || strings.Contains(path, "/") || strings.Contains(path, "\\")) {
 			if strings.Contains(cmd, "-replace") {
-				return &fileOp{Op: "modify", File: path}
+			return makeFileOp("modify", path)
 			}
-			return &fileOp{Op: "modify", File: path}
+		return makeFileOp("modify", path)
 		}
 	}
 
@@ -515,20 +576,20 @@ func parseBashFileOp(cmd string) *fileOp {
 	if idx := strings.Index(cmd, ">>"); idx >= 0 {
 		rest := strings.TrimSpace(cmd[idx+2:])
 		if path := extractBareToken(rest); path != "" && !strings.Contains(path, "/dev/") {
-			return &fileOp{Op: "append", File: path}
+			return makeFileOp("append", path)
 		}
 	}
 	if idx := strings.LastIndex(cmd, ">"); idx >= 0 && (idx == 0 || cmd[idx-1] != '>') {
 		rest := strings.TrimSpace(cmd[idx+1:])
 		if path := extractBareToken(rest); path != "" && !strings.Contains(path, "/dev/") {
-			return &fileOp{Op: "modify", File: path}
+		return makeFileOp("modify", path)
 		}
 	}
 
 	// ----- Unix: sed -i 's/old/new/' file -----
 	if strings.Contains(cmd, "sed ") {
 		if path := extractLastBare(cmd); path != "" {
-			return &fileOp{Op: "modify", File: path}
+		return makeFileOp("modify", path)
 		}
 	}
 

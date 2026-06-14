@@ -4,12 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	pmdb "aipmc/db"
+	"aipmc/paths"
 )
 
 // ============================================================
@@ -298,29 +297,11 @@ func containsStrIn(s, substr string) bool {
 }
 
 func resolveCommandPath() string {
-	bin := resolveBinaryPath()
-	if lp, err := exec.LookPath("aipmc"); err == nil {
-		lpReal, err1 := filepath.EvalSymlinks(lp)
-		binReal, err2 := filepath.EvalSymlinks(bin)
-		if err1 == nil && err2 == nil && lpReal == binReal {
-			return "aipmc"
-		}
-	}
-	return bin
+	return paths.ConfigCommand()
 }
 
 func resolveBinaryPath() string {
-	binaryPath, err := os.Executable()
-	if err != nil {
-		binaryPath = os.Args[0]
-		if !filepath.IsAbs(binaryPath) {
-			binaryPath, _ = filepath.Abs(binaryPath)
-		}
-	}
-	if runtime.GOOS == "windows" {
-		binaryPath = filepath.ToSlash(binaryPath)
-	}
-	return binaryPath
+	return paths.RunningBinaryPath()
 }
 
 // checkMCPSetup verifies which platforms have MCP configured.
