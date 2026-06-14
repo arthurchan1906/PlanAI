@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	pmdb "aipmc/db"
+	"aipmc/meeting"
 	"aipmc/store"
 	"aipmc/web"
 )
@@ -99,21 +99,24 @@ func (s *Server) handleMeetingTyping(w http.ResponseWriter, method, path string,
 		return false
 	}
 	roomID := extractID(path, "meetings/", "/typing")
-	typing := 0
+	typing := false
 	if v, ok := body["pm_typing"]; ok {
 		if b, ok := v.(bool); ok && b {
-			typing = 1
+			typing = true
 		}
 		if f, ok := v.(float64); ok && f > 0 {
-			typing = 1
+			typing = true
 		}
 	}
-	db, err := pmdb.Open()
-	if err == nil {
-		defer db.Close()
-		db.Exec("UPDATE meeting_rooms SET pm_typing = ? WHERE id = ?", typing, roomID)
+	if err := meeting.SetPMTyping(roomID, typing); err != nil {
+		web.SendError(w, 500, err.Error())
+		return true
 	}
-	web.SendJSON(w, map[string]any{"ok": true, "pm_typing": typing})
+	v := 0
+	if typing {
+		v = 1
+	}
+	web.SendJSON(w, map[string]any{"ok": true, "pm_typing": v})
 	return true
 }
 

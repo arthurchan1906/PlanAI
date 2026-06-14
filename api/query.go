@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"net/url"
 
-	"aipmc/ai"
 	"aipmc/mcp"
+	"aipmc/meeting"
 	"aipmc/store"
 	"aipmc/u"
 	"aipmc/web"
@@ -130,43 +130,11 @@ func (s *Server) handleAITest(w http.ResponseWriter) {
 }
 
 func (s *Server) handleArbitrate(w http.ResponseWriter, body map[string]any) {
-	client := s.deps.App.AI
-	if client == nil {
-		web.SendError(w, 503, "AI 未配置")
-		return
-	}
 	roomID := u.Str(body["room_id"])
-	room, err := store.GetMeetingRoom(roomID)
-	if err != nil {
-		web.SendError(w, 404, err.Error())
-		return
-	}
-	turns, _ := store.ListMeetingTurns(roomID)
-	var recent []ai.ArbitrationTurn
-	start := 0
-	if len(turns) > 8 {
-		start = len(turns) - 8
-	}
-	for i := start; i < len(turns); i++ {
-		t := turns[i]
-		txt := u.Str(t["question"])
-		if r := u.Str(t["response"]); r != "" {
-			txt = r
-		}
-		recent = append(recent, ai.ArbitrationTurn{
-			SpeakerType: u.Str(t["speaker_type"]),
-			SpeakerID:   u.Str(t["speaker_id"]),
-			Content:     txt,
-			AddressTo:   u.Str(t["address_to"]),
-		})
-	}
-	next, reason, err := client.ArbitrateNextSpeaker(u.Str(room["topic"]), u.Str(room["agent_roles_context"]), recent)
+	result, err := meeting.ArbitrateNext(s.deps.App.AI, roomID)
 	if err != nil {
 		web.SendError(w, 500, err.Error())
 		return
 	}
-	existing, _ := store.ListMeetingTurns(roomID)
-	nextNum := len(existing) + 1
-	store.CreateMeetingTurn(roomID, nextNum, "agent", next, fmt.Sprintf("[AI 仲裁] %s。请就此发表意见。", reason))
-	web.SendJSON(w, map[string]any{"next_agent": next, "reason": reason})
+	web.SendJSON(w, map[string]any{"next_agent": result.NextAgent, "reason": result.Reason})
 }

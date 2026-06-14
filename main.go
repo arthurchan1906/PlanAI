@@ -17,6 +17,7 @@ import (
 	"aipmc/cli"
 	pmdb "aipmc/db"
 	"aipmc/hook"
+	"aipmc/meeting"
 	"aipmc/search"
 	"aipmc/store"
 	"aipmc/web"
@@ -146,7 +147,7 @@ func main() {
 		fmt.Printf("embedded %d discussions\n", count)
 		return
 	case "wait":
-		waitForTurnCmd(os.Args[2:])
+		meeting.RunWaitCLI(os.Args[2:])
 		return
 	case "hook-process":
 		hook.ProcessClaudeHook()

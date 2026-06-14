@@ -4,8 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"aipmc/ai"
-	pmdb "aipmc/db"
+	"aipmc/meeting"
 	"aipmc/store"
 	"aipmc/u"
 )
@@ -326,17 +325,11 @@ func (s *mcpServer) handleSpeakInMeeting(args map[string]interface{}) mcpToolRes
 	if roomID == "" || agentID == "" || content == "" {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "请提供 room_id, agent_id, content"}}, IsError: true}
 	}
-	existing, _ := store.ListMeetingTurns(roomID)
-	nextNum := len(existing) + 1
-	id := u.Slug("turn")
-	now := u.NowISO()
-	db, err := pmdb.Open()
+	turn, err := meeting.AgentSpeak(roomID, agentID, content, replyTo, addressTo)
 	if err != nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("数据库错误: %v", err)}}, IsError: true}
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("发言失败: %v", err)}}, IsError: true}
 	}
-	defer db.Close()
-	tn := fmt.Sprintf("%d", nextNum)
-	db.Exec("INSERT INTO meeting_turns (id, room_id, turn_number, speaker_type, speaker_id, question, response, status, reply_to, address_to, created_at) VALUES (?, ?, ?, 'agent', ?, '[主动发言]', ?, 'responded', ?, ?, ?)", id, roomID, tn, agentID, content, replyTo, addressTo, now)
+	id := u.Str(turn["id"])
 	store.RecordAudit("agent", agentID, "speak_meeting", "meeting_turn", id, "Agent spoke voluntarily in meeting")
 	return mcpToolResult{
 		Content:        []mcpContent{{Type: "text", Text: "✅ 你的发言已提交到会议"}},
@@ -350,60 +343,21 @@ func (s *mcpServer) handleArbitrateNext(args map[string]interface{}) mcpToolResu
 	if roomID == "" {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "请提供 room_id"}}, IsError: true}
 	}
-	room, err := store.GetMeetingRoom(roomID)
+	result, err := meeting.ArbitrateNext(s.ai, roomID)
 	if err != nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("会议不存在: %v", err)}}, IsError: true}
-	}
-	if s.ai == nil || !s.ai.Enabled() {
 		return mcpToolResult{
-			Content:    []mcpContent{{Type: "text", Text: "AI 未配置，无法自动仲裁。请 PM 手动点名下一个发言人。"}},
+			Content:    []mcpContent{{Type: "text", Text: fmt.Sprintf("仲裁失败: %v。请 PM 手动点名。", err)}},
 			IsError:    true,
 			Reflection: "配置 AI_ENDPOINT 后可使用自动仲裁功能。",
 		}
 	}
-	turns, _ := store.ListMeetingTurns(roomID)
-	var recent []ai.ArbitrationTurn
-	start := 0
-	if len(turns) > 8 {
-		start = len(turns) - 8
-	}
-	for i := start; i < len(turns); i++ {
-		t := turns[i]
-		txt := u.Str(t["question"])
-		if r := u.Str(t["response"]); r != "" {
-			txt = r
-		}
-		recent = append(recent, ai.ArbitrationTurn{
-			SpeakerType: u.Str(t["speaker_type"]),
-			SpeakerID:   u.Str(t["speaker_id"]),
-			Content:     txt,
-			AddressTo:   u.Str(t["address_to"]),
-		})
-	}
-	nextAgent, reason, err := s.ai.ArbitrateNextSpeaker(
-		u.Str(room["topic"]),
-		u.Str(room["agent_roles_context"]),
-		recent,
-	)
-	if err != nil {
-		return mcpToolResult{
-			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("仲裁失败: %v。请 PM 手动点名。", err)}},
-			IsError: true,
-		}
-	}
-	existing, _ := store.ListMeetingTurns(roomID)
-	nextNum := len(existing) + 1
-	id := u.Slug("turn")
-	now := u.NowISO()
-	db, err2 := pmdb.Open()
-	if err2 == nil {
-		defer db.Close()
-		tn2 := fmt.Sprintf("%d", nextNum)
-		db.Exec("INSERT INTO meeting_turns (id, room_id, turn_number, speaker_type, speaker_id, question, response, status, created_at) VALUES (?, ?, ?, 'agent', ?, ?, '', 'waiting', ?)", id, roomID, tn2, nextAgent, fmt.Sprintf("[AI 仲裁] %s。请就此发表意见。", reason), now)
+	id := ""
+	if result.Turn != nil {
+		id = u.Str(result.Turn["id"])
 	}
 	return mcpToolResult{
-		Content:        []mcpContent{{Type: "text", Text: fmt.Sprintf("🔮 AI 仲裁: 下一个发言人是 **%s** (%s)", nextAgent, reason)}},
-		RelatedContext: map[string]interface{}{"next_agent": nextAgent, "reason": reason, "turn_id": id},
-		Reflection:     fmt.Sprintf("%s 被选中发言。请在 briefing 中查看新 turn。", nextAgent),
+		Content:        []mcpContent{{Type: "text", Text: fmt.Sprintf("🔮 AI 仲裁: 下一个发言人是 **%s** (%s)", result.NextAgent, result.Reason)}},
+		RelatedContext: map[string]interface{}{"next_agent": result.NextAgent, "reason": result.Reason, "turn_id": id},
+		Reflection:     fmt.Sprintf("%s 被选中发言。请在 briefing 中查看新 turn。", result.NextAgent),
 	}
 }
