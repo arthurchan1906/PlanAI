@@ -11,6 +11,8 @@ func SetupHooksCmd(commandPath, targetPlatform string) error {
 		return SetupCodexHooks(commandPath)
 	case "OpenCode", "opencode":
 		return SetupOpencodeHooks(commandPath)
+	case "Cursor":
+		return SetupCursorHooks(commandPath)
 	default:
 		// Claude Code and all other platforms
 		return SetupClaudeHooks(commandPath)
