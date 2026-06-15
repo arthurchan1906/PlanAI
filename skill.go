@@ -25,10 +25,9 @@ AIPM is the project's knowledge base. Every task, commit, plan, bug, decision li
    - 建议的线程 (thread suggestions) — 从上一次 commit 推断的模式
 2. **aipm_mark_consumed** — 确认已阅读 PM 提醒（读完立即标记，不要跳过）
 3. **aipm_search_context** — 如果你要开始一个新任务，先搜索是否有相关已有工作
-4. **aipm_search_discussions** — 搜索其他 Agent 的讨论历史：
-	   - 关键词搜索: query 参数搜索讨论内容
-	   - 最近 N 条: last_n 参数查看某 agent 最近活动（无需关键词）
-	   - 完整 session: mode=full_session 展开匹配消息所属 session 的全部内容
+4. **aipm_read_discussions** — 读取其他 Agent 的讨论历史（互读全文）：
+	   - aipm_read_discussions(source="claude-code", last_n=10, full=true)
+	   - 禁止 sqlite3 直查 .pmai/data/pmai.db
 	   - 用途：了解谁做过相关工作？有没有现成的方案？其他 agent 最近在做什么？
 5. **决策**: 用 briefing 中的信息决定：
    - 继续已有任务？→ 更新任务状态 (aipm_update_task)
@@ -80,29 +79,31 @@ AIPM is the project's knowledge base. Every task, commit, plan, bug, decision li
 
 ---
 
-## 跨 Agent 讨论搜索
+## 跨 Agent 协作（v1 默认）
 
-AIPM 自动捕获所有 Agent（Claude Code / Gemini CLI / Codex CLI / OpenCode / Cursor）的完整对话历史。
-用 **aipm_search_discussions** 搜索其他 Agent 的讨论。
+AIPM 自动捕获所有 Agent（Claude Code / Gemini CLI / Codex / OpenCode / Cursor）的完整对话历史。
 
-### 使用方式
+### Agent 互读
+- **aipm_read_discussions**(source="...", last_n=10, full=true) — 一步读全文
+- 禁止 sqlite3 读取 .pmai/data/pmai.db
+- 讨论模式：禁止创建/修改代码；仅分析、记录、调 MCP
+- Hook 会在违规 Write 时写入 ⚠️ 告警到 discussion（PM catchup 可见）
+- 回应格式：① 引用对方一点 ② 明确同意/反对 ③ 结论或开放问题
 
-**搜索方法**（二选一）:
-- **关键词搜索**: 提供 query 参数搜索讨论内容
-      aipm_search_discussions(query="bug fix", source="claude-code")
-- **最近 N 条**: 提供 last_n 参数查看某 agent 最近活动（无需关键词）
-      aipm_search_discussions(last_n=20, source="claude-code")
-  — 这可以实现 Agent 之间通过 aipm 间接 "聊天"：Agent A 查看 Agent B 最近的对话
+### PM 协作 CLI（PM 使用，Agent 不需要记）
+- aipmc topic create / catchup / prompt / close
 
-**输出格式**（可选 mode 参数）:
-- 默认 (mode 不传或 mode="matches"): 只返回匹配的消息本身
-- mode="full_session": 展开为完整 session，包含 user/assistant/tool 全部消息，按 session 分组展示
-      aipm_search_discussions(query="refactor", mode="full_session", limit=3)
-
-以上两个维度可以组合使用，例如：
-      aipm_search_discussions(last_n=10, source="gemini-cli", mode="full_session")
+### v1 不包含
+- aipmc wait 循环
+- 自动仲裁 / turn 状态机
+- aipm_get_meeting_turn / aipm_respond_in_meeting（MCP 已卸注册）
 
 用 **aipm_log_discussion** 手动记录重要结论。具体参数见各 MCP tool 的 inputSchema。
+
+---
+## 跨 Agent 讨论搜索（兼容）
+
+旧工具 **aipm_search_discussions** 仍可用（支持 query / mode=full_session）；新代码请用 **aipm_read_discussions**。
 
 ---
 ## 线索 (Threads) — 概念说明
@@ -140,9 +141,9 @@ commit → task → plan → roadmap
 
 ---
 
-## 会议行为准则 (MEETING RULES)
+## 会议行为准则（已归档 — v1 用协作模式）
 
-会议有两种模式，Agent 必须先确认模式再行动。
+v1 默认路径见上方「跨 Agent 协作」。以下 turn/wait 会议流程 **不再注册 MCP**，仅供历史参考。
 
 ### 模式 A：讨论模式（默认）
 - ✅ 可以：搜索代码、阅读文件、分析逻辑、提出方案、架构推理

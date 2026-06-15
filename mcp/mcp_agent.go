@@ -9,49 +9,8 @@ import (
 	"aipmc/u"
 )
 
-// registerAgentTools adds meeting + assignment MCP tools.
+// registerAgentTools adds assignment MCP tools (meeting turn/wait tools removed in v1).
 func (s *mcpServer) registerAgentTools() {
-	s.addTool(MCPTool{
-		Name:        "aipm_confirm_attendance",
-		Description: "确认参与会议。Agent 在准备参加会议时调用此工具，Web UI 将显示参会状态。",
-		InputSchema: MCPInputSchema{
-			Type: "object",
-			Properties: map[string]interface{}{
-				"meeting_id": map[string]string{"type": "string", "description": "会议 ID"},
-				"agent_id":   map[string]string{"type": "string", "description": "Agent ID"},
-			},
-			Required: []string{"meeting_id", "agent_id"},
-		},
-	}, s.handleConfirmAttendance)
-
-	s.addTool(MCPTool{
-		Name:        "aipm_get_meeting_turn",
-		Description: "获取当前会议轮次的上下文。返回会议主题、Agent 角色、PM 对你的提问、以及之前的发言。支持增量同步。",
-		InputSchema: MCPInputSchema{
-			Type: "object",
-			Properties: map[string]interface{}{
-				"room_id":    map[string]string{"type": "string", "description": "会议 ID"},
-				"turn_id":    map[string]string{"type": "string", "description": "轮次 ID"},
-				"since_turn": map[string]string{"type": "integer", "description": "可选: 只返回序号大于此值的记录"},
-				"agent_id":   map[string]string{"type": "string", "description": "可选: 提供时自动更新 last_seen_turn"},
-			},
-			Required: []string{"room_id", "turn_id"},
-		},
-	}, s.handleGetMeetingTurn)
-
-	s.addTool(MCPTool{
-		Name:        "aipm_respond_in_meeting",
-		Description: "在会议轮次中提交回应（被 PM 点名或 AI 仲裁时使用）。",
-		InputSchema: MCPInputSchema{
-			Type: "object",
-			Properties: map[string]interface{}{
-				"turn_id":  map[string]string{"type": "string", "description": "轮次 ID"},
-				"response": map[string]string{"type": "string", "description": "回应内容"},
-			},
-			Required: []string{"turn_id", "response"},
-		},
-	}, s.handleRespondInMeeting)
-
 	s.addTool(MCPTool{
 		Name:        "aipm_get_my_assignments",
 		Description: "获取分配给当前 Agent 的任务清单。",
@@ -88,34 +47,6 @@ func (s *mcpServer) registerAgentTools() {
 			Required: []string{"assignment_id"},
 		},
 	}, s.handleCompleteAssignment)
-
-	s.addTool(MCPTool{
-		Name:        "aipm_speak_in_meeting",
-		Description: "在会议中主动发言。可指定 reply_to 回复某条发言，或 address_to 向某人提问。",
-		InputSchema: MCPInputSchema{
-			Type: "object",
-			Properties: map[string]interface{}{
-				"room_id":    map[string]string{"type": "string", "description": "会议 ID"},
-				"agent_id":   map[string]string{"type": "string", "description": "你的 Agent ID"},
-				"content":    map[string]string{"type": "string", "description": "发言内容"},
-				"reply_to":   map[string]string{"type": "string", "description": "可选: 回复的 turn_id"},
-				"address_to": map[string]string{"type": "string", "description": "可选: 向谁提问 (agent_id 或 'PM')"},
-			},
-			Required: []string{"room_id", "agent_id", "content"},
-		},
-	}, s.handleSpeakInMeeting)
-
-	s.addTool(MCPTool{
-		Name:        "aipm_arbitrate_next",
-		Description: "触发 AI 仲裁选择下一个发言人。",
-		InputSchema: MCPInputSchema{
-			Type: "object",
-			Properties: map[string]interface{}{
-				"room_id": map[string]string{"type": "string", "description": "会议 ID"},
-			},
-			Required: []string{"room_id"},
-		},
-	}, s.handleArbitrateNext)
 }
 
 func (s *mcpServer) handleConfirmAttendance(args map[string]interface{}) mcpToolResult {

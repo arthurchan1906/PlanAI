@@ -10,6 +10,7 @@ import (
 
 	"aipmc/ai"
 	"aipmc/analyze"
+	"aipmc/discussion"
 	"aipmc/store"
 	"aipmc/u"
 )
@@ -341,25 +342,28 @@ func (s *mcpServer) registerTools() {
 		},
 	}, s.handleSmartSearch)
 
-	// Agent registration
-	s.addTool(MCPTool{
-		Name:        "aipm_register_agent",
-		Description: "注册临时 Agent 身份。每次调用创建新 ID（不按名称去重）。用于会议、审查等临时协作任务。任务结束后身份即弃。",
-		InputSchema: MCPInputSchema{
-			Type: "object",
-			Properties: map[string]interface{}{
-				"name":         map[string]string{"type": "string", "description": "Agent 名称"},
-				"role":         map[string]string{"type": "string", "description": "角色: coder | reviewer | insight"},
-				"capabilities": map[string]string{"type": "string", "description": "能力标签，逗号分隔 (例: frontend,react,typescript)"},
-			},
-			Required: []string{"name"},
-		},
-	}, s.handleRegisterAgent)
+	// Agent registration (deprecated for v1 collaboration — kept for CLI/debug only)
+	// aipm_register_agent is not exposed to agents in v1.
 
 	// Discussion log tools
 	s.addTool(MCPTool{
+		Name:        "aipm_read_discussions",
+		Description: "读取项目讨论历史（一步全文）。按 source / last_n / since 过滤；full=true 返回全文，默认预览约 200 字。topic_id 限定协作主题时间窗。禁止用 sqlite3 直查数据库。",
+		InputSchema: MCPInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"source":   map[string]string{"type": "string", "description": "可选: 按 agent 来源过滤 (claude-code / cursor / gemini-cli / …)"},
+				"last_n":   map[string]string{"type": "integer", "description": "可选: 最近 N 条（与 since 可组合）"},
+				"since":    map[string]string{"type": "string", "description": "可选: ISO 时间下限 (例 2026-06-15T21:48:00)"},
+				"full":     map[string]string{"type": "boolean", "description": "可选: true=全文，false=预览（默认）"},
+				"topic_id": map[string]string{"type": "string", "description": "可选: 协作主题 ID，限定时间窗"},
+			},
+		},
+	}, s.handleReadDiscussions)
+
+	s.addTool(MCPTool{
 		Name:        "aipm_search_discussions",
-		Description: "搜索项目讨论历史。通过 query（关键词）或 last_n（最近 N 条）查找，可选 mode='full_session' 展开匹配消息所属 session 的完整内容。可指定 source 过滤特定 agent（claude-code/gemini-cli/codex-cli），type 过滤消息类型（user/assistant/tool），project_path 搜索其他项目的聊天数据。",
+		Description: "（兼容别名）同 aipm_read_discussions；额外支持 query 关键词与 mode=full_session。新代码请用 aipm_read_discussions。",
 		InputSchema: MCPInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
@@ -885,6 +889,60 @@ func (s *mcpServer) handleRegisterAgent(args map[string]interface{}) mcpToolResu
 	}
 }
 
+func (s *mcpServer) handleReadDiscussions(args map[string]interface{}) mcpToolResult {
+	source := getStr(args, "source", "")
+	since := getStr(args, "since", "")
+	topicID := getStr(args, "topic_id", "")
+	lastN := getInt(args, "last_n", 0)
+	full := false
+	if v, ok := args["full"].(bool); ok {
+		full = v
+	} else if v := getStr(args, "full", ""); v == "true" || v == "1" {
+		full = true
+	}
+
+	rows, err := store.ReadDiscussions(store.ReadDiscussionsOpts{
+		Source:  source,
+		LastN:   lastN,
+		Since:   since,
+		Full:    full,
+		TopicID: topicID,
+	})
+	if err != nil {
+		return mcpToolResult{
+			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("读取讨论失败: %v", err)}},
+			IsError: true,
+		}
+	}
+
+	var header strings.Builder
+	header.WriteString(fmt.Sprintf("讨论记录: %d 条", len(rows)))
+	if source != "" {
+		header.WriteString(fmt.Sprintf(" [source=%s]", source))
+	}
+	if since != "" {
+		header.WriteString(fmt.Sprintf(" [since=%s]", since))
+	}
+	if topicID != "" {
+		header.WriteString(fmt.Sprintf(" [topic=%s]", topicID))
+	}
+	header.WriteString("\n\n")
+
+	text := header.String() + discussion.FormatResults(rows, full)
+	reflection := ""
+	if len(rows) == 0 {
+		reflection = "未找到讨论记录。确认 source 拼写或扩大 since 时间窗。"
+	} else if !full {
+		reflection = "内容为预览。需要全文时请设 full=true。"
+	}
+
+	return mcpToolResult{
+		Content:        []mcpContent{{Type: "text", Text: text}},
+		RelatedContext: map[string]interface{}{"results": rows, "count": len(rows), "full": full},
+		Reflection:     reflection,
+	}
+}
+
 func (s *mcpServer) handleSearchDiscussions(args map[string]interface{}) mcpToolResult {
 	query := getStr(args, "query", "")
 	source := getStr(args, "source", "")
@@ -1376,7 +1434,7 @@ func mcpLogDiscussion(toolName string, args map[string]interface{}, result mcpTo
 		if aid, ok := args["agent_id"].(string); ok && aid != "" {
 			summary += " agent=" + aid
 		}
-	case "aipm_search_context", "aipm_smart_search", "aipm_search_discussions":
+	case "aipm_search_context", "aipm_smart_search", "aipm_search_discussions", "aipm_read_discussions":
 		if q, ok := args["query"].(string); ok && q != "" {
 			if len(q) > 60 {
 				q = q[:60] + "..."

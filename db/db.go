@@ -242,6 +242,24 @@ func migrate(d *sql.DB) error {
 	if !ColumnExists(d, "meeting_rooms", "pm_typing") {
 		d.Exec("ALTER TABLE meeting_rooms ADD COLUMN pm_typing INTEGER DEFAULT 0")
 	}
+	if !ColumnExists(d, "meeting_rooms", "pm_last_visit_at") {
+		d.Exec("ALTER TABLE meeting_rooms ADD COLUMN pm_last_visit_at TEXT DEFAULT ''")
+	}
+	if !ColumnExists(d, "meeting_rooms", "plan_id") {
+		d.Exec("ALTER TABLE meeting_rooms ADD COLUMN plan_id TEXT DEFAULT ''")
+	}
+	if !tableOrVTableExists(d, "route_log") {
+		d.Exec(`CREATE TABLE IF NOT EXISTS route_log (
+			id TEXT PRIMARY KEY,
+			topic_id TEXT NOT NULL,
+			to_source TEXT NOT NULL,
+			refs TEXT NOT NULL DEFAULT '',
+			pm_say TEXT NOT NULL,
+			prompt_snapshot TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			FOREIGN KEY(topic_id) REFERENCES meeting_rooms(id)
+		)`)
+	}
 	for _, spec := range []struct{ table, sql string }{
 		{"meeting_rooms", `CREATE TABLE IF NOT EXISTS meeting_rooms (id TEXT PRIMARY KEY, title TEXT NOT NULL, topic TEXT NOT NULL, context TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active', agent_roles_context TEXT NOT NULL DEFAULT '', auto_arbitrate INTEGER NOT NULL DEFAULT 0, meeting_mode TEXT NOT NULL DEFAULT 'discussion', created_by TEXT NOT NULL, created_at TEXT NOT NULL, closed_at TEXT)`},
 		{"meeting_turns", `CREATE TABLE IF NOT EXISTS meeting_turns (id TEXT PRIMARY KEY, room_id TEXT NOT NULL, turn_number INTEGER NOT NULL, speaker_type TEXT NOT NULL, speaker_id TEXT NOT NULL, question TEXT NOT NULL, response TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'waiting', reply_to TEXT NOT NULL DEFAULT '', address_to TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, FOREIGN KEY(room_id) REFERENCES meeting_rooms(id))`},

@@ -1,19 +1,29 @@
 # 会议室模块 (`aipmc/meeting`)
 
-多 Agent 会议协作的领域层。完整设计见 [docs/MEETING_DESIGN.md](../docs/MEETING_DESIGN.md)。
+多 Agent 协作的 **早期会议原型**（turn / wait / 仲裁）。**v1 产品默认路径**见 [docs/COLLABORATION_DESIGN.md](../docs/COLLABORATION_DESIGN.md)。
 
-## 当前状态
+原实时会议设计（已归档）：[docs/MEETING_DESIGN.md](../docs/MEETING_DESIGN.md)。
 
-**骨架已就位，核心流程尚未完整实现。** 现有代码主要是早期原型：
+## v1 与本文档的关系
+
+| v1 默认（协作） | 本包（归档原型） |
+|----------------|------------------|
+| `topic` + `catchup` + `prompt` CLI | turn 状态机、wait |
+| `read_discussions` | MCP get/respond/arbitrate |
+| 无自动仲裁 | `ArbitrateNext` |
+| PM 巡视员 | PM 同步点名 |
+
+本包代码 **保留**供实验与后续可选「会议模式」；**不在 v1 Skill / MCP 注册中引导**。
+
+## 当前代码状态
 
 | 能力 | 状态 |
 |------|------|
 | 会议室 CRUD | 部分（`store/meeting.go`） |
-| Turn 状态机 waiting→processing→responded | 部分（MCP get/respond 有，缺自动清理） |
-| PM typing 暂停仲裁 | 部分（API `/typing`，缺定时仲裁） |
-| AI 自动仲裁 | 部分（`ArbitrateNext`，缺 8s 触发器） |
-| `aipmc wait` 轮询 | 已实现（`wait.go`） |
-| Web UI 会议聊天 | 原型（`frontend/.../MeetingsView.jsx`） |
+| Turn 状态机 | 部分（MCP get/respond） |
+| `aipmc wait` | 已实现（`wait.go`，v1 不文档化） |
+| AI 仲裁 | 部分（`arbitration.go`，v1 不做自动触发） |
+| Web UI MeetingsView | 原型 |
 
 ## 目录结构
 
@@ -22,33 +32,14 @@ meeting/
   status.go       — 状态常量
   turn.go         — 点名 / PM 发言 / Agent 主动发言
   wait.go         — aipmc wait CLI
-  arbitrator.go   — 仲裁 prompt + pickNextSpeaker
-  arbitration.go  — ArbitrateNext 编排（store + AI）
+  arbitrator.go   — 仲裁 prompt
+  arbitration.go  — ArbitrateNext
   README.md
 ```
 
-持久化仍在 `store/meeting.go`（表：`meeting_rooms`, `meeting_turns`, `meeting_participants`）。
-
-## 入口映射
-
-| 入口 | 应调用 |
-|------|--------|
-| `aipmc wait` | `meeting.RunWaitCLI` |
-| REST `/pmai/meetings/*/typing` | `meeting.SetPMTyping` |
-| REST `/pmai/meetings/*/arbitrate` | `meeting.ArbitrateNext` |
-| MCP `aipm_arbitrate_next` | `meeting.ArbitrateNext` |
-| MCP `aipm_speak_in_meeting` | `meeting.AgentSpeak` |
-
-## 待实现（按设计文档）
-
-1. `processing` 超过 5 分钟 → 重置为 `waiting`
-2. Agent 回应后 8 秒内无人发言 → 触发 `ArbitrateNext`（需尊重 `pm_typing`）
-3. 会议创建表单的 `auto_arbitrate` / `meeting_mode` 字段贯通
-4. MCP `handleGetMeetingTurn` 迁入本包（格式化 briefing 文本）
-5. 前端 MeetingsView 轮询 / WebSocket 刷新 turns
+持久化：`store/meeting.go`（`meeting_rooms`, `meeting_turns`, …）。
 
 ## 开发约定
 
-- **业务逻辑**放 `meeting/`，不要散落在 `api/`、`mcp/`、`main.go`
-- **SQL / CRUD** 放 `store/meeting.go`
-- **AI 仲裁 prompt** 在 `meeting/arbitrator.go`（依赖 `ai.Client.Summarize`）
+- 新业务逻辑优先写在 v1 协作路径（`discussion`、`topic` CLI），而非扩展 turn/wait
+- 本包仅 bugfix / deprecated 维护，直到 v2 重新评估「结构化轮流发言」场景

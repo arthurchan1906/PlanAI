@@ -213,6 +213,135 @@ func GetSessionMessages(sessionID string) ([]map[string]any, error) {
 	return results, nil
 }
 
+// ReadDiscussionsOpts controls aipm_read_discussions / topic catchup queries.
+type ReadDiscussionsOpts struct {
+	Source  string
+	LastN   int
+	Since   string
+	Full    bool
+	TopicID string
+}
+
+// ReadDiscussions returns substantive discussion rows (user + non-tool assistant).
+func ReadDiscussions(opts ReadDiscussionsOpts) ([]map[string]any, error) {
+	since := opts.Since
+	var closedAt string
+	if opts.TopicID != "" {
+		topic, err := GetCollaborationTopic(opts.TopicID)
+		if err != nil {
+			return nil, err
+		}
+		started := u.Str(topic["created_at"])
+		if since == "" || since < started {
+			since = started
+		}
+		closedAt = u.Str(topic["closed_at"])
+	}
+
+	where := "WHERE " + substantiveDiscussionSQL()
+	var args []any
+	if opts.Source != "" {
+		where += " AND source = ?"
+		args = append(args, opts.Source)
+	}
+	if since != "" {
+		where += " AND created_at >= ?"
+		args = append(args, since)
+	}
+	if closedAt != "" {
+		where += " AND created_at <= ?"
+		args = append(args, closedAt)
+	}
+
+	limit := opts.LastN
+	if limit <= 0 {
+		limit = 500
+	}
+
+	// Fetch newest-first, then trim to last_n and reverse to chronological.
+	q := "SELECT id, session_id, role, source, content, metadata, created_at FROM discussion_log " +
+		where + " ORDER BY created_at DESC, rowid DESC LIMIT ?"
+	args = append(args, limit)
+
+	db, err := pmdb.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []map[string]any
+	for rows.Next() {
+		var id, sid, role, src, content, metadata, createdAt string
+		rows.Scan(&id, &sid, &role, &src, &content, &metadata, &createdAt)
+		results = append(results, map[string]any{
+			"id": id, "session_id": sid, "role": role, "source": src,
+			"content": content, "metadata": metadata, "created_at": createdAt,
+		})
+	}
+	if results == nil {
+		results = []map[string]any{}
+	}
+
+	// Reverse to chronological order (oldest first).
+	for i, j := 0, len(results)-1; i < j; i, j = i+1, j-1 {
+		results[i], results[j] = results[j], results[i]
+	}
+	return results, nil
+}
+
+func substantiveDiscussionSQL() string {
+	toolEmojis := []string{"🔧", "📝", "👁", "🔍", "🆕", "🛠", "📡", "💭", "🗑", "📂", "🌐", "❓", "🤖", "📋"}
+	notTool := ""
+	for _, e := range toolEmojis {
+		if notTool != "" {
+			notTool += " AND "
+		}
+		notTool += "content NOT LIKE '" + e + "%'"
+	}
+	return "(role = 'user' OR (role = 'assistant' AND " + notTool + "))"
+}
+
+// GetDiscussionsByIDs returns discussion rows for the given IDs, in request order.
+func GetDiscussionsByIDs(ids []string) ([]map[string]any, error) {
+	if len(ids) == 0 {
+		return []map[string]any{}, nil
+	}
+	db, err := pmdb.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	byID := map[string]map[string]any{}
+	for _, id := range ids {
+		var rid, sid, role, src, content, metadata, createdAt string
+		row := db.QueryRow(
+			"SELECT id, session_id, role, source, content, metadata, created_at FROM discussion_log WHERE id = ?",
+			id,
+		)
+		if err := row.Scan(&rid, &sid, &role, &src, &content, &metadata, &createdAt); err != nil {
+			continue
+		}
+		byID[id] = map[string]any{
+			"id": rid, "session_id": sid, "role": role, "source": src,
+			"content": content, "metadata": metadata, "created_at": createdAt,
+		}
+	}
+	out := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
+		if r, ok := byID[id]; ok {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
 // ListDiscussionSources returns distinct source names from discussion_log.
 func ListDiscussionSources() ([]string, error) {
 	db, err := pmdb.Open()

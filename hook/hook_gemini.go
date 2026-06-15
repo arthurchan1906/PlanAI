@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	pmdb "aipmc/db"
+	"aipmc/collab"
 	"aipmc/store"
 )
 
@@ -114,6 +115,7 @@ func ProcessGeminiHook() {
 			} else {
 				logf("AfterTool %s logged", raw.ToolName)
 			}
+			collab.MaybeAlertFromToolInput(raw.SessionID, "gemini-cli", raw.ToolName, raw.ToolInput)
 		} else {
 			logf("AfterTool %s — empty content, skipped", raw.ToolName)
 		}

@@ -265,6 +265,8 @@ func main() {
 		dispatchFeedback(subcmd, args)
 	case "thread":
 		dispatchThread(subcmd, args)
+	case "topic":
+		dispatchTopic(subcmd, args)
 	case "brief":
 		dispatchBrief(subcmd, args)
 	default:
