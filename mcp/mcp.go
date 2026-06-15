@@ -359,15 +359,18 @@ func (s *mcpServer) registerTools() {
 	// Discussion log tools
 	s.addTool(MCPTool{
 		Name:        "aipm_search_discussions",
-		Description: "搜索项目讨论历史。可指定 project_path 搜索其他项目的聊天数据。",
+		Description: "搜索项目讨论历史。通过 query（关键词）或 last_n（最近 N 条）查找，可选 mode='full_session' 展开匹配消息所属 session 的完整内容。可指定 source 过滤特定 agent（claude-code/gemini-cli/codex-cli），type 过滤消息类型（user/assistant/tool），project_path 搜索其他项目的聊天数据。",
 		InputSchema: MCPInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
-				"query":        map[string]string{"type": "string", "description": "搜索关键词"},
-				"limit":        map[string]string{"type": "integer", "description": "结果数量，默认 10"},
+				"query":        map[string]string{"type": "string", "description": "搜索关键词（与 last_n 二选一）"},
+				"source":       map[string]string{"type": "string", "description": "可选: 按 agent 来源过滤 (claude-code / gemini-cli / codex-cli / codex / opencode / cursor)"},
+				"type":         map[string]string{"type": "string", "description": "可选: 按消息类型过滤 (user / assistant / tool)"},
+				"last_n":       map[string]string{"type": "integer", "description": "可选: 返回最近 N 条记录（与 query 二选一，优先使用 last_n）"},
+				"mode":         map[string]string{"type": "string", "description": "可选: 'matches' (默认，只返回匹配的消息本身)；'full_session' (展开为匹配消息所属 session 的完整 user+assistant+tool 对话)"},
+				"limit":        map[string]string{"type": "integer", "description": "结果数量，默认 10。full_session 模式下为 session 数量上限（≤5）"},
 				"project_path": map[string]string{"type": "string", "description": "可选: 目标项目路径，不传则搜索当前项目"},
 			},
-			Required: []string{"query"},
 		},
 	}, s.handleSearchDiscussions)
 
@@ -884,22 +887,116 @@ func (s *mcpServer) handleRegisterAgent(args map[string]interface{}) mcpToolResu
 
 func (s *mcpServer) handleSearchDiscussions(args map[string]interface{}) mcpToolResult {
 	query := getStr(args, "query", "")
+	source := getStr(args, "source", "")
+	typeFilter := getStr(args, "type", "")
 	projectPath := getStr(args, "project_path", "")
-	limit := 10
-	if l := getStr(args, "limit", ""); l != "" { fmt.Sscanf(l, "%d", &limit) }
-	results, total, _ := s.searchDiscussions(query, "", "", projectPath, 1, limit)
-	var b strings.Builder
-	b.WriteString(fmt.Sprintf("搜索讨论历史 '%s': %d 条结果 (共 %d 条)\n", query, len(results), total))
-	for _, r := range results {
-		b.WriteString(fmt.Sprintf("\n- [%s][%s] %s", r["role"], r["source"], r["content"]))
+	mode := getStr(args, "mode", "matches")
+	limit := getInt(args, "limit", 10)
+	lastN := getInt(args, "last_n", 0)
+
+	if lastN <= 0 && query == "" {
+		return mcpToolResult{
+			Content: []mcpContent{{Type: "text", Text: "请提供 query（关键词搜索）或 last_n（最近 N 条记录）"}},
+			IsError: true,
+		}
 	}
+
+	var results []map[string]any
+	var total int
+
+	if lastN > 0 {
+		// Recent-N mode: fetch most recent N records
+		var err error
+		results, err = store.ListRecentDiscussions(source, typeFilter, lastN)
+		if err != nil {
+			return mcpToolResult{
+				Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("获取最近讨论失败: %v", err)}},
+				IsError: true,
+			}
+		}
+		total = len(results)
+	} else {
+		// Keyword search mode (existing behavior)
+		var err error
+		results, total, err = s.searchDiscussions(query, source, typeFilter, projectPath, 1, limit)
+		if err != nil {
+			return mcpToolResult{
+				Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("搜索讨论失败: %v", err)}},
+				IsError: true,
+			}
+		}
+	}
+
+	// Full session mode: expand results to include complete sessions
+	if mode == "full_session" && len(results) > 0 {
+		// Cap sessions to avoid overwhelming output (limit controls session count in this mode)
+		sessionLimit := limit
+		if sessionLimit <= 0 || sessionLimit > 5 {
+			sessionLimit = 5
+		}
+		results = expandToFullSessions(results, sessionLimit)
+	} else if len(results) > limit {
+		results = results[:limit]
+	}
+
+	var b strings.Builder
+	if lastN > 0 {
+		b.WriteString(fmt.Sprintf("最近 %d 条讨论记录", lastN))
+	} else {
+		b.WriteString(fmt.Sprintf("搜索讨论历史 '%s'", query))
+	}
+	if source != "" {
+		b.WriteString(fmt.Sprintf(" [source=%s]", source))
+	}
+	if typeFilter != "" {
+		b.WriteString(fmt.Sprintf(" [type=%s]", typeFilter))
+	}
+	if mode == "full_session" {
+		b.WriteString(" [完整 session 模式]")
+	}
+	b.WriteString(fmt.Sprintf(": %d 条结果 (共 %d 条)\n", len(results), total))
+
+	// Group by session for full_session mode display
+	if mode == "full_session" {
+		sessionGroups := groupBySession(results)
+		for _, sg := range sessionGroups {
+			b.WriteString(fmt.Sprintf("\n### Session: %s\n", sg.sessionID))
+			for _, r := range sg.messages {
+				role := u.Str(r["role"])
+				src := u.Str(r["source"])
+				content := u.Str(r["content"])
+				ts := u.Str(r["created_at"])
+				// Truncate long content for readability
+				if len(content) > 300 {
+					content = content[:300] + "..."
+				}
+				b.WriteString(fmt.Sprintf("[%s][%s] %s  %s\n", role, src, ts, content))
+			}
+		}
+	} else {
+		for _, r := range results {
+			role := u.Str(r["role"])
+			src := u.Str(r["source"])
+			content := u.Str(r["content"])
+			if len(content) > 200 {
+				content = content[:200] + "..."
+			}
+			b.WriteString(fmt.Sprintf("\n- [%s][%s] %s  %s", role, src, u.Str(r["created_at"]), content))
+		}
+	}
+
 	reflection := ""
 	if len(results) == 0 {
 		reflection = "未找到相关讨论记录。"
+	} else if mode == "full_session" {
+		reflection = fmt.Sprintf("已展开为完整 session 内容，包含相关 user/assistant/tool 消息。共 %d 条结果。", len(results))
+	} else if source != "" || typeFilter != "" {
+		reflection = fmt.Sprintf("已按 source=%s type=%s 过滤，共 %d 条结果。", source, typeFilter, total)
 	}
+
 	return mcpToolResult{
 		Content:        []mcpContent{{Type: "text", Text: b.String()}},
-		RelatedContext: map[string]interface{}{"results": results, "total": total},
+		RelatedContext: map[string]interface{}{"results": results, "total": total, "mode": mode},
 		Reflection:     reflection,
 	}
 }
@@ -1286,6 +1383,12 @@ func mcpLogDiscussion(toolName string, args map[string]interface{}, result mcpTo
 			}
 			summary += " \"" + q + "\""
 		}
+		if ln, ok := args["last_n"]; ok {
+			summary += fmt.Sprintf(" last_n=%v", ln)
+		}
+		if m, ok := args["mode"].(string); ok && m != "" {
+			summary += " mode=" + m
+		}
 	case "aipm_create_task":
 		if t, ok := args["title"].(string); ok {
 			summary += " \"" + t + "\""
@@ -1347,6 +1450,37 @@ func getStr(m map[string]interface{}, key, def string) string {
 	return def
 }
 
+// getInt reads an integer parameter from MCP tool args.
+// Clients may send numbers as float64 (JSON), int/int64 (native bridges), or string.
+func getInt(m map[string]interface{}, key string, def int) int {
+	v, ok := m[key]
+	if !ok {
+		return def
+	}
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case float32:
+		return int(n)
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case int32:
+		return int(n)
+	case json.Number:
+		if i, err := n.Int64(); err == nil {
+			return int(i)
+		}
+	case string:
+		var i int
+		if _, err := fmt.Sscanf(n, "%d", &i); err == nil {
+			return i
+		}
+	}
+	return def
+}
+
 func splitStr(s, sep string) []string {
 	if s == "" {
 		return nil
@@ -1381,4 +1515,75 @@ func strIndex(s, sep string) int {
 		}
 	}
 	return -1
+}
+
+// ---- Discussion search helpers ----
+
+// sessionGroup holds a session ID and its messages (ordered by time).
+type sessionGroup struct {
+	sessionID string
+	messages  []map[string]any
+}
+
+// expandToFullSessions takes search results and expands them to include all
+// messages from each result's session. Sessions are deduplicated.
+func expandToFullSessions(matches []map[string]any, maxSessions int) []map[string]any {
+	// Collect unique session IDs in order of first appearance
+	seen := map[string]bool{}
+	var sessionIDs []string
+	for _, m := range matches {
+		sid := u.Str(m["session_id"])
+		if sid != "" && !seen[sid] {
+			seen[sid] = true
+			sessionIDs = append(sessionIDs, sid)
+		}
+	}
+
+	if maxSessions > 0 && len(sessionIDs) > maxSessions {
+		sessionIDs = sessionIDs[:maxSessions]
+	}
+
+	var allMessages []map[string]any
+	for _, sid := range sessionIDs {
+		msgs, err := store.GetSessionMessages(sid)
+		if err != nil {
+			// Fall back to the original match if we can't get full session
+			for _, m := range matches {
+				if u.Str(m["session_id"]) == sid {
+					allMessages = append(allMessages, m)
+					break
+				}
+			}
+			continue
+		}
+		for i := range msgs {
+			allMessages = append(allMessages, msgs[i])
+		}
+	}
+	if allMessages == nil {
+		allMessages = []map[string]any{}
+	}
+	return allMessages
+}
+
+// groupBySession groups messages by session_id, preserving chronological order within each session.
+func groupBySession(messages []map[string]any) []sessionGroup {
+	order := []string{}
+	groups := map[string][]map[string]any{}
+	for _, m := range messages {
+		sid := u.Str(m["session_id"])
+		if _, ok := groups[sid]; !ok {
+			order = append(order, sid)
+		}
+		groups[sid] = append(groups[sid], m)
+	}
+
+	var result []sessionGroup
+	for _, sid := range order {
+		result = append(result, sessionGroup{sessionID: sid, messages: groups[sid]})
+	}
+	if result == nil {
+		result = []sessionGroup{}
+	}
+	return result
 }

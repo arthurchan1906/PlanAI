@@ -18,12 +18,13 @@ type EditPair struct {
 }
 
 type cursorCachedEdit struct {
-	FilePath      string     `json:"file_path"`
-	Edits         []EditPair `json:"edits"`
-	UpdatedAt     int64      `json:"updated_at"`
-	LoggedToDB    bool       `json:"logged_to_db,omitempty"`
-	GenerationID  string     `json:"generation_id,omitempty"`
-	EditSignature string     `json:"edit_signature,omitempty"`
+	FilePath      string      `json:"file_path"`
+	Edits         []EditPair  `json:"edits"`
+	Hunks         []PatchHunk `json:"hunks,omitempty"`
+	UpdatedAt     int64       `json:"updated_at"`
+	LoggedToDB    bool        `json:"logged_to_db,omitempty"`
+	GenerationID  string      `json:"generation_id,omitempty"`
+	EditSignature string      `json:"edit_signature,omitempty"`
 }
 
 type cursorEditCacheFile struct {
@@ -124,6 +125,45 @@ func saveCursorEditCache(cache cursorEditCacheFile) {
 		return
 	}
 	_ = os.WriteFile(path, data, 0644)
+}
+
+// cacheCursorHunks stores hunks extracted from postToolUse for later use by afterFileEdit.
+// postToolUse fires before afterFileEdit and contains structuredPatch with line numbers.
+func cacheCursorHunks(sessionID, filePath string, hunks []PatchHunk) {
+	if sessionID == "" || filePath == "" || len(hunks) == 0 {
+		return
+	}
+	withCursorEditCacheLock(func() {
+		cache := loadCursorEditCache()
+		key := cursorEditCacheKey(sessionID, filePath)
+		entry := cache.Entries[key]
+		entry.FilePath = filePath
+		entry.Hunks = hunks
+		entry.UpdatedAt = time.Now().Unix()
+		cache.Entries[key] = entry
+		saveCursorEditCache(cache)
+	})
+}
+
+// takeCursorHunks retrieves cached hunks for a (session, filePath) and removes them.
+func takeCursorHunks(sessionID, filePath string) []PatchHunk {
+	if sessionID == "" || filePath == "" {
+		return nil
+	}
+	var hunks []PatchHunk
+	withCursorEditCacheLock(func() {
+		cache := loadCursorEditCache()
+		key := cursorEditCacheKey(sessionID, filePath)
+		entry, ok := cache.Entries[key]
+		if !ok || len(entry.Hunks) == 0 {
+			return
+		}
+		hunks = entry.Hunks
+		entry.Hunks = nil
+		cache.Entries[key] = entry
+		saveCursorEditCache(cache)
+	})
+	return hunks
 }
 
 func cacheCursorFileEdit(sessionID, filePath string, edits []EditPair) {
@@ -494,11 +534,11 @@ func primaryCursorEdit(edits []EditPair) (oldStr, newStr string) {
 }
 
 // ApplyEditsToMeta writes diff metadata for the frontend DiffPanel.
-func ApplyEditsToMeta(meta map[string]any, filePath string, edits []EditPair, writeContent string) {
-	applyEditsToMeta(meta, filePath, edits, writeContent)
+func ApplyEditsToMeta(meta map[string]any, sessionID, filePath string, edits []EditPair, writeContent string) {
+	applyEditsToMeta(meta, sessionID, filePath, edits, writeContent)
 }
 
-func applyEditsToMeta(meta map[string]any, filePath string, edits []EditPair, writeContent string) {
+func applyEditsToMeta(meta map[string]any, sessionID, filePath string, edits []EditPair, writeContent string) {
 	if filePath != "" {
 		meta["file_path"] = filePath
 	}
@@ -520,6 +560,13 @@ func applyEditsToMeta(meta map[string]any, filePath string, edits []EditPair, wr
 	}
 
 	meta["type"] = "edit"
+
+	// Prefer cached hunks from postToolUse — they carry line numbers (oldStart/newStart)
+	// so the frontend can render proper unified-diff blocks instead of raw text blocks.
+	if hunks := takeCursorHunks(sessionID, filePath); len(hunks) > 0 {
+		meta["hunks"] = hunks
+	}
+
 	oldStr, newStr := primaryCursorEdit(edits)
 	oldStr = FixHookText(oldStr)
 	newStr = FixHookText(newStr)
@@ -541,12 +588,12 @@ func applyEditsToMeta(meta map[string]any, filePath string, edits []EditPair, wr
 	}
 }
 
-func buildAfterFileEditMeta(baseMetaJSON, filePath string, edits []EditPair) string {
+func buildAfterFileEditMeta(baseMetaJSON, sessionID, filePath string, edits []EditPair) string {
 	var meta map[string]any
 	if err := json.Unmarshal([]byte(baseMetaJSON), &meta); err != nil {
 		meta = map[string]any{}
 	}
-	applyEditsToMeta(meta, filePath, edits, "")
+	applyEditsToMeta(meta, sessionID, filePath, edits, "")
 	b, _ := json.Marshal(meta)
 	return string(b)
 }

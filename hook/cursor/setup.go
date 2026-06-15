@@ -19,6 +19,7 @@ const fs = require('fs');
 const path = require('path');
 
 const CONFIG_PATH = path.join(__dirname, 'aipm-config.json');
+const PROJECT_ROOT = path.join(__dirname, '..', '..');
 
 function readStdin() {
   let buf = fs.readFileSync(0);
@@ -65,6 +66,7 @@ function main() {
   try {
     const result = spawnSync(command, args, {
       input,
+      cwd: PROJECT_ROOT,
       maxBuffer: 10 * 1024 * 1024,
       windowsHide: true,
     });
@@ -128,7 +130,8 @@ func SetupHooks(_ string) error {
 		return fmt.Errorf("write hook script: %w", err)
 	}
 
-	aipmcBin := paths.ConfigCommand()
+	// Cursor hook subprocesses do not inherit the shell PATH; use absolute binary path.
+	aipmcBin := paths.RunningBinaryPath()
 	configData, _ := json.MarshalIndent(map[string]any{
 		"command": aipmcBin,
 		"args":    []string{"hook-cursor"},

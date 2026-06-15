@@ -115,10 +115,17 @@ func ProcessHook() {
 
 		ti := parseToolInput(raw.ToolInput)
 		fp := toolFilePath(ti, toolResp)
-		// Cursor emits afterFileEdit with structured old/new diffs for Write/Edit.
-		// Logging postToolUse too produces duplicate bare-path entries without diffs.
+		// Cursor emits afterFileEdit with old/new text pairs but NO line numbers.
+		// postToolUse has structuredPatch hunks with line numbers (oldStart/newStart).
+		// Cache the hunks here so afterFileEdit can include them in metadata for
+		// the frontend to render proper unified-diff blocks.
 		if isFileEditTool(normalizedName) && fp != "" {
-			logf("postToolUse %s skipped (afterFileEdit owns file edits): %s", raw.ToolName, fp)
+			if hunks := extractHunksFromCursorResp(toolResp); len(hunks) > 0 {
+				cacheCursorHunks(sid, fp, hunks)
+				logf("postToolUse %s cached %d hunks for afterFileEdit: %s", raw.ToolName, len(hunks), fp)
+			} else {
+				logf("postToolUse %s skipped (no hunks, afterFileEdit owns file edits): %s", raw.ToolName, fp)
+			}
 			os.Exit(0)
 		}
 
@@ -172,7 +179,7 @@ func ProcessHook() {
 			os.Exit(0)
 		}
 
-		metaJSON := buildAfterFileEditMeta(buildFullMeta("after_file_edit", data), raw.FilePath, edits)
+		metaJSON := buildAfterFileEditMeta(buildFullMeta("after_file_edit", data), sid, raw.FilePath, edits)
 		var meta map[string]any
 		if err := json.Unmarshal([]byte(metaJSON), &meta); err != nil {
 			meta = map[string]any{"file_path": raw.FilePath, "type": "edit"}

@@ -142,10 +142,7 @@ func (s *mcpServer) handleGetMeetingTurn(args map[string]interface{}) mcpToolRes
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "请提供 room_id 和 turn_id"}}, IsError: true}
 	}
 	agentID := getStr(args, "agent_id", "")
-	sinceTurn := 0
-	if st := getStr(args, "since_turn", ""); st != "" {
-		fmt.Sscanf(st, "%d", &sinceTurn)
-	}
+	sinceTurn := getInt(args, "since_turn", 0)
 	room, err := store.GetMeetingRoom(roomID)
 	if err != nil {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("会议不存在: %v", err)}}, IsError: true}

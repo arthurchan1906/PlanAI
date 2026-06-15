@@ -41,7 +41,7 @@ func TestIsNewFileFromEdits(t *testing.T) {
 func TestApplyEditsToMeta(t *testing.T) {
 	meta := map[string]any{}
 	edits := []cursor.EditPair{{OldString: "old", NewString: "new"}}
-	cursor.ApplyEditsToMeta(meta, "foo.go", edits, "")
+	cursor.ApplyEditsToMeta(meta, "test-session", "foo.go", edits, "")
 	if meta["type"] != "edit" {
 		t.Fatalf("type=%v", meta["type"])
 	}
@@ -248,7 +248,7 @@ func TestApplyEditsToMetaFixesMojibake(t *testing.T) {
 	garbled := mojibakeUTF8AsGBK("文件")
 	meta := map[string]any{}
 	edits := []cursor.EditPair{{OldString: garbled, NewString: "文件编辑"}}
-	cursor.ApplyEditsToMeta(meta, "main.py", edits, "")
+	cursor.ApplyEditsToMeta(meta, "test-session", "main.py", edits, "")
 	oldS, _ := meta["old_string"].(string)
 	if oldS != "文件" {
 		t.Fatalf("old_string not fixed: %q", oldS)

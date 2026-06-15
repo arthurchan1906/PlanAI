@@ -57,7 +57,7 @@ func RefreshFileToolContent(content, metaJSON string) string {
 
 func enrichEditMeta(meta map[string]any, sessionID, filePath string, toolResp json.RawMessage, ti map[string]string) {
 	if cached := takeCursorFileEditWithRetry(sessionID, filePath, 3*time.Second); cached != nil {
-		ApplyEditsToMeta(meta, filePath, cached.Edits, "")
+		ApplyEditsToMeta(meta, sessionID, filePath, cached.Edits, "")
 		return
 	}
 
@@ -83,7 +83,7 @@ func enrichEditMeta(meta map[string]any, sessionID, filePath string, toolResp js
 func enrichWriteMeta(meta map[string]any, sessionID, filePath string, toolResp json.RawMessage, ti map[string]string) {
 	writeContent := ti["content"]
 	if cached := takeCursorFileEditWithRetry(sessionID, filePath, 3*time.Second); cached != nil {
-		ApplyEditsToMeta(meta, filePath, cached.Edits, writeContent)
+		ApplyEditsToMeta(meta, sessionID, filePath, cached.Edits, writeContent)
 		return
 	}
 

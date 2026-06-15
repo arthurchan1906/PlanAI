@@ -130,6 +130,89 @@ func RecentUserPrompts(sessionID, source string, limit int) ([]string, error) {
 	return result, nil
 }
 
+// ListRecentDiscussions returns the most recent N discussion entries, optionally filtered.
+func ListRecentDiscussions(source, typeFilter string, lastN int) ([]map[string]any, error) {
+	if lastN <= 0 {
+		lastN = 10
+	}
+	db, err := pmdb.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	where := "WHERE 1=1"
+	var args []any
+	if source != "" {
+		where += " AND source = ?"
+		args = append(args, source)
+	}
+	if typeFilter != "" {
+		switch typeFilter {
+		case "user":
+			where += " AND role = 'user'"
+		case "assistant":
+			where += " AND role = 'assistant'"
+		case "tool":
+			where += " AND role = 'tool'"
+		}
+	}
+
+	q := "SELECT id, session_id, role, source, content, metadata, created_at FROM discussion_log " + where + " ORDER BY created_at DESC, rowid DESC LIMIT ?"
+	args = append(args, lastN)
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []map[string]any
+	for rows.Next() {
+		var id, sid, role, src, content, metadata, createdAt string
+		rows.Scan(&id, &sid, &role, &src, &content, &metadata, &createdAt)
+		results = append(results, map[string]any{
+			"id": id, "session_id": sid, "role": role, "source": src,
+			"content": content, "metadata": metadata, "created_at": createdAt,
+		})
+	}
+	if results == nil {
+		results = []map[string]any{}
+	}
+	return results, nil
+}
+
+// GetSessionMessages returns all messages for a given session, ordered by time.
+func GetSessionMessages(sessionID string) ([]map[string]any, error) {
+	db, err := pmdb.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	rows, err := db.Query(
+		"SELECT id, session_id, role, source, content, metadata, created_at FROM discussion_log WHERE session_id = ? ORDER BY created_at ASC, rowid ASC",
+		sessionID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []map[string]any
+	for rows.Next() {
+		var id, sid, role, src, content, metadata, createdAt string
+		rows.Scan(&id, &sid, &role, &src, &content, &metadata, &createdAt)
+		results = append(results, map[string]any{
+			"id": id, "session_id": sid, "role": role, "source": src,
+			"content": content, "metadata": metadata, "created_at": createdAt,
+		})
+	}
+	if results == nil {
+		results = []map[string]any{}
+	}
+	return results, nil
+}
+
 // ListDiscussionSources returns distinct source names from discussion_log.
 func ListDiscussionSources() ([]string, error) {
 	db, err := pmdb.Open()
