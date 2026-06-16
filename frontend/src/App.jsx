@@ -17,7 +17,6 @@ import {
   DashboardOutlined,
   FileTextOutlined,
   FundProjectionScreenOutlined,
-  ScheduleOutlined,
   SettingOutlined,
   BranchesOutlined,
   CompassOutlined,
@@ -48,8 +47,6 @@ import BugsView from "./views/BugsView";
 import ThreadsView from "./views/ThreadsView";
 import DailyViewHuman from "./views/DailyViewHuman";
 import AgentsView from "./views/AgentsView";
-import MeetingsView from "./views/MeetingsView";
-import AssignmentsView from "./views/AssignmentsView";
 import AuditView from "./views/AuditView";
 import DiscussionsView from "./views/DiscussionsView";
 import SettingsView from "./views/SettingsView";
@@ -80,7 +77,7 @@ function ConsoleApp() {
     codeStatus, recentGitCommits,
     tasks, taskNotes, commits, bugs, ideas, docs, docAudit, decisions, daily,
     threads, threadSuggestions, threadStatus,
-    agents, meetings, assignments, auditLogs,
+    agents, auditLogs,
     loadAll, runAction,
   } = useBootstrap(api, message, view);
 
@@ -286,7 +283,7 @@ function ConsoleApp() {
             children: group.children.map(item => ({
               key: item.key,
               label: item.label,
-              icon: ({ chat: <MessageOutlined />, planning: <AppstoreOutlined />, commits: <BranchesOutlined />, bugs: <BugOutlined />, threads: <NodeIndexOutlined />, decisions: <FundProjectionScreenOutlined />, visions: <CompassOutlined />, discussions: <TeamOutlined />, ideas: <BulbOutlined />, docs: <FileTextOutlined />, daily: <ProjectOutlined />, code: <CodeOutlined />, agents: <RobotOutlined />, meetings: <MessageOutlined />, assignments: <ScheduleOutlined />, audit: <SafetyCertificateOutlined />, settings: <SettingOutlined /> })[item.key] || null,
+              icon: ({ chat: <MessageOutlined />, planning: <AppstoreOutlined />, commits: <BranchesOutlined />, bugs: <BugOutlined />, threads: <NodeIndexOutlined />, decisions: <FundProjectionScreenOutlined />, visions: <CompassOutlined />, discussions: <TeamOutlined />, ideas: <BulbOutlined />, docs: <FileTextOutlined />, daily: <ProjectOutlined />, code: <CodeOutlined />, agents: <RobotOutlined />, audit: <SafetyCertificateOutlined />, settings: <SettingOutlined /> })[item.key] || null,
             }))
           }))}
           onClick={({ key }) => setView(key)} 
@@ -381,8 +378,6 @@ function ConsoleApp() {
           {view === "decisions" && <GovernanceView decisions={decisions} decisionForm={decisionForm} setDecisionForm={setDecisionForm} onCreateDecision={() => runAction(() => api("/pmai/decisions", { method: "POST", body: JSON.stringify({ title: decisionForm.title, background: decisionForm.background, decision: decisionForm.decision, status: "proposed" }) }), "Decision created")} busy={busy} loading={loading} principles={principles} principleForm={principleForm} setPrincipleForm={setPrincipleForm} canon={canon} canonForm={canonForm} setCanonForm={setCanonForm} visions={visions} visionForm={visionForm} setVisionForm={setVisionForm} onCreateVision={p => runAction(() => api("/pmai/visions", { method: "POST", body: JSON.stringify(p) }), "Vision created")} onSubmitCanon={() => runAction(() => api("/pmai/canon/update", { method: "POST", body: JSON.stringify(buildCanonPayload(canonForm)) }), "Canon updated")} />}
           {view === "d_old" && <DecisionsView decisions={decisions} decisionSearch={decisionSearch} decisionStatusFilter={decisionStatusFilter} setDecisionSearch={setDecisionSearch} setDecisionStatusFilter={setDecisionStatusFilter} decisionForm={decisionForm} setDecisionForm={setDecisionForm} busy={busy} onOpenIdea={handleOpenIdea} onCreateDecision={() => runAction(() => api("/pmai/decisions", { method: "POST", body: JSON.stringify(decisionForm) }), "Decision created")} onUpdateDecision={(id, s) => runAction(() => api(`/pmai/decisions/${id}`, { method: "PATCH", body: JSON.stringify({ status: s }) }), "Decision updated")} onCopyIntoCanon={id => { setCanonForm({...canonForm, decisionId: id}); setView("canon"); }} />}
           {view === "agents" && <AgentsView agents={agents} loading={loading} loadAll={loadAll} busy={busy} />}
-          {view === "meetings" && <MeetingsView meetings={meetings} agents={agents} loading={loading} loadAll={loadAll} busy={busy} />}
-          {view === "assignments" && <AssignmentsView assignments={assignments} agents={agents} tasks={tasks} loading={loading} loadAll={loadAll} busy={busy} />}
           {view === "audit" && <AuditView auditLogs={auditLogs} loading={loading} loadAll={loadAll} />}
           {view === "discussions" && <DiscussionsView />}
           {view === "chat" && <ChatView />}

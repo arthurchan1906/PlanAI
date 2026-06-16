@@ -108,38 +108,6 @@ func AgentsPayload() map[string]any {
 	return map[string]any{"agents": agents}
 }
 
-// MeetingsPayload is returned by GET /pmai/web/meetings.
-func MeetingsPayload() map[string]any {
-	meetings, _ := store.ListMeetingRooms("")
-	agents, _ := store.ListAgentProfiles()
-	if meetings == nil {
-		meetings = []map[string]any{}
-	}
-	if agents == nil {
-		agents = []map[string]any{}
-	}
-	return map[string]any{"meetings": meetings, "agents": agents}
-}
-
-// AssignmentsPayload is returned by GET /pmai/web/assignments.
-func AssignmentsPayload() map[string]any {
-	assignments, _ := store.ListAssignments("", "")
-	agents, _ := store.ListAgentProfiles()
-	b := NewBundle()
-	b.loadTasks()
-	if assignments == nil {
-		assignments = []map[string]any{}
-	}
-	if agents == nil {
-		agents = []map[string]any{}
-	}
-	return map[string]any{
-		"assignments": assignments,
-		"agents":      agents,
-		"tasks":       b.enhancedTasks(),
-	}
-}
-
 // AuditPayload is returned by GET /pmai/web/audit.
 func AuditPayload() map[string]any {
 	logs, _ := store.ListAuditLog("", "", 100)

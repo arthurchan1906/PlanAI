@@ -9,8 +9,6 @@ const VIEW_ENDPOINTS = {
   docs: "/pmai/web/docs",
   threads: "/pmai/web/threads",
   agents: "/pmai/web/agents",
-  meetings: "/pmai/web/meetings",
-  assignments: "/pmai/web/assignments",
   audit: "/pmai/web/audit",
   code: "/pmai/web/code",
   daily: "/pmai/web/daily",
@@ -35,8 +33,6 @@ function mergePayload(setters, payload) {
   if (payload.thread_suggestions != null) setters.setThreadSuggestions(payload.thread_suggestions);
   if (payload.thread_status != null) setters.setThreadStatus(payload.thread_status);
   if (payload.agents != null) setters.setAgents(payload.agents);
-  if (payload.meetings != null) setters.setMeetings(payload.meetings);
-  if (payload.assignments != null) setters.setAssignments(payload.assignments);
   if (payload.audit_logs != null) setters.setAuditLogs(payload.audit_logs);
   if (payload.code_status != null) setters.setCodeStatus(payload.code_status);
   if (payload.recent_git_commits != null) setters.setRecentGitCommits(payload.recent_git_commits);
@@ -72,15 +68,13 @@ export default function useBootstrap(api, message, view) {
   const [threadSuggestions, setThreadSuggestions] = useState([]);
   const [threadStatus, setThreadStatus] = useState([]);
   const [agents, setAgents] = useState([]);
-  const [meetings, setMeetings] = useState([]);
-  const [assignments, setAssignments] = useState([]);
   const [auditLogs, setAuditLogs] = useState([]);
 
   const setters = {
     setRoadmaps, setPlans, setVisions, setTasks, setTaskNotes, setCommits,
     setDocs, setIdeas, setBugs, setDecisions, setPrinciples, setCanon,
     setDocAudit, setDaily, setThreads, setThreadSuggestions, setThreadStatus,
-    setAgents, setMeetings, setAssignments, setAuditLogs, setCodeStatus, setRecentGitCommits,
+    setAgents, setAuditLogs, setCodeStatus, setRecentGitCommits,
   };
 
   const loadView = useCallback(async (viewKey, { force = false } = {}) => {
@@ -132,7 +126,7 @@ export default function useBootstrap(api, message, view) {
     canon, visions, roadmaps, plans, principles,
     codeStatus, recentGitCommits,
     tasks, taskNotes, commits, bugs, ideas, docs, docAudit, decisions, daily,
-    agents, meetings, assignments, auditLogs,
+    agents, auditLogs,
     threads, threadSuggestions, threadStatus,
     loadAll, runAction,
   };

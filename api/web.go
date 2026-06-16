@@ -29,10 +29,6 @@ func (s *Server) handleWebRoutes(w http.ResponseWriter, method, path string) boo
 		web.SendJSON(w, webdata.ThreadsPayload())
 	case "web/agents":
 		web.SendJSON(w, webdata.AgentsPayload())
-	case "web/meetings":
-		web.SendJSON(w, webdata.MeetingsPayload())
-	case "web/assignments":
-		web.SendJSON(w, webdata.AssignmentsPayload())
 	case "web/audit":
 		web.SendJSON(w, webdata.AuditPayload())
 	case "web/code":

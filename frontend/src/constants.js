@@ -41,8 +41,6 @@ export const NAV_GROUPS = [
     children: [
       { key: "chat", label: "Chat" },
       { key: "agents", label: "Agents" },
-      { key: "meetings", label: "Meetings" },
-      { key: "assignments", label: "Assignments" },
       { key: "audit", label: "Audit Log" },
     ],
   },

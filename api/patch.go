@@ -21,14 +21,6 @@ func (s *Server) handlePatchRoutes(w http.ResponseWriter, method, path string, b
 			return true
 		}
 		web.SendJSON(w, a)
-	case strings.HasPrefix(path, "assignments/"):
-		id := strings.TrimPrefix(path, "assignments/")
-		a, err := store.UpdateAssignment(id, body)
-		if err != nil {
-			web.SendError(w, 400, err.Error())
-			return true
-		}
-		web.SendJSON(w, a)
 	default:
 		entity, id := parseEntityID(path)
 		if id == "" {

@@ -228,44 +228,25 @@ func GetSessionMessages(sessionID string) ([]map[string]any, error) {
 	return results, nil
 }
 
-// ReadDiscussionsOpts controls aipm_read_discussions / topic catchup queries.
+// ReadDiscussionsOpts controls aipm_read_discussions queries.
 type ReadDiscussionsOpts struct {
-	Source  string
-	LastN   int
-	Since   string
-	Full    bool
-	TopicID string
+	Source string
+	LastN  int
+	Since  string
+	Full   bool
 }
 
 // ReadDiscussions returns substantive discussion rows (user + non-tool assistant).
 func ReadDiscussions(opts ReadDiscussionsOpts) ([]map[string]any, error) {
-	since := opts.Since
-	var closedAt string
-	if opts.TopicID != "" {
-		topic, err := GetCollaborationTopic(opts.TopicID)
-		if err != nil {
-			return nil, err
-		}
-		started := u.Str(topic["created_at"])
-		if since == "" || since < started {
-			since = started
-		}
-		closedAt = u.Str(topic["closed_at"])
-	}
-
 	where := "WHERE " + substantiveDiscussionSQL()
 	var args []any
 	if opts.Source != "" {
 		where += " AND source = ?"
 		args = append(args, opts.Source)
 	}
-	if since != "" {
+	if opts.Since != "" {
 		where += " AND created_at >= ?"
-		args = append(args, since)
-	}
-	if closedAt != "" {
-		where += " AND created_at <= ?"
-		args = append(args, closedAt)
+		args = append(args, opts.Since)
 	}
 
 	limit := opts.LastN

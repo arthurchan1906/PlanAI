@@ -1354,52 +1354,6 @@ func BuildBriefing(aiClient *ai.Client) string {
 	return b.String()
 }
 
-// BuildBriefingForAgent generates a personalized briefing for a specific agent.
-// aiClient can be nil — AI summary is skipped when unavailable.
-func BuildBriefingForAgent(agentID string, aiClient *ai.Client) string {
-	base := BuildBriefing(aiClient)
-	assignments, _ := store.ListAssignments(agentID, "")
-
-	var b strings.Builder
-	b.WriteString(base)
-
-	// Agent-specific section
-	if len(assignments) > 0 {
-		b.WriteString("\n## 🎯 你的任务\n\n")
-		for _, a := range assignments {
-			status := u.Str(a["status"])
-			role := u.Str(a["role"])
-			scope := u.Str(a["scope"])
-			icon := "⬜"
-			switch status {
-			case "in_progress":
-				icon = "🔄"
-			case "done":
-				icon = "✅"
-			case "assigned":
-				icon = "📋"
-			}
-			b.WriteString(fmt.Sprintf("- %s [%s] **%s**: %s\n", icon, status, role, scope))
-			if tid := u.Str(a["task_id"]); tid != "" {
-				b.WriteString(fmt.Sprintf("  → task: aipmc task show --id %s\n", tid))
-			}
-		}
-		b.WriteString("\n")
-	}
-
-	// Active collaboration topics
-	rooms, _ := store.ListMeetingRooms("active")
-	if len(rooms) > 0 {
-		b.WriteString("## 📞 活跃协作主题\n\n")
-		for _, r := range rooms {
-			b.WriteString(fmt.Sprintf("- **%s** [%s]\n", u.Str(r["title"]), u.Str(r["id"])))
-		}
-		b.WriteString("  → 用 aipm_read_discussions(topic_id=...) 获取讨论上下文\n\n")
-	}
-
-	return b.String()
-}
-
 // getActionableSuggestion returns a context-aware suggestion for a task.
 func GetActionableSuggestion(task store.Task) string {
 	switch task.Status {

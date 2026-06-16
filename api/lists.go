@@ -58,12 +58,6 @@ func (s *Server) handleListRoutes(w http.ResponseWriter, method, path string, q 
 	case "agents":
 		agents, _ := store.ListAgentProfiles()
 		web.SendJSON(w, map[string]any{"agents": agents})
-	case "meetings":
-		rooms, _ := store.ListMeetingRooms(q.Get("status"))
-		web.SendJSON(w, map[string]any{"meetings": rooms})
-	case "assignments":
-		asgns, _ := store.ListAssignments(q.Get("agent_id"), q.Get("status"))
-		web.SendJSON(w, map[string]any{"assignments": asgns})
 	case "audit":
 		logs, _ := store.ListAuditLog(q.Get("actor_type"), q.Get("entity_type"), 200)
 		web.SendJSON(w, map[string]any{"audit_logs": logs})

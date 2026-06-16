@@ -98,20 +98,6 @@ func (s *Server) handleCreateRoutes(w http.ResponseWriter, method, path string, 
 			return true
 		}
 		web.SendJSON(w, profile)
-	case "meetings":
-		room, err := store.CreateMeetingRoom(u.Str(body["title"]), u.Str(body["topic"]), u.Str(body["context"]), u.Str(body["created_by"]))
-		if err != nil {
-			web.SendError(w, 400, err.Error())
-			return true
-		}
-		web.SendJSON(w, room)
-	case "assignments":
-		a, err := store.CreateAssignment(u.Str(body["agent_id"]), u.Str(body["task_id"]), u.Str(body["role"]), u.Str(body["scope"]), u.Str(body["assigned_by"]))
-		if err != nil {
-			web.SendError(w, 400, err.Error())
-			return true
-		}
-		web.SendJSON(w, a)
 	default:
 		return false
 	}
@@ -187,14 +173,6 @@ func (s *Server) handleNestedPostSubRoutes(w http.ResponseWriter, path string, b
 		web.SendJSON(w, t)
 	case strings.HasPrefix(path, "plans/") && strings.HasSuffix(path, "/advance"):
 		web.SendJSON(w, map[string]any{"ok": true, "message": "plan advanced"})
-	case strings.HasPrefix(path, "meetings/") && strings.HasSuffix(path, "/close"):
-		id := extractID(path, "meetings/", "/close")
-		r, err := store.CloseMeetingRoom(id)
-		if err != nil {
-			web.SendError(w, 400, err.Error())
-			return true
-		}
-		web.SendJSON(w, r)
 	default:
 		return false
 	}

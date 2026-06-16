@@ -114,12 +114,10 @@ func (s *mcpServer) registerTools() {
 	// Core tools
 	s.addTool(MCPTool{
 		Name:        "aipm_get_briefing",
-		Description: "获取当前项目简报。包含进行中的任务、PM 最新变更、进度风险、重复检测、scope 漂移等分析结果。Agent 在开始编码前应调用此工具获取最新上下文。提供 agent_id 时返回个性化简报（包含分配的任務和待参与的会议）。",
+		Description: "获取当前项目简报。包含进行中的任务、PM 最新变更、进度风险、重复检测、scope 漂移、最近 Agent 活动等分析结果。Agent 在开始编码前应调用此工具获取最新上下文。",
 		InputSchema: MCPInputSchema{
-			Type: "object",
-			Properties: map[string]interface{}{
-				"agent_id": map[string]string{"type": "string", "description": "可选: Agent ID，提供时返回个性化简报"},
-			},
+			Type:       "object",
+			Properties: map[string]interface{}{},
 		},
 	}, s.handleBriefing)
 
@@ -345,15 +343,14 @@ func (s *mcpServer) registerTools() {
 	// Discussion log tools
 	s.addTool(MCPTool{
 		Name:        "aipm_read_discussions",
-		Description: "读取项目讨论历史（一步全文）。按 source / last_n / since 过滤；full=true 返回全文，默认预览约 200 字。topic_id 限定协作主题时间窗。禁止用 sqlite3 直查数据库。",
+		Description: "读取项目讨论历史（一步全文）。按 source / last_n / since 过滤；full=true 返回全文，默认预览约 200 字。禁止用 sqlite3 直查数据库。",
 		InputSchema: MCPInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
-				"source":   map[string]string{"type": "string", "description": "可选: 按 agent 来源过滤 (claude-code / cursor / gemini-cli / …)"},
-				"last_n":   map[string]string{"type": "integer", "description": "可选: 最近 N 条（与 since 可组合）"},
-				"since":    map[string]string{"type": "string", "description": "可选: ISO 时间下限 (例 2026-06-15T21:48:00)"},
-				"full":     map[string]string{"type": "boolean", "description": "可选: true=全文，false=预览（默认）"},
-				"topic_id": map[string]string{"type": "string", "description": "可选: 协作主题 ID，限定时间窗"},
+				"source": map[string]string{"type": "string", "description": "可选: 按 agent 来源过滤 (claude-code / cursor / gemini-cli / …)"},
+				"last_n": map[string]string{"type": "integer", "description": "可选: 最近 N 条（与 since 可组合）"},
+				"since":  map[string]string{"type": "string", "description": "可选: ISO 时间下限 (例 2026-06-15T21:48:00)"},
+				"full":   map[string]string{"type": "boolean", "description": "可选: true=全文，false=预览（默认）"},
 			},
 		},
 	}, s.handleReadDiscussions)
@@ -388,9 +385,6 @@ func (s *mcpServer) registerTools() {
 			Required: []string{"content"},
 		},
 	}, s.handleLogDiscussion)
-
-	// Agent collaboration tools (meetings, assignments)
-	s.registerAgentTools()
 }
 
 func (s *mcpServer) addTool(tool MCPTool, handler mcpToolHandler) {
@@ -401,13 +395,7 @@ func (s *mcpServer) addTool(tool MCPTool, handler mcpToolHandler) {
 // ---- Tool Handlers ----
 
 func (s *mcpServer) handleBriefing(args map[string]interface{}) mcpToolResult {
-	agentID := getStr(args, "agent_id", "")
-	var briefing string
-	if agentID != "" {
-		briefing = analyze.BuildBriefingForAgent(agentID, s.ai)
-	} else {
-		briefing = analyze.BuildBriefing(s.ai)
-	}
+	briefing := analyze.BuildBriefing(s.ai)
 	report := analyze.RunFullAnalysis()
 
 	related := map[string]interface{}{
@@ -418,7 +406,7 @@ func (s *mcpServer) handleBriefing(args map[string]interface{}) mcpToolResult {
 
 	reflection := ""
 	if len(report.Orphans) > 0 {
-		reflection = fmt.Sprintf("⚠️ 检测到 %d 个孤儿任务（in_progress 但无 commit）。检查这些任务是否需要 commit 或更新状态。", len(report.Orphans))
+		reflection = fmt.Sprintf("⚠️ 检测到 %d 个孤儿任务（3 天内无 commit 且无讨论）。检查这些任务是否需要 commit 或更新状态。", len(report.Orphans))
 	}
 	if len(report.Duplicates) > 0 {
 		reflection += fmt.Sprintf("⚠️ 检测到 %d 个重复 Plan。避免重复创建。", len(report.Duplicates))
@@ -877,7 +865,6 @@ func (s *mcpServer) handleSmartSearch(args map[string]interface{}) mcpToolResult
 func (s *mcpServer) handleReadDiscussions(args map[string]interface{}) mcpToolResult {
 	source := getStr(args, "source", "")
 	since := getStr(args, "since", "")
-	topicID := getStr(args, "topic_id", "")
 	lastN := getInt(args, "last_n", 0)
 	full := false
 	if v, ok := args["full"].(bool); ok {
@@ -887,11 +874,10 @@ func (s *mcpServer) handleReadDiscussions(args map[string]interface{}) mcpToolRe
 	}
 
 	rows, err := store.ReadDiscussions(store.ReadDiscussionsOpts{
-		Source:  source,
-		LastN:   lastN,
-		Since:   since,
-		Full:    full,
-		TopicID: topicID,
+		Source: source,
+		LastN:  lastN,
+		Since:  since,
+		Full:   full,
 	})
 	if err != nil {
 		return mcpToolResult{
@@ -907,9 +893,6 @@ func (s *mcpServer) handleReadDiscussions(args map[string]interface{}) mcpToolRe
 	}
 	if since != "" {
 		header.WriteString(fmt.Sprintf(" [since=%s]", since))
-	}
-	if topicID != "" {
-		header.WriteString(fmt.Sprintf(" [topic=%s]", topicID))
 	}
 	header.WriteString("\n\n")
 
@@ -1415,10 +1398,6 @@ func mcpLogDiscussion(toolName string, args map[string]interface{}, result mcpTo
 
 	// Include the first key argument as context
 	switch toolName {
-	case "aipm_get_briefing":
-		if aid, ok := args["agent_id"].(string); ok && aid != "" {
-			summary += " agent=" + aid
-		}
 	case "aipm_search_context", "aipm_smart_search", "aipm_search_discussions", "aipm_read_discussions":
 		if q, ok := args["query"].(string); ok && q != "" {
 			if len(q) > 60 {

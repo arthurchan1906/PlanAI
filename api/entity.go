@@ -88,20 +88,6 @@ func handleGetEntity(w http.ResponseWriter, entity, id string) {
 			return
 		}
 		web.SendJSON(w, a)
-	case "meetings":
-		m, err := store.GetMeetingRoom(id)
-		if err != nil {
-			web.SendError(w, 404, err.Error())
-			return
-		}
-		web.SendJSON(w, m)
-	case "assignments":
-		a, err := store.GetAssignment(id)
-		if err != nil {
-			web.SendError(w, 404, err.Error())
-			return
-		}
-		web.SendJSON(w, a)
 	default:
 		web.SendError(w, 404, fmt.Sprintf("unknown entity: %s", entity))
 	}
@@ -190,13 +176,6 @@ func handlePatchEntity(w http.ResponseWriter, entity, id string, body map[string
 		web.SendJSON(w, t)
 	case "agents":
 		a, err := store.UpdateAgentProfile(id, body)
-		if err != nil {
-			web.SendError(w, 400, err.Error())
-			return
-		}
-		web.SendJSON(w, a)
-	case "assignments":
-		a, err := store.UpdateAssignment(id, body)
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return
