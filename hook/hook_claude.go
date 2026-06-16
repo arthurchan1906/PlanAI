@@ -11,7 +11,6 @@ import (
 	"time"
 
 	pmdb "aipmc/db"
-	"aipmc/collab"
 	"aipmc/store"
 	"aipmc/u"
 )
@@ -230,9 +229,6 @@ func ProcessClaudeHook() {
 		if desc != "" {
 			if _, err := store.LogDiscussion(raw.SessionID, "assistant", "claude-code", desc, metadataJSON); err != nil {
 				fmt.Fprintf(os.Stderr, "[aipm-claude %s] PostToolUse %s log FAILED: %v\n", now, raw.ToolName, err)
-			}
-			if raw.ToolName == "Write" || raw.ToolName == "Edit" {
-				collab.MaybeAlertDiscussionWrite(raw.SessionID, "claude-code", raw.ToolName, ti.FilePath)
 			}
 		}
 	}

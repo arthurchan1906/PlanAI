@@ -6,7 +6,6 @@ import (
 	"net/url"
 
 	"aipmc/mcp"
-	"aipmc/meeting"
 	"aipmc/store"
 	"aipmc/u"
 	"aipmc/web"
@@ -107,8 +106,6 @@ func (s *Server) handleMutateRoutes(w http.ResponseWriter, method, path string, 
 		s.handleAITest(w)
 	case method == "POST" && path == "config":
 		s.handlePostConfig(w, body)
-	case method == "POST" && path == "arbitrate":
-		s.handleArbitrate(w, body)
 	default:
 		return false
 	}
@@ -129,12 +126,3 @@ func (s *Server) handleAITest(w http.ResponseWriter) {
 	web.SendJSON(w, map[string]any{"ok": true, "message": "AI 连接正常"})
 }
 
-func (s *Server) handleArbitrate(w http.ResponseWriter, body map[string]any) {
-	roomID := u.Str(body["room_id"])
-	result, err := meeting.ArbitrateNext(s.deps.App.AI, roomID)
-	if err != nil {
-		web.SendError(w, 500, err.Error())
-		return
-	}
-	web.SendJSON(w, map[string]any{"next_agent": result.NextAgent, "reason": result.Reason})
-}

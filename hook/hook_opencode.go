@@ -11,7 +11,6 @@ import (
 	"time"
 
 	pmdb "aipmc/db"
-	"aipmc/collab"
 	"aipmc/store"
 )
 
@@ -216,8 +215,7 @@ func ProcessOpencodeHook() {
 			} else {
 				logf("tool.execute.after %s logged", raw.ToolName)
 			}
-			collab.MaybeAlertFromToolInput(sid, "opencode", normalizedName, raw.ToolInput)
-		} else {
+			} else {
 			logf("tool.execute.after %s — empty content, skipped", raw.ToolName)
 		}
 

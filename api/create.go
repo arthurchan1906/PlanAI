@@ -195,22 +195,6 @@ func (s *Server) handleNestedPostSubRoutes(w http.ResponseWriter, path string, b
 			return true
 		}
 		web.SendJSON(w, r)
-	case strings.HasPrefix(path, "meetings/") && strings.HasSuffix(path, "/turns"):
-		roomID := extractID(path, "meetings/", "/turns")
-		turn, err := store.CreateMeetingTurn(roomID, 0, u.Str(body["speaker_type"]), u.Str(body["speaker_id"]), u.Str(body["question"]))
-		if err != nil {
-			web.SendError(w, 400, err.Error())
-			return true
-		}
-		web.SendJSON(w, turn)
-	case strings.HasPrefix(path, "meetings/") && strings.HasSuffix(path, "/participants"):
-		roomID := extractID(path, "meetings/", "/participants")
-		p, err := store.ConfirmMeetingAttendance(roomID, u.Str(body["agent_id"]))
-		if err != nil {
-			web.SendError(w, 400, err.Error())
-			return true
-		}
-		web.SendJSON(w, p)
 	default:
 		return false
 	}

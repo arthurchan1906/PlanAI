@@ -56,7 +56,6 @@ MCP TOOLS (Agent primary — always visible in tool list):
 CLI (legacy / debug):
   aipmc search|start|next|status|context|inbox|analyze|briefing
   aipmc task|commit|plan|bug|decision|idea|roadmap|principle [CRUD]
-  aipmc topic {create,catchup,prompt,close,list,show,routes}  Multi-agent collaboration
   aipmc doctor|info|event|link|daily|docs|canon
 
 HIERARCHY: commit → task → plan → roadmap (no orphans, no back-fill)`)

@@ -57,9 +57,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.handleNestedPostRoutes(w, method, path, body) {
 		return
 	}
-	if s.handleMeetingTyping(w, method, path, body) {
-		return
-	}
 	if s.handleDeleteRoutes(w, method, path) {
 		return
 	}

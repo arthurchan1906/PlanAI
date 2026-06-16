@@ -17,7 +17,6 @@ import (
 	"aipmc/cli"
 	pmdb "aipmc/db"
 	"aipmc/hook"
-	"aipmc/meeting"
 	"aipmc/search"
 	"aipmc/store"
 	"aipmc/web"
@@ -146,9 +145,6 @@ func main() {
 		if err != nil { fmt.Fprintf(os.Stderr, "embed error: %v\n", err); os.Exit(1) }
 		fmt.Printf("embedded %d discussions\n", count)
 		return
-	case "wait":
-		meeting.RunWaitCLI(os.Args[2:])
-		return
 	case "hook-process":
 		hook.ProcessClaudeHook()
 		return
@@ -265,8 +261,6 @@ func main() {
 		dispatchFeedback(subcmd, args)
 	case "thread":
 		dispatchThread(subcmd, args)
-	case "topic":
-		dispatchTopic(subcmd, args)
 	case "brief":
 		dispatchBrief(subcmd, args)
 	default:

@@ -342,9 +342,6 @@ func (s *mcpServer) registerTools() {
 		},
 	}, s.handleSmartSearch)
 
-	// Agent registration (deprecated for v1 collaboration — kept for CLI/debug only)
-	// aipm_register_agent is not exposed to agents in v1.
-
 	// Discussion log tools
 	s.addTool(MCPTool{
 		Name:        "aipm_read_discussions",
@@ -867,25 +864,6 @@ func (s *mcpServer) handleSmartSearch(args map[string]interface{}) mcpToolResult
 		Content:        []mcpContent{{Type: "text", Text: text.String()}},
 		RelatedContext: map[string]interface{}{"results": results, "ai_enhanced": aiEnhanced},
 		Reflection:     reflection,
-	}
-}
-
-func (s *mcpServer) handleRegisterAgent(args map[string]interface{}) mcpToolResult {
-	name := getStr(args, "name", "")
-	if name == "" {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "请提供 Agent 名称 (name)"}}, IsError: true}
-	}
-	role := getStr(args, "role", "coder")
-	caps := getStr(args, "capabilities", "")
-
-	// Always create a new agent identity — temporary, per-session
-	profile, err := store.CreateAgentProfile(name, role, caps)
-	if err != nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("注册 Agent 失败: %v", err)}}, IsError: true}
-	}
-	return mcpToolResult{
-		Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("✅ Agent '%s' 已注册 (role: %s)", name, role)}},
-		RelatedContext: map[string]interface{}{"agent": profile, "action": "created"},
 	}
 }
 

@@ -11,7 +11,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"aipmc/collab"
 	"aipmc/store"
 
 	"golang.org/x/text/encoding/simplifiedchinese"
@@ -198,7 +197,6 @@ func ProcessHook() {
 		} else {
 			markFileEditLogged(sid, raw.GenerationID, raw.FilePath, edits)
 			logf("afterFileEdit logged %d edit(s) for %s", len(edits), raw.FilePath)
-			collab.MaybeAlertDiscussionWrite(sid, "cursor", "Edit", raw.FilePath)
 		}
 		os.Exit(0)
 

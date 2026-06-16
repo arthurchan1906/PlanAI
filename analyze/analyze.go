@@ -1344,56 +1344,14 @@ func BuildBriefingForAgent(agentID string, aiClient *ai.Client) string {
 		b.WriteString("\n")
 	}
 
-	// Active meetings involving this agent
+	// Active collaboration topics
 	rooms, _ := store.ListMeetingRooms("active")
-	hasMeetings := false
-	for _, r := range rooms {
-		parts, _ := store.ListMeetingParticipants(u.Str(r["id"]))
-		for _, p := range parts {
-			if u.Str(p["agent_id"]) == agentID {
-				if !hasMeetings {
-					b.WriteString("## 📞 待参与的会议\n\n")
-					hasMeetings = true
-				}
-				lastSeen := 0
-				if v, ok := p["last_seen_turn"]; ok {
-					switch vv := v.(type) {
-					case int:
-						lastSeen = vv
-					case int64:
-						lastSeen = int(vv)
-					}
-				}
-				// Count waiting turns for this agent
-				turns, _ := store.ListMeetingTurns(u.Str(r["id"]))
-				waitingForMe := 0
-				latestTurn := 0
-				for _, t := range turns {
-					if tn, ok := t["turn_number"].(string); ok {
-						n := 0
-						fmt.Sscanf(tn, "%d", &n)
-						if n > latestTurn {
-							latestTurn = n
-						}
-					}
-					if u.Str(t["speaker_id"]) == agentID && u.Str(t["status"]) == "waiting" {
-						waitingForMe++
-					}
-				}
-				newSince := latestTurn - lastSeen
-				info := fmt.Sprintf("最新 Turn %d, 你同步到 Turn %d", latestTurn, lastSeen)
-				if waitingForMe > 0 {
-					info += fmt.Sprintf(", ⚠️ %d 条待你回应", waitingForMe)
-				}
-				if newSince > 0 && lastSeen > 0 {
-					info += fmt.Sprintf(", %d 条新发言", newSince)
-				}
-				b.WriteString(fmt.Sprintf("- **%s** [%s] — %s\n", u.Str(r["title"]), u.Str(r["id"]), info))
-			}
+	if len(rooms) > 0 {
+		b.WriteString("## 📞 活跃协作主题\n\n")
+		for _, r := range rooms {
+			b.WriteString(fmt.Sprintf("- **%s** [%s]\n", u.Str(r["title"]), u.Str(r["id"])))
 		}
-	}
-	if hasMeetings {
-		b.WriteString("  → 用 aipm_get_meeting_turn(room_id, turn_id, since_turn=N) 获取增量上下文\n\n")
+		b.WriteString("  → 用 aipm_read_discussions(topic_id=...) 获取讨论上下文\n\n")
 	}
 
 	return b.String()

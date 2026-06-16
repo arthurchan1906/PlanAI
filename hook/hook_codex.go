@@ -11,7 +11,6 @@ import (
 	"time"
 
 	pmdb "aipmc/db"
-	"aipmc/collab"
 	"aipmc/store"
 )
 
@@ -131,8 +130,7 @@ func ProcessCodexHook() {
 			} else {
 				logf("PostToolUse %s logged", raw.ToolName)
 			}
-			collab.MaybeAlertFromToolInput(raw.SessionID, "codex-cli", normalizedName, raw.ToolInput)
-		} else {
+			} else {
 			logf("PostToolUse %s — empty content, skipped", raw.ToolName)
 		}
 

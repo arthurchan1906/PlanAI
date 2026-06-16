@@ -79,24 +79,16 @@ AIPM is the project's knowledge base. Every task, commit, plan, bug, decision li
 
 ---
 
-## 跨 Agent 协作（v1 默认）
+## 跨 Agent 协作
 
 AIPM 自动捕获所有 Agent（Claude Code / Gemini CLI / Codex / OpenCode / Cursor）的完整对话历史。
 
 ### Agent 互读
 - **aipm_read_discussions**(source="...", last_n=10, full=true) — 一步读全文
 - 禁止 sqlite3 读取 .pmai/data/pmai.db
-- 讨论模式：禁止创建/修改代码；仅分析、记录、调 MCP
-- Hook 会在违规 Write 时写入 ⚠️ 告警到 discussion（PM catchup 可见）
 - 回应格式：① 引用对方一点 ② 明确同意/反对 ③ 结论或开放问题
 
-### PM 协作 CLI（PM 使用，Agent 不需要记）
-- aipmc topic create / catchup / prompt / close
-
-### v1 不包含
-- aipmc wait 循环
-- 自动仲裁 / turn 状态机
-- aipm_get_meeting_turn / aipm_respond_in_meeting（MCP 已卸注册）
+discussion_log 就是共享会议室。PM 在任意 Agent 窗口里用自然语言协作，Agent 读到 discussion 即参与。
 
 用 **aipm_log_discussion** 手动记录重要结论。具体参数见各 MCP tool 的 inputSchema。
 
@@ -141,32 +133,6 @@ commit → task → plan → roadmap
 
 ---
 
-## 会议行为准则（已归档 — v1 用协作模式）
-
-v1 默认路径见上方「跨 Agent 协作」。以下 turn/wait 会议流程 **不再注册 MCP**，仅供历史参考。
-
-### 模式 A：讨论模式（默认）
-- ✅ 可以：搜索代码、阅读文件、分析逻辑、提出方案、架构推理
-- ❌ 禁止：修改代码、执行终端命令、创建/修改文件、git 操作
-- 适用：方案评估、架构决策、风险分析、需求讨论
-
-### 模式 B：会诊调试模式
-- ✅ 可以：修改代码、执行命令、测试修复、实时调试
-- ✅ 每步操作后通过 **aipm_speak_in_meeting** 汇报结果
-- 适用：PM 明确要求现场修复 bug、联调问题排查
-
-### 参与方式
-- **PM 点名**：aipm_get_briefing → 看到 inbox 提示 → aipm_get_meeting_turn → aipm_respond_in_meeting
-- **主动发言**：aipm_get_briefing → 检查会议新消息 → aipm_get_meeting_turn 同步上下文 → aipm_speak_in_meeting
-
-### 发言前检查
-1. 先调 aipm_get_briefing(agent_id) 看看有无待回应的 PM 点名 —— 优先回应
-2. 再调 aipm_get_meeting_turn 获取最新上下文 —— 不要遗漏别人的发言
-3. 确认当前模式（讨论/会诊）—— 不确定时默认为讨论模式
-4. 发言后等待 PM 反馈或继续观察
-
----
-
 ## 禁止事项 (NEVER)
 
 - ❌ 在 aipm_get_briefing 之前开始写代码
@@ -175,9 +141,6 @@ v1 默认路径见上方「跨 Agent 协作」。以下 turn/wait 会议流程 *
 - ❌ 忽略 MCP 工具返回的 reflection 提示
 - ❌ 记录 bug 时不提供 error 和 root-cause
 - ❌ 盲从 aipm_suggest_threads 的启发式建议（用自己的分析判断）
-- ❌ 会议中在不确认模式的情况下修改代码（默认用讨论模式）
-- ❌ 发言前不同步 aipm_get_meeting_turn 获取最新上下文
-- ❌ PM 点名后不优先回应（PM 点名优先于主动发言）
 - ❌ 创建无意义标题的线索（如 "Work on frontend"、"Recent commits"）
 - ❌ commit 后不调用 aipm_record_commit
 

@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"strings"
 
-	"aipmc/meeting"
 	"aipmc/store"
 	"aipmc/web"
 )
@@ -91,32 +90,6 @@ func (s *Server) handleDeleteRoutes(w http.ResponseWriter, method, path string) 
 	default:
 		return false
 	}
-	return true
-}
-
-func (s *Server) handleMeetingTyping(w http.ResponseWriter, method, path string, body map[string]any) bool {
-	if method != "POST" || !strings.HasPrefix(path, "meetings/") || !strings.HasSuffix(path, "/typing") {
-		return false
-	}
-	roomID := extractID(path, "meetings/", "/typing")
-	typing := false
-	if v, ok := body["pm_typing"]; ok {
-		if b, ok := v.(bool); ok && b {
-			typing = true
-		}
-		if f, ok := v.(float64); ok && f > 0 {
-			typing = true
-		}
-	}
-	if err := meeting.SetPMTyping(roomID, typing); err != nil {
-		web.SendError(w, 500, err.Error())
-		return true
-	}
-	v := 0
-	if typing {
-		v = 1
-	}
-	web.SendJSON(w, map[string]any{"ok": true, "pm_typing": v})
 	return true
 }
 
