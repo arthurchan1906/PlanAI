@@ -365,3 +365,101 @@ func ListDiscussionSources() ([]string, error) {
 	}
 	return result, nil
 }
+
+// AgentSessionSummary describes one agent session for the briefing.
+type AgentSessionSummary struct {
+	Source           string
+	SessionID        string
+	UserPromptCount  int
+	ToolCallCount    int
+	SubstantiveCount int
+	FirstSeen        string
+	LastSeen         string
+	UserPrompts      []string // first few user prompts for context
+}
+
+// RecentAgentActivity returns per-session summaries grouped by source,
+// limited to sessions with activity since the given ISO timestamp.
+func RecentAgentActivity(since string, limit int) ([]AgentSessionSummary, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	db, err := pmdb.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	// Get active sessions since the cutoff. Only include sessions
+	// with at least one user message (real conversations).
+	rows, err := db.Query(`
+		SELECT source, session_id,
+			COUNT(*) AS total,
+			SUM(CASE WHEN role = 'user' THEN 1 ELSE 0 END) AS users,
+			SUM(CASE WHEN `+substantiveDiscussionSQL()+` AND role != 'user' THEN 1 ELSE 0 END) AS substantive,
+			MIN(created_at) AS first_seen,
+			MAX(created_at) AS last_seen
+		FROM discussion_log
+		WHERE created_at >= ? AND source != ''
+		GROUP BY source, session_id
+		HAVING users > 0
+		ORDER BY last_seen DESC
+		LIMIT ?`,
+		since, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []AgentSessionSummary
+	for rows.Next() {
+		var s AgentSessionSummary
+		var total int
+		if err := rows.Scan(&s.Source, &s.SessionID, &total, &s.UserPromptCount, &s.SubstantiveCount, &s.FirstSeen, &s.LastSeen); err != nil {
+			continue
+		}
+		s.ToolCallCount = total - s.UserPromptCount - s.SubstantiveCount
+
+		// Fetch up to 3 user prompts for context.
+		prompts, _ := recentUserPrompts(s.SessionID, 3)
+		s.UserPrompts = prompts
+
+		result = append(result, s)
+	}
+	if result == nil {
+		result = []AgentSessionSummary{}
+	}
+	return result, nil
+}
+
+// recentUserPrompts returns the most recent user prompts for a session.
+func recentUserPrompts(sessionID string, limit int) ([]string, error) {
+	db, err := pmdb.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	rows, err := db.Query(
+		`SELECT content FROM discussion_log
+		 WHERE session_id = ? AND role = 'user'
+		 ORDER BY created_at DESC LIMIT ?`,
+		sessionID, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var prompts []string
+	for rows.Next() {
+		var content string
+		if err := rows.Scan(&content); err == nil {
+			prompts = append(prompts, content)
+		}
+	}
+	if prompts == nil {
+		prompts = []string{}
+	}
+	return prompts, nil
+}

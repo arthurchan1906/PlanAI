@@ -1297,6 +1297,34 @@ func BuildBriefing(aiClient *ai.Client) string {
 		b.WriteString("✅ 一切正常，无问题检测。\n")
 	}
 
+	// Recent agent activity (last 24h)
+	if sessions, err := store.RecentAgentActivity(since(24*time.Hour), 8); err == nil && len(sessions) > 0 {
+		b.WriteString("## 📞 最近 Agent 活动 (24h)\n\n")
+		seen := map[string]bool{}
+		for _, s := range sessions {
+			if !seen[s.Source] {
+				seen[s.Source] = true
+				ago := relativeTime(s.LastSeen)
+				count := 0
+				for _, x := range sessions {
+					if x.Source == s.Source {
+						count++
+					}
+				}
+				b.WriteString(fmt.Sprintf("**%s** — %d 个 session，最新 %s\n", s.Source, count, ago))
+			}
+		}
+		for _, s := range sessions {
+			label := firstLine(s.UserPrompts, s.Source)
+			b.WriteString(fmt.Sprintf("- [%s] %s", s.SessionID[:8], label))
+			if s.ToolCallCount > 0 {
+				b.WriteString(fmt.Sprintf(" (💬×%d 🔧×%d)", s.UserPromptCount, s.ToolCallCount))
+			}
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
+
 	// AI executive summary when available
 	if aiClient != nil && aiClient.Enabled() {
 		summary, err := aiClient.Summarize(b.String(),
@@ -1416,4 +1444,59 @@ func Itoa(n int) string {
 		digits = "-" + digits
 	}
 	return digits
+}
+
+// since returns an ISO timestamp for the given duration ago from now.
+func since(d time.Duration) string {
+	return time.Now().Add(-d).Format("2006-01-02T15:04:05")
+}
+
+// relativeTime returns a human-readable relative time label for an ISO timestamp.
+func relativeTime(iso string) string {
+	t, err := time.Parse("2006-01-02T15:04:05", iso)
+	if err != nil {
+		if len(iso) >= 16 {
+			return iso[11:16]
+		}
+		return iso
+	}
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "刚刚"
+	case d < time.Hour:
+		m := int(d.Minutes())
+		if m == 1 {
+			return "1 分钟前"
+		}
+		return u.Itoa(m) + " 分钟前"
+	case d < 24*time.Hour:
+		h := int(d.Hours())
+		if h == 1 {
+			return "1 小时前"
+		}
+		return u.Itoa(h) + " 小时前"
+	default:
+		days := int(d.Hours() / 24)
+		if days == 1 {
+			return "昨天"
+		}
+		return u.Itoa(days) + " 天前"
+	}
+}
+
+// firstLine returns the first line of the first user prompt, or a fallback label.
+func firstLine(prompts []string, fallback string) string {
+	if len(prompts) == 0 {
+		return fallback
+	}
+	content := prompts[len(prompts)-1] // oldest first in the slice
+	if idx := strings.IndexByte(content, '\n'); idx > 0 {
+		content = content[:idx]
+	}
+	runes := []rune(content)
+	if len(runes) > 60 {
+		return string(runes[:60]) + "…"
+	}
+	return content
 }
