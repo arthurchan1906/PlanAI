@@ -1206,11 +1206,15 @@ func BuildBriefing(aiClient *ai.Client) string {
 
 	if len(tasks) > 0 {
 		b.WriteString("### 当前进行中的任务\n")
+		activitySince := since(24 * time.Hour)
 		for _, t := range tasks[:min(5, len(tasks))] {
 			b.WriteString(fmt.Sprintf("- **%s** [%s] _%s_\n", t.Title, t.ID, t.Status))
 			sug := GetActionableSuggestion(t)
 			if sug != "" {
 				b.WriteString(fmt.Sprintf("  → %s\n", sug))
+			}
+			if store.HasRecentDiscussionLink("task", t.ID, activitySince) {
+				b.WriteString("  → 💬 最近 24h 有讨论涉及此 task\n")
 			}
 		}
 		b.WriteString("\n")
@@ -1298,7 +1302,9 @@ func BuildBriefing(aiClient *ai.Client) string {
 	}
 
 	// Recent agent activity (last 24h)
-	if sessions, err := store.RecentAgentActivity(since(24*time.Hour), 8); err == nil && len(sessions) > 0 {
+	activitySince := since(24 * time.Hour)
+	if sessions, err := store.RecentAgentActivity(activitySince, 8); err == nil && len(sessions) > 0 {
+		_, _ = store.AutoLinkDiscussions(sessions)
 		b.WriteString("## 📞 最近 Agent 活动 (24h)\n\n")
 		seen := map[string]bool{}
 		for _, s := range sessions {
@@ -1316,9 +1322,12 @@ func BuildBriefing(aiClient *ai.Client) string {
 		}
 		for _, s := range sessions {
 			label := firstLine(s.UserPrompts, s.Source)
-			b.WriteString(fmt.Sprintf("- [%s] %s", s.SessionID[:8], label))
+			b.WriteString(fmt.Sprintf("- [%s] %s", sessionIDPrefix(s.SessionID), label))
 			if s.ToolCallCount > 0 {
 				b.WriteString(fmt.Sprintf(" (💬×%d 🔧×%d)", s.UserPromptCount, s.ToolCallCount))
+			}
+			if linked, err := store.LinkedEntityIDsForSession(s.SessionID); err == nil && len(linked) > 0 {
+				b.WriteString(fmt.Sprintf("\n  涉及: %s", strings.Join(linked, ", ")))
 			}
 			b.WriteString("\n")
 		}
@@ -1444,6 +1453,14 @@ func Itoa(n int) string {
 		digits = "-" + digits
 	}
 	return digits
+}
+
+// sessionIDPrefix returns a short display prefix for a session ID.
+func sessionIDPrefix(sessionID string) string {
+	if len(sessionID) <= 8 {
+		return sessionID
+	}
+	return sessionID[:8]
 }
 
 // since returns an ISO timestamp for the given duration ago from now.

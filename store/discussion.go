@@ -1,14 +1,29 @@
 package store
 
 import (
+	"database/sql"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
 	pmdb "aipmc/db"
 	"aipmc/u"
 )
+
+const discussionLinkSourceType = "discussion"
+const discussionLinkRelation = "relates_to"
+
+// entityIDPattern matches AIPM entity IDs (e.g. task-20260615-172610-6ccede).
+var entityIDPattern = regexp.MustCompile(`(?i)(task|plan|decision|commit|bug)-\d{8}-\d{6}-[a-f0-9]{6}`)
+
+// EntityRef ties a discussion session to a referenced PM entity.
+type EntityRef struct {
+	SessionID  string
+	TargetType string
+	TargetID   string
+}
 
 // ---- Discussion Log (pure DB, no AI dependency) ----
 
@@ -462,4 +477,238 @@ func recentUserPrompts(sessionID string, limit int) ([]string, error) {
 		prompts = []string{}
 	}
 	return prompts, nil
+}
+
+// ExtractEntityRefsFromSessions scans user messages in the given sessions for entity ID references.
+func ExtractEntityRefsFromSessions(sessions []AgentSessionSummary) ([]EntityRef, error) {
+	seen := map[string]bool{}
+	var refs []EntityRef
+	for _, s := range sessions {
+		if s.SessionID == "" {
+			continue
+		}
+		text, err := sessionLinkableText(s.SessionID)
+		if err != nil || text == "" {
+			continue
+		}
+		for _, m := range entityIDPattern.FindAllStringSubmatch(text, -1) {
+			if len(m) < 2 {
+				continue
+			}
+			targetType := strings.ToLower(m[1])
+			targetID := m[0]
+			key := s.SessionID + "|" + targetType + "|" + targetID
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			refs = append(refs, EntityRef{
+				SessionID:  s.SessionID,
+				TargetType: targetType,
+				TargetID:   targetID,
+			})
+		}
+	}
+	if refs == nil {
+		refs = []EntityRef{}
+	}
+	return refs, nil
+}
+
+// AutoLinkDiscussions creates links from discussion sessions to referenced entities.
+// Returns the number of newly created links.
+func AutoLinkDiscussions(sessions []AgentSessionSummary) (int, error) {
+	refs, err := ExtractEntityRefsFromSessions(sessions)
+	if err != nil {
+		return 0, err
+	}
+	created := 0
+	for _, ref := range refs {
+		if !EntityExists(ref.TargetType, ref.TargetID) {
+			continue
+		}
+		exists, err := discussionLinkExists(ref.SessionID, ref.TargetType, ref.TargetID)
+		if err != nil || exists {
+			continue
+		}
+		if _, err := CreateLink(discussionLinkSourceType, ref.SessionID, discussionLinkRelation, ref.TargetType, ref.TargetID, "auto-linked from discussion"); err != nil {
+			continue
+		}
+		created++
+	}
+	return created, nil
+}
+
+// EntityExists returns true when the entity ID exists in the PM database.
+func EntityExists(entityType, entityID string) bool {
+	if entityID == "" {
+		return false
+	}
+	db, err := pmdb.Open()
+	if err != nil {
+		return false
+	}
+	defer db.Close()
+
+	var q string
+	switch strings.ToLower(entityType) {
+	case "task":
+		q = "SELECT 1 FROM tasks WHERE id = ? LIMIT 1"
+	case "plan":
+		q = "SELECT 1 FROM plans WHERE id = ? LIMIT 1"
+	case "decision":
+		q = "SELECT 1 FROM decisions WHERE id = ? LIMIT 1"
+	case "commit":
+		q = "SELECT 1 FROM commits WHERE id = ? LIMIT 1"
+	case "bug":
+		q = "SELECT 1 FROM bugs WHERE id = ? LIMIT 1"
+	default:
+		return false
+	}
+	var n int
+	if err := db.QueryRow(q, entityID).Scan(&n); err != nil {
+		return false
+	}
+	return n == 1
+}
+
+func discussionLinkExists(sessionID, targetType, targetID string) (bool, error) {
+	db, err := pmdb.Open()
+	if err != nil {
+		return false, err
+	}
+	defer db.Close()
+	var n int
+	err = db.QueryRow(
+		`SELECT 1 FROM links
+		 WHERE source_type = ? AND source_id = ? AND relation = ? AND target_type = ? AND target_id = ?
+		 LIMIT 1`,
+		discussionLinkSourceType, sessionID, discussionLinkRelation, targetType, targetID,
+	).Scan(&n)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func sessionLinkableText(sessionID string) (string, error) {
+	db, err := pmdb.Open()
+	if err != nil {
+		return "", err
+	}
+	defer db.Close()
+	rows, err := db.Query(
+		`SELECT content FROM discussion_log
+		 WHERE session_id = ? AND `+substantiveDiscussionSQL()+`
+		 ORDER BY created_at ASC`,
+		sessionID,
+	)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	var parts []string
+	for rows.Next() {
+		var content string
+		if err := rows.Scan(&content); err == nil && content != "" {
+			parts = append(parts, content)
+		}
+	}
+	return strings.Join(parts, "\n"), nil
+}
+
+// LinkedEntityIDsForSession returns entity IDs linked from a discussion session.
+func LinkedEntityIDsForSession(sessionID string) ([]string, error) {
+	db, err := pmdb.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	rows, err := db.Query(
+		`SELECT target_type, target_id FROM links
+		 WHERE source_type = ? AND source_id = ? AND relation = ?
+		 ORDER BY created_at ASC`,
+		discussionLinkSourceType, sessionID, discussionLinkRelation,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var targetType, targetID string
+		if err := rows.Scan(&targetType, &targetID); err == nil && targetID != "" {
+			ids = append(ids, targetID)
+		}
+	}
+	if ids == nil {
+		ids = []string{}
+	}
+	return ids, nil
+}
+
+// HasRecentDiscussionLink returns true if an entity was discussed since the given ISO timestamp.
+func HasRecentDiscussionLink(targetType, targetID, since string) bool {
+	if targetID == "" {
+		return false
+	}
+	db, err := pmdb.Open()
+	if err != nil {
+		return false
+	}
+	defer db.Close()
+	q := `SELECT 1 FROM links
+		WHERE source_type = ? AND relation = ? AND target_type = ? AND target_id = ?`
+	args := []any{discussionLinkSourceType, discussionLinkRelation, targetType, targetID}
+	if since != "" {
+		q += " AND created_at >= ?"
+		args = append(args, since)
+	}
+	q += " LIMIT 1"
+	var n int
+	if err := db.QueryRow(q, args...).Scan(&n); err != nil {
+		return false
+	}
+	return true
+}
+
+// LinkedDiscussionSessions returns discussion sessions linked to an entity.
+func LinkedDiscussionSessions(targetType, targetID string, limit int) ([]map[string]any, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+	db, err := pmdb.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	rows, err := db.Query(
+		`SELECT source_id, note, created_at FROM links
+		 WHERE source_type = ? AND relation = ? AND target_type = ? AND target_id = ?
+		 ORDER BY created_at DESC LIMIT ?`,
+		discussionLinkSourceType, discussionLinkRelation, targetType, targetID, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []map[string]any
+	for rows.Next() {
+		var sessionID, note, createdAt string
+		if err := rows.Scan(&sessionID, &note, &createdAt); err != nil {
+			continue
+		}
+		out = append(out, map[string]any{
+			"session_id": sessionID,
+			"note":       note,
+			"created_at": createdAt,
+		})
+	}
+	if out == nil {
+		out = []map[string]any{}
+	}
+	return out, nil
 }

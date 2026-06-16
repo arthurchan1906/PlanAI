@@ -467,7 +467,14 @@ func (s *mcpServer) handleSearch(args map[string]interface{}) mcpToolResult {
 	text := fmt.Sprintf("搜索 '%s' 找到 %v 个结果", query, result["count"])
 	if results, ok := result["results"].([]map[string]interface{}); ok {
 		for _, h := range results {
-			text += fmt.Sprintf("\n- [%s] %s (%s)", u.Str(h["type"]), u.Str(h["title"]), u.Str(h["id"]))
+			entityType := u.Str(h["type"])
+			entityID := u.Str(h["id"])
+			text += fmt.Sprintf("\n- [%s] %s (%s)", entityType, u.Str(h["title"]), entityID)
+			if entityID != "" {
+				if sessions, err := store.LinkedDiscussionSessions(entityType, entityID, 3); err == nil && len(sessions) > 0 {
+					text += fmt.Sprintf(" — 💬 %d 个讨论 session 涉及", len(sessions))
+				}
+			}
 		}
 	}
 
