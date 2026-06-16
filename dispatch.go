@@ -9,6 +9,7 @@ import (
 	"aipmc/mcp"
 	"aipmc/store"
 	"aipmc/analyze"
+	"aipmc/session"
 	"aipmc/u"
 )
 
@@ -374,6 +375,26 @@ func dispatchDaily(subcmd string, args *cli.Args) {
 		cli.PrintJSON(d)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown daily subcommand: %s\n", subcmd)
+		os.Exit(1)
+	}
+}
+
+func dispatchReview(subcmd string, args *cli.Args) {
+	switch subcmd {
+	case "sessions", "":
+		since := session.ParseSince(args.Str("since", "24h"))
+		limit := args.Int("limit", 50)
+		sample := args.Str("sample", "")
+		if sample == "" {
+			sample = ".pmai/cache/sessions_sample.json"
+		}
+		result, err := session.Run(session.RunOpts{Since: since, Limit: limit, SamplePath: sample})
+		if err != nil {
+			cli.Fail(err)
+		}
+		cli.PrintJSON(result)
+	default:
+		fmt.Fprintf(os.Stderr, "unknown review subcommand: %s\n", subcmd)
 		os.Exit(1)
 	}
 }

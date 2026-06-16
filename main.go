@@ -215,6 +215,14 @@ func main() {
 		cli.PrintJSON(application.ContextPack())
 	case "analyze":
 		cli.PrintJSON(analyze.RunFullAnalysis())
+	case "review":
+		reviewSub := subcmd
+		reviewRaw := rawArgs
+		if strings.HasPrefix(reviewSub, "--") {
+			reviewRaw = append([]string{reviewSub}, rawArgs...)
+			reviewSub = ""
+		}
+		dispatchReview(reviewSub, cli.ParseArgs(reviewRaw))
 	case "briefing":
 		fmt.Println(analyze.BuildBriefing(application.AI))
 	case "inbox":

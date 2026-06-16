@@ -26,7 +26,8 @@ func Read(opts ReadOpts) ([]map[string]any, error) {
 	})
 }
 
-const previewRunes = 200
+// PreviewRunes is the default preview length for discussion MCP text output.
+const PreviewRunes = 200
 
 // FormatResults renders discussion rows for MCP or CLI output.
 func FormatResults(rows []map[string]any, full bool) string {
@@ -38,7 +39,7 @@ func FormatResults(rows []map[string]any, full bool) string {
 	for _, r := range rows {
 		content := u.Str(r["content"])
 		if !full {
-			content = previewContent(content, previewRunes)
+			content = PreviewContent(content, PreviewRunes)
 		}
 		b.WriteString(fmt.Sprintf("%s %s [%s][%s]\n%s\n\n",
 			u.Str(r["id"]), u.Str(r["created_at"]), u.Str(r["role"]), u.Str(r["source"]), content))
@@ -46,7 +47,23 @@ func FormatResults(rows []map[string]any, full bool) string {
 	return b.String()
 }
 
-func previewContent(s string, maxRunes int) string {
+// FormatSessionMessages renders messages grouped under one session (search full_session mode).
+func FormatSessionMessages(sessionID string, messages []map[string]any, full bool) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("\n### Session: %s\n", sessionID))
+	for _, r := range messages {
+		content := u.Str(r["content"])
+		if !full {
+			content = PreviewContent(content, PreviewRunes)
+		}
+		b.WriteString(fmt.Sprintf("[%s][%s] %s  %s\n",
+			u.Str(r["role"]), u.Str(r["source"]), u.Str(r["created_at"]), content))
+	}
+	return b.String()
+}
+
+// PreviewContent truncates s to maxRunes runes (safe for UTF-8 / CJK).
+func PreviewContent(s string, maxRunes int) string {
 	runes := []rune(s)
 	if len(runes) <= maxRunes {
 		return s

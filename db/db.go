@@ -270,6 +270,18 @@ func migrate(d *sql.DB) error {
 		d.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS fts5_index USING fts5(content, entity_type UNINDEXED, entity_id UNINDEXED, title, tokenize='unicode61')`)
 		RebuildFTS5Index(d)
 	}
+	if !tableOrVTableExists(d, "session_summaries") {
+		d.Exec(`CREATE TABLE IF NOT EXISTS session_summaries (
+			session_id TEXT PRIMARY KEY,
+			source TEXT NOT NULL DEFAULT '',
+			review_json TEXT NOT NULL DEFAULT '{}',
+			summary TEXT NOT NULL DEFAULT '',
+			intent TEXT NOT NULL DEFAULT '',
+			entity_refs TEXT NOT NULL DEFAULT '[]',
+			quality_score INTEGER NOT NULL DEFAULT 0,
+			created_at TEXT NOT NULL
+		)`)
+	}
 	return nil
 }
 

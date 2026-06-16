@@ -357,7 +357,7 @@ func (s *mcpServer) registerTools() {
 
 	s.addTool(MCPTool{
 		Name:        "aipm_search_discussions",
-		Description: "（兼容别名）同 aipm_read_discussions；额外支持 query 关键词与 mode=full_session。新代码请用 aipm_read_discussions。",
+		Description: "搜索讨论历史。mode=full_session 展开整段 session 且返回全文；默认 matches 仅预览约 200 字。读长文优先 aipm_read_discussions(full=true)。",
 		InputSchema: MCPInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
@@ -365,7 +365,7 @@ func (s *mcpServer) registerTools() {
 				"source":       map[string]string{"type": "string", "description": "可选: 按 agent 来源过滤 (claude-code / gemini-cli / codex-cli / codex / opencode / cursor)"},
 				"type":         map[string]string{"type": "string", "description": "可选: 按消息类型过滤 (user / assistant / tool)"},
 				"last_n":       map[string]string{"type": "integer", "description": "可选: 返回最近 N 条记录（与 query 二选一，优先使用 last_n）"},
-				"mode":         map[string]string{"type": "string", "description": "可选: 'matches' (默认，只返回匹配的消息本身)；'full_session' (展开为匹配消息所属 session 的完整 user+assistant+tool 对话)"},
+				"mode":         map[string]string{"type": "string", "description": "可选: 'matches' (默认，匹配消息预览约200字)；'full_session' (展开 session 全部消息且全文不截断)"},
 				"limit":        map[string]string{"type": "integer", "description": "结果数量，默认 10。full_session 模式下为 session 数量上限（≤5）"},
 				"project_path": map[string]string{"type": "string", "description": "可选: 目标项目路径，不传则搜索当前项目"},
 			},
@@ -901,7 +901,7 @@ func (s *mcpServer) handleReadDiscussions(args map[string]interface{}) mcpToolRe
 	if len(rows) == 0 {
 		reflection = "未找到讨论记录。确认 source 拼写或扩大 since 时间窗。"
 	} else if !full {
-		reflection = "内容为预览。需要全文时请设 full=true。"
+		reflection = "内容为预览（约 200 字）。需要全文请设 full=true。数据库中存的是完整内容。"
 	}
 
 	return mcpToolResult{
@@ -986,27 +986,13 @@ func (s *mcpServer) handleSearchDiscussions(args map[string]interface{}) mcpTool
 	if mode == "full_session" {
 		sessionGroups := groupBySession(results)
 		for _, sg := range sessionGroups {
-			b.WriteString(fmt.Sprintf("\n### Session: %s\n", sg.sessionID))
-			for _, r := range sg.messages {
-				role := u.Str(r["role"])
-				src := u.Str(r["source"])
-				content := u.Str(r["content"])
-				ts := u.Str(r["created_at"])
-				// Truncate long content for readability
-				if len(content) > 300 {
-					content = content[:300] + "..."
-				}
-				b.WriteString(fmt.Sprintf("[%s][%s] %s  %s\n", role, src, ts, content))
-			}
+			b.WriteString(discussion.FormatSessionMessages(sg.sessionID, sg.messages, true))
 		}
 	} else {
 		for _, r := range results {
 			role := u.Str(r["role"])
 			src := u.Str(r["source"])
-			content := u.Str(r["content"])
-			if len(content) > 200 {
-				content = content[:200] + "..."
-			}
+			content := discussion.PreviewContent(u.Str(r["content"]), discussion.PreviewRunes)
 			b.WriteString(fmt.Sprintf("\n- [%s][%s] %s  %s", role, src, u.Str(r["created_at"]), content))
 		}
 	}
@@ -1015,9 +1001,12 @@ func (s *mcpServer) handleSearchDiscussions(args map[string]interface{}) mcpTool
 	if len(results) == 0 {
 		reflection = "未找到相关讨论记录。"
 	} else if mode == "full_session" {
-		reflection = fmt.Sprintf("已展开为完整 session 内容，包含相关 user/assistant/tool 消息。共 %d 条结果。", len(results))
-	} else if source != "" || typeFilter != "" {
-		reflection = fmt.Sprintf("已按 source=%s type=%s 过滤，共 %d 条结果。", source, typeFilter, total)
+		reflection = fmt.Sprintf("已展开 %d 条 session 消息（全文，未截断）。", len(results))
+	} else {
+		reflection = fmt.Sprintf("匹配预览约 %d 字。全文请用 aipm_read_discussions(full=true) 或 mode=full_session。", discussion.PreviewRunes)
+		if source != "" || typeFilter != "" {
+			reflection += fmt.Sprintf(" 已过滤 source=%s type=%s。", source, typeFilter)
+		}
 	}
 
 	return mcpToolResult{
