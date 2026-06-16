@@ -208,12 +208,13 @@ func AnalyzeScopeDrift() []DriftResult {
 	return results
 }
 
-// analyzeOrphanTasks finds tasks that are in_progress but have no linked commits.
+// analyzeOrphanTasks finds in_progress tasks with no commits and no recent discussion activity.
 func AnalyzeOrphanTasks() []OrphanResult {
 	tasks, err := store.ListTasks("in_progress", "")
 	if err != nil {
 		return nil
 	}
+	discussionCutoff := time.Now().Add(-3 * 24 * time.Hour).Format("2006-01-02T15:04:05")
 
 	var results []OrphanResult
 	for _, t := range tasks {
@@ -221,14 +222,18 @@ func AnalyzeOrphanTasks() []OrphanResult {
 		if err != nil {
 			continue
 		}
-		if len(commits) == 0 {
-			results = append(results, OrphanResult{
-				TaskID:    t.ID,
-				TaskTitle: t.Title,
-				PlanID:    t.PlanID,
-				Status:    t.Status,
-			})
+		if len(commits) > 0 {
+			continue
 		}
+		if store.HasRecentDiscussionLink("task", t.ID, discussionCutoff) {
+			continue
+		}
+		results = append(results, OrphanResult{
+			TaskID:    t.ID,
+			TaskTitle: t.Title,
+			PlanID:    t.PlanID,
+			Status:    t.Status,
+		})
 	}
 	if results == nil {
 		results = []OrphanResult{}
@@ -1185,7 +1190,7 @@ func BuildBriefing(aiClient *ai.Client) string {
 		}
 
 		if len(report.Orphans) > 0 {
-			b.WriteString("### 孤儿任务 (in_progress 但无 commit)\n")
+			b.WriteString("### 孤儿任务 (in_progress，3 天内无 commit 且无讨论)\n")
 			for _, o := range report.Orphans {
 				b.WriteString(fmt.Sprintf("- **%s** [%s]\n", o.TaskTitle, o.TaskID))
 			}
@@ -1206,7 +1211,7 @@ func BuildBriefing(aiClient *ai.Client) string {
 
 	if len(tasks) > 0 {
 		b.WriteString("### 当前进行中的任务\n")
-		activitySince := since(24 * time.Hour)
+		activitySince := activityWindowSince()
 		for _, t := range tasks[:min(5, len(tasks))] {
 			b.WriteString(fmt.Sprintf("- **%s** [%s] _%s_\n", t.Title, t.ID, t.Status))
 			sug := GetActionableSuggestion(t)
@@ -1214,7 +1219,7 @@ func BuildBriefing(aiClient *ai.Client) string {
 				b.WriteString(fmt.Sprintf("  → %s\n", sug))
 			}
 			if store.HasRecentDiscussionLink("task", t.ID, activitySince) {
-				b.WriteString("  → 💬 最近 24h 有讨论涉及此 task\n")
+				b.WriteString("  → 💬 最近有讨论涉及此 task\n")
 			}
 		}
 		b.WriteString("\n")
@@ -1301,11 +1306,12 @@ func BuildBriefing(aiClient *ai.Client) string {
 		b.WriteString("✅ 一切正常，无问题检测。\n")
 	}
 
-	// Recent agent activity (last 24h)
-	activitySince := since(24 * time.Hour)
+	// Recent agent activity since last briefing consume (fallback: 24h)
+	activitySince := activityWindowSince()
+	activityLabel := activityWindowLabel(activitySince)
 	if sessions, err := store.RecentAgentActivity(activitySince, 8); err == nil && len(sessions) > 0 {
 		_, _ = store.AutoLinkDiscussions(sessions)
-		b.WriteString("## 📞 最近 Agent 活动 (24h)\n\n")
+		b.WriteString(fmt.Sprintf("## 📞 最近 Agent 活动 (%s)\n\n", activityLabel))
 		seen := map[string]bool{}
 		for _, s := range sessions {
 			if !seen[s.Source] {
@@ -1453,6 +1459,21 @@ func Itoa(n int) string {
 		digits = "-" + digits
 	}
 	return digits
+}
+
+// activityWindowSince prefers time since last aipm_mark_consumed, else last 24h.
+func activityWindowSince() string {
+	if ts := store.LastBriefingConsumedAt(); ts != "" {
+		return ts
+	}
+	return since(24 * time.Hour)
+}
+
+func activityWindowLabel(sinceISO string) string {
+	if ts := store.LastBriefingConsumedAt(); ts != "" && ts == sinceISO {
+		return "自上次 mark_consumed"
+	}
+	return "24h"
 }
 
 // sessionIDPrefix returns a short display prefix for a session ID.

@@ -2159,7 +2159,34 @@ func MarkEventsConsumed() error {
 	}
 	defer db.Close()
 	_, err = db.Exec("UPDATE events SET consumed_by_agent = 1 WHERE consumed_by_agent = 0")
-	return err
+	if err != nil {
+		return err
+	}
+	writeLastBriefingConsumedAt(u.NowISO())
+	return nil
+}
+
+// LastBriefingConsumedAt returns the ISO timestamp of the last aipm_mark_consumed call.
+func LastBriefingConsumedAt() string {
+	dir, err := pmdb.RuntimeDir()
+	if err != nil {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "cache", "last-briefing-consumed-at.txt"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+func writeLastBriefingConsumedAt(iso string) {
+	dir, err := pmdb.RuntimeDir()
+	if err != nil || iso == "" {
+		return
+	}
+	cacheDir := filepath.Join(dir, "cache")
+	_ = os.MkdirAll(cacheDir, 0755)
+	_ = os.WriteFile(filepath.Join(cacheDir, "last-briefing-consumed-at.txt"), []byte(iso), 0644)
 }
 
 func GetUnconsumedEvents() ([]map[string]any, error) {

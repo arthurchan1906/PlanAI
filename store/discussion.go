@@ -322,6 +322,16 @@ func substantiveDiscussionSQL() string {
 	return "(role = 'user' OR (role = 'assistant' AND " + notTool + "))"
 }
 
+func toolCallCountSQL() string {
+	prefixes := []string{"🔧", "📝", "👁", "🔍", "🆕", "🛠", "📡", "🗑", "📂", "🌐", "❓", "🤖", "📋"}
+	var parts []string
+	parts = append(parts, "role = 'tool'")
+	for _, p := range prefixes {
+		parts = append(parts, "(role = 'assistant' AND content LIKE '"+p+"%')")
+	}
+	return "SUM(CASE WHEN " + strings.Join(parts, " OR ") + " THEN 1 ELSE 0 END)"
+}
+
 // GetDiscussionsByIDs returns discussion rows for the given IDs, in request order.
 func GetDiscussionsByIDs(ids []string) ([]map[string]any, error) {
 	if len(ids) == 0 {
@@ -409,9 +419,9 @@ func RecentAgentActivity(since string, limit int) ([]AgentSessionSummary, error)
 	// with at least one user message (real conversations).
 	rows, err := db.Query(`
 		SELECT source, session_id,
-			COUNT(*) AS total,
 			SUM(CASE WHEN role = 'user' THEN 1 ELSE 0 END) AS users,
 			SUM(CASE WHEN `+substantiveDiscussionSQL()+` AND role != 'user' THEN 1 ELSE 0 END) AS substantive,
+			`+toolCallCountSQL()+` AS tools,
 			MIN(created_at) AS first_seen,
 			MAX(created_at) AS last_seen
 		FROM discussion_log
@@ -429,11 +439,9 @@ func RecentAgentActivity(since string, limit int) ([]AgentSessionSummary, error)
 	var result []AgentSessionSummary
 	for rows.Next() {
 		var s AgentSessionSummary
-		var total int
-		if err := rows.Scan(&s.Source, &s.SessionID, &total, &s.UserPromptCount, &s.SubstantiveCount, &s.FirstSeen, &s.LastSeen); err != nil {
+		if err := rows.Scan(&s.Source, &s.SessionID, &s.UserPromptCount, &s.SubstantiveCount, &s.ToolCallCount, &s.FirstSeen, &s.LastSeen); err != nil {
 			continue
 		}
-		s.ToolCallCount = total - s.UserPromptCount - s.SubstantiveCount
 
 		// Fetch up to 3 user prompts for context.
 		prompts, _ := recentUserPrompts(s.SessionID, 3)
