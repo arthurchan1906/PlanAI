@@ -123,7 +123,7 @@ func (s *mcpServer) registerTools() {
 
 	s.addTool(MCPTool{
 		Name:        "aipm_search_context",
-		Description: "在项目知识库中搜索。返回匹配的 tasks/plans/decisions/bugs/ideas 及它们的关联上下文（父子关系、相关 commit、PM 决策等）。",
+		Description: "搜索 PM 实体（task/plan/decision/bug/idea）及其关联上下文（父子关系、相关 commit、PM 决策）。搜「有没有类似的 task/plan」用这个。与 aipm_smart_search 的区别：search_context 搜实体+关系，smart_search 是全文关键词搜索。",
 		InputSchema: MCPInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
@@ -329,7 +329,7 @@ func (s *mcpServer) registerTools() {
 	// Smart search — AI-enhanced when available
 	s.addTool(MCPTool{
 		Name:        "aipm_smart_search",
-		Description: "智能搜索 — FTS5 关键词搜索 + AI 语义重排序（当 AI 可用时）。返回 BM25 排序结果，如果配置了 AI 端点则自动使用 embedding 进行语义重排。",
+		Description: "全文关键词搜索讨论和实体内容，AI 语义重排序（当 AI 可用时）。搜「哪里提到了 observer/某关键词」用这个。与 aipm_search_context 的区别：smart_search 搜内容全文，search_context 搜实体及其关系。",
 		InputSchema: MCPInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
@@ -343,21 +343,21 @@ func (s *mcpServer) registerTools() {
 	// Discussion log tools
 	s.addTool(MCPTool{
 		Name:        "aipm_read_discussions",
-		Description: "读取项目讨论历史（一步全文）。按 source / last_n / since 过滤；full=true 返回全文，默认预览约 200 字。禁止用 sqlite3 直查数据库。",
+		Description: "读取其他 Agent（Claude Code/Cursor/Gemini/OpenCode 等）的对话历史。想看某个 Agent 说了什么 → source 指定来源；不传 source 则返回所有人。full=true 返回全文。禁止 sqlite3 直查数据库。",
 		InputSchema: MCPInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
-				"source": map[string]string{"type": "string", "description": "可选: 按 agent 来源过滤 (claude-code / cursor / gemini-cli / …)"},
-				"last_n": map[string]string{"type": "integer", "description": "可选: 最近 N 条（与 since 可组合）"},
+				"source": map[string]string{"type": "string", "description": "想看哪个 Agent: claude-code / cursor / gemini-cli / opencode / codex-cli。例：看 Cursor 说了什么 → source=\"cursor\"。不传则看所有人。"},
+				"last_n": map[string]string{"type": "integer", "description": "最近 N 条。快速浏览用 10，深入阅读用 50（与 since 可组合）"},
 				"since":  map[string]string{"type": "string", "description": "可选: ISO 时间下限 (例 2026-06-15T21:48:00)"},
-				"full":   map[string]string{"type": "boolean", "description": "可选: true=全文，false=预览（默认）"},
+				"full":   map[string]string{"type": "boolean", "description": "true=全文（互读讨论必设），false=预览约 200 字（默认）"},
 			},
 		},
 	}, s.handleReadDiscussions)
 
 	s.addTool(MCPTool{
 		Name:        "aipm_search_discussions",
-		Description: "搜索讨论历史。mode=full_session 展开整段 session 且返回全文；默认 matches 仅预览约 200 字。读长文优先 aipm_read_discussions(full=true)。",
+		Description: "按关键词搜索讨论内容（搜「谁说了关于 X 的话」）。与 aipm_read_discussions 的区别：search 按内容关键词搜，read 按 Agent 直接读。mode=full_session 展开整段 session 全文；读某 Agent 全部发言优先 read_discussions(source=..., full=true)。",
 		InputSchema: MCPInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
@@ -899,9 +899,11 @@ func (s *mcpServer) handleReadDiscussions(args map[string]interface{}) mcpToolRe
 	text := header.String() + discussion.FormatResults(rows, full)
 	reflection := ""
 	if len(rows) == 0 {
-		reflection = "未找到讨论记录。确认 source 拼写或扩大 since 时间窗。"
+		reflection = "未找到讨论记录。确认 source 拼写或扩大 since 时间窗。看某 Agent 的讨论 → source=\"cursor\" + full=true。"
 	} else if !full {
-		reflection = "内容为预览（约 200 字）。需要全文请设 full=true。数据库中存的是完整内容。"
+		reflection = "内容为预览（约 200 字）。互读讨论请设 full=true。看某 Agent → source=\"cursor\" + full=true。"
+	} else if source == "" {
+		reflection = "已返回全文。若只看某个 Agent，加 source=\"cursor\" 或 source=\"claude-code\" 等。"
 	}
 
 	return mcpToolResult{

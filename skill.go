@@ -83,19 +83,27 @@ AIPM is the project's knowledge base. Every task, commit, plan, bug, decision li
 
 AIPM 自动捕获所有 Agent（Claude Code / Gemini CLI / Codex / OpenCode / Cursor）的完整对话历史。
 
-### Agent 互读
-- **aipm_read_discussions**(source="...", last_n=10, full=true) — 一步读全文
-- 禁止 sqlite3 读取 .pmai/data/pmai.db
+### Agent 互读 — 用户说 → 调哪个
+
+| 用户说 | 调用 |
+|--------|------|
+| 「看看 Cursor 说了什么」 | aipm_read_discussions(source="cursor", last_n=10, full=true) |
+| 「看看 Claude Code 最近讨论」 | aipm_read_discussions(source="claude-code", last_n=10, full=true) |
+| 「搜一下 observer 相关的讨论」 | aipm_search_discussions(query="observer", mode="full_session") |
+| 「有没有类似的 task/plan」 | aipm_search_context(query="...") |
+| 「全文搜某个关键词」 | aipm_smart_search(query="...") |
+
+- 互读讨论 **必须 full=true**，禁止 sqlite3 读取 .pmai/data/pmai.db
 - 回应格式：① 引用对方一点 ② 明确同意/反对 ③ 结论或开放问题
 
 discussion_log 就是共享会议室。PM 在任意 Agent 窗口里用自然语言协作，Agent 读到 discussion 即参与。
 
-用 **aipm_log_discussion** 手动记录重要结论。具体参数见各 MCP tool 的 inputSchema。
+用 **aipm_log_discussion** 手动记录重要结论。
 
----
-## 跨 Agent 讨论搜索（兼容）
+### read vs search discussions
 
-旧工具 **aipm_search_discussions** 仍可用（支持 query / mode=full_session）；新代码请用 **aipm_read_discussions**。
+- **aipm_read_discussions** — 按 Agent 直接读（source=...）
+- **aipm_search_discussions** — 按关键词搜讨论内容（query=...）
 
 ---
 ## 线索 (Threads) — 概念说明
