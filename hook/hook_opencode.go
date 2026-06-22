@@ -165,9 +165,11 @@ func ProcessOpencodeHook() {
 			break
 		}
 
-		// Default role to assistant for text messages
+		// User text parts often arrive without explicit role metadata.
+		// Prefer "user" as the fallback: assistant/tool messages always carry
+		// explicit roles; only user messages are ambiguous in practice.
 		if role == "" {
-			role = "assistant"
+			role = "user"
 		}
 
 		role = normalizeRole(role)
@@ -737,36 +739,52 @@ export const HookRecorder = async ({ $ }) => {
     } catch (_) {}
   }
 
-  // Buffer pending text parts keyed by messageID, with age tracking
+  // Pending text parts buffered by session and message ID.
+  // Structure: { [sid]: { [msgId]: { texts: string[], ts: number } } }
+  // msgId is "__noid__" when part.messageID is missing.
   const pending = {}
   const lastRole = {}  // sessionID → last known role
 
-  const flushSession = (sid, fallbackRole) => {
-    const texts = []
-    for (const [key, part] of Object.entries(pending)) {
-      if (part.sid === sid && part.text) {
-        texts.push(part.text)
-      }
-      delete pending[key]
-    }
-    return { content: texts.join("\n"), role: fallbackRole || lastRole[sid] || "" }
+  // flushMessage: flush only pending parts belonging to a specific message.
+  const flushMessage = (sid, msgId, fallbackRole) => {
+    const bucket = pending[sid]?.[msgId]
+    if (!bucket || !bucket.texts.length) return { content: "", role: "" }
+    const content = bucket.texts.join("\n")
+    delete pending[sid][msgId]
+    if (!Object.keys(pending[sid]).length) delete pending[sid]
+    return { content, role: fallbackRole || lastRole[sid] || "" }
   }
 
-  // Cleanup stale buffers every 30s
+  // flushSession: flush all pending parts for a session (used on session.idle).
+  const flushSession = (sid, fallbackRole) => {
+    const bucket = pending[sid]
+    if (!bucket) return { content: "", role: "" }
+    const allTexts = []
+    for (const msgId of Object.keys(bucket)) {
+      const msg = bucket[msgId]
+      if (msg.texts.length) allTexts.push(...msg.texts)
+    }
+    delete pending[sid]
+    return { content: allTexts.join("\n"), role: fallbackRole || lastRole[sid] || "" }
+  }
+
+  // Cleanup stale buffers every 30s — per-message timeout
   setInterval(() => {
     const now = Date.now()
-    for (const [key, part] of Object.entries(pending)) {
-      if (now - part.ts > 30000) {
-        if (part.text) {
+    for (const sid of Object.keys(pending)) {
+      for (const msgId of Object.keys(pending[sid])) {
+        const msg = pending[sid][msgId]
+        if (now - msg.ts > 30000 && msg.texts.length) {
           sendHook({
             hook_event_name: "message.part.updated",
-            session_id: part.sid,
-            role: lastRole[part.sid] || "assistant",
-            content: part.text,
+            session_id: sid,
+            role: lastRole[sid] || "user",
+            content: msg.texts.join("\n"),
           })
+          delete pending[sid][msgId]
         }
-        delete pending[key]
       }
+      if (!Object.keys(pending[sid]).length) delete pending[sid]
     }
   }, 30000)
 
@@ -778,18 +796,28 @@ export const HookRecorder = async ({ $ }) => {
 
       if (type === "message.updated") {
         const info = props?.info || {}
-        const role = info?.role || ""
         const sid = props?.sessionID || evt?.sessionID || ""
-        if (!role || !sid) return
+        if (!sid) return
 
-        lastRole[sid] = role
+        // Use info.role if present, otherwise fall back to last known role
+        // for this session.  User text parts often arrive without role,
+        // so message.updated may be the first event that carries it.
+        const role = info?.role || lastRole[sid] || ""
+        if (role) {
+          lastRole[sid] = role
+        }
 
-        const flushed = flushSession(sid, role)
-        if (flushed.content) {
+        // Flush only the pending parts belonging to this specific message.
+        // If we flushed the whole session, a user's text parts buffered
+        // without role could be emitted under the assistant's role when
+        // the assistant's message.updated fires next.
+        const msgId = info?.id || "__noid__"
+        const flushed = flushMessage(sid, msgId, role)
+        if (flushed.content && flushed.role) {
           await sendHook({
             hook_event_name: "message.updated",
             session_id: sid,
-            role: role,
+            role: flushed.role,
             content: flushed.content,
             _raw: evt,
           })
@@ -799,7 +827,7 @@ export const HookRecorder = async ({ $ }) => {
       if (type === "message.part.updated") {
         const part = props?.part || {}
         const sid = props?.sessionID || part?.sessionID || ""
-        const msgId = part?.messageID || ""
+        const msgId = part?.messageID || "__noid__"
         if (!part?.text || part?.type !== "text") return
 
         if (part?.role) {
@@ -812,8 +840,10 @@ export const HookRecorder = async ({ $ }) => {
             _raw: evt,
           })
         } else {
-          const key = msgId + "-" + (part?.id || Math.random())
-          pending[key] = { sid, text: part.text, ts: Date.now() }
+          if (!pending[sid]) pending[sid] = {}
+          if (!pending[sid][msgId]) pending[sid][msgId] = { texts: [], ts: Date.now() }
+          pending[sid][msgId].texts.push(part.text)
+          pending[sid][msgId].ts = Date.now()
         }
       }
     },
@@ -835,7 +865,7 @@ export const HookRecorder = async ({ $ }) => {
     "session.idle": async (...args) => {
       const evt = args[0] || {}
       const sid = evt.sessionID || evt.session?.id || evt.id || evt.session_id || ""
-      const flushed = flushSession(sid, lastRole[sid] || "assistant")
+      const flushed = flushSession(sid, lastRole[sid] || "user")
       if (flushed.content) {
         await sendHook({
           hook_event_name: "message.part.updated",
