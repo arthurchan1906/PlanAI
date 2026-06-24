@@ -33,6 +33,7 @@ type ReviewResult struct {
 	MergedMCPCount    int            `json:"merged_mcp_count"`
 	UserPromptCount   int            `json:"user_prompt_count"`
 	ToolCallCount     int            `json:"tool_call_count"`
+	DirectiveSession  bool           `json:"directive_session"`
 }
 
 type mcpCompliance struct {
@@ -76,6 +77,7 @@ func ReviewSession(sessionID, source string, messages []map[string]any, mergedMC
 	baseline := compliance.HasBriefing
 	completed := workflowCompleted(intent, compliance, messages)
 	findings, positives := buildFindings(sessionID, intent, baseline, completed, compliance, hookCoverage, sqliteViolation, messages)
+	isDirective := isDirectiveSession(messages)
 
 	return ReviewResult{
 		SessionID:         sessionID,
@@ -94,6 +96,7 @@ func ReviewSession(sessionID, source string, messages []map[string]any, mergedMC
 		MergedMCPCount:    mergedMCP,
 		UserPromptCount:   userCount,
 		ToolCallCount:     toolCount,
+		DirectiveSession:  isDirective,
 	}
 }
 
@@ -374,6 +377,48 @@ func firstUserMessageID(messages []map[string]any) string {
 		return u.Str(messages[0]["id"])
 	}
 	return ""
+}
+
+// isDirectiveSession checks whether the session's first user prompt contains
+// an explicit instruction (entity ID reference or directive keyword without
+// question words). Directive sessions are exempt from "search-first" metrics.
+func isDirectiveSession(messages []map[string]any) bool {
+	firstUser := ""
+	for _, m := range messages {
+		if u.Str(m["role"]) == "user" {
+			firstUser = u.Str(m["content"])
+			break
+		}
+	}
+	if firstUser == "" {
+		return false
+	}
+
+	// Signal 1: first user prompt contains an entity ID reference
+	if entityIDPattern.MatchString(firstUser) {
+		return true
+	}
+
+	// Signal 2: contains directive keyword AND no question keyword
+	directiveKW := []string{"修改", "改成", "删除", "添加", "commit", "实现", "修复", "提交"}
+	questionKW := []string{"为什么", "是什么原因", "查一下", "看一下", "怎么办", "怎么回", "如何", "是不是"}
+
+	hasDirective := false
+	for _, kw := range directiveKW {
+		if strings.Contains(firstUser, kw) {
+			hasDirective = true
+			break
+		}
+	}
+	if !hasDirective {
+		return false
+	}
+	for _, kw := range questionKW {
+		if strings.Contains(firstUser, kw) {
+			return false // looks like a question despite having directive keywords
+		}
+	}
+	return true
 }
 
 // ReviewJSON marshals the review result for storage.

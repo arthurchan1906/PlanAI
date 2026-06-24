@@ -95,7 +95,11 @@ func CreateTask(title, priority, status, phase, planID string, acceptance []stri
 	if err != nil {
 		return nil, err
 	}
-	pmdb.SyncFTS5Entity(db, "task", id, title, title)
+	planIDContent := title
+	if planID != "" {
+		planIDContent += " " + planID
+	}
+	pmdb.SyncFTS5Entity(db, "task", id, title, planIDContent)
 
 	// Auto-create event
 	CreateEvent("task_created", "task", id, fmt.Sprintf("New task: %s", title))
@@ -148,7 +152,12 @@ func UpdateTask(id, status, note string, allowWithoutCommit, appendNote bool) (m
 		return nil, err
 	}
 	title := u.Str(existing["title"])
-	pmdb.SyncFTS5Entity(db, "task", id, title, title+" "+nextNote)
+	planID := u.Str(existing["plan_id"])
+	content := title + " " + nextNote
+	if planID != "" {
+		content += " " + planID
+	}
+	pmdb.SyncFTS5Entity(db, "task", id, title, content)
 	if note != "" {
 		mode := "replace"
 		if appendNote {
@@ -342,7 +351,17 @@ func CreateCommit(title, summary, evidenceSummary, reviewNotes, branch, commitHa
 	if err != nil {
 		return nil, err
 	}
-	pmdb.SyncFTS5Entity(db, "commit", id, title, title+" "+summary)
+	commitContent := title + " " + summary
+	if evidenceSummary != "" {
+		commitContent += " " + evidenceSummary
+	}
+	if reviewNotes != "" {
+		commitContent += " " + reviewNotes
+	}
+	if filesJSON != "" && filesJSON != "[]" {
+		commitContent += " " + filesJSON
+	}
+	pmdb.SyncFTS5Entity(db, "commit", id, title, commitContent)
 	c, _ := GetCommit(id)
 	return c, nil
 }

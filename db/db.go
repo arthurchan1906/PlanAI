@@ -347,12 +347,22 @@ func RebuildFTS5Index(d *sql.DB) {
 		rows2.Close()
 	}
 
-	rows3, _ := d.Query("SELECT id, title, summary FROM commits")
+	rows3, _ := d.Query("SELECT id, title, summary, evidence_summary, review_notes, files_json FROM commits")
 	if rows3 != nil {
 		for rows3.Next() {
-			var id, title, summary string
-			rows3.Scan(&id, &title, &summary)
-			d.Exec("INSERT INTO fts5_index (content, entity_type, entity_id, title) VALUES (?, 'commit', ?, ?)", title+" "+summary, id, title)
+			var id, title, summary, evidence, reviewNotes, filesJSON string
+			rows3.Scan(&id, &title, &summary, &evidence, &reviewNotes, &filesJSON)
+			content := title + " " + summary
+			if evidence != "" {
+				content += " " + evidence
+			}
+			if reviewNotes != "" {
+				content += " " + reviewNotes
+			}
+			if filesJSON != "" && filesJSON != "[]" {
+				content += " " + filesJSON
+			}
+			d.Exec("INSERT INTO fts5_index (content, entity_type, entity_id, title) VALUES (?, 'commit', ?, ?)", content, id, title)
 		}
 		rows3.Close()
 	}

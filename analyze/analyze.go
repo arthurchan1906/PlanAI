@@ -1,12 +1,14 @@
 package analyze
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
 
 	"aipmc/ai"
+	"aipmc/session"
 	"aipmc/store"
 	"aipmc/u"
 )
@@ -1323,21 +1325,73 @@ func BuildBriefing(aiClient *ai.Client) string {
 						count++
 					}
 				}
-				b.WriteString(fmt.Sprintf("**%s** — %d 个 session，最新 %s\n", s.Source, count, ago))
+				b.WriteString(fmt.Sprintf("**%s** (%d sessions, latest: %s)\n", s.Source, count, ago))
 			}
 		}
 		for _, s := range sessions {
 			label := firstLine(s.UserPrompts, s.Source)
-			b.WriteString(fmt.Sprintf("- [%s] %s", sessionIDPrefix(s.SessionID), label))
+			date := dateShort(s.FirstSeen)
+			b.WriteString(fmt.Sprintf("  • %s", label))
+			parts := []string{}
+			if date != "" {
+				parts = append(parts, date)
+			}
 			if s.ToolCallCount > 0 {
-				b.WriteString(fmt.Sprintf(" (💬×%d 🔧×%d)", s.UserPromptCount, s.ToolCallCount))
+				parts = append(parts, fmt.Sprintf("💬×%d 🔧×%d", s.UserPromptCount, s.ToolCallCount))
+			}
+			if len(parts) > 0 {
+				b.WriteString(fmt.Sprintf(" (%s)", strings.Join(parts, ", ")))
 			}
 			if linked, err := store.LinkedEntityIDsForSession(s.SessionID); err == nil && len(linked) > 0 {
-				b.WriteString(fmt.Sprintf("\n  涉及: %s", strings.Join(linked, ", ")))
+				b.WriteString(fmt.Sprintf("\n    涉及: %s", strings.Join(linked, ", ")))
 			}
 			b.WriteString("\n")
 		}
 		b.WriteString("\n")
+	}
+
+	// L2 Session Knowledge (available when L2 summaries exist)
+	if summaryRows, err := store.ListSessionSummariesWithSummary("", 20); err == nil && len(summaryRows) > 0 {
+		b.WriteString("## 🧠 Session Knowledge\n\n")
+		b.WriteString(fmt.Sprintf("Analyzed %d sessions with AI-generated summaries.\n\n", len(summaryRows)))
+
+		// Show recent 3 session goals
+		b.WriteString("### Recent Session Goals\n")
+		shown := 0
+		for _, sr := range summaryRows {
+			if shown >= 3 {
+				break
+			}
+			var l2 session.SessionL2Summary
+			if json.Unmarshal([]byte(sr.Summary), &l2) == nil && l2.Goal != "" {
+				b.WriteString(fmt.Sprintf("- [%s] %s\n", sessionIDPrefix(sr.SessionID), l2.Goal))
+				shown++
+			}
+		}
+		b.WriteString("\n")
+
+		// Cross-session patterns
+		knowledge := session.AggregateCrossSessionKnowledge(summaryRows)
+		if len(knowledge.FilePatterns) > 0 {
+			b.WriteString("### 高频文件\n")
+			for i, fp := range knowledge.FilePatterns {
+				if i >= 3 {
+					break
+				}
+				b.WriteString(fmt.Sprintf("- **%s**: %d sessions\n", fp.FilePath, fp.SessionCount))
+			}
+			b.WriteString("\n")
+		}
+		if len(knowledge.RecurringLessons) > 0 {
+			b.WriteString("### 经验教训\n")
+			for i, lesson := range knowledge.RecurringLessons {
+				if i >= 5 {
+					break
+				}
+				b.WriteString(fmt.Sprintf("- %s\n", lesson))
+			}
+			b.WriteString("\n")
+		}
 	}
 
 	// AI executive summary when available
@@ -1475,6 +1529,14 @@ func relativeTime(iso string) string {
 		}
 		return u.Itoa(days) + " 天前"
 	}
+}
+
+// dateShort returns a short date label (MM/DD) from an ISO timestamp.
+func dateShort(iso string) string {
+	if len(iso) < 10 {
+		return ""
+	}
+	return iso[5:10] // "06/23"
 }
 
 // firstLine returns the first line of the first user prompt, or a fallback label.
