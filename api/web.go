@@ -35,6 +35,8 @@ func (s *Server) handleWebRoutes(w http.ResponseWriter, method, path string) boo
 		web.SendJSON(w, webdata.CodePayload())
 	case "web/daily":
 		web.SendJSON(w, webdata.DailyPayload())
+	case "web/activity":
+		web.SendJSON(w, webdata.ActivityPayload())
 	case "web/bootstrap":
 		s.handleBootstrap(w)
 	default:

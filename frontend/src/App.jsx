@@ -49,6 +49,7 @@ import DailyViewHuman from "./views/DailyViewHuman";
 import AgentsView from "./views/AgentsView";
 import AuditView from "./views/AuditView";
 import DiscussionsView from "./views/DiscussionsView";
+import ActivityView from "./views/ActivityView";
 import SettingsView from "./views/SettingsView";
 import ChatView from "./views/ChatView";
 
@@ -379,7 +380,8 @@ function ConsoleApp() {
           {view === "d_old" && <DecisionsView decisions={decisions} decisionSearch={decisionSearch} decisionStatusFilter={decisionStatusFilter} setDecisionSearch={setDecisionSearch} setDecisionStatusFilter={setDecisionStatusFilter} decisionForm={decisionForm} setDecisionForm={setDecisionForm} busy={busy} onOpenIdea={handleOpenIdea} onCreateDecision={() => runAction(() => api("/pmai/decisions", { method: "POST", body: JSON.stringify(decisionForm) }), "Decision created")} onUpdateDecision={(id, s) => runAction(() => api(`/pmai/decisions/${id}`, { method: "PATCH", body: JSON.stringify({ status: s }) }), "Decision updated")} onCopyIntoCanon={id => { setCanonForm({...canonForm, decisionId: id}); setView("canon"); }} />}
           {view === "agents" && <AgentsView agents={agents} loading={loading} loadAll={loadAll} busy={busy} />}
           {view === "audit" && <AuditView auditLogs={auditLogs} loading={loading} loadAll={loadAll} />}
-          {view === "discussions" && <DiscussionsView />}
+          {view === "activity" && <ActivityView />}
+        {view === "discussions" && <DiscussionsView />}
           {view === "chat" && <ChatView />}
           {view === "settings" && <SettingsView />}
           {view === "daily" && <DailyViewHuman daily={daily} dailyForm={dailyForm} setDailyForm={setDailyForm} busy={busy} onAppendDaily={() => runDailyAction("POST", "Daily note updated")} onReplaceDaily={() => runDailyAction("PUT", "Daily note replaced")} tasks={tasks} commits={commits} onCreateTaskFromDaily={handleCreateTaskFromDaily} />}
