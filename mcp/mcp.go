@@ -447,7 +447,7 @@ func (s *mcpServer) handleSearch(args map[string]interface{}) mcpToolResult {
 	// Check for duplicates in results
 	reflection := ""
 	if cnt, ok := result["count"].(int); ok && cnt == 0 {
-		reflection = "未找到匹配结果。可以创建新的 task/plan，但请先确认是否属于已有 plan 的范围。"
+		reflection = "未找到匹配结果。可尝试：1) 用 aipm_search_discussions 搜索讨论内容；2) 用 aipm_get_briefing 了解项目概况；3) 用不同关键词重试。"
 	} else if cnt > 5 {
 		reflection = fmt.Sprintf("找到 %d 个相关结果。建议缩小搜索范围或使用 aipm_get_briefing 了解当前项目概况。", cnt)
 	}
@@ -457,10 +457,37 @@ func (s *mcpServer) handleSearch(args map[string]interface{}) mcpToolResult {
 		for _, h := range results {
 			entityType := u.Str(h["type"])
 			entityID := u.Str(h["id"])
-			text += fmt.Sprintf("\n- [%s] %s (%s)", entityType, u.Str(h["title"]), entityID)
+			score := ""
+			if s, ok := h["score"].(float64); ok && s > 0 {
+				score = fmt.Sprintf(" (相关度: %.0f%%)", s)
+			} else if s, ok := h["score"].(int); ok && s > 0 {
+				score = fmt.Sprintf(" (相关度: %d%%)", s)
+			}
+			text += fmt.Sprintf("\n- [%s] %s (%s)%s", entityType, u.Str(h["title"]), entityID, score)
 			if entityID != "" {
 				if sessions, err := store.LinkedDiscussionSessions(entityType, entityID, 3); err == nil && len(sessions) > 0 {
 					text += fmt.Sprintf(" — 💬 %d 个讨论 session 涉及", len(sessions))
+				}
+			}
+		}
+	}
+
+	// Enhance with L2 session summaries when available
+	if summaryRows, err := store.SearchSessionSummaries(query, 3); err == nil && len(summaryRows) > 0 {
+		text += "\n\n### 相关 Session 知识\n"
+		for _, sr := range summaryRows {
+			var l2 struct {
+				Goal  string   `json:"goal"`
+				Files []string `json:"files"`
+			}
+			if json.Unmarshal([]byte(sr.Summary), &l2) == nil && l2.Goal != "" {
+				prefix := sr.SessionID
+				if len(prefix) > 8 {
+					prefix = prefix[:8]
+				}
+				text += fmt.Sprintf("- [%s] %s\n", prefix, l2.Goal)
+				if len(l2.Files) > 0 {
+					text += fmt.Sprintf("  文件: %s\n", strings.Join(l2.Files, ", "))
 				}
 			}
 		}
