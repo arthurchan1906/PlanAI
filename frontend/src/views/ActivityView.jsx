@@ -1,10 +1,16 @@
-import { useState, useEffect } from "react";
-import { Card, Tag, Typography, Empty, Spin, Alert, Space } from "antd";
+import { useState, useEffect, useMemo } from "react";
+import { Card, Tag, Typography, Empty, Spin, Alert, Space, Button } from "antd";
 import {
   ClockCircleOutlined, BugOutlined, BranchesOutlined,
   FileTextOutlined, AlertOutlined, NodeIndexOutlined,
-  RobotOutlined, CodeOutlined,
+  RobotOutlined, CodeOutlined, ArrowLeftOutlined,
 } from "@ant-design/icons";
+import {
+  ReactFlow, MiniMap, Background,
+  useNodesState, useEdgesState, MarkerType,
+} from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
+import { forceSimulation, forceManyBody, forceLink, forceCenter, forceCollide } from "d3-force";
 import { api } from "../utils/api";
 
 const { Title, Text, Paragraph } = Typography;
@@ -17,14 +23,178 @@ const SOURCE_ICONS = {
   "codex-cli": <CodeOutlined />,
 };
 
-function ActivityGraphView({ sessionId, onClose }) {
+// ── Entity colors ──
+const ENTITY_COLORS = {
+  bug: "#ff4d4f", commit: "#2f6fec", task: "#52c41a",
+  plan: "#722ed1", decision: "#faad14",
+};
+const SESSION_COLOR = "#13c2c2";
+const FILE_COLOR = "#8c8c8c";
+
+// ── Force layout ──
+function layoutNodes(nodes, edges) {
+  const simNodes = nodes.map((n) => ({ id: n.id }));
+  const simLinks = edges
+    .filter((e) => nodes.some((n) => n.id === e.source) && nodes.some((n) => n.id === e.target))
+    .map((e) => ({ source: e.source, target: e.target }));
+
+  if (simLinks.length === 0) {
+    const pos = {};
+    simNodes.forEach((n, i) => {
+      pos[n.id] = { x: (i % 3) * 180 - 180, y: Math.floor(i / 3) * 100 - 50 };
+    });
+    return pos;
+  }
+
+  const sim = forceSimulation(simNodes)
+    .force("charge", forceManyBody().strength(-300))
+    .force("link", forceLink(simLinks).distance(120).strength(0.4))
+    .force("center", forceCenter(0, 0))
+    .force("collide", forceCollide(45))
+    .stop();
+
+  const N = Math.ceil(Math.log(sim.alphaMin()) / Math.log(1 - sim.alphaDecay()));
+  for (let i = 0; i < N; i++) sim.tick();
+
+  const pos = {};
+  for (const n of sim.nodes()) pos[n.id] = { x: n.x, y: n.y };
+  return pos;
+}
+
+// ── Graph view ──
+function ActivityGraphView({ sessionId, graphEdges, sessions, onClose }) {
+  const { nodes: rfNodes, edges: rfEdges } = useMemo(() => {
+    if (!sessionId || !graphEdges?.length) return { nodes: [], edges: [] };
+
+    // Filter edges connected to target session (1-hop)
+    const connected = new Set([sessionId]);
+    const relevant = graphEdges.filter(([s, t]) => {
+      if (s === sessionId) { connected.add(t); return true; }
+      if (t === sessionId) { connected.add(s); return true; }
+      return false;
+    });
+
+    // Build nodes
+    const nodeMap = {};
+    // Center session node
+    nodeMap[sessionId] = {
+      id: sessionId, type: "session", label: sessionId.slice(0, 8),
+      x: 0, y: 0,
+    };
+
+    for (const [s, t, rel] of relevant) {
+      const other = s === sessionId ? t : s;
+      if (nodeMap[other]) continue;
+
+      if (other.startsWith("file:")) {
+        const fname = other.slice(5).split("/").pop();
+        nodeMap[other] = { id: other, type: "file", label: fname };
+      } else {
+        const parts = other.split("-");
+        const etype = parts[0] || "unknown";
+        nodeMap[other] = {
+          id: other, type: "entity", etype,
+          label: other.length > 20 ? etype + ":" + other.slice(other.length - 8) : other,
+        };
+      }
+    }
+    const nodes = Object.values(nodeMap);
+
+    // Build edges
+    const edges = relevant.map(([s, t, rel], i) => {
+      const isHard = rel.includes("fixes") || rel.includes("produced") || rel.includes("refers_to");
+      return {
+        id: `e-${i}`,
+        source: s, target: t,
+        style: { stroke: isHard ? "#2f6fec" : "#ccc", strokeWidth: isHard ? 2 : 1,
+                 strokeDasharray: isHard ? "" : "5,5" },
+        markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12, color: isHard ? "#2f6fec" : "#ccc" },
+      };
+    });
+
+    // Layout
+    const pos = layoutNodes(nodes, edges);
+    for (const n of nodes) {
+      if (pos[n.id]) { n.x = pos[n.id].x; n.y = pos[n.id].y; }
+    }
+
+    return { nodes, edges };
+  }, [sessionId, graphEdges]);
+
+  const [nodes, setNodes, onNodesChange] = useNodesState(rfNodes);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(rfEdges);
+
+  useEffect(() => { setNodes(rfNodes); setEdges(rfEdges); }, [rfNodes, rfEdges]);
+
   return (
-    <div style={{ padding: 24 }}>
-      <Title level={5}>关联图 — {sessionId?.slice(0, 8)}</Title>
-      <Text type="secondary">图视图将在下一步实现。</Text>
+    <div style={{ position: "relative", width: "100%", height: "100%" }}>
+      <div style={{ position: "absolute", top: 12, left: 12, zIndex: 10 }}>
+        <Button icon={<ArrowLeftOutlined />} onClick={onClose} size="small">返回</Button>
+      </div>
+      <ReactFlow
+        nodes={nodes} edges={edges}
+        onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
+        nodeTypes={graphNodeTypes}
+        fitView
+        style={{ background: "#fafafa" }}
+      >
+        <MiniMap />
+        <Background gap={20} />
+      </ReactFlow>
+      <div style={{ position: "absolute", bottom: 12, left: 12, zIndex: 10, background: "rgba(255,255,255,0.9)", padding: "6px 10px", borderRadius: 6, fontSize: 11 }}>
+        <Space size={12}>
+          <span><span style={{display:"inline-block",width:10,height:10,borderRadius:"50%",background:SESSION_COLOR,marginRight:4}} /> Session</span>
+          <span><span style={{display:"inline-block",width:10,height:10,borderRadius:2,background:"#2f6fec",marginRight:4}} /> Entity</span>
+          <span><span style={{display:"inline-block",width:6,height:6,borderRadius:"50%",background:FILE_COLOR,marginRight:4}} /> File</span>
+          <span><span style={{display:"inline-block",width:14,height:0,borderTop:"2px solid #2f6fec",marginRight:4}} /> 关联</span>
+          <span><span style={{display:"inline-block",width:14,height:0,borderTop:"1px dashed #ccc",marginRight:4}} /> 推断</span>
+        </Space>
+      </div>
     </div>
   );
 }
+
+// ── Node type renderers ──
+function SessionNode({ data }) {
+  return (
+    <div style={{
+      width: 28, height: 28, borderRadius: "50%",
+      background: SESSION_COLOR, border: "2px solid #fff",
+      boxShadow: "0 1px 4px rgba(0,0,0,0.15)",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      fontSize: 9, color: "#fff", fontWeight: 600,
+    }} title={data.label}>{data.label?.slice(0, 3)}</div>
+  );
+}
+
+function EntityNode({ data }) {
+  const color = ENTITY_COLORS[data.etype] || "#2f6fec";
+  return (
+    <div style={{
+      padding: "2px 8px", borderRadius: 4,
+      background: "#fff", border: `1.5px solid ${color}`,
+      fontSize: 9, color: "#333", maxWidth: 100,
+      whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+      boxShadow: "0 1px 2px rgba(0,0,0,0.08)",
+    }} title={data.label}>{data.label}</div>
+  );
+}
+
+function FileNode({ data }) {
+  return (
+    <div style={{
+      width: 8, height: 8, borderRadius: "50%",
+      background: FILE_COLOR, border: "1px solid #fff",
+      boxShadow: "0 1px 2px rgba(0,0,0,0.1)",
+    }} title={data.label} />
+  );
+}
+
+const graphNodeTypes = {
+  session: SessionNode,
+  entity: EntityNode,
+  file: FileNode,
+};
 
 export default function ActivityView() {
   const [data, setData] = useState(null);
@@ -58,7 +228,16 @@ export default function ActivityView() {
   };
 
   if (graphSession) {
-    return <ActivityGraphView sessionId={graphSession} onClose={() => setGraphSession(null)} />;
+    return (
+      <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "#fff" }}>
+        <ActivityGraphView
+          sessionId={graphSession}
+          graphEdges={graph_edges}
+          sessions={sessions}
+          onClose={() => setGraphSession(null)}
+        />
+      </div>
+    );
   }
 
   return (
