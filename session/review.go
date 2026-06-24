@@ -395,13 +395,19 @@ func isDirectiveSession(messages []map[string]any) bool {
 	}
 
 	// Signal 1: first user prompt contains an entity ID reference
+	// (but still check for question keywords to avoid misclassifying queries)
+	questionKW := []string{"为什么", "是什么原因", "查一下", "看一下", "怎么办", "怎么回", "如何", "是不是"}
 	if entityIDPattern.MatchString(firstUser) {
+		for _, kw := range questionKW {
+			if strings.Contains(firstUser, kw) {
+				return false // looks like a question about a known entity
+			}
+		}
 		return true
 	}
 
 	// Signal 2: contains directive keyword AND no question keyword
 	directiveKW := []string{"修改", "改成", "删除", "添加", "commit", "实现", "修复", "提交"}
-	questionKW := []string{"为什么", "是什么原因", "查一下", "看一下", "怎么办", "怎么回", "如何", "是不是"}
 
 	hasDirective := false
 	for _, kw := range directiveKW {

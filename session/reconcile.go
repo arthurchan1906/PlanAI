@@ -56,14 +56,14 @@ const reconcileWindow = 30 // minutes around session for commit matching
 func Reconcile(since string) (ReconcileResult, error) {
 	out := ReconcileResult{Since: since}
 
-	summaries, err := store.ListSessionSummariesWithSummary(since, 50)
+	summaries, err := store.ListSessionSummariesSince(since, 50)
 	if err != nil {
 		return out, err
 	}
 	out.SessionsReviewed = len(summaries)
 
 	for _, ss := range summaries {
-		// Get session messages for Hard-path file extraction
+		// Get session messages for Hard-path file extraction (works without L2)
 		messages, err := store.GetSessionMessages(ss.SessionID)
 		if err != nil || len(messages) == 0 {
 			continue
@@ -74,10 +74,13 @@ func Reconcile(since string) (ReconcileResult, error) {
 			continue
 		}
 
-		// Parse L2 summary for Soft-path data
+		// Parse L2 summary for Soft-path data (optional, may be empty)
 		var l2 SessionL2Summary
-		if err := json.Unmarshal([]byte(ss.Summary), &l2); err != nil || l2.Goal == "" {
-			continue
+		hasL2 := false
+		if ss.Summary != "" {
+			if err := json.Unmarshal([]byte(ss.Summary), &l2); err == nil && l2.Goal != "" {
+				hasL2 = true
+			}
 		}
 
 		// Find commits in time window
@@ -93,11 +96,16 @@ func Reconcile(since string) (ReconcileResult, error) {
 			cfilesJSON := u.Str(c["files_json"])
 
 			var commitFiles []string
-			json.Unmarshal([]byte(cfilesJSON), &commitFiles)
+			if err := json.Unmarshal([]byte(cfilesJSON), &commitFiles); err != nil {
+					commitFiles = []string{}
+				}
 
 			// Dual-path file matching
 			hardMatches := intersectFiles(touchedFiles, commitFiles)
-			softMatches := intersectFiles(l2.Files, commitFiles)
+			var softMatches []string
+				if hasL2 {
+					softMatches = intersectFiles(l2.Files, commitFiles)
+				}
 
 			switch {
 			case len(hardMatches) >= 2:
@@ -109,7 +117,7 @@ func Reconcile(since string) (ReconcileResult, error) {
 					TargetType: "session",
 					TargetID:   ss.SessionID,
 					Confidence: "hard",
-					Reason:     fmt.Sprintf("2+ file intersection: %s", strings.Join(hardMatches[:3], ", ")),
+					Reason:     fmt.Sprintf("2+ file intersection: %s", strings.Join(safeSlice(hardMatches, 3), ", ")),
 				})
 				// Also link commit → task if task exists
 				if ctaskID != "" {
@@ -153,7 +161,7 @@ func Reconcile(since string) (ReconcileResult, error) {
 		// Execute auto-links for this session's batch
 		for _, link := range out.AutoLinked {
 			if link.SessionID == ss.SessionID {
-				store.CreateLink("session", link.SessionID, "relates_to",
+				store.CreateLink(link.SourceType, link.SourceID, "relates_to",
 					link.TargetType, link.TargetID,
 					fmt.Sprintf("reconcile: %s", link.Reason))
 			}
@@ -214,6 +222,14 @@ func intersectFiles(a, b []string) []string {
 		}
 	}
 	return out
+}
+
+// safeSlice returns s[:n] without panicking when cap(s) < n.
+func safeSlice(s []string, n int) []string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
 }
 
 // basename extracts the filename portion of a path.

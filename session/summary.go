@@ -100,7 +100,7 @@ func extractSessionText(messages []map[string]any) string {
 			buf.WriteString("[user] ")
 			buf.WriteString(k.content)
 			buf.WriteString("\n\n")
-			sBudget -= len(k.content) + 12
+			sBudget -= len(k.content) + 9
 		}
 	}
 
@@ -115,7 +115,7 @@ func extractSessionText(messages []map[string]any) string {
 	// We want most recent first, so iterate in reverse.
 	for i := len(aList) - 1; i >= 0; i-- {
 		k := aList[i]
-		size := len(k.content) + 20
+		size := len(k.content) + 14
 		if sBudget-size < 0 {
 			break
 		}
@@ -130,7 +130,7 @@ func extractSessionText(messages []map[string]any) string {
 		if k.level != 'B' {
 			continue
 		}
-		size := len(k.content) + 20
+		size := len(k.content) + 14
 		if sBudget-size < 0 {
 			buf.WriteString("[... truncated ...]\n")
 			break
@@ -143,7 +143,19 @@ func extractSessionText(messages []map[string]any) string {
 
 	result := buf.String()
 	if len(result) > maxExtractedBytes {
-		result = result[:maxExtractedBytes]
+		// Truncate on rune boundary to avoid splitting multi-byte characters
+		runes := []rune(result)
+		byteCount := 0
+		cut := 0
+		for _, r := range runes {
+			rl := utf8.RuneLen(r)
+			if byteCount+rl > maxExtractedBytes {
+				break
+			}
+			byteCount += rl
+			cut++
+		}
+		result = string(runes[:cut])
 	}
 	return result
 }

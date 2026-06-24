@@ -129,8 +129,10 @@ func Run(opts RunOpts) (RunResult, error) {
 	// Write cross-session lessons file if L2 summaries exist
 	if summaries, err := store.ListSessionSummariesWithSummary("", 50); err == nil && len(summaries) > 0 {
 		knowledge := AggregateCrossSessionKnowledge(summaries)
-		lessonsPath := filepath.Join(filepath.Dir(opts.SamplePath), "recent_lessons.md")
-		WriteLessonsFile(lessonsPath, knowledge)
+		lessonsPath := ".pmai/cache/recent_lessons.md"
+		if err := WriteLessonsFile(lessonsPath, knowledge); err != nil {
+				// non-fatal
+			}
 	}
 
 	return out, nil

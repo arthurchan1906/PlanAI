@@ -145,8 +145,12 @@ func ActivityPayload() map[string]any {
 		sessions = []store.AgentSessionSummary{}
 	}
 
-	// L2 summaries (may be empty)
-	summaries, _ := store.ListSessionSummariesWithSummary("", 30)
+	// B1 review data (available for all sessions)
+	// Use ListSessionSummariesSince to get ALL session_summaries, not just L2 ones
+	summaries, _ := store.ListSessionSummariesSince(since, 50)
+	if summaries == nil {
+		summaries = []store.SessionSummary{}
+	}
 	summaryMap := map[string]store.SessionSummary{}
 	for _, s := range summaries {
 		summaryMap[s.SessionID] = s
@@ -189,10 +193,11 @@ func ActivityPayload() map[string]any {
 					DirectiveSession bool   `json:"directive_session"`
 					QualityScore     int    `json:"quality_score"`
 				}
-				json.Unmarshal([]byte(ss.ReviewJSON), &review)
-				card.Intent = review.Intent
-				card.Directive = review.DirectiveSession
-				card.QualityScore = review.QualityScore
+				if err := json.Unmarshal([]byte(ss.ReviewJSON), &review); err == nil {
+					card.Intent = review.Intent
+					card.Directive = review.DirectiveSession
+					card.QualityScore = review.QualityScore
+				}
 			}
 			card.Entities = parseEntityRefs(ss.EntityRefs)
 		}
@@ -202,7 +207,7 @@ func ActivityPayload() map[string]any {
 
 		// First user prompt text
 		if len(s.UserPrompts) > 0 {
-			card.FirstPrompt = firstLine(s.UserPrompts[len(s.UserPrompts)-1])
+			card.FirstPrompt = firstLine(s.UserPrompts[0])
 		}
 
 		// L2 data if available
