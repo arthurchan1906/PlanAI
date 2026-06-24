@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"aipmc/ai"
 	"aipmc/store"
 	"aipmc/u"
 )
@@ -17,6 +18,7 @@ type RunOpts struct {
 	Since      string
 	Limit      int
 	SamplePath string
+	Summarizer ai.Summarizer // optional AI summarizer for L2 summary generation
 }
 
 // RunResult is the CLI/MCP output for a review batch.
@@ -87,12 +89,18 @@ func Run(opts RunOpts) (RunResult, error) {
 		messages := CombineMessages(rows, mergedRows)
 		review := ReviewSession(s.SessionID, s.Source, messages, len(mergedRows), nil)
 
+		// L2 semantic summary (gracefully degrades if AI not configured)
+		summary := ""
+		if opts.Summarizer != nil {
+			summary = GenerateL2Summary(messages, review, opts.Summarizer)
+		}
+
 		entityRefs := review.EntityRefsJSON()
 		if err := store.UpsertSessionSummary(store.SessionSummary{
 			SessionID:    s.SessionID,
 			Source:       s.Source,
 			ReviewJSON:   review.ReviewJSON(),
-			Summary:      "",
+			Summary:      summary,
 			Intent:       review.Intent,
 			EntityRefs:   entityRefs,
 			QualityScore: review.QualityScoreValue(),
@@ -117,6 +125,14 @@ func Run(opts RunOpts) (RunResult, error) {
 		}
 		out.SamplePath = opts.SamplePath
 	}
+
+	// Write cross-session lessons file if L2 summaries exist
+	if summaries, err := store.ListSessionSummariesWithSummary("", 50); err == nil && len(summaries) > 0 {
+		knowledge := AggregateCrossSessionKnowledge(summaries)
+		lessonsPath := filepath.Join(filepath.Dir(opts.SamplePath), "recent_lessons.md")
+		WriteLessonsFile(lessonsPath, knowledge)
+	}
+
 	return out, nil
 }
 

@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"aipmc/ai"
 	"aipmc/cli"
 	"aipmc/mcp"
 	"aipmc/store"
@@ -25,13 +26,13 @@ func dispatchTask(subcmd string, args *cli.Args) {
 		t, err := store.CreateTask(args.Get("title"), args.Str("priority", "P1"), args.Str("status", "todo"), args.Str("phase", "general"), args.Get("plan_id"), nil)
 		if err != nil {
 			cli.Fail(err)
-		}
+			}
 		cli.PrintJSON(map[string]any{"task": t})
 	case "update":
 		t, err := store.UpdateTask(args.Get("id"), args.Str("status", ""), args.Str("note", ""), args.Bool("allow_without_commit"), args.Bool("append_note"))
 		if err != nil {
 			cli.Fail(err)
-		}
+			}
 		cli.PrintJSON(map[string]any{"task": t})
 	case "note":
 		r, _ := store.AppendTaskNote(args.Get("id"), args.Get("content"))
@@ -72,7 +73,7 @@ func dispatchCommit(subcmd string, args *cli.Args) {
 			}
 			cli.PrintJSON(map[string]any{"commits": cc, "count": len(cc)})
 			return
-		}
+			}
 		cli.PrintJSON(map[string]any{"commits": commits, "count": len(commits)})
 	case "show":
 		c, _ := store.GetCommit(args.Get("id"))
@@ -85,15 +86,15 @@ func dispatchCommit(subcmd string, args *cli.Args) {
 					taskIDs = append(taskIDs, tid)
 				}
 			}
-		}
+			}
 		if len(taskIDs) == 0 {
 			if tid := args.Str("task_id", ""); tid != "" {
 				taskIDs = append(taskIDs, tid)
 			}
-		}
+			}
 		if len(taskIDs) == 0 {
 			cli.Fail(fmt.Errorf("commit requires --task-id (or --task-ids for multi-task). Find a task: aipmc task list --status in_progress"))
-		}
+			}
 		var commits []map[string]any
 		for _, tid := range taskIDs {
 			c, err := store.CreateCommit(args.Get("title"), args.Str("summary", ""), args.Str("evidence_summary", ""), args.Str("review_notes", ""), args.Str("branch", ""), args.Str("commit_hash", ""), tid, args.Str("decision_id", ""), args.Str("status", "draft"), args.Str("test_status", "not_run"), args.Str("review_status", "pending"), nil)
@@ -101,22 +102,22 @@ func dispatchCommit(subcmd string, args *cli.Args) {
 				cli.Fail(err)
 			}
 			commits = append(commits, c)
-		}
+			}
 		if len(commits) == 1 {
 			cli.PrintJSON(map[string]any{"commit": commits[0]})
-		} else {
+			} else {
 			cli.PrintJSON(map[string]any{"commits": commits})
-		}
+			}
 	case "update":
 		payload := map[string]any{}
 		for _, k := range []string{"title", "summary", "evidence_summary", "review_notes", "branch", "commit_hash", "decision_id", "status", "test_status", "review_status"} {
 			if v := args.Str(k, ""); v != "" {
 				payload[k] = v
 			}
-		}
+			}
 		if args.Bool("clear_decision_id") {
 			payload["decision_id"] = nil
-		}
+			}
 		c, _ := store.UpdateCommit(args.Get("id"), payload)
 		cli.PrintJSON(map[string]any{"commit": c})
 	default:
@@ -140,7 +141,7 @@ func dispatchPlan(subcmd string, args *cli.Args) {
 		p, err := store.CreatePlan(args.Get("title"), args.Str("goal", ""), args.Get("roadmap_id"), args.Str("vision_id", ""), args.Str("priority", "P1"), args.Str("status", "draft"), nil, nil, nil, nil)
 		if err != nil {
 			cli.Fail(err)
-		}
+			}
 		cli.PrintJSON(map[string]any{"plan": p})
 	case "update":
 		payload := map[string]any{}
@@ -148,7 +149,7 @@ func dispatchPlan(subcmd string, args *cli.Args) {
 			if v := args.Str(k, ""); v != "" {
 				payload[k] = v
 			}
-		}
+			}
 		p, _ := store.UpdatePlan(args.Get("id"), payload)
 		cli.PrintJSON(map[string]any{"plan": p})
 	default:
@@ -169,7 +170,7 @@ func dispatchBug(subcmd string, args *cli.Args) {
 		b, err := store.CreateBug(args.Get("title"), args.Str("description", ""), args.Str("severity", "minor"), args.Str("status", "open"), args.Str("commit_id", ""), args.Str("error", ""), args.Str("files", ""), args.Str("root_cause", ""), args.Str("fix", ""), args.Str("tags", ""))
 		if err != nil {
 			cli.Fail(err)
-		}
+			}
 		cli.PrintJSON(map[string]any{"bug": b})
 	case "update":
 		payload := map[string]any{}
@@ -177,10 +178,10 @@ func dispatchBug(subcmd string, args *cli.Args) {
 			if v := args.Str(k, ""); v != "" {
 				payload[k] = v
 			}
-		}
+			}
 		if args.Bool("clear_commit_id") {
 			payload["clear_commit_id"] = true
-		}
+			}
 		b, _ := store.UpdateBug(args.Get("id"), payload)
 		cli.PrintJSON(map[string]any{"bug": b})
 	default:
@@ -201,7 +202,7 @@ func dispatchDecision(subcmd string, args *cli.Args) {
 		d, err := store.CreateDecision(args.Get("title"), args.Get("background"), args.Get("decision"), args.Str("status", "proposed"))
 		if err != nil {
 			cli.Fail(err)
-		}
+			}
 		cli.PrintJSON(map[string]any{"decision": d})
 	case "review":
 		d, _ := store.UpdateDecisionStatus(args.Get("id"), args.Get("status"))
@@ -224,7 +225,7 @@ func dispatchIdea(subcmd string, args *cli.Args) {
 		i, err := store.CreateIdea(args.Get("title"), args.Get("summary"), args.Str("impact", ""), args.Str("source", "manual"), args.Bool("canon_conflict"), args.Str("current_summary", ""), args.Str("main_question", ""), args.Str("recommended_next_action", "continue_discussion"))
 		if err != nil {
 			cli.Fail(err)
-		}
+			}
 		cli.PrintJSON(map[string]any{"idea": i})
 	case "review":
 		i, _ := store.ReviewIdea(args.Get("id"), args.Get("status"), args.Str("note", ""))
@@ -235,7 +236,7 @@ func dispatchIdea(subcmd string, args *cli.Args) {
 			if v := args.Str(k, ""); v != "" {
 				payload[k] = v
 			}
-		}
+			}
 		i, _ := store.UpdateIdea(args.Get("id"), payload)
 		cli.PrintJSON(map[string]any{"idea": i})
 	case "comment":
@@ -248,10 +249,10 @@ func dispatchIdea(subcmd string, args *cli.Args) {
 				cli.Fail(err)
 			}
 			cli.PrintJSON(r)
-		} else {
+			} else {
 			r, _ := store.ConvertIdeaToDecision(args.Get("id"))
 			cli.PrintJSON(r)
-		}
+			}
 	default:
 		fmt.Fprintf(os.Stderr, "unknown idea subcommand: %s\n", subcmd)
 		os.Exit(1)
@@ -270,7 +271,7 @@ func dispatchRoadmap(subcmd string, args *cli.Args) {
 		r, err := store.CreateRoadmap(args.Get("title"), args.Str("target_date", ""), args.Str("vision_id", ""), args.Str("status", "planned"), args.Str("priority", "P1"))
 		if err != nil {
 			cli.Fail(err)
-		}
+			}
 		cli.PrintJSON(map[string]any{"roadmap": r})
 	case "update":
 		payload := map[string]any{}
@@ -278,7 +279,7 @@ func dispatchRoadmap(subcmd string, args *cli.Args) {
 			if v := args.Str(k, ""); v != "" {
 				payload[k] = v
 			}
-		}
+			}
 		r, _ := store.UpdateRoadmap(args.Get("id"), payload)
 		cli.PrintJSON(map[string]any{"roadmap": r})
 	default:
@@ -299,7 +300,7 @@ func dispatchPrinciple(subcmd string, args *cli.Args) {
 		p, err := store.CreatePrinciple(args.Get("title"), args.Str("summary", ""), args.Str("kind", "governance"), args.Str("status", "active"))
 		if err != nil {
 			cli.Fail(err)
-		}
+			}
 		cli.PrintJSON(map[string]any{"principle": p})
 	case "update":
 		payload := map[string]any{}
@@ -307,7 +308,7 @@ func dispatchPrinciple(subcmd string, args *cli.Args) {
 			if v := args.Str(k, ""); v != "" {
 				payload[k] = v
 			}
-		}
+			}
 		p, _ := store.UpdatePrinciple(args.Get("id"), payload)
 		cli.PrintJSON(map[string]any{"principle": p})
 	default:
@@ -345,7 +346,7 @@ func dispatchVision(subcmd string, args *cli.Args) {
 		v, err := store.CreateVision(args.Get("title"), args.Str("summary", ""), args.Str("status", "active"), args.Str("horizon", "long_term"))
 		if err != nil {
 			cli.Fail(err)
-		}
+			}
 		cli.PrintJSON(map[string]any{"vision": v})
 	case "update":
 		payload := map[string]any{}
@@ -353,7 +354,7 @@ func dispatchVision(subcmd string, args *cli.Args) {
 			if v := args.Str(k, ""); v != "" {
 				payload[k] = v
 			}
-		}
+			}
 		v, _ := store.UpdateVision(args.Get("id"), payload)
 		cli.PrintJSON(map[string]any{"vision": v})
 	default:
@@ -388,7 +389,11 @@ func dispatchReview(subcmd string, args *cli.Args) {
 		if sample == "" {
 			sample = ".pmai/cache/sessions_sample.json"
 		}
-		result, err := session.Run(session.RunOpts{Since: since, Limit: limit, SamplePath: sample})
+		var summarizer ai.Summarizer
+		if application.AI != nil && application.AI.Enabled() {
+			summarizer = application.AI
+		}
+		result, err := session.Run(session.RunOpts{Since: since, Limit: limit, SamplePath: sample, Summarizer: summarizer})
 		if err != nil {
 			cli.Fail(err)
 		}
@@ -397,6 +402,19 @@ func dispatchReview(subcmd string, args *cli.Args) {
 		fmt.Fprintf(os.Stderr, "unknown review subcommand: %s\n", subcmd)
 		os.Exit(1)
 	}
+}
+
+
+func dispatchReconcile(subcmd string, args *cli.Args) {
+	since := session.ParseSince(args.Str("since", "6h"))
+	if args.Bool("full") {
+		since = ""
+	}
+	result, err := session.Reconcile(since)
+	if err != nil {
+		cli.Fail(err)
+	}
+	cli.PrintJSON(result)
 }
 
 func dispatchSession(subcmd string, args *cli.Args) {
@@ -420,13 +438,13 @@ func dispatchDocs(subcmd string, args *cli.Args) {
 			if v := args.Str(k, ""); v != "" {
 				payload[k] = v
 			}
-		}
+			}
 		if args.Bool("source_of_truth") {
 			payload["source_of_truth"] = true
-		}
+			}
 		if args.Bool("clear_source_of_truth") {
 			payload["source_of_truth"] = false
-		}
+			}
 		doc, _ := store.UpdateDocRecord(args.Get("path"), payload)
 		cli.PrintJSON(doc)
 	default:
@@ -482,7 +500,7 @@ func dispatchThread(subcmd string, args *cli.Args) {
 		t, err := store.CreateThread(args.Get("title"), args.Str("summary", ""), args.Str("source", "manual"))
 		if err != nil {
 			cli.Fail(err)
-		}
+			}
 		cli.PrintJSON(map[string]any{"thread": t})
 	case "update":
 		payload := map[string]any{}
@@ -490,7 +508,7 @@ func dispatchThread(subcmd string, args *cli.Args) {
 			if v := args.Str(k, ""); v != "" {
 				payload[k] = v
 			}
-		}
+			}
 		t, _ := store.UpdateThread(args.Get("id"), payload)
 		cli.PrintJSON(map[string]any{"thread": t})
 	case "item":
@@ -498,7 +516,7 @@ func dispatchThread(subcmd string, args *cli.Args) {
 		itemSub := ""
 		if len(os.Args) > 3 {
 			itemSub = os.Args[3]
-		}
+			}
 		switch itemSub {
 		case "add":
 			t, _ := store.AddToThread(args.Get("thread_id"), args.Get("entity_type"), args.Get("entity_id"), args.Str("note", ""))
@@ -509,7 +527,7 @@ func dispatchThread(subcmd string, args *cli.Args) {
 		default:
 			fmt.Fprintf(os.Stderr, "unknown thread item subcommand: %s\n", itemSub)
 			os.Exit(1)
-		}
+			}
 	case "delete":
 		store.DeleteThread(args.Get("id"))
 		cli.PrintJSON(map[string]any{"ok": true})
@@ -535,7 +553,7 @@ func dispatchFeedback(subcmd string, args *cli.Args) {
 			idea, _ := store.CreateIdea("[Feedback] "+args.Get("content")[:min(80, len(args.Get("content")))], args.Get("content"), "", "feedback", false, "", "", "continue_discussion")
 			cli.PrintJSON(map[string]any{"status": "stored_locally", "idea": idea})
 			return
-		}
+			}
 		cli.PrintJSON(fb)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown feedback subcommand: %s\n", subcmd)

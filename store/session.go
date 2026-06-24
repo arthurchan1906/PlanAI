@@ -177,3 +177,79 @@ func EnsureSessionSummariesTable() error {
 	}
 	return nil
 }
+
+// ListSessionSummariesWithSummary returns sessions that have a non-empty L2 summary.
+func ListSessionSummariesWithSummary(since string, limit int) ([]SessionSummary, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	db, err := pmdb.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	q := `SELECT session_id, source, review_json, summary, intent, entity_refs, quality_score, created_at
+		FROM session_summaries WHERE summary != ''`
+	var args []any
+	if since != "" {
+		q += " AND created_at >= ?"
+		args = append(args, since)
+	}
+	q += " ORDER BY created_at DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []SessionSummary
+	for rows.Next() {
+		var r SessionSummary
+		if err := rows.Scan(&r.SessionID, &r.Source, &r.ReviewJSON, &r.Summary, &r.Intent, &r.EntityRefs, &r.QualityScore, &r.CreatedAt); err != nil {
+			continue
+		}
+		out = append(out, r)
+	}
+	if out == nil {
+		out = []SessionSummary{}
+	}
+	return out, nil
+}
+
+// SearchSessionSummaries searches the summary field using LIKE.
+func SearchSessionSummaries(query string, limit int) ([]SessionSummary, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+	db, err := pmdb.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	rows, err := db.Query(
+		`SELECT session_id, source, review_json, summary, intent, entity_refs, quality_score, created_at
+		FROM session_summaries WHERE summary LIKE ? ORDER BY created_at DESC LIMIT ?`,
+		"%"+query+"%", limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []SessionSummary
+	for rows.Next() {
+		var r SessionSummary
+		if err := rows.Scan(&r.SessionID, &r.Source, &r.ReviewJSON, &r.Summary, &r.Intent, &r.EntityRefs, &r.QualityScore, &r.CreatedAt); err != nil {
+			continue
+		}
+		out = append(out, r)
+	}
+	if out == nil {
+		out = []SessionSummary{}
+	}
+	return out, nil
+}

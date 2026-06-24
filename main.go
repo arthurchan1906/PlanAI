@@ -257,6 +257,8 @@ func main() {
 		dispatchDaily(subcmd, args)
 	case "session":
 		dispatchSession(subcmd, args)
+	case "reconcile":
+		dispatchReconcile(subcmd, args)
 	case "docs":
 		dispatchDocs(subcmd, args)
 	case "canon":
