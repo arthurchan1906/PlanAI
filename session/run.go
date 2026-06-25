@@ -94,6 +94,12 @@ func Run(opts RunOpts) (RunResult, error) {
 		if opts.Summarizer != nil {
 			summary = GenerateL2Summary(messages, review, opts.Summarizer)
 		}
+		// Preserve existing summary if current run produced nothing
+		if summary == "" {
+			if old, _ := store.GetSessionSummary(s.SessionID); old != nil && old.Summary != "" {
+				summary = old.Summary
+			}
+		}
 
 		entityRefs := review.EntityRefsJSON()
 		if err := store.UpsertSessionSummary(store.SessionSummary{

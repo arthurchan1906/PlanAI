@@ -32,7 +32,7 @@ func NewClient(endpoint, embeddingEndpoint, model, chatModel, apiKey string) *Cl
 		model:             model,
 		chatModel:         chatModel,
 		apiKey:            apiKey,
-		http:              &http.Client{Timeout: 60 * time.Second},
+		http:              &http.Client{Timeout: 600 * time.Second},
 	}
 }
 
@@ -69,7 +69,34 @@ func (c *Client) Summarize(text, instruction string) (string, error) {
 		{"role": "system", "content": instruction},
 		{"role": "user", "content": text},
 	}
-	body := map[string]any{"model": c.chatModel, "messages": messages}
+	body := map[string]any{"model": c.chatModel, "messages": messages, "max_tokens": 3072}
+	resp, err := c.post(c.endpoint, "/chat/completions", body)
+	if err != nil { return "", err }
+	var result struct {
+		Choices []struct{ Message struct{ Content string `json:"content"` } `json:"message"` } `json:"choices"`
+	}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return "", fmt.Errorf("parse chat response: %w", err)
+	}
+	if len(result.Choices) == 0 { return "", fmt.Errorf("no choices") }
+	return result.Choices[0].Message.Content, nil
+}
+
+// SummarizeJSON is like Summarize but adds response_format: json_object
+// to enforce valid JSON output from the model. Only use when the instruction
+// asks for JSON output (e.g. L2 summaries), not for natural language responses.
+func (c *Client) SummarizeJSON(text, instruction string) (string, error) {
+	if !c.Enabled() { return "", fmt.Errorf("AI not configured") }
+	messages := []map[string]string{
+		{"role": "system", "content": instruction},
+		{"role": "user", "content": text},
+	}
+	body := map[string]any{
+		"model":           c.chatModel,
+		"messages":        messages,
+		"max_tokens":      3072,
+		"response_format": map[string]string{"type": "json_object"},
+	}
 	resp, err := c.post(c.endpoint, "/chat/completions", body)
 	if err != nil { return "", err }
 	var result struct {

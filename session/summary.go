@@ -2,10 +2,13 @@ package session
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"unicode/utf8"
 
 	"aipmc/ai"
+	"aipmc/db"
 	"aipmc/store"
 	"aipmc/u"
 )
@@ -21,7 +24,7 @@ type SessionL2Summary struct {
 	Patterns    []string `json:"patterns"`     // Lessons for future agents
 }
 
-const maxExtractedBytes = 25000 // ~6-7K tokens for small model budget
+const maxExtractedBytes = 12000 // ~3-4K tokens, fits Gemma 12B prompt processing within timeout
 const minGoalRunes = 5
 
 // GenerateL2Summary produces a structured JSON summary of a session using the AI Summarizer.
@@ -37,7 +40,13 @@ func GenerateL2Summary(messages []map[string]any, review ReviewResult, summarize
 	}
 
 	instruction, text := buildL2Prompt(extracted, review)
-	raw, err := summarizer.Summarize(text, instruction)
+	var raw string
+	var err error
+	if js, ok := summarizer.(interface{ SummarizeJSON(string, string) (string, error) }); ok {
+		raw, err = js.SummarizeJSON(text, instruction)
+	} else {
+		raw, err = summarizer.Summarize(text, instruction)
+	}
 	if err != nil || raw == "" {
 		return "" // model unavailable, degrade gracefully
 	}
@@ -193,6 +202,43 @@ func shouldSkipMessage(role, content string) bool {
 	return false
 }
 
+const defaultL2Prompt = `You are a project knowledge extractor. Analyze an AI coding agent's session record.
+Answer the following 7 questions in Chinese. Output ONLY a valid JSON object.
+
+IMPORTANT: Every field must be a string or array of strings. Never nest a JSON object inside a string.
+Goal must be plain text like "修复跨平台密友同步问题", never a JSON string like "{\"goal\":\"...\"}".
+
+Entity ID format — look for patterns like task-20260615-172610-abcdef, bug-20260624-114337-813aa9,
+commit-20260623-093457-67c970, plan-20260414-092344-56abbf in the session text.
+Extract exact IDs into the entities array. Empty array [] if none found.
+
+Questions:
+1. goal: What was the primary goal? (1-2 Chinese sentences, plain text)
+2. root_causes: What were the root causes? (array of Chinese strings)
+3. fixes: What solutions were applied? (array of Chinese strings)
+4. files: What files or modules were involved? (array of paths)
+5. entities: AIPM entity IDs found in the text? Look for patterns like task-20260615-172610-abcdef, bug-20260624-114337-813aa9, commit-20260623-093457-67c970. Copy EXACT IDs found, or [].
+6. corrections: Did the user correct the agent? How? (array of Chinese strings)
+7. patterns: What lessons for future agents? (array of Chinese strings)
+
+Output format:
+{"goal":"...","root_causes":["..."],"fixes":["..."],"files":["..."],"entities":["..."],"corrections":["..."],"patterns":["..."]}`
+
+// loadL2Prompt reads the L2 prompt from .pmai/config/l2_prompt.txt.
+// Falls back to defaultL2Prompt if the file does not exist.
+func loadL2Prompt() string {
+	pmaiDir, err := db.RuntimeDir()
+	if err != nil {
+		return defaultL2Prompt
+	}
+	path := filepath.Join(pmaiDir, "config", "l2_prompt.txt")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return defaultL2Prompt
+	}
+	return string(data)
+}
+
 // buildL2Prompt constructs the system instruction and user text for the AI call.
 func buildL2Prompt(extracted string, review ReviewResult) (instruction, text string) {
 	var ctx strings.Builder
@@ -210,26 +256,17 @@ func buildL2Prompt(extracted string, review ReviewResult) (instruction, text str
 	}
 	ctx.WriteString("- Files mentioned: " + strings.Join(files, ", ") + "\n")
 
-	instruction = `You are a project knowledge extractor. Analyze an AI coding agent's session record.
-Answer the following 7 questions in Chinese. Output ONLY a valid JSON object.
+	instruction = loadL2Prompt()
 
-Questions:
-1. goal: What was the user's primary goal? (1-2 sentences)
-2. root_causes: What were the root causes of the problems? (array of strings)
-3. fixes: What solutions were applied? (array of strings)
-4. files: What files or modules were involved? (array of paths)
-5. entities: Which AIPM entity IDs (task-*, bug-*, commit-*, decision-*, plan-*) are related? (array of IDs)
-6. corrections: Did the user correct or redirect the agent? How? (array of strings)
-7. patterns: What lessons should future agents learn? (array of strings)
+	// Few-shot example — shows model the expected output format
+	example := `\n\n---\nExample session:\n[user] 修复登录页面在iOS上崩溃的问题\n[assistant] 根因是 NSLayoutConstraint 在 iOS17 上的行为变化...\n\nCorrect JSON output:\n{"goal":"修复登录页面在iOS17上崩溃的问题","root_causes":["NSLayoutConstraint 在 iOS17 上的行为变化导致约束冲突"],"fixes":["替换为 UIStackView 布局"],"files":["LoginViewController.swift","LoginView.xib"],"entities":["bug-20231015-143022-abcdef"],"corrections":["用户指出应优先使用 UIStackView 而非修复旧约束"],"patterns":["iOS 大版本升级后应优先验证 AutoLayout 行为"]}\n---\n\nNow analyze the REAL session below. Output ONLY the JSON:` + "\n\n"
 
-Output format:
-{"goal":"...","root_causes":["..."],"fixes":["..."],"files":["..."],"entities":["..."],"corrections":["..."],"patterns":["..."]}`
-
-	text = ctx.String() + "\n\nSession messages:\n\n" + extracted
+	text = ctx.String() + example + "Session messages:\n\n" + extracted
 	return
 }
 
 // parseL2Response validates and normalizes the AI JSON response.
+// Uses map[string]any to preserve extra fields from customized prompts.
 // Falls back gracefully on malformed output.
 func parseL2Response(raw string) string {
 	cleaned := strings.TrimSpace(raw)
@@ -238,58 +275,62 @@ func parseL2Response(raw string) string {
 	cleaned = strings.TrimSuffix(cleaned, "```")
 	cleaned = strings.TrimSpace(cleaned)
 
-	var l2 SessionL2Summary
-	if err := json.Unmarshal([]byte(cleaned), &l2); err != nil {
-		// Fallback: use raw text as goal
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(cleaned), &parsed); err != nil {
 		fallback := SessionL2Summary{Goal: u.TruncateStr(raw, 200)}
 		b, _ := json.Marshal(fallback)
 		return string(b)
 	}
 
-	// Normalize nil slices to empty
-	if l2.RootCauses == nil {
-		l2.RootCauses = []string{}
-	}
-	if l2.Fixes == nil {
-		l2.Fixes = []string{}
-	}
-	if l2.Files == nil {
-		l2.Files = []string{}
-	}
-	if l2.Entities == nil {
-		l2.Entities = []string{}
-	}
-	if l2.Corrections == nil {
-		l2.Corrections = []string{}
-	}
-	if l2.Patterns == nil {
-		l2.Patterns = []string{}
-	}
+	// Extract required fields for validation
+	goal, _ := parsed["goal"].(string)
+	rootCauses := toStringSlice(parsed["root_causes"])
 
-	// Validate required field
-	if utf8.RuneCountInString(l2.Goal) < minGoalRunes {
+	// Quality gate: goal must be substantive and root_causes non-empty
+	if utf8.RuneCountInString(goal) < minGoalRunes || len(rootCauses) == 0 {
 		fallback := SessionL2Summary{Goal: u.TruncateStr(raw, 200)}
 		b, _ := json.Marshal(fallback)
 		return string(b)
+	}
+
+	// Normalize known array fields to empty if nil/missing
+	for _, field := range []string{"root_causes", "fixes", "files", "entities", "corrections", "patterns"} {
+		if parsed[field] == nil {
+			parsed[field] = []any{}
+		}
 	}
 
 	// Validate entity IDs: discard fake/hallucinated IDs
-	if len(l2.Entities) > 0 {
-		valid := make([]string, 0, len(l2.Entities))
-		for _, eid := range l2.Entities {
-			// entity IDs have format: type-YYYYMMDD-HHMMSS-xxxxxx
-			parts := strings.SplitN(eid, "-", 4)
+	if entities, ok := parsed["entities"].([]any); ok && len(entities) > 0 {
+		valid := make([]any, 0, len(entities))
+		for _, eid := range entities {
+			eidStr, _ := eid.(string)
+			parts := strings.SplitN(eidStr, "-", 4)
 			if len(parts) < 4 {
-				continue // clearly not a valid entity ID
+				continue
 			}
-			if store.EntityExists(parts[0], eid) {
-				valid = append(valid, eid)
+			if store.EntityExists(parts[0], eidStr) {
+				valid = append(valid, eidStr)
 			}
-			// Silently discard hallucinated IDs
 		}
-		l2.Entities = valid
+		parsed["entities"] = valid
 	}
 
-	b, _ := json.Marshal(l2)
+	b, _ := json.Marshal(parsed)
 	return string(b)
+}
+
+// toStringSlice converts a parsed JSON array to []string.
+func toStringSlice(v any) []string {
+	arr, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(arr))
+	for _, item := range arr {
+		if s, ok := item.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
