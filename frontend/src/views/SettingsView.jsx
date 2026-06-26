@@ -61,17 +61,17 @@ export default function SettingsView() {
       <Card size="small" title="AI 配置" style={{ marginBottom: 16 }}>
         <Form form={form} layout="vertical" onFinish={onFinish}>
           <Form.Item name="ai_endpoint" label="对话 API 端点">
-            <Input placeholder="http://127.0.0.1:8080/v1 或 https://api.openai.com/v1" />
+            <Input placeholder="https://api.openai.com/v1" />
           </Form.Item>
-          <Form.Item name="ai_embedding_endpoint" label="Embedding API 端点 (可选，默认同对话端点)">
-            <Input placeholder="留空则使用对话端点，或单独设置如 http://127.0.0.1:8081/v1" />
+          <Form.Item name="ai_embedding_endpoint" label="Embedding API 端点 (可选)">
+            <Input placeholder="留空则使用对话端点" />
           </Form.Item>
           <Space>
             <Form.Item name="ai_chat_model" label="对话模型">
-              <Input placeholder="qwen3 / gpt-4o-mini" style={{ width: 200 }} />
+              <Input placeholder="gpt-4o-mini" style={{ width: 200 }} />
             </Form.Item>
             <Form.Item name="ai_model" label="Embedding 模型">
-              <Input placeholder="bge-m3 / text-embedding-3-small" style={{ width: 220 }} />
+              <Input placeholder="text-embedding-3-small" style={{ width: 220 }} />
             </Form.Item>
           </Space>
           <Space>
@@ -90,9 +90,31 @@ export default function SettingsView() {
             : aiStatus === "error" ? <Tag color="red">连接失败</Tag>
             : <Tag color="default">未配置</Tag>}
         </div>
+      </Card>
+
+      <Card size="small" title="Proxy 配置">
+        <Form form={form} layout="vertical" onFinish={onFinish}>
+          <Form.Item name="upstream_url" label="上游 API 端点">
+            <Input placeholder="https://api.openai.com/v1" />
+          </Form.Item>
+          <Space>
+            <Form.Item name="proxy_port" label="Proxy 端口">
+              <Input placeholder="19530" style={{ width: 120 }} />
+            </Form.Item>
+            <Form.Item name="proxy_model" label="模型覆写 (可选)">
+              <Input placeholder="留空透传 Agent 的模型名" style={{ width: 220 }} />
+            </Form.Item>
+          </Space>
+          <Form.Item name="proxy_log_dir" label="流量日志目录 (可选)">
+            <Input placeholder="/tmp/aipmc-traces" />
+          </Form.Item>
+          <Form.Item>
+            <Button type="primary" htmlType="submit" loading={loading}>保存</Button>
+          </Form.Item>
+        </Form>
         <div style={{ color: "#888", fontSize: 12, marginTop: 8 }}>
-          本地模型示例: endpoint=http://127.0.0.1:8080/v1, chat=你的模型名, embedding=bge-m3<br/>
-          远程 OpenAI: endpoint=https://api.openai.com/v1, chat=gpt-4o-mini, embedding=text-embedding-3-small
+          API Key 通过环境变量 UPSTREAM_KEY 设置，不保存在文件中。<br/>
+          设置 proxy_model 后所有 Agent 的请求模型将被强制覆盖为该值。
         </div>
       </Card>
     </div>

@@ -93,6 +93,15 @@ func logDiscussionOnce(sessionID, role, source, content, metadataJSON string) (m
 	if sid == "" {
 		sid = "unknown"
 	}
+	// Dedup: skip if identical to the last message for this session
+	if role == "assistant" {
+		var lastContent string
+		db.QueryRow("SELECT content FROM discussion_log WHERE session_id=? AND role='assistant' ORDER BY created_at DESC LIMIT 1", sid).Scan(&lastContent)
+		if lastContent == content {
+			return map[string]any{"id": id, "status": "skipped_duplicate"}, nil
+		}
+	}
+
 	_, err = db.Exec("INSERT INTO discussion_log (id, session_id, role, source, content, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", id, sid, role, source, content, metadataJSON, now)
 	if err != nil {
 		return nil, err

@@ -98,8 +98,6 @@ AIPM 自动捕获所有 Agent（Claude Code / Gemini CLI / Codex / OpenCode / Cu
 
 discussion_log 就是共享会议室。PM 在任意 Agent 窗口里用自然语言协作，Agent 读到 discussion 即参与。
 
-用 **aipm_log_discussion** 手动记录重要结论。
-
 ### read vs search discussions
 
 - **aipm_read_discussions** — 按 Agent 直接读（source=...）

@@ -372,19 +372,6 @@ func (s *mcpServer) registerTools() {
 		},
 	}, s.handleSearchDiscussions)
 
-	s.addTool(MCPTool{
-		Name:        "aipm_log_discussion",
-		Description: "手动记录一段讨论或决策。当对话中产生了重要的结论、架构决策或未来计划时，调用此工具将其永久保存到项目知识库中。",
-		InputSchema: MCPInputSchema{
-			Type: "object",
-			Properties: map[string]interface{}{
-				"content": map[string]string{"type": "string", "description": "要记录的讨论内容"},
-				"role":    map[string]string{"type": "string", "description": "可选: 角色 (user/assistant)，默认 assistant"},
-				"session": map[string]string{"type": "string", "description": "可选: 会话 ID"},
-			},
-			Required: []string{"content"},
-		},
-	}, s.handleLogDiscussion)
 }
 
 func (s *mcpServer) addTool(tool MCPTool, handler mcpToolHandler) {

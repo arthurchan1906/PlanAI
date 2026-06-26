@@ -76,6 +76,14 @@ func ProcessClaudeHook() {
 		os.Exit(0)
 	}
 
+	// Capture assistant text from PostToolUse and Stop events.
+	// Both carry last_assistant_message; dedup via DB check.
+	if raw.LastAssistantMessage != "" && (raw.Event == "PostToolUse" || raw.Event == "Stop" || raw.Event == "StopFailure") {
+		if _, err := store.LogDiscussion(raw.SessionID, "assistant", "claude-code", raw.LastAssistantMessage, ""); err != nil {
+			fmt.Fprintf(os.Stderr, "[aipm-claude %s] assistant log FAILED: %v\n", now, err)
+		}
+	}
+
 	switch raw.Event {
 	case "UserPromptSubmit":
 		if raw.Prompt != "" {
@@ -85,11 +93,6 @@ func ProcessClaudeHook() {
 		}
 
 	case "Stop", "StopFailure":
-		if raw.LastAssistantMessage != "" {
-			if _, err := store.LogDiscussion(raw.SessionID, "assistant", "claude-code", raw.LastAssistantMessage, ""); err != nil {
-				fmt.Fprintf(os.Stderr, "[aipm-claude %s] Stop log FAILED: %v\n", now, err)
-			}
-		}
 
 	case "PostToolUse":
 		desc := raw.ToolName
@@ -227,7 +230,7 @@ func ProcessClaudeHook() {
 		}
 
 		if desc != "" {
-			if _, err := store.LogDiscussion(raw.SessionID, "assistant", "claude-code", desc, metadataJSON); err != nil {
+			if _, err := store.LogDiscussion(raw.SessionID, "tool", "claude-code", desc, metadataJSON); err != nil {
 				fmt.Fprintf(os.Stderr, "[aipm-claude %s] PostToolUse %s log FAILED: %v\n", now, raw.ToolName, err)
 			}
 		}

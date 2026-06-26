@@ -51,6 +51,7 @@ import AuditView from "./views/AuditView";
 import DiscussionsView from "./views/DiscussionsView";
 import ActivityView from "./views/ActivityView";
 import SettingsView from "./views/SettingsView";
+import DashboardView from "./views/DashboardView";
 import ChatView from "./views/ChatView";
 
 const { Header, Sider, Content } = Layout;
@@ -59,7 +60,7 @@ const { Title, Text } = Typography;
 function getViewFromHash() {
   const raw = window.location.hash.replace(/^#/, "");
   if (raw && NAV_ITEMS.some(i => i.key === raw)) return raw;
-  return "commits";
+  return "dashboard";
 }
 
 function ConsoleApp() {
@@ -284,7 +285,7 @@ function ConsoleApp() {
             children: group.children.map(item => ({
               key: item.key,
               label: item.label,
-              icon: ({ chat: <MessageOutlined />, planning: <AppstoreOutlined />, commits: <BranchesOutlined />, bugs: <BugOutlined />, threads: <NodeIndexOutlined />, decisions: <FundProjectionScreenOutlined />, visions: <CompassOutlined />, discussions: <TeamOutlined />, ideas: <BulbOutlined />, docs: <FileTextOutlined />, daily: <ProjectOutlined />, code: <CodeOutlined />, agents: <RobotOutlined />, audit: <SafetyCertificateOutlined />, settings: <SettingOutlined /> })[item.key] || null,
+              icon: ({ chat: <MessageOutlined />, dashboard: <DashboardOutlined />, planning: <AppstoreOutlined />, commits: <BranchesOutlined />, bugs: <BugOutlined />, threads: <NodeIndexOutlined />, decisions: <FundProjectionScreenOutlined />, visions: <CompassOutlined />, discussions: <TeamOutlined />, ideas: <BulbOutlined />, docs: <FileTextOutlined />, daily: <ProjectOutlined />, code: <CodeOutlined />, agents: <RobotOutlined />, audit: <SafetyCertificateOutlined />, settings: <SettingOutlined /> })[item.key] || null,
             }))
           }))}
           onClick={({ key }) => setView(key)} 
@@ -304,6 +305,7 @@ function ConsoleApp() {
           </div>
         </Header>
         <Content className={`console-content${view === "chat" ? " console-content-fill" : ""}`}>
+          {view === "dashboard" && <DashboardView />}
           {false && <DashboardView visions={visions} principles={principles} ideas={ideas} bugs={bugs} dashboard={dashboard} aiContext={aiContext} nextPacket={nextPacket} handoff={handoff} inbox={inbox} canon={canon} loading={loading} onOpenCanon={id => { setCanonForm({...canonForm, decisionId: id || ""}); setView("canon"); }} onOpenDecisions={() => setView("decisions")} onOpenPlans={() => setView("planning")} onOpenCommits={() => setView("commits")} onOpenCommitAttention={handleOpenCommitAttention} onOpenIdeas={() => setView("ideas")} onOpenDocs={() => setView("docs")} onOpenDaily={() => setView("daily")} onOpenPrinciples={() => setView("principles")} />}
           {view === "planning" && (
             <RoadmapView

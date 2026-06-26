@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -17,6 +18,7 @@ import (
 	"aipmc/cli"
 	pmdb "aipmc/db"
 	"aipmc/hook"
+	"aipmc/proxy"
 	"aipmc/search"
 	"aipmc/store"
 	"aipmc/web"
@@ -190,6 +192,26 @@ func main() {
 	case "chat":
 		chatcli.Run(application)
 		return
+	case "proxy":
+		gcfg := pmdb.LoadGlobalConfig()
+		proxy.Run(proxy.Options{
+			Port:        gcfg.ProxyPort,
+			UpstreamURL: gcfg.UpstreamURL,
+			UpstreamKey: os.Getenv("UPSTREAM_KEY"),
+			Model:       gcfg.ProxyModel,
+			LogDir:      gcfg.ProxyLogDir,
+		})
+		return
+	case "agent":
+		if len(os.Args) < 3 {
+			fmt.Println("Usage: aipmc agent <claude|gemini|codex>")
+			fmt.Println()
+			fmt.Println("Launch an AI coding agent pre-configured to use aipmc proxy.")
+			fmt.Println("Proxy must be running: aipmc proxy")
+			os.Exit(1)
+		}
+		runAgent(os.Args[2])
+		return
 	}
 
 	var rawArgs []string
@@ -306,4 +328,43 @@ func runDoctor(dbPath string) map[string]any {
 		}
 	}
 	return map[string]any{"ok": len(problems) == 0, "problems": problems, "db_path": dbPath, "binary": os.Args[0]}
+}
+
+func runAgent(name string) {
+	gcfg := pmdb.LoadGlobalConfig()
+	port := gcfg.ProxyPort
+	model := gcfg.ProxyModel
+	if model == "" {
+		model = "gpt-4o"
+	}
+	proxyURL := fmt.Sprintf("http://localhost:%d", port)
+
+	var cmd *exec.Cmd
+	switch strings.ToLower(name) {
+	case "claude", "claude-code", "cc":
+		cmd = exec.Command("claude")
+		cmd.Env = append(os.Environ(),
+			"ANTHROPIC_BASE_URL="+proxyURL,
+			"ANTHROPIC_AUTH_TOKEN=local",
+			"ANTHROPIC_MODEL="+model,
+		)
+	case "gemini", "gemini-cli", "gc":
+		cmd = exec.Command("gemini")
+		cmd.Env = append(os.Environ(),
+			"GOOGLE_GEMINI_BASE_URL="+proxyURL,
+			"GEMINI_API_KEY=local",
+		)
+	case "codex", "openai-codex":
+		cmd = exec.Command("codex", "-p", "proxy")
+	default:
+		fmt.Fprintf(os.Stderr, "unknown agent: %s\n", name)
+		fmt.Fprintln(os.Stderr, "available: claude, gemini, codex")
+		os.Exit(1)
+	}
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		os.Exit(1)
+	}
 }

@@ -484,3 +484,60 @@ func SaveConfig(cfg Config) error {
 	}
 	return os.WriteFile(filepath.Join(dir, "config.json"), u.MustMarshal(cfg), 0644)
 }
+
+// GlobalConfig holds proxy configuration stored at ~/.aipmc/config.json.
+type GlobalConfig struct {
+	ProxyPort    int    `json:"proxy_port"`
+	UpstreamURL  string `json:"upstream_url"`
+	ProxyModel   string `json:"proxy_model"`
+	ProxyLogDir  string `json:"proxy_log_dir"`
+}
+
+func globalConfigPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".aipmc", "config.json")
+}
+
+// LoadGlobalConfig reads ~/.aipmc/config.json with env var overrides.
+func LoadGlobalConfig() GlobalConfig {
+	cfg := GlobalConfig{
+		ProxyPort:   19530,
+		UpstreamURL: "http://localhost:8080/v1",
+	}
+	if v := os.Getenv("PROXY_PORT"); v != "" {
+		fmt.Sscanf(v, "%d", &cfg.ProxyPort)
+	}
+	if v := os.Getenv("UPSTREAM_URL"); v != "" {
+		cfg.UpstreamURL = v
+	}
+	if v := os.Getenv("UPSTREAM_MODEL"); v != "" {
+		cfg.ProxyModel = v
+	}
+	data, err := os.ReadFile(globalConfigPath())
+	if err != nil {
+		return cfg
+	}
+	var raw map[string]any
+	if json.Unmarshal(data, &raw) == nil {
+		if p, ok := raw["proxy_port"].(float64); ok && cfg.ProxyPort == 19530 {
+			cfg.ProxyPort = int(p)
+		}
+		if v, ok := raw["upstream_url"].(string); ok && cfg.UpstreamURL == "http://localhost:8080/v1" {
+			cfg.UpstreamURL = v
+		}
+		if v, ok := raw["proxy_model"].(string); ok && cfg.ProxyModel == "" {
+			cfg.ProxyModel = v
+		}
+		if v, ok := raw["proxy_log_dir"].(string); ok && cfg.ProxyLogDir == "" {
+			cfg.ProxyLogDir = v
+		}
+	}
+	return cfg
+}
+
+// SaveGlobalConfig writes ~/.aipmc/config.json.
+func SaveGlobalConfig(cfg GlobalConfig) error {
+	path := globalConfigPath()
+	os.MkdirAll(filepath.Dir(path), 0755)
+	return os.WriteFile(path, u.MustMarshal(cfg), 0644)
+}

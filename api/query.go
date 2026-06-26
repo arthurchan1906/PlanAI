@@ -2,9 +2,11 @@ package api
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 
+	pmdb "aipmc/db"
 	"aipmc/mcp"
 	"aipmc/store"
 	"aipmc/u"
@@ -63,6 +65,10 @@ func (s *Server) handleQueryRoutes(w http.ResponseWriter, method, path string, q
 		web.SendJSON(w, map[string]any{"sources": sources})
 	case "config":
 		s.handleGetConfig(w)
+	case "proxy-status":
+		proxyForward(w, "status")
+	case "proxy-traffic":
+		proxyForward(w, "traffic")
 	default:
 		return false
 	}
@@ -106,6 +112,8 @@ func (s *Server) handleMutateRoutes(w http.ResponseWriter, method, path string, 
 		s.handleAITest(w)
 	case method == "POST" && path == "config":
 		s.handlePostConfig(w, body)
+	case method == "DELETE" && path == "proxy-traffic":
+		proxyForwardDelete(w, "traffic")
 	default:
 		return false
 	}
@@ -124,5 +132,36 @@ func (s *Server) handleAITest(w http.ResponseWriter) {
 		return
 	}
 	web.SendJSON(w, map[string]any{"ok": true, "message": "AI 连接正常"})
+}
+
+func proxyForward(w http.ResponseWriter, endpoint string) {
+	gcfg := pmdb.LoadGlobalConfig()
+	url := fmt.Sprintf("http://127.0.0.1:%d/__proxy/%s", gcfg.ProxyPort, endpoint)
+	resp, err := http.Get(url)
+	if err != nil {
+		web.SendJSON(w, map[string]any{"running": false, "error": err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	w.Write(body)
+}
+
+func proxyForwardDelete(w http.ResponseWriter, endpoint string) {
+	gcfg := pmdb.LoadGlobalConfig()
+	url := fmt.Sprintf("http://127.0.0.1:%d/__proxy/%s", gcfg.ProxyPort, endpoint)
+	req, _ := http.NewRequest("DELETE", url, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		web.SendJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	w.Write(body)
 }
 

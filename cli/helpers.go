@@ -42,6 +42,7 @@ func PrintHelp() {
 PRIMARY (infrastructure):
   aipmc init                     Initialize project + auto-configure MCP
   aipmc setup <platform>          Configure MCP for a specific platform (run without args to see options)
+  aipmc proxy                    Start AI protocol translation proxy (Gemini / Anthropic / Responses → OpenAI)
   aipmc web                      Start web UI server (PM dashboard)
   aipmc mcp                      Start MCP server (Agent interface)
 
