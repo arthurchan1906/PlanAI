@@ -854,44 +854,41 @@ func handleResponsesStream(w http.ResponseWriter, req *ResponsesRequest, model, 
 			}
 			if reasoningText != "" {
 				reasoningBuf.WriteString(reasoningText)
-				// Emit reasoning as output_text directly so Codex renders it
-				// as an AgentMessage (not a hidden Reasoning item).
-				if !textAdded {
-					textAdded = true
-					textOutputIndex = outputIndex
+				// Emit as reasoning (hidden by default, shown if show_agent_reasoning is on).
+				// Models like GLM-5.2 separate thinking from answer, so reasoning goes here.
+				if !reasoningAdded {
+					reasoningAdded = true
+					reasoningOutputIndex = outputIndex
 					outputIndex++
-					textItemID = responseID + "_msg"
+					reasoningItemID = "rs_" + responseID
 					emitSSE("response.output_item.added", sseJSON(map[string]any{
 						"type":         "response.output_item.added",
-						"output_index": textOutputIndex,
+						"output_index": reasoningOutputIndex,
 						"item": map[string]any{
-							"id":      textItemID,
-							"type":    "message",
-							"role":    "assistant",
+							"id":      reasoningItemID,
+							"type":    "reasoning",
 							"status":  "in_progress",
-							"content": []any{},
+							"summary": []any{},
 						},
 					}))
-					emitSSE("response.content_part.added", sseJSON(map[string]any{
-						"type":         "response.content_part.added",
-						"item_id":      textItemID,
-						"output_index": textOutputIndex,
-						"content_index": 0,
+					emitSSE("response.reasoning_summary_part.added", sseJSON(map[string]any{
+						"type":          "response.reasoning_summary_part.added",
+						"item_id":       reasoningItemID,
+						"output_index":  reasoningOutputIndex,
+						"summary_index": 0,
 						"part": map[string]any{
-							"type":        "output_text",
-							"text":        "",
-							"annotations": []any{},
+							"type": "summary_text",
+							"text": "",
 						},
 					}))
 				}
-				emitSSE("response.output_text.delta", sseJSON(map[string]any{
-					"type":          "response.output_text.delta",
-					"item_id":       textItemID,
-					"output_index":  textOutputIndex,
-					"content_index": 0,
+				emitSSE("response.reasoning_summary_text.delta", sseJSON(map[string]any{
+					"type":          "response.reasoning_summary_text.delta",
+					"item_id":       reasoningItemID,
+					"output_index":  reasoningOutputIndex,
+					"summary_index": 0,
 					"delta":         reasoningText,
 				}))
-				hasContent = true
 			}
 
 			textDelta := ""
@@ -957,6 +954,15 @@ func handleResponsesStream(w http.ResponseWriter, req *ResponsesRequest, model, 
 						}
 						if args, ok := fn["arguments"].(string); ok && args != "" {
 							acc.Arguments += args
+							// Emit delta immediately (incremental, don't reset accumulator)
+							if acc.itemID != "" {
+								emitSSE("response.function_call_arguments.delta", sseJSON(map[string]any{
+									"type":         "response.function_call_arguments.delta",
+									"item_id":      acc.itemID,
+									"output_index": acc.outputIdx,
+									"delta":        args,
+								}))
+							}
 						}
 					}
 					// Emit output_item.added on first appearance (when we have id or name)
@@ -976,17 +982,6 @@ func handleResponsesStream(w http.ResponseWriter, req *ResponsesRequest, model, 
 								"name":      acc.Name,
 								"arguments": "",
 							},
-						}))
-					}
-					// Emit accumulated arguments as deltas
-					if acc.Arguments != "" && acc.itemID != "" {
-						delta := acc.Arguments
-						acc.Arguments = ""
-						emitSSE("response.function_call_arguments.delta", sseJSON(map[string]any{
-							"type":         "response.function_call_arguments.delta",
-							"item_id":      acc.itemID,
-							"output_index": acc.outputIdx,
-							"delta":        delta,
 						}))
 					}
 				}
