@@ -107,10 +107,6 @@ type ResponsesResponseWrapper struct {
 // Request: Responses API → Chat Completions
 // =============================================================================
 
-// toolNamespace maps flat tool names to their MCP namespace (e.g. "aipm_get_briefing" → "mcp__aipm").
-// Built during namespace tool expansion, used to fix function_call names in responses.
-var toolNamespace = map[string]string{}
-
 func responsesToChat(req *ResponsesRequest) *OpenAIRequest {
 	chat := &OpenAIRequest{
 		Model:  effectiveModel(req.Model),
@@ -125,14 +121,8 @@ func responsesToChat(req *ResponsesRequest) *OpenAIRequest {
 	} else {
 		log.Printf("[RESPONSES] WARNING: empty instructions — injecting default system prompt")
 		messages = append([]OpenAIMessage{{
-			Role: "system",
-			Content: "You are an AI coding agent with access to tools through the 'tool_search' function. " +
-				"You MUST use tool_search to discover available tools before using them. " +
-				"To find tools, call tool_search with a query describing what you need. " +
-				"For example: tool_search(query=\"project briefing\") or tool_search(query=\"create task\") or tool_search(query=\"search discussions\"). " +
-				"IMPORTANT: You CANNOT call tool names directly. Always use tool_search first to find the right tool, " +
-				"then call the tool that tool_search returns. " +
-				"Never say 'I don't have access to that tool' — use tool_search to find it instead.",
+			Role:    "system",
+			Content: "You are an AI coding assistant. Use available tools to help the user with their software engineering tasks.",
 		}}, messages...)
 	}
 
@@ -157,71 +147,24 @@ func responsesToChat(req *ResponsesRequest) *OpenAIRequest {
 		chat.MaxTokens = &defaultMaxTokens
 	}
 
-	hasToolSearch := false
-	for _, t := range req.Tools {
-		if t.Type == "tool_search" {
-			hasToolSearch = true
-			break
-		}
-	}
-
 	for _, t := range req.Tools {
 		switch t.Type {
 		case "", "function":
 			chat.Tools = append(chat.Tools, responsesToolToOpenAI(t))
 		case "namespace":
-			// If tool_search is present, MCP tools are deferred. Don't expand
-			// namespace tools — let the model use tool_search to discover them.
-			// Expanding them would let the model call them directly, but Codex
-			// rejects direct calls to deferred tools ("unsupported call").
-			if hasToolSearch {
-				log.Printf("[RESPONSES] tool_search present — skipping namespace expansion for %q (deferred MCP tools)", t.Name)
-				continue
-			}
 			chat.Tools = append(chat.Tools, explodeNamespaceTools(t)...)
-		case "tool_search":
-			// Codex's tool_search — pass through as a regular function so the
-			// model can use it to discover deferred MCP tools.
-			chat.Tools = append(chat.Tools, OpenAITool{
-				Type: "function",
-				Function: OpenAIFuncDecl{
-					Name:        "tool_search",
-					Description: "Search for available tools by keyword. Use this to discover tools before calling them. Example: tool_search(query=\"project briefing\")",
-					Parameters: map[string]any{
-						"type": "object",
-						"properties": map[string]any{
-							"query": map[string]any{
-								"type":        "string",
-								"description": "Search query to find matching tools",
-							},
-						},
-						"required": []string{"query"},
-					},
-				},
-			})
 		default:
 			log.Printf("[RESPONSES] WARNING: skipping unsupported tool type=%q name=%q", t.Type, t.Name)
 		}
 	}
 
-	// Preserve tool_choice from the original request (OpenCode P1 fix)
+	// Preserve tool_choice from the original request
 	if req.ToolChoice != nil {
 		chat.ToolChoice = req.ToolChoice
 	}
 
 	if req.Reasoning != nil && req.Reasoning.Effort != "" {
 		chat.ReasoningEffort = &req.Reasoning.Effort
-	}
-
-	// If the only tool is tool_search, inject guidance to help the model
-	// discover MCP tools (OpenCode P0: tool_search deferral workaround)
-	if len(chat.Tools) == 1 && chat.Tools[0].Function.Name == "tool_search" {
-		if len(chat.Messages) > 0 && chat.Messages[0].Role == "system" {
-			chat.Messages[0].Content = chat.Messages[0].Content.(string) +
-				"\n\nYou have immediate access to many tools through the tool_search function. " +
-				"Use tool_search with queries like \"aipm\" or \"briefing\" or \"task\" to discover specific tools. " +
-				"Always use tool_search before claiming you don't have a tool available."
-		}
 	}
 
 	// Log AFTER tool expansion so tools count is accurate (OpenCode P2 fix)
@@ -435,8 +378,6 @@ func explodeNamespaceTools(t ResponsesTool) []OpenAITool {
 				Parameters:  params,
 			},
 		})
-		// Register flat name → namespace mapping for function_call fixup
-		toolNamespace[name] = t.Name
 	}
 	return out
 }
