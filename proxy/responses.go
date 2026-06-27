@@ -107,6 +107,10 @@ type ResponsesResponseWrapper struct {
 // Request: Responses API → Chat Completions
 // =============================================================================
 
+// toolNamespace maps flat tool names to their MCP namespace (e.g. "aipm_get_briefing" → "mcp__aipm").
+// Built during namespace tool expansion, used to fix function_call names in responses.
+var toolNamespace = map[string]string{}
+
 func responsesToChat(req *ResponsesRequest) *OpenAIRequest {
 	chat := &OpenAIRequest{
 		Model:  effectiveModel(req.Model),
@@ -118,6 +122,18 @@ func responsesToChat(req *ResponsesRequest) *OpenAIRequest {
 	instr := instructionText(req.Instructions)
 	if instr != "" {
 		messages = append(messages, OpenAIMessage{Role: "system", Content: instr})
+	} else {
+		log.Printf("[RESPONSES] WARNING: empty instructions — injecting default system prompt")
+		messages = append([]OpenAIMessage{{
+			Role: "system",
+			Content: "You are an AI coding agent with access to tools through the 'tool_search' function. " +
+				"You MUST use tool_search to discover available tools before using them. " +
+				"To find tools, call tool_search with a query describing what you need. " +
+				"For example: tool_search(query=\"project briefing\") or tool_search(query=\"create task\") or tool_search(query=\"search discussions\"). " +
+				"IMPORTANT: You CANNOT call tool names directly. Always use tool_search first to find the right tool, " +
+				"then call the tool that tool_search returns. " +
+				"Never say 'I don't have access to that tool' — use tool_search to find it instead.",
+		}}, messages...)
 	}
 
 	switch v := req.Input.(type) {
@@ -128,12 +144,6 @@ func responsesToChat(req *ResponsesRequest) *OpenAIRequest {
 	}
 
 	messages = collapseSystemMessages(messages)
-
-	roles := make([]string, len(messages))
-	for i, m := range messages {
-		roles[i] = m.Role
-	}
-	log.Printf("[RESPONSES] → upstream: %d messages roles=%v tools=%d", len(messages), roles, len(chat.Tools))
 
 	chat.Messages = messages
 	chat.Temperature = req.Temperature
@@ -147,19 +157,85 @@ func responsesToChat(req *ResponsesRequest) *OpenAIRequest {
 		chat.MaxTokens = &defaultMaxTokens
 	}
 
+	hasToolSearch := false
+	for _, t := range req.Tools {
+		if t.Type == "tool_search" {
+			hasToolSearch = true
+			break
+		}
+	}
+
 	for _, t := range req.Tools {
 		switch t.Type {
 		case "", "function":
 			chat.Tools = append(chat.Tools, responsesToolToOpenAI(t))
 		case "namespace":
+			// If tool_search is present, MCP tools are deferred. Don't expand
+			// namespace tools — let the model use tool_search to discover them.
+			// Expanding them would let the model call them directly, but Codex
+			// rejects direct calls to deferred tools ("unsupported call").
+			if hasToolSearch {
+				log.Printf("[RESPONSES] tool_search present — skipping namespace expansion for %q (deferred MCP tools)", t.Name)
+				continue
+			}
 			chat.Tools = append(chat.Tools, explodeNamespaceTools(t)...)
+		case "tool_search":
+			// Codex's tool_search — pass through as a regular function so the
+			// model can use it to discover deferred MCP tools.
+			chat.Tools = append(chat.Tools, OpenAITool{
+				Type: "function",
+				Function: OpenAIFuncDecl{
+					Name:        "tool_search",
+					Description: "Search for available tools by keyword. Use this to discover tools before calling them. Example: tool_search(query=\"project briefing\")",
+					Parameters: map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"query": map[string]any{
+								"type":        "string",
+								"description": "Search query to find matching tools",
+							},
+						},
+						"required": []string{"query"},
+					},
+				},
+			})
 		default:
 			log.Printf("[RESPONSES] WARNING: skipping unsupported tool type=%q name=%q", t.Type, t.Name)
 		}
 	}
 
+	// Preserve tool_choice from the original request (OpenCode P1 fix)
+	if req.ToolChoice != nil {
+		chat.ToolChoice = req.ToolChoice
+	}
+
 	if req.Reasoning != nil && req.Reasoning.Effort != "" {
 		chat.ReasoningEffort = &req.Reasoning.Effort
+	}
+
+	// If the only tool is tool_search, inject guidance to help the model
+	// discover MCP tools (OpenCode P0: tool_search deferral workaround)
+	if len(chat.Tools) == 1 && chat.Tools[0].Function.Name == "tool_search" {
+		if len(chat.Messages) > 0 && chat.Messages[0].Role == "system" {
+			chat.Messages[0].Content = chat.Messages[0].Content.(string) +
+				"\n\nYou have immediate access to many tools through the tool_search function. " +
+				"Use tool_search with queries like \"aipm\" or \"briefing\" or \"task\" to discover specific tools. " +
+				"Always use tool_search before claiming you don't have a tool available."
+		}
+	}
+
+	// Log AFTER tool expansion so tools count is accurate (OpenCode P2 fix)
+	{
+		roles := make([]string, len(chat.Messages))
+		for i, m := range chat.Messages {
+			roles[i] = m.Role
+		}
+		var toolNames []string
+		for _, t := range chat.Tools {
+			toolNames = append(toolNames, t.Function.Name)
+		}
+		log.Printf("[RESPONSES] → upstream: %d messages roles=%v tools=%d names=%v",
+			len(chat.Messages), roles, len(chat.Tools), firstN(toolNames, 15))
 	}
 
 	return chat
@@ -359,6 +435,8 @@ func explodeNamespaceTools(t ResponsesTool) []OpenAITool {
 				Parameters:  params,
 			},
 		})
+		// Register flat name → namespace mapping for function_call fixup
+		toolNamespace[name] = t.Name
 	}
 	return out
 }
@@ -419,6 +497,8 @@ func chatCompletionToResponse(chatResp *OpenAIResponse, model string) *Responses
 		msg = &OpenAIMessage{}
 	}
 
+	hasContent := msg.Content != nil && msg.Content != ""
+
 	if msg.ReasoningContent != "" {
 		output = append(output, ResponsesOutputItem{
 			ID:      "rs_" + responseID,
@@ -426,9 +506,21 @@ func chatCompletionToResponse(chatResp *OpenAIResponse, model string) *Responses
 			Status:  "completed",
 			Summary: []ResponsesContentPart{{Type: "summary_text", Text: msg.ReasoningContent}},
 		})
+		// If the model only returned reasoning_content (DeepSeek behavior),
+		// promote it to a message item so Codex sees the actual answer.
+		if !hasContent {
+			text := stripThinkBlock(msg.ReasoningContent)
+			output = append(output, ResponsesOutputItem{
+				ID:      responseID + "_msg",
+				Type:    "message",
+				Status:  "completed",
+				Role:    "assistant",
+				Content: []ResponsesContentPart{{Type: "output_text", Text: text}},
+			})
+		}
 	}
 
-	if msg.Content != nil && msg.Content != "" {
+	if hasContent {
 		output = append(output, chatMessageToResponseItem(msg, responseID)...)
 	}
 
@@ -631,6 +723,8 @@ func handleResponsesStream(w http.ResponseWriter, req *ResponsesRequest, model, 
 	outputIndex := 0
 	toolCallAcc := map[int]*streamToolCall{}
 	pendingFinish := ""
+	hasContent := false          // true if any non-reasoning content arrived
+	reasoningBuf := strings.Builder{} // accumulate reasoning text for fallback
 
 	scanner := bufio.NewScanner(respBody)
 	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
@@ -652,6 +746,84 @@ func handleResponsesStream(w http.ResponseWriter, req *ResponsesRequest, model, 
 		}
 		data := strings.TrimPrefix(line, "data: ")
 		if data == "[DONE]" {
+			// Complete the in-progress output item (message or reasoning)
+			if textAdded {
+				emitSSE("response.output_item.done", sseJSON(map[string]any{
+					"type":         "response.output_item.done",
+					"output_index": textOutputIndex,
+					"item": map[string]any{
+						"id":     textItemID,
+						"type":   "message",
+						"status": "completed",
+						"role":   "assistant",
+					},
+				}))
+			}
+			// If the model only emitted reasoning_content (DeepSeek behavior)
+			// but no regular content, promote reasoning to output_text
+			// so Codex sees the actual answer rather than 0 tokens.
+			if reasoningBuf.Len() > 0 && !hasContent {
+				// First, complete the reasoning item that was left in_progress
+				if reasoningAdded {
+					emitSSE("response.output_item.done", sseJSON(map[string]any{
+						"type":         "response.output_item.done",
+						"output_index": reasoningOutputIndex,
+						"item": map[string]any{
+							"id":     reasoningItemID,
+							"type":   "reasoning",
+							"status": "completed",
+						},
+					}))
+				}
+				if !textAdded {
+					textAdded = true
+					textOutputIndex = outputIndex
+					outputIndex++
+					textItemID = responseID + "_msg"
+					emitSSE("response.output_item.added", sseJSON(map[string]any{
+						"type":         "response.output_item.added",
+						"output_index": textOutputIndex,
+						"item": map[string]any{
+							"id":      textItemID,
+							"type":    "message",
+							"role":    "assistant",
+							"status":  "in_progress",
+							"content": []any{},
+						},
+					}))
+					emitSSE("response.content_part.added", sseJSON(map[string]any{
+						"type":         "response.content_part.added",
+						"item_id":      textItemID,
+						"output_index": textOutputIndex,
+						"content_index": 0,
+						"part": map[string]any{
+							"type":        "output_text",
+							"text":        "",
+							"annotations": []any{},
+						},
+					}))
+				}
+				finalText := reasoningBuf.String()
+				emitSSE("response.output_text.delta", sseJSON(map[string]any{
+					"type":          "response.output_text.delta",
+					"item_id":       textItemID,
+					"output_index":  textOutputIndex,
+					"content_index": 0,
+					"delta":         finalText,
+				}))
+				emitSSE("response.output_item.done", sseJSON(map[string]any{
+					"type":         "response.output_item.done",
+					"output_index": textOutputIndex,
+					"item": map[string]any{
+						"id":      textItemID,
+						"type":    "message",
+						"status":  "completed",
+						"role":    "assistant",
+						"content": []map[string]any{{"type": "output_text", "text": finalText}},
+					},
+				}))
+			}
+
 			for _, acc := range toolCallAcc {
 				if acc.itemID != "" {
 					emitSSE("response.output_item.done", sseJSON(map[string]any{
@@ -663,7 +835,7 @@ func handleResponsesStream(w http.ResponseWriter, req *ResponsesRequest, model, 
 							"status":    "completed",
 							"call_id":   acc.ID,
 							"name":      acc.Name,
-							"arguments": acc.Arguments,
+							"arguments": func() string { if acc.Arguments == "" { return "{}" }; return acc.Arguments }(),
 						},
 					}))
 				}
@@ -680,7 +852,11 @@ func handleResponsesStream(w http.ResponseWriter, req *ResponsesRequest, model, 
 					"object": "response",
 					"status": status,
 					"model":  modelName,
-					"usage":  chatUsageToResponsesUsage(nil),
+					"usage": map[string]any{
+						"input_tokens":  0,
+						"output_tokens": totalTokens,
+						"total_tokens":  totalTokens,
+					},
 				},
 			}))
 			continue
@@ -736,39 +912,45 @@ func handleResponsesStream(w http.ResponseWriter, req *ResponsesRequest, model, 
 				}
 			}
 			if reasoningText != "" {
-				if !reasoningAdded {
-					reasoningAdded = true
-					reasoningOutputIndex = outputIndex
+				reasoningBuf.WriteString(reasoningText)
+				// Emit reasoning as output_text directly so Codex renders it
+				// as an AgentMessage (not a hidden Reasoning item).
+				if !textAdded {
+					textAdded = true
+					textOutputIndex = outputIndex
 					outputIndex++
-					reasoningItemID = "rs_" + responseID
+					textItemID = responseID + "_msg"
 					emitSSE("response.output_item.added", sseJSON(map[string]any{
 						"type":         "response.output_item.added",
-						"output_index": reasoningOutputIndex,
+						"output_index": textOutputIndex,
 						"item": map[string]any{
-							"id":      reasoningItemID,
-							"type":    "reasoning",
+							"id":      textItemID,
+							"type":    "message",
+							"role":    "assistant",
 							"status":  "in_progress",
-							"summary": []any{},
+							"content": []any{},
 						},
 					}))
-					emitSSE("response.reasoning_summary_part.added", sseJSON(map[string]any{
-						"type":          "response.reasoning_summary_part.added",
-						"item_id":       reasoningItemID,
-						"output_index":  reasoningOutputIndex,
-						"summary_index": 0,
+					emitSSE("response.content_part.added", sseJSON(map[string]any{
+						"type":         "response.content_part.added",
+						"item_id":      textItemID,
+						"output_index": textOutputIndex,
+						"content_index": 0,
 						"part": map[string]any{
-							"type": "summary_text",
-							"text": "",
+							"type":        "output_text",
+							"text":        "",
+							"annotations": []any{},
 						},
 					}))
 				}
-				emitSSE("response.reasoning_summary_text.delta", sseJSON(map[string]any{
-					"type":          "response.reasoning_summary_text.delta",
-					"item_id":       reasoningItemID,
-					"output_index":  reasoningOutputIndex,
-					"summary_index": 0,
+				emitSSE("response.output_text.delta", sseJSON(map[string]any{
+					"type":          "response.output_text.delta",
+					"item_id":       textItemID,
+					"output_index":  textOutputIndex,
+					"content_index": 0,
 					"delta":         reasoningText,
 				}))
+				hasContent = true
 			}
 
 			textDelta := ""
@@ -778,6 +960,7 @@ func handleResponsesStream(w http.ResponseWriter, req *ResponsesRequest, model, 
 				}
 			}
 			if textDelta != "" {
+				hasContent = true
 				if !textAdded {
 					textAdded = true
 					textOutputIndex = outputIndex
@@ -819,12 +1002,11 @@ func handleResponsesStream(w http.ResponseWriter, req *ResponsesRequest, model, 
 				for _, tc := range tcs {
 					tcMap := tc.(map[string]any)
 					idx := int(tcMap["index"].(float64))
-					newTool := false
-					if _, exists := toolCallAcc[idx]; !exists {
-						toolCallAcc[idx] = &streamToolCall{}
-						newTool = true
+					acc, exists := toolCallAcc[idx]
+					if !exists {
+						acc = &streamToolCall{}
+						toolCallAcc[idx] = acc
 					}
-					acc := toolCallAcc[idx]
 					if id, ok := tcMap["id"].(string); ok && id != "" {
 						acc.ID = id
 					}
@@ -834,32 +1016,37 @@ func handleResponsesStream(w http.ResponseWriter, req *ResponsesRequest, model, 
 						}
 						if args, ok := fn["arguments"].(string); ok && args != "" {
 							acc.Arguments += args
-							if newTool {
-								oi := outputIndex
-								outputIndex++
-								itemID := fmt.Sprintf("fc_%s_%d", responseID, oi)
-								acc.itemID = itemID
-								acc.outputIdx = oi
-								emitSSE("response.output_item.added", sseJSON(map[string]any{
-									"type":         "response.output_item.added",
-									"output_index": oi,
-									"item": map[string]any{
-										"id":        itemID,
-										"type":      "function_call",
-										"status":    "in_progress",
-										"call_id":   acc.ID,
-										"name":      acc.Name,
-										"arguments": "",
-									},
-								}))
-							}
-							emitSSE("response.function_call_arguments.delta", sseJSON(map[string]any{
-								"type":         "response.function_call_arguments.delta",
-								"item_id":      acc.itemID,
-								"output_index": acc.outputIdx,
-								"delta":        args,
-							}))
 						}
+					}
+					// Emit output_item.added on first appearance (when we have id or name)
+					if acc.itemID == "" && (acc.ID != "" || acc.Name != "") {
+						oi := outputIndex
+						outputIndex++
+						acc.itemID = fmt.Sprintf("fc_%s_%d", responseID, oi)
+						acc.outputIdx = oi
+						emitSSE("response.output_item.added", sseJSON(map[string]any{
+							"type":         "response.output_item.added",
+							"output_index": oi,
+							"item": map[string]any{
+								"id":        acc.itemID,
+								"type":      "function_call",
+								"status":    "in_progress",
+								"call_id":   acc.ID,
+								"name":      acc.Name,
+								"arguments": "",
+							},
+						}))
+					}
+					// Emit accumulated arguments as deltas
+					if acc.Arguments != "" && acc.itemID != "" {
+						delta := acc.Arguments
+						acc.Arguments = ""
+						emitSSE("response.function_call_arguments.delta", sseJSON(map[string]any{
+							"type":         "response.function_call_arguments.delta",
+							"item_id":      acc.itemID,
+							"output_index": acc.outputIdx,
+							"delta":        delta,
+						}))
 					}
 				}
 			}

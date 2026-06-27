@@ -990,6 +990,12 @@ func handlePassthrough(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	proxyReq.Header = r.Header
+	// When upstreamKey is configured, always use it (ignore incoming auth)
+	if upstreamKey != "" {
+		proxyReq.Header.Set("Authorization", "Bearer "+upstreamKey)
+	} else if apiKey := extractAPIKey(r); apiKey != "" && proxyReq.Header.Get("Authorization") == "" {
+		proxyReq.Header.Set("Authorization", "Bearer "+apiKey)
+	}
 
 	resp, err := http.DefaultClient.Do(proxyReq)
 	if err != nil {
@@ -1017,6 +1023,12 @@ func handleModelsList(w http.ResponseWriter, r *http.Request) {
 
 	proxyReq, _ := http.NewRequest("GET", url, nil)
 	proxyReq.Header = r.Header
+	// When upstreamKey is configured, always use it (ignore incoming auth)
+	if upstreamKey != "" {
+		proxyReq.Header.Set("Authorization", "Bearer "+upstreamKey)
+	} else if apiKey := extractAPIKey(r); apiKey != "" && proxyReq.Header.Get("Authorization") == "" {
+		proxyReq.Header.Set("Authorization", "Bearer "+apiKey)
+	}
 
 	resp, err := http.DefaultClient.Do(proxyReq)
 	if err != nil {
@@ -1044,24 +1056,32 @@ func handleModelsList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build Codex-compatible model list from upstream models
+	type reasoningLevel struct {
+		Effort      string `json:"effort"`
+		Description string `json:"description"`
+	}
 	type codexModel struct {
-		Slug                     string `json:"slug"`
-		DisplayName              string `json:"display_name"`
-		Description              string `json:"description"`
-		ShellType                string `json:"shell_type"`
-		Visibility               string `json:"visibility"`
-		SupportedInAPI           bool   `json:"supported_in_api"`
-		Priority                 int    `json:"priority"`
-		BaseInstructions         string `json:"base_instructions"`
-		SupportsReasoningSummary bool   `json:"supports_reasoning_summaries"`
-		DefaultReasoningSummary  string `json:"default_reasoning_summary"`
-		SupportVerbosity         bool   `json:"support_verbosity"`
-		TruncationPolicy         struct {
+		Slug                      string           `json:"slug"`
+		DisplayName               string           `json:"display_name"`
+		Description               string           `json:"description"`
+		ShellType                 string           `json:"shell_type"`
+		Visibility                string           `json:"visibility"`
+		SupportedInAPI            bool             `json:"supported_in_api"`
+		Priority                  int              `json:"priority"`
+		BaseInstructions          string           `json:"base_instructions"`
+		SupportsReasoningSummary  bool             `json:"supports_reasoning_summaries"`
+		DefaultReasoningSummary   string           `json:"default_reasoning_summary"`
+		DefaultReasoningLevel     *string          `json:"default_reasoning_level"`
+		SupportedReasoningLevels  []reasoningLevel `json:"supported_reasoning_levels"`
+		SupportVerbosity          bool             `json:"support_verbosity"`
+		TruncationPolicy          struct {
 			Mode  string `json:"mode"`
 			Limit int    `json:"limit"`
 		} `json:"truncation_policy"`
-		SupportsParallelToolCalls bool `json:"supports_parallel_tool_calls"`
-		WebSearchToolType         string `json:"web_search_tool_type"`
+		SupportsParallelToolCalls  bool     `json:"supports_parallel_tool_calls"`
+		SupportsSearchTool         bool     `json:"supports_search_tool"`
+		WebSearchToolType          string   `json:"web_search_tool_type"`
+		ExperimentalSupportedTools []string `json:"experimental_supported_tools"`
 	}
 
 	var codexModels []codexModel
@@ -1078,13 +1098,21 @@ func handleModelsList(w http.ResponseWriter, r *http.Request) {
 			BaseInstructions:         "",
 			SupportsReasoningSummary: false,
 			DefaultReasoningSummary:  "none",
-			SupportVerbosity:         false,
+			DefaultReasoningLevel:    func() *string { s := "medium"; return &s }(),
+			SupportedReasoningLevels: []reasoningLevel{
+				{Effort: "low", Description: "Low effort"},
+				{Effort: "medium", Description: "Medium effort"},
+				{Effort: "high", Description: "High effort"},
+			},
+			SupportVerbosity: false,
 			TruncationPolicy: struct {
 				Mode  string `json:"mode"`
 				Limit int    `json:"limit"`
 			}{Mode: "tokens", Limit: 131072},
-			SupportsParallelToolCalls: true,
-			WebSearchToolType:         "text",
+			SupportsParallelToolCalls:  true,
+			SupportsSearchTool:         false,
+			WebSearchToolType:          "text",
+			ExperimentalSupportedTools: []string{},
 		}
 		codexModels = append(codexModels, cm)
 	}
@@ -1098,7 +1126,7 @@ func handleModelsList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, merged)
 }
 
-// modelIDToSlug converts a llama.cpp model path to a short slug.
+// modelIDToSlug converts a model ID to a display slug.
 func modelIDToSlug(id string) string {
 	// e.g. "/Users/dazsec/llms/Qwen3.5-9B-Q4_K_M.gguf" → "qwen3.5-9b"
 	name := id
@@ -1106,11 +1134,6 @@ func modelIDToSlug(id string) string {
 		name = name[idx+1:]
 	}
 	name = strings.TrimSuffix(name, ".gguf")
-	// Take first two segments (model name + variant)
-	parts := strings.Split(name, "-")
-	if len(parts) >= 2 {
-		name = strings.ToLower(parts[0] + "-" + parts[1])
-	}
 	return strings.ToLower(name)
 }
 
@@ -1328,6 +1351,13 @@ func forwardToUpstreamStream(endpoint string, body any, apiKey string) (io.ReadC
 	}
 
 	return resp.Body, nil
+}
+
+func firstN[T any](slice []T, n int) []T {
+	if len(slice) <= n {
+		return slice
+	}
+	return slice[:n]
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {
