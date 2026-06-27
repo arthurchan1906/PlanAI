@@ -28,7 +28,11 @@ func ProcessGeminiHook() {
 		dumpRawHook("gemini", now, data)
 	}
 
+	isDebug := os.Getenv("AIPM_DEBUG_HOOK") != ""
 	logf := func(format string, args ...any) {
+		if !isDebug {
+			return
+		}
 		fmt.Fprintf(os.Stderr, "[aipm-gemini %s] ", now)
 		fmt.Fprintf(os.Stderr, format+"\n", args...)
 	}

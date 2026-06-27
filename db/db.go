@@ -491,6 +491,7 @@ type GlobalConfig struct {
 	UpstreamURL  string `json:"upstream_url"`
 	ProxyModel   string `json:"proxy_model"`
 	ProxyLogDir  string `json:"proxy_log_dir"`
+	AnthropicURL string `json:"anthropic_url"`
 }
 
 func globalConfigPath() string {
@@ -513,6 +514,9 @@ func LoadGlobalConfig() GlobalConfig {
 	if v := os.Getenv("UPSTREAM_MODEL"); v != "" {
 		cfg.ProxyModel = v
 	}
+	if v := os.Getenv("ANTHROPIC_URL"); v != "" {
+		cfg.AnthropicURL = v
+	}
 	data, err := os.ReadFile(globalConfigPath())
 	if err != nil {
 		return cfg
@@ -530,6 +534,9 @@ func LoadGlobalConfig() GlobalConfig {
 		}
 		if v, ok := raw["proxy_log_dir"].(string); ok && cfg.ProxyLogDir == "" {
 			cfg.ProxyLogDir = v
+		}
+		if v, ok := raw["anthropic_url"].(string); ok && cfg.AnthropicURL == "" {
+			cfg.AnthropicURL = v
 		}
 	}
 	return cfg

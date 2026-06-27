@@ -23,6 +23,7 @@ func (s *Server) handleGetConfig(w http.ResponseWriter) {
 		"upstream_url":          gcfg.UpstreamURL,
 		"proxy_model":           gcfg.ProxyModel,
 		"proxy_log_dir":         gcfg.ProxyLogDir,
+		"anthropic_url":         gcfg.AnthropicURL,
 	})
 }
 
@@ -59,6 +60,7 @@ func (s *Server) handlePostConfig(w http.ResponseWriter, body map[string]any) {
 	}
 	gcfg.ProxyModel = u.Str(body["proxy_model"])
 	gcfg.ProxyLogDir = u.Str(body["proxy_log_dir"])
+	gcfg.AnthropicURL = u.Str(body["anthropic_url"])
 	if err := pmdb.SaveConfig(cfg); err != nil {
 		web.SendError(w, 500, err.Error())
 		return

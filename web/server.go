@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"strings"
 )
@@ -16,16 +18,19 @@ type Server struct {
 	apiHandler http.Handler
 	host       string
 	port       int
+	proxyPort  int // port of the AI proxy, for reverse-proxying /__proxy/* requests
 }
 
 // NewServer creates a Server. staticFS provides the React frontend files.
-// apiHandler handles /pmai/ API requests.
-func NewServer(staticFS fs.FS, apiHandler http.Handler, host string, port int) *Server {
+// apiHandler handles /pmai/ API requests. proxyPort is the AI proxy port for
+// forwarding /__proxy/* inspection requests.
+func NewServer(staticFS fs.FS, apiHandler http.Handler, host string, port int, proxyPort int) *Server {
 	return &Server{
 		staticFS:   staticFS,
 		apiHandler: apiHandler,
 		host:       host,
 		port:       port,
+		proxyPort:  proxyPort,
 	}
 }
 
@@ -46,6 +51,14 @@ func (s *Server) Listen() error {
 	})
 
 	fileServer := http.FileServer(http.FS(s.staticFS))
+
+	// Reverse proxy for /__proxy/* → AI proxy port (capture API, inspect page, status)
+	var proxyHandler http.Handler
+	if s.proxyPort > 0 {
+		proxyURL, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", s.proxyPort))
+		proxyHandler = httputil.NewSingleHostReverseProxy(proxyURL)
+	}
+
 	wrapper := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/pmai/") || r.URL.Path == "/health" {
 			CORS(w)
@@ -54,6 +67,12 @@ func (s *Server) Listen() error {
 				return
 			}
 			apiMux.ServeHTTP(w, r)
+			return
+		}
+
+		// Forward /__proxy/* requests to the AI proxy port for inspection
+		if proxyHandler != nil && strings.HasPrefix(r.URL.Path, "/__proxy/") {
+			proxyHandler.ServeHTTP(w, r)
 			return
 		}
 

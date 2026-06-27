@@ -17,7 +17,6 @@ export const NAV_GROUPS = [
     key: "project",
     label: "Project",
     children: [
-      { key: "dashboard", label: "Dashboard" },
       { key: "activity", label: "Activity" },
       { key: "decisions", label: "Governance" },
       { key: "planning", label: "Plans & Tasks" },
@@ -50,6 +49,7 @@ export const NAV_GROUPS = [
     key: "config",
     label: "Config",
     children: [
+      { key: "proxy", label: "Proxy" },
       { key: "settings", label: "Settings" },
     ],
   },

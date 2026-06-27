@@ -94,8 +94,11 @@ export default function SettingsView() {
 
       <Card size="small" title="Proxy 配置">
         <Form form={form} layout="vertical" onFinish={onFinish}>
-          <Form.Item name="upstream_url" label="上游 API 端点">
-            <Input placeholder="https://api.openai.com/v1" />
+          <Form.Item name="upstream_url" label="上游 API 端点 (OpenAI 协议)">
+            <Input placeholder="https://api.deepseek.com" />
+          </Form.Item>
+          <Form.Item name="anthropic_url" label="Anthropic 端点 (Claude Code 透传)">
+            <Input placeholder="https://api.deepseek.com/anthropic" />
           </Form.Item>
           <Space>
             <Form.Item name="proxy_port" label="Proxy 端口">
@@ -114,7 +117,8 @@ export default function SettingsView() {
         </Form>
         <div style={{ color: "#888", fontSize: 12, marginTop: 8 }}>
           API Key 通过环境变量 UPSTREAM_KEY 设置，不保存在文件中。<br/>
-          设置 proxy_model 后所有 Agent 的请求模型将被强制覆盖为该值。
+          设置 Anthropic 端点后，Claude Code 请求将直接透传，绕过 OpenAI 翻译层，
+          完整保留 thinking/signature/tool_use 结构。
         </div>
       </Card>
     </div>

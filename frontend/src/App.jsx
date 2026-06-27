@@ -28,6 +28,7 @@ import {
   NodeIndexOutlined,
   MessageOutlined,
   RobotOutlined,
+  ApiOutlined,
 } from "@ant-design/icons";
 
 // 导入工具和常量
@@ -285,10 +286,10 @@ function ConsoleApp() {
             children: group.children.map(item => ({
               key: item.key,
               label: item.label,
-              icon: ({ chat: <MessageOutlined />, dashboard: <DashboardOutlined />, planning: <AppstoreOutlined />, commits: <BranchesOutlined />, bugs: <BugOutlined />, threads: <NodeIndexOutlined />, decisions: <FundProjectionScreenOutlined />, visions: <CompassOutlined />, discussions: <TeamOutlined />, ideas: <BulbOutlined />, docs: <FileTextOutlined />, daily: <ProjectOutlined />, code: <CodeOutlined />, agents: <RobotOutlined />, audit: <SafetyCertificateOutlined />, settings: <SettingOutlined /> })[item.key] || null,
+              icon: ({ chat: <MessageOutlined />, dashboard: <DashboardOutlined />, planning: <AppstoreOutlined />, commits: <BranchesOutlined />, bugs: <BugOutlined />, threads: <NodeIndexOutlined />, decisions: <FundProjectionScreenOutlined />, visions: <CompassOutlined />, discussions: <TeamOutlined />, ideas: <BulbOutlined />, docs: <FileTextOutlined />, daily: <ProjectOutlined />, code: <CodeOutlined />, agents: <RobotOutlined />, audit: <SafetyCertificateOutlined />, settings: <SettingOutlined />, proxy: <ApiOutlined /> })[item.key] || null,
             }))
           }))}
-          onClick={({ key }) => setView(key)} 
+          onClick={({ key }) => { if (key === "proxy") { window.open("http://localhost:19530/__proxy/inspect", "_blank"); } else { setView(key); } }}
         />
       </Sider>
       <Layout>

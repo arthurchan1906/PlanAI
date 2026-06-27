@@ -186,7 +186,8 @@ func main() {
 			fmt.Fprintf(os.Stderr, "failed to load embedded UI: %v\n", err)
 			os.Exit(1)
 		}
-		srv := web.NewServer(staticFS, newAPIHandler(), host, port)
+		gcfg := pmdb.LoadGlobalConfig()
+		srv := web.NewServer(staticFS, newAPIHandler(), host, port, gcfg.ProxyPort)
 		srv.Listen()
 		return
 	case "chat":
@@ -195,11 +196,12 @@ func main() {
 	case "proxy":
 		gcfg := pmdb.LoadGlobalConfig()
 		proxy.Run(proxy.Options{
-			Port:        gcfg.ProxyPort,
-			UpstreamURL: gcfg.UpstreamURL,
-			UpstreamKey: os.Getenv("UPSTREAM_KEY"),
-			Model:       gcfg.ProxyModel,
-			LogDir:      gcfg.ProxyLogDir,
+			Port:         gcfg.ProxyPort,
+			UpstreamURL:  gcfg.UpstreamURL,
+			UpstreamKey:  os.Getenv("UPSTREAM_KEY"),
+			Model:        gcfg.ProxyModel,
+			LogDir:       gcfg.ProxyLogDir,
+			AnthropicURL: gcfg.AnthropicURL,
 		})
 		return
 	case "agent":

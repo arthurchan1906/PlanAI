@@ -20,15 +20,17 @@ var upstreamURL string
 var upstreamKey string
 var proxyModel string
 var proxyLogDir string
+var upstreamAnthropicURL string
 var startTime time.Time
 
 // Options configures the proxy server.
 type Options struct {
-	Port        int
-	UpstreamURL string
-	UpstreamKey string
-	Model       string
-	LogDir      string
+	Port         int
+	UpstreamURL  string
+	UpstreamKey  string
+	Model        string
+	LogDir       string
+	AnthropicURL string
 }
 
 type trafficEntry struct {
@@ -57,6 +59,7 @@ func Run(opts Options) {
 	upstreamKey = opts.UpstreamKey
 	proxyModel = opts.Model
 	proxyLogDir = opts.LogDir
+	upstreamAnthropicURL = strings.TrimRight(opts.AnthropicURL, "/")
 	startTime = time.Now()
 
 	port := fmt.Sprintf("%d", opts.Port)
@@ -64,6 +67,9 @@ func Run(opts Options) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/__proxy/status", handleProxyStatus)
 	mux.HandleFunc("/__proxy/traffic", handleProxyTraffic)
+	mux.HandleFunc("/__proxy/capture", handleCaptureList)
+	mux.HandleFunc("/__proxy/capture/clear", handleCaptureClear)
+	mux.HandleFunc("/__proxy/inspect", handleInspectPage)
 	mux.HandleFunc("/", handler)
 
 	addr := ":" + port
@@ -171,13 +177,17 @@ func handler(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case strings.Contains(path, ":generateContent") && !strings.Contains(path, "stream"):
-		handleGenerateContent(rw, r)
+		handleUnifiedNonStream(rw, r, &GeminiAdapter{})
 	case strings.Contains(path, ":streamGenerateContent"):
-		handleStreamGenerateContent(rw, r)
+		handleUnifiedStream(rw, r, &GeminiAdapter{})
 	case strings.Contains(path, ":countTokens"):
 		handleCountTokens(rw, r)
 	case path == "/v1/messages":
-		handleAnthropicMessages(rw, r)
+		if upstreamAnthropicURL != "" {
+			handleAnthropicPassthrough(rw, r)
+		} else {
+			handleClaudeUnified(rw, r)
+		}
 	case path == "/v1/responses" || path == "/responses":
 		if r.Method == "GET" {
 			if strings.ToLower(r.Header.Get("Upgrade")) == "websocket" {
@@ -187,7 +197,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 			writeJSON(rw, http.StatusOK, map[string]any{"object": "list", "data": []any{}})
 			return
 		}
-		handleResponsesCreate(rw, r)
+		handleCodexUnified(rw, r)
 	case path == "/v1/models" || path == "/models" || strings.HasPrefix(path, "/v1/"):
 		handlePassthrough(rw, r)
 	default:
@@ -563,11 +573,13 @@ func openaiToGemini(openai *OpenAIResponse, model string) *GeminiResponse {
 		var newParts []GeminiPart
 		for _, p := range parts {
 			if p.Text != "" {
-				cleaned, toolParts := parseGemmaToolCalls(p.Text)
+				cleaned, toolCalls := parseGemmaToolCalls(p.Text)
 				if cleaned != "" {
 					newParts = append(newParts, GeminiPart{Text: cleaned})
 				}
-				newParts = append(newParts, toolParts...)
+				for _, tc := range toolCalls {
+						newParts = append(newParts, unifiedTCToGeminiPart(tc))
+					}
 			} else {
 				newParts = append(newParts, p)
 			}
@@ -732,17 +744,17 @@ func handleStreamGenerateContent(w http.ResponseWriter, r *http.Request) {
 		data := strings.TrimPrefix(line, "data: ")
 		if data == "[DONE]" {
 			if thinkBuf != "" {
-				clean, toolParts := parseGemmaToolCalls(thinkBuf)
+				clean, toolCalls := parseGemmaToolCalls(thinkBuf)
 				if clean != "" {
 					emitChunk(&GeminiResponse{
 						ModelVersion: model,
 						Candidates:   []GeminiCandidate{{Content: &GeminiContent{Role: "model", Parts: []GeminiPart{{Text: clean}}}, Index: 0}},
 					})
 				}
-				for _, tp := range toolParts {
+				for _, tc := range toolCalls {
 					emitChunk(&GeminiResponse{
 						ModelVersion: model,
-						Candidates:   []GeminiCandidate{{Content: &GeminiContent{Role: "model", Parts: []GeminiPart{tp}}, Index: 0}},
+						Candidates:   []GeminiCandidate{{Content: &GeminiContent{Role: "model", Parts: []GeminiPart{unifiedTCToGeminiPart(tc)}}, Index: 0}},
 					})
 				}
 				thinkBuf = ""
@@ -846,11 +858,11 @@ func handleStreamGenerateContent(w http.ResponseWriter, r *http.Request) {
 			hasToolClose := strings.Contains(thinkBuf, "<tool_call|>")
 			hasThinkClose := strings.Contains(thinkBuf, "<channel|>") || strings.Contains(thinkBuf, "</think>")
 			if hasToolOpen && hasToolClose {
-				cleaned, toolParts := parseGemmaToolCalls(thinkBuf)
+				cleaned, toolCalls := parseGemmaToolCalls(thinkBuf)
 				if cleaned != "" {
 					parts = append(parts, GeminiPart{Text: cleaned})
 				}
-				parts = append(parts, toolParts...)
+				for _, tc := range toolCalls { parts = append(parts, unifiedTCToGeminiPart(tc)) }
 				thinkBuf = ""
 			} else if hasThinkClose {
 				clean := stripThinkTags(thinkBuf)
@@ -897,11 +909,11 @@ func handleStreamGenerateContent(w http.ResponseWriter, r *http.Request) {
 		var finalParts []GeminiPart
 		for _, p := range parts {
 			if p.Text != "" {
-				cleaned, toolParts := parseGemmaToolCalls(p.Text)
+				cleaned, toolCalls := parseGemmaToolCalls(p.Text)
 				if cleaned != "" {
 					finalParts = append(finalParts, GeminiPart{Text: cleaned})
 				}
-				finalParts = append(finalParts, toolParts...)
+				for _, tc := range toolCalls { finalParts = append(finalParts, unifiedTCToGeminiPart(tc)) }
 			} else {
 				finalParts = append(finalParts, p)
 			}
@@ -1137,95 +1149,16 @@ func modelIDToSlug(id string) string {
 	return strings.ToLower(name)
 }
 
-// =============================================================================
-// Gemma 4 tool call parser
-// =============================================================================
-
-func parseGemmaToolCalls(text string) (cleaned string, toolParts []GeminiPart) {
-	for {
-		start := strings.Index(text, "<|tool_call>")
-		if start < 0 {
-			break
-		}
-		end := strings.Index(text[start:], "<tool_call|>")
-		if end < 0 {
-			break
-		}
-		end += start
-		raw := text[start+12:]
-		cleaned = text[:start]
-		text = text[end+12:]
-
-		raw = strings.TrimPrefix(raw, "call:")
-		bracePos := strings.Index(raw, "{")
-		if bracePos < 0 {
-			continue
-		}
-		name := strings.TrimSpace(raw[:bracePos])
-		if idx := strings.LastIndex(name, ":"); idx >= 0 && idx < len(name)-1 {
-			name = name[idx+1:]
-		}
-		argsStr := raw[bracePos:]
-		args := parseGemmaArgs(argsStr)
-		toolParts = append(toolParts, GeminiPart{
-			FunctionCall: &GeminiFuncCall{
-				Name: name,
-				Args: args,
-			},
-		})
+// unifiedTCToGeminiPart converts a UnifiedToolCall (from normalize.go) to a GeminiPart.
+func unifiedTCToGeminiPart(tc UnifiedToolCall) GeminiPart {
+	var args map[string]any
+	json.Unmarshal([]byte(tc.Arguments), &args)
+	return GeminiPart{
+		FunctionCall: &GeminiFuncCall{
+			Name: tc.Name,
+			Args: args,
+		},
 	}
-	cleaned += text
-	return
-}
-
-func parseGemmaArgs(s string) map[string]any {
-	args := map[string]any{}
-	s = strings.TrimSpace(s)
-	if !strings.HasPrefix(s, "{") {
-		return args
-	}
-	s = s[1:]
-	if strings.HasSuffix(s, "}") {
-		s = s[:len(s)-1]
-	}
-	for _, part := range splitArgs(s) {
-		colon := strings.Index(part, ":")
-		if colon < 0 {
-			continue
-		}
-		key := strings.TrimSpace(part[:colon])
-		val := strings.Trim(strings.TrimSpace(part[colon+1:]), "\"")
-		args[key] = val
-	}
-	return args
-}
-
-func splitArgs(s string) []string {
-	var parts []string
-	depth := 0
-	inQuote := false
-	start := 0
-	for i, ch := range s {
-		switch ch {
-		case '"':
-			inQuote = !inQuote
-		case '{':
-			if !inQuote {
-				depth++
-			}
-		case '}':
-			if !inQuote {
-				depth--
-			}
-		case ',':
-			if depth == 0 && !inQuote {
-				parts = append(parts, s[start:i])
-				start = i + 1
-			}
-		}
-	}
-	parts = append(parts, s[start:])
-	return parts
 }
 
 // =============================================================================
@@ -1264,32 +1197,7 @@ func extractFinalAnswer(reasoning string) string {
 	return reasoning
 }
 
-func stripThinkTags(s string) string {
-	for {
-		start := strings.Index(s, "<think>")
-		if start < 0 {
-			break
-		}
-		end := strings.Index(s, "</think>")
-		if end < 0 {
-			return strings.TrimSpace(s[:start])
-		}
-		s = s[:start] + s[end+8:]
-	}
-	for {
-		start := strings.Index(s, "<|channel>thought")
-		if start < 0 {
-			break
-		}
-		end := strings.Index(s[start:], "<channel|>")
-		if end < 0 {
-			return strings.TrimSpace(s[:start])
-		}
-		end += start
-		s = s[:start] + s[end+10:]
-	}
-	return strings.TrimSpace(s)
-}
+// stripThinkTags is now in normalize.go
 
 func extractModel(path string) string {
 	parts := strings.SplitN(path, "/models/", 2)
@@ -1303,54 +1211,181 @@ func extractModel(path string) string {
 	return modelPart
 }
 
-func forwardToUpstream(endpoint string, body any, apiKey string) ([]byte, error) {
-	bodyJSON, _ := json.Marshal(body)
-	url := upstreamURL + "/" + endpoint
+// handleCodexUnified dispatches Codex requests to stream or non-stream handler
+// based on the "stream" field in the request body.
+func handleCodexUnified(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
+	r.Body.Close()
 
-	req, _ := http.NewRequest("POST", url, strings.NewReader(string(bodyJSON)))
-	req.Header.Set("Content-Type", "application/json")
-	if apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
+	// Peek at stream flag
+	var peek struct {
+		Stream bool `json:"stream"`
 	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
+	json.Unmarshal(body, &peek)
 
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
+	// Reconstruct body for the adapter
+	r.Body = io.NopCloser(strings.NewReader(string(body)))
 
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("upstream returned %d: %s", resp.StatusCode, string(respBody))
+	adapter := &CodexAdapter{}
+	if peek.Stream {
+		handleUnifiedStream(w, r, adapter)
+	} else {
+		handleUnifiedNonStream(w, r, adapter)
 	}
-
-	return respBody, nil
 }
 
-func forwardToUpstreamStream(endpoint string, body any, apiKey string) (io.ReadCloser, error) {
-	bodyJSON, _ := json.Marshal(body)
-	url := upstreamURL + "/" + endpoint
-
-	req, _ := http.NewRequest("POST", url, strings.NewReader(string(bodyJSON)))
-	req.Header.Set("Content-Type", "application/json")
-	if apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
+func handleClaudeUnified(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
+	r.Body.Close()
+	var peek struct {
+		Stream bool `json:"stream"`
 	}
-	resp, err := http.DefaultClient.Do(req)
+	json.Unmarshal(body, &peek)
+	r.Body = io.NopCloser(strings.NewReader(string(body)))
+	adapter := &ClaudeAdapter{}
+	if peek.Stream {
+		handleUnifiedStream(w, r, adapter)
+	} else {
+		handleUnifiedNonStream(w, r, adapter)
+	}
+}
+
+// forwardToUpstream and forwardToUpstreamStream are now in upstream.go
+
+// =============================================================================
+// Unified handler — new architecture (progressively replacing old handlers)
+// =============================================================================
+
+// handleUnifiedNonStream handles a non-streaming request using the unified pipeline:
+//
+//	Adapter.ParseRequest → unifiedToOpenAI → forwardToUpstream → NormalizeResponse → Adapter.ConvertResponse → JSON
+func handleUnifiedNonStream(w http.ResponseWriter, r *http.Request, adapter ProtocolAdapter) {
+	rawBody, _ := io.ReadAll(r.Body)
+	r.Body.Close()
+	r.Body = io.NopCloser(strings.NewReader(string(rawBody)))
+
+	req, err := adapter.ParseRequest(r)
 	if err != nil {
-		return nil, err
+		log.Printf("[UNIFIED] ERROR parsing request: %v", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
-	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		return nil, fmt.Errorf("upstream returned %d: %s", resp.StatusCode, string(body))
+	apiKey := extractAPIKey(r)
+	model := req.Model
+	agent := detectAgent(r.URL.Path)
+	log.Printf("[UNIFIED] → non-stream  model=%s", model)
+
+	// Convert to OpenAI format and send upstream
+	openaiReq := unifiedToOpenAI(req)
+
+	capID := startCapture(agent, r.Method, r.URL.Path, model, rawBody, copyHeaders(r), req)
+	startTime := time.Now()
+
+	respBody, err := forwardToUpstream("chat/completions", openaiReq, apiKey)
+	if err != nil {
+		log.Printf("[UNIFIED] ERROR upstream: %v", err)
+		finishCapture(capID, http.StatusBadGateway, time.Since(startTime), nil, err.Error(), "")
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
 	}
 
-	return resp.Body, nil
+	var openaiResp OpenAIResponse
+	if err := json.Unmarshal(respBody, &openaiResp); err != nil {
+		log.Printf("[UNIFIED] ERROR parsing upstream response: %v", err)
+		finishCapture(capID, http.StatusInternalServerError, time.Since(startTime), nil, err.Error(), "")
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Normalize (model compat) then convert to native protocol
+	NormalizeResponse(&openaiResp)
+	nativeResp := adapter.ConvertResponse(&openaiResp, model)
+	responseJSON, _ := json.Marshal(nativeResp)
+	writeJSON(w, http.StatusOK, nativeResp)
+
+	finishCapture(capID, http.StatusOK, time.Since(startTime), nil, string(responseJSON), "")
+
+	log.Printf("[UNIFIED] ← complete  model=%s", model)
+}
+
+// handleUnifiedStream handles a streaming request using the unified pipeline:
+//
+//	Adapter.ParseRequest → unifiedToOpenAI → forwardToUpstreamStream →
+//	parseUpstreamSSE → StreamNormalizer.Process → Emitter.Emit → Emitter.Done
+func handleUnifiedStream(w http.ResponseWriter, r *http.Request, adapter ProtocolAdapter) {
+	rawBody, _ := io.ReadAll(r.Body)
+	r.Body.Close()
+	r.Body = io.NopCloser(strings.NewReader(string(rawBody)))
+
+	req, err := adapter.ParseRequest(r)
+	if err != nil {
+		log.Printf("[UNIFIED] ERROR parsing request: %v", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	req.Stream = true
+	apiKey := extractAPIKey(r)
+	model := req.Model
+	agent := detectAgent(r.URL.Path)
+	log.Printf("[UNIFIED] → stream  model=%s", model)
+
+	openaiReq := unifiedToOpenAI(req)
+
+	capID := startCapture(agent, r.Method, r.URL.Path, model, rawBody, copyHeaders(r), req)
+	startTime := time.Now()
+	cap := newStreamCapture()
+
+	respBody, err := forwardToUpstreamStream("chat/completions", openaiReq, apiKey)
+	if err != nil {
+		log.Printf("[UNIFIED] ERROR upstream stream: %v", err)
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer respBody.Close()
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	emitter := adapter.NewEmitter(w, model)
+	normalizer := &StreamNormalizer{}
+	var totalTokens int
+	var finishReason string
+	status := http.StatusOK
+
+	for event := range parseUpstreamSSE(respBody) {
+		cap.addEvent(event)
+
+		if event.Type == StreamDone {
+			if event.Usage != nil {
+				totalTokens = event.Usage.TotalTokens
+			}
+			finishReason = event.FinishReason
+		}
+
+		if event.Type == StreamError {
+			log.Printf("[UNIFIED] stream error: %s", event.Delta)
+			status = http.StatusBadGateway
+			emitter.Emit(event)
+			emitter.Done("error", &UnifiedUsage{})
+			break
+		}
+
+		for _, normalized := range normalizer.Process(event) {
+			emitter.Emit(normalized)
+		}
+	}
+
+	if finishReason == "" {
+		finishReason = "STOP"
+	}
+	emitter.Done(finishReason, &UnifiedUsage{TotalTokens: totalTokens})
+
+	finishCapture(capID, status, time.Since(startTime), nil, cap.responseText(), cap.eventsJSON())
+
+	log.Printf("[UNIFIED] ← stream complete  model=%s  tokens=%d", model, totalTokens)
 }
 
 func firstN[T any](slice []T, n int) []T {
