@@ -347,6 +347,16 @@ func serveCommand() int {
 	os.Chdir(projectPath)
 	projectName := filepath.Base(projectPath)
 
+	// Auto-initialize if project has no .pmai/ directory
+	if _, err := os.Stat(filepath.Join(projectPath, ".pmai")); os.IsNotExist(err) {
+		fmt.Printf("→ 项目尚未初始化，正在执行 aipmc init...\n")
+		if _, err := pmdb.Bootstrap(); err != nil {
+			fmt.Fprintf(os.Stderr, "初始化失败: %v\n", err)
+			return 1
+		}
+		fmt.Printf("✓ 项目已初始化\n")
+	}
+
 	// Step 2: Determine web port — projects.json > .pmai/config.json > default
 	projects := pmdb.LoadProjects()
 	webPort := 0
