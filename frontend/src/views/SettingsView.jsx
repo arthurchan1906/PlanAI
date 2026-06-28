@@ -93,6 +93,9 @@ export default function SettingsView() {
       </Card>
 
       <Card size="small" title="Proxy 配置">
+        <div style={{ color: "#888", fontSize: 12, marginBottom: 12 }}>
+          此配置为全局生效，影响所有项目。保存在 ~/.aipmc/config.json。
+        </div>
         <Form form={form} layout="vertical" onFinish={onFinish}>
           <Form.Item name="upstream_url" label="上游 API 端点 (OpenAI 协议)">
             <Input placeholder="https://api.deepseek.com" />

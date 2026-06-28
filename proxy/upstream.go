@@ -77,7 +77,7 @@ func unifiedToOpenAI(req *UnifiedReq) *OpenAIRequest {
 // forwardToUpstream sends a non-streaming POST request to the upstream endpoint.
 func forwardToUpstream(endpoint string, body any, apiKey string) ([]byte, error) {
 	bodyJSON, _ := json.Marshal(body)
-	url := upstreamURL + "/" + endpoint
+	url := loadCfg().upstreamURL + "/" + endpoint
 
 	req, _ := http.NewRequest("POST", url, strings.NewReader(string(bodyJSON)))
 	req.Header.Set("Content-Type", "application/json")
@@ -106,7 +106,7 @@ func forwardToUpstream(endpoint string, body any, apiKey string) ([]byte, error)
 // The caller MUST close the returned body when done.
 func forwardToUpstreamStream(endpoint string, body any, apiKey string) (io.ReadCloser, error) {
 	bodyJSON, _ := json.Marshal(body)
-	url := upstreamURL + "/" + endpoint
+	url := loadCfg().upstreamURL + "/" + endpoint
 
 	req, _ := http.NewRequest("POST", url, strings.NewReader(string(bodyJSON)))
 	req.Header.Set("Content-Type", "application/json")

@@ -8,19 +8,40 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	pmdb "aipmc/db"
 )
 
-var upstreamURL string
-var upstreamKey string
-var proxyModel string
-var proxyLogDir string
-var upstreamAnthropicURL string
-var startTime time.Time
+// proxyCfg holds all proxy configuration. It is stored in an atomic.Value
+// so that handlers can read it without locking, and /__proxy/reload can swap
+// it atomically.
+type proxyCfg struct {
+	upstreamURL          string
+	upstreamKey          string
+	proxyModel           string
+	upstreamAnthropicURL string
+	startTime            time.Time
+}
+
+var cfg atomic.Value // stores *proxyCfg
+
+func init() {
+	cfg.Store(&proxyCfg{})
+}
+
+func loadCfg() *proxyCfg { return cfg.Load().(*proxyCfg) }
+
+func storeCfg(c *proxyCfg) { cfg.Store(c) }
 
 // Options configures the proxy server.
 type Options struct {
@@ -49,19 +70,21 @@ var (
 	maxTraffic  = 500
 )
 
-// Run starts the proxy HTTP server.
-func Run(opts Options) {
-	upstreamURL = strings.TrimRight(opts.UpstreamURL, "/")
-	if upstreamURL == "" {
-		upstreamURL = "http://localhost:8080/v1"
+// NewHandler creates an http.Handler for the proxy without starting a listener.
+// This allows the proxy to be embedded in another HTTP server (e.g., the web UI).
+// The returned handler serves agent request routing + /__proxy/* inspection endpoints.
+func NewHandler(opts Options) http.Handler {
+	u := strings.TrimRight(opts.UpstreamURL, "/")
+	if u == "" {
+		u = "http://localhost:8080/v1"
 	}
-	upstreamKey = opts.UpstreamKey
-	proxyModel = opts.Model
-	proxyLogDir = opts.LogDir
-	upstreamAnthropicURL = strings.TrimRight(opts.AnthropicURL, "/")
-	startTime = time.Now()
-
-	port := fmt.Sprintf("%d", opts.Port)
+	storeCfg(&proxyCfg{
+		upstreamURL:          u,
+		upstreamKey:          opts.UpstreamKey,
+		proxyModel:           opts.Model,
+		upstreamAnthropicURL: strings.TrimRight(opts.AnthropicURL, "/"),
+		startTime:            time.Now(),
+	})
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/__proxy/status", handleProxyStatus)
@@ -69,13 +92,35 @@ func Run(opts Options) {
 	mux.HandleFunc("/__proxy/capture", handleCaptureList)
 	mux.HandleFunc("/__proxy/capture/clear", handleCaptureClear)
 	mux.HandleFunc("/__proxy/inspect", handleInspectPage)
+	mux.HandleFunc("/__proxy/reload", handleProxyReload)
 	mux.HandleFunc("/", handler)
+	return mux
+}
 
-	addr := ":" + port
-	log.Printf("[PROXY] starting on %s, upstream=%s", addr, upstreamURL)
-	if err := http.ListenAndServe(addr, mux); err != nil {
-		log.Fatalf("[PROXY] server error: %v", err)
+// Run starts the proxy HTTP server on its own port. It blocks until the server
+// exits. For embedding the proxy in another server, use NewHandler.
+func Run(opts Options) error {
+	h := NewHandler(opts)
+
+	addr := fmt.Sprintf("127.0.0.1:%d", opts.Port)
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("proxy listen %s: %w", addr, err)
 	}
+
+	// Write PID file after successful Listen
+	pidPath := pidFilePath(opts.Port)
+	os.MkdirAll(filepath.Dir(pidPath), 0755)
+	os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0644)
+	defer os.Remove(pidPath)
+
+	log.Printf("[PROXY] listening on %s, upstream=%s", addr, loadCfg().upstreamURL)
+	return http.Serve(ln, h)
+}
+
+func pidFilePath(port int) string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".aipmc", fmt.Sprintf("proxy-%d.pid", port))
 }
 
 func recordTraffic(agent, method, path string, status, size int) {
@@ -118,12 +163,12 @@ func handleProxyStatus(w http.ResponseWriter, r *http.Request) {
 	mu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"running":      true,
-		"uptime":       time.Since(startTime).String(),
+		"uptime":       time.Since(loadCfg().startTime).String(),
 		"requests":     count,
 		"errors":       errs,
-		"upstream":     upstreamURL,
+		"upstream":     loadCfg().upstreamURL,
 		"port":         strings.TrimPrefix(r.Host, ":"),
-		"model_override": proxyModel,
+		"model_override": loadCfg().proxyModel,
 	})
 }
 
@@ -141,6 +186,29 @@ func handleProxyTraffic(w http.ResponseWriter, r *http.Request) {
 	mu.Unlock()
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Time > entries[j].Time })
 	writeJSON(w, http.StatusOK, map[string]any{"traffic": entries})
+}
+
+func handleProxyReload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	// Read GlobalConfig from disk and atomically swap proxy configuration.
+	// This allows the web UI to change upstream/model without restarting the proxy.
+	gcfg := pmdb.LoadGlobalConfig()
+	u := strings.TrimRight(gcfg.UpstreamURL, "/")
+	if u == "" {
+		u = "http://localhost:8080/v1"
+	}
+	storeCfg(&proxyCfg{
+		upstreamURL:          u,
+		upstreamKey:          os.Getenv("UPSTREAM_KEY"),
+		proxyModel:           gcfg.ProxyModel,
+		upstreamAnthropicURL: strings.TrimRight(gcfg.AnthropicURL, "/"),
+		startTime:            loadCfg().startTime, // preserve original start time
+	})
+	log.Printf("[PROXY] config reloaded upstream=%s model=%s", loadCfg().upstreamURL, loadCfg().proxyModel)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 type responseWrapper struct {
@@ -161,8 +229,8 @@ func (rw *responseWrapper) Write(b []byte) (int, error) {
 }
 
 func effectiveModel(agentModel string) string {
-	if proxyModel != "" {
-		return proxyModel
+	if loadCfg().proxyModel != "" {
+		return loadCfg().proxyModel
 	}
 	return agentModel
 }
@@ -182,7 +250,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	case strings.Contains(path, ":countTokens"):
 		handleCountTokens(rw, r)
 	case path == "/v1/messages":
-		if upstreamAnthropicURL != "" {
+		if loadCfg().upstreamAnthropicURL != "" {
 			handleAnthropicPassthrough(rw, r)
 		} else {
 			handleClaudeUnified(rw, r)
@@ -460,7 +528,7 @@ func handlePassthrough(w http.ResponseWriter, r *http.Request) {
 
 	path := r.URL.Path
 	path = strings.TrimPrefix(path, "/v1")
-	url := upstreamURL + path
+	url := loadCfg().upstreamURL + path
 	if r.URL.RawQuery != "" {
 		url += "?" + r.URL.RawQuery
 	}
@@ -472,8 +540,8 @@ func handlePassthrough(w http.ResponseWriter, r *http.Request) {
 	}
 	proxyReq.Header = r.Header
 	// When upstreamKey is configured, always use it (ignore incoming auth)
-	if upstreamKey != "" {
-		proxyReq.Header.Set("Authorization", "Bearer "+upstreamKey)
+	if loadCfg().upstreamKey != "" {
+		proxyReq.Header.Set("Authorization", "Bearer "+loadCfg().upstreamKey)
 	} else if apiKey := extractAPIKey(r); apiKey != "" && proxyReq.Header.Get("Authorization") == "" {
 		proxyReq.Header.Set("Authorization", "Bearer "+apiKey)
 	}
@@ -497,7 +565,7 @@ func handlePassthrough(w http.ResponseWriter, r *http.Request) {
 // handleModelsList transforms the upstream model list into a format compatible
 // with both standard OpenAI clients and Codex (which requires "slug" fields).
 func handleModelsList(w http.ResponseWriter, r *http.Request) {
-	url := upstreamURL + "/models"
+	url := loadCfg().upstreamURL + "/models"
 	if r.URL.RawQuery != "" {
 		url += "?" + r.URL.RawQuery
 	}
@@ -505,8 +573,8 @@ func handleModelsList(w http.ResponseWriter, r *http.Request) {
 	proxyReq, _ := http.NewRequest("GET", url, nil)
 	proxyReq.Header = r.Header
 	// When upstreamKey is configured, always use it (ignore incoming auth)
-	if upstreamKey != "" {
-		proxyReq.Header.Set("Authorization", "Bearer "+upstreamKey)
+	if loadCfg().upstreamKey != "" {
+		proxyReq.Header.Set("Authorization", "Bearer "+loadCfg().upstreamKey)
 	} else if apiKey := extractAPIKey(r); apiKey != "" && proxyReq.Header.Get("Authorization") == "" {
 		proxyReq.Header.Set("Authorization", "Bearer "+apiKey)
 	}
@@ -623,8 +691,8 @@ func modelIDToSlug(id string) string {
 // =============================================================================
 
 func extractAPIKey(r *http.Request) string {
-	if upstreamKey != "" {
-		return upstreamKey
+	if loadCfg().upstreamKey != "" {
+		return loadCfg().upstreamKey
 	}
 	if key := r.Header.Get("x-goog-api-key"); key != "" {
 		return key

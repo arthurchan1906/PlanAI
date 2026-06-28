@@ -548,3 +548,41 @@ func SaveGlobalConfig(cfg GlobalConfig) error {
 	os.MkdirAll(filepath.Dir(path), 0755)
 	return os.WriteFile(path, u.MustMarshal(cfg), 0644)
 }
+
+// ProjectEntry records a registered project in ~/.aipmc/projects.json.
+type ProjectEntry struct {
+	Path      string `json:"path"`
+	Name      string `json:"name"`
+	WebPort   int    `json:"web_port"`
+	ProxyPort int    `json:"proxy_port"`
+}
+
+func projectsPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".aipmc", "projects.json")
+}
+
+// LoadProjects reads the project registry from ~/.aipmc/projects.json.
+func LoadProjects() map[string]ProjectEntry {
+	data, err := os.ReadFile(projectsPath())
+	if err != nil {
+		return map[string]ProjectEntry{}
+	}
+	var projects map[string]ProjectEntry
+	if json.Unmarshal(data, &projects) != nil {
+		return map[string]ProjectEntry{}
+	}
+	if projects == nil {
+		projects = map[string]ProjectEntry{}
+	}
+	return projects
+}
+
+// SaveProject registers a project in ~/.aipmc/projects.json.
+func SaveProject(entry ProjectEntry) error {
+	projects := LoadProjects()
+	projects[entry.Path] = entry
+	path := projectsPath()
+	os.MkdirAll(filepath.Dir(path), 0755)
+	return os.WriteFile(path, u.MustMarshal(projects), 0644)
+}

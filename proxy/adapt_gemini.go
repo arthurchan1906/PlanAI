@@ -36,8 +36,8 @@ func (a *GeminiAdapter) ParseRequest(r *http.Request) (*UnifiedReq, error) {
 func (a *GeminiAdapter) toUnified(g *GeminiRequest, urlModel string) *UnifiedReq {
 	// Prefer the URL-path model; effectiveModel overrides with proxyModel if configured
 	model := urlModel
-	if proxyModel != "" {
-		model = proxyModel
+	if loadCfg().proxyModel != "" {
+		model = loadCfg().proxyModel
 	}
 	req := &UnifiedReq{
 		Model:  model,

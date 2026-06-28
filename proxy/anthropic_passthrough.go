@@ -20,17 +20,17 @@ func handleAnthropicPassthrough(w http.ResponseWriter, r *http.Request) {
 	r.Body.Close()
 
 	// 2. Optionally replace model field if proxyModel override is configured
-	if proxyModel != "" {
-		body = replaceModelField(body, proxyModel)
+	if loadCfg().proxyModel != "" {
+		body = replaceModelField(body, loadCfg().proxyModel)
 	}
 
 	// 3. Start capture recording
 	agent := "claude"
-	capID := startCapture(agent, r.Method, r.URL.Path, proxyModel, body, copyHeaders(r), nil)
+	capID := startCapture(agent, r.Method, r.URL.Path, loadCfg().proxyModel, body, copyHeaders(r), nil)
 	startTime := time.Now()
 
 	// 4. Build upstream request: {anthropicURL}/v1/messages
-	targetURL := upstreamAnthropicURL + "/v1/messages"
+	targetURL := loadCfg().upstreamAnthropicURL + "/v1/messages"
 	proxyReq, err := http.NewRequest(r.Method, targetURL, bytes.NewReader(body))
 	if err != nil {
 		finishCapture(capID, http.StatusInternalServerError, time.Since(startTime), nil, err.Error(), "")
@@ -40,8 +40,8 @@ func handleAnthropicPassthrough(w http.ResponseWriter, r *http.Request) {
 
 	// 5. Copy request headers (keep Claude Code's headers, replace Authorization)
 	proxyReq.Header = r.Header.Clone()
-	if upstreamKey != "" {
-		proxyReq.Header.Set("Authorization", "Bearer "+upstreamKey)
+	if loadCfg().upstreamKey != "" {
+		proxyReq.Header.Set("Authorization", "Bearer "+loadCfg().upstreamKey)
 	}
 
 	// 6. Send request to upstream

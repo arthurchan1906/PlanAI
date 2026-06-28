@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 
 	pmdb "aipmc/db"
@@ -70,5 +71,14 @@ func (s *Server) handlePostConfig(w http.ResponseWriter, body map[string]any) {
 		return
 	}
 	s.deps.App.ReloadAI()
+
+	// Reload proxy config if proxy is running (best-effort, ignore errors)
+	go func() {
+		http.Post(
+			fmt.Sprintf("http://127.0.0.1:%d/__proxy/reload", gcfg.ProxyPort),
+			"application/json", nil,
+		)
+	}()
+
 	web.SendJSON(w, map[string]any{"ok": true, "ai_enabled": cfg.AIEndpoint != ""})
 }

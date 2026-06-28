@@ -110,6 +110,8 @@ func (s *Server) handleMutateRoutes(w http.ResponseWriter, method, path string, 
 		web.SendJSON(w, map[string]any{"ok": true, "embedded": count})
 	case method == "POST" && path == "ai-test":
 		s.handleAITest(w)
+	case method == "POST" && path == "agent/launch":
+		s.handleAgentLaunch(w, body)
 	case method == "POST" && path == "config":
 		s.handlePostConfig(w, body)
 	case method == "DELETE" && path == "proxy-traffic":

@@ -5,11 +5,16 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"time"
 
 	apipkg "aipmc/api"
 	"aipmc/app"
@@ -187,22 +192,33 @@ func main() {
 			os.Exit(1)
 		}
 		gcfg := pmdb.LoadGlobalConfig()
-		srv := web.NewServer(staticFS, newAPIHandler(), host, port, gcfg.ProxyPort)
+		// Build reverse proxy to proxy port for backward-compatible /__proxy/* forwarding
+		var proxyHandler http.Handler
+		if gcfg.ProxyPort > 0 {
+			proxyURL, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", gcfg.ProxyPort))
+			proxyHandler = httputil.NewSingleHostReverseProxy(proxyURL)
+		}
+		srv := web.NewServer(staticFS, newAPIHandler(), host, port, proxyHandler)
 		srv.Listen()
 		return
+	case "serve":
+		os.Exit(serveCommand())
 	case "chat":
 		chatcli.Run(application)
 		return
 	case "proxy":
 		gcfg := pmdb.LoadGlobalConfig()
-		proxy.Run(proxy.Options{
+		if err := proxy.Run(proxy.Options{
 			Port:         gcfg.ProxyPort,
 			UpstreamURL:  gcfg.UpstreamURL,
 			UpstreamKey:  os.Getenv("UPSTREAM_KEY"),
 			Model:        gcfg.ProxyModel,
 			LogDir:       gcfg.ProxyLogDir,
 			AnthropicURL: gcfg.AnthropicURL,
-		})
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "proxy error: %v\n", err)
+			os.Exit(1)
+		}
 		return
 	case "agent":
 		if len(os.Args) < 3 {
@@ -300,6 +316,119 @@ func main() {
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
 		os.Exit(1)
+	}
+}
+
+func serveCommand() int {
+	gcfg := pmdb.LoadGlobalConfig()
+	exe, _ := os.Executable()
+
+	// Step 1: Ensure proxy is running
+	proxyAddr := fmt.Sprintf("127.0.0.1:%d", gcfg.ProxyPort)
+	proxyRunning := false
+	if conn, err := net.DialTimeout("tcp", proxyAddr, 500*time.Millisecond); err == nil {
+		conn.Close()
+		// Verify it's actually our proxy
+		resp, err := http.Get(fmt.Sprintf("http://%s/__proxy/status", proxyAddr))
+		if err == nil && resp.StatusCode == 200 {
+			resp.Body.Close()
+			proxyRunning = true
+		}
+	}
+
+	if !proxyRunning {
+		fmt.Printf("→ Proxy 未运行，启动中...\n")
+		cmd := exec.Command(exe, "proxy")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Start(); err != nil {
+			fmt.Fprintf(os.Stderr, "无法启动 proxy: %v\n", err)
+			return 1
+		}
+		// Wait for proxy to be ready
+		for i := 0; i < 30; i++ {
+			time.Sleep(200 * time.Millisecond)
+			resp, err := http.Get(fmt.Sprintf("http://%s/__proxy/status", proxyAddr))
+			if err == nil && resp.StatusCode == 200 {
+				resp.Body.Close()
+				proxyRunning = true
+				break
+			}
+		}
+		if !proxyRunning {
+			fmt.Fprintf(os.Stderr, "Proxy 6s 内未就绪\n")
+			return 1
+		}
+		fmt.Printf("✓ Proxy 就绪 :%d\n", gcfg.ProxyPort)
+	} else {
+		fmt.Printf("✓ Proxy 已在运行 :%d\n", gcfg.ProxyPort)
+	}
+
+	// Step 2: Allocate web port
+	cfg := pmdb.LoadConfig()
+	webPort := cfg.WebPort
+	if webPort == 0 {
+		webPort = 8720
+	}
+	for i := 0; i < 100; i++ {
+		ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", webPort))
+		if err == nil {
+			ln.Close()
+			break
+		}
+		webPort++
+	}
+
+	// Step 3: Register project
+	projectPath, _ := os.Getwd()
+	pmdb.SaveProject(pmdb.ProjectEntry{
+		Path:      projectPath,
+		Name:      filepath.Base(projectPath),
+		WebPort:   webPort,
+		ProxyPort: gcfg.ProxyPort,
+	})
+
+	// Step 4: Create proxy handler for embedding
+	staticFS, err := fs.Sub(uiFS, "frontend/dist")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "加载 UI 失败: %v\n", err)
+		return 1
+	}
+	proxyHandler := proxy.NewHandler(proxy.Options{
+		Port:         gcfg.ProxyPort,
+		UpstreamURL:  gcfg.UpstreamURL,
+		UpstreamKey:  os.Getenv("UPSTREAM_KEY"),
+		Model:        gcfg.ProxyModel,
+		LogDir:       gcfg.ProxyLogDir,
+		AnthropicURL: gcfg.AnthropicURL,
+	})
+	srv := web.NewServer(staticFS, newAPIHandler(), "127.0.0.1", webPort, proxyHandler)
+
+	// Step 5: Auto-open browser
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		url := fmt.Sprintf("http://127.0.0.1:%d", webPort)
+		openBrowser(url)
+	}()
+
+	// Step 6: Start web server (blocking)
+	fmt.Printf("✓ Web 启动 :%d → http://127.0.0.1:%d\n", webPort, webPort)
+	fmt.Printf("✓ 项目 %s 已注册\n", filepath.Base(projectPath))
+	if err := srv.Listen(); err != nil {
+		fmt.Fprintf(os.Stderr, "web error: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func openBrowser(url string) {
+	switch runtime.GOOS {
+	case "windows":
+		exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+	case "darwin":
+		exec.Command("open", url).Start()
+	default:
+		exec.Command("xdg-open", url).Start()
 	}
 }
 
