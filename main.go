@@ -497,13 +497,9 @@ func resolveProjectPath(projectFlag, cwd string) string {
 		return cwd
 	}
 
-	// Single project — auto-select
-	if len(projects) == 1 {
-		fmt.Printf("→ 使用项目: %s (%s)\n", projects[0].Name, projects[0].Path)
-		return projects[0].Path
-	}
-
-	// Multiple projects — show selector
+	// Registered projects exist but CWD is not one of them — show selector
+	// so the user can pick a project or register the current directory.
+	// Single project also shows the selector here (because CWD is different).
 	fmt.Printf("\n当前目录未注册。已注册 %d 个项目:\n\n", len(projects))
 	for i, p := range projects {
 		rel := formatTimeAgo(p.LastOpenedAt)
