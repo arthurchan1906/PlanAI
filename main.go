@@ -491,7 +491,7 @@ func resolveProjectPath(projectFlag, cwd string) string {
 	fmt.Printf("\n当前目录未注册。已注册 %d 个项目:\n\n", len(projects))
 	for i, p := range projects {
 		rel := formatTimeAgo(p.LastOpenedAt)
-		fmt.Printf("  [%d] %s\n      %s  %s\n", i+1, p.Name, p.Path, rel)
+		fmt.Printf("  [%d]  %-10s  %s\n", i+1, rel, p.Path)
 	}
 	fmt.Printf("\n输入序号 [1-%d]，或 Enter 注册当前目录: ", len(projects))
 
