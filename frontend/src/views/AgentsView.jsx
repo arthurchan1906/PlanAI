@@ -1,13 +1,31 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { Button, Card, Input, Space, Table, Tag, Typography, message } from "antd";
 import { ReloadOutlined, SearchOutlined, CodeOutlined, RobotOutlined, ThunderboltOutlined } from "@ant-design/icons";
 import { api } from "../utils/api";
 
 const { Title } = Typography;
 
+function relativeTime(ts) {
+  const diff = Math.floor((Date.now() / 1000) - ts);
+  if (diff < 60) return "刚刚";
+  if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`;
+  return `${Math.floor(diff / 86400)} 天前`;
+}
+
 export default function AgentsView({ agents, loading, loadAll }) {
   const [search, setSearch] = useState("");
   const [launching, setLaunching] = useState(null);
+  const [sessions, setSessions] = useState([]);
+
+  const fetchSessions = useCallback(async () => {
+    try {
+      const data = await api("/pmai/agent/sessions");
+      setSessions(data.sessions || []);
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => { fetchSessions(); }, [fetchSessions]);
 
   async function launchAgent(name) {
     setLaunching(name);
@@ -18,6 +36,7 @@ export default function AgentsView({ agents, loading, loadAll }) {
       });
       if (data.ok) {
         message.success(`${name} 已启动`);
+        setTimeout(fetchSessions, 500);
       } else {
         message.error(data.error || "启动失败");
       }
@@ -71,6 +90,19 @@ export default function AgentsView({ agents, loading, loadAll }) {
           在系统原生终端中启动 AI 编码 Agent，自动配置代理连接。
         </div>
       </Card>
+
+      {sessions.length > 0 && (
+        <Card size="small" title="运行中的 Agent" style={{ marginBottom: 16 }}>
+          {sessions.map((s, i) => (
+            <Tag key={i} color="processing" style={{ marginBottom: 4 }}>
+              {s.agent} · {relativeTime(s.started_at)}
+            </Tag>
+          ))}
+          <div style={{ color: "#888", fontSize: 11, marginTop: 6 }}>
+            在系统终端窗口运行中。关闭终端窗口即终止。
+          </div>
+        </Card>
+      )}
 
       <Space style={{ marginBottom: 16 }}>
         <Title level={4} style={{ margin: 0 }}>🤖 Agent 列表</Title>

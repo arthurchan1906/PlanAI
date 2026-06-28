@@ -3,13 +3,17 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"sync"
 
 	"aipmc/web"
 )
 
 // Server is the HTTP API handler for /pmai/* routes.
 type Server struct {
-	deps Deps
+	deps      Deps
+	sessions  []agentSession
+	sessionsMu sync.Mutex
+	sessionsInit sync.Once
 }
 
 // New creates an API server with the given dependencies.

@@ -69,6 +69,8 @@ func (s *Server) handleQueryRoutes(w http.ResponseWriter, method, path string, q
 		proxyForward(w, "status")
 	case "proxy-traffic":
 		proxyForward(w, "traffic")
+	case "agent/sessions":
+		s.handleAgentSessions(w)
 	default:
 		return false
 	}
@@ -112,6 +114,10 @@ func (s *Server) handleMutateRoutes(w http.ResponseWriter, method, path string, 
 		s.handleAITest(w)
 	case method == "POST" && path == "agent/launch":
 		s.handleAgentLaunch(w, body)
+	case method == "POST" && path == "proxy/stop":
+		s.handleProxyStop(w, body)
+	case method == "POST" && path == "proxy/restart":
+		s.handleProxyRestart(w, body)
 	case method == "POST" && path == "config":
 		s.handlePostConfig(w, body)
 	case method == "DELETE" && path == "proxy-traffic":

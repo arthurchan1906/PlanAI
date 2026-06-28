@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
-import { Button, Card, Form, Input, Space, Tag, Typography, message } from "antd";
-import { ReloadOutlined, CheckCircleOutlined } from "@ant-design/icons";
+import { useState, useEffect, useCallback } from "react";
+import { Button, Card, Form, Input, Space, Tag, Typography, message, Tooltip } from "antd";
+import { ReloadOutlined, CheckCircleOutlined, PauseCircleOutlined, PlayCircleOutlined } from "@ant-design/icons";
 import { api } from "../utils/api";
 
 const { Title } = Typography;
@@ -9,6 +9,9 @@ export default function SettingsView() {
   const [loading, setLoading] = useState(false);
   const [testing, setTesting] = useState(false);
   const [aiStatus, setAiStatus] = useState(null);
+  const [proxyStatus, setProxyStatus] = useState(null);
+  const [stopping, setStopping] = useState(false);
+  const [restarting, setRestarting] = useState(false);
   const [form] = Form.useForm();
 
   async function load() {
@@ -19,12 +22,31 @@ export default function SettingsView() {
     setLoading(false);
   }
 
+  const checkProxy = useCallback(async () => {
+    try {
+      const data = await api("/pmai/proxy-status");
+      if (data && data.running) {
+        setProxyStatus(data);
+      } else {
+        setProxyStatus(null);
+      }
+    } catch {
+      setProxyStatus(null);
+    }
+  }, []);
+
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    checkProxy();
+    const t = setInterval(checkProxy, 5000);
+    return () => clearInterval(t);
+  }, [checkProxy]);
 
   async function onFinish(values) {
     await api("/pmai/config", { method: "POST", body: JSON.stringify(values) });
     message.success("配置已保存");
     load();
+    setTimeout(checkProxy, 500);
   }
 
   async function embedAll() {
@@ -49,6 +71,38 @@ export default function SettingsView() {
       setAiStatus("error");
     }
     setTesting(false);
+  }
+
+  async function stopProxy() {
+    setStopping(true);
+    try {
+      const data = await api("/pmai/proxy/stop", { method: "POST", body: "{}" });
+      if (data.ok) {
+        message.success("Proxy 已停止");
+        setProxyStatus(null);
+      } else {
+        message.error(data.error || "停止失败");
+      }
+    } catch (e) {
+      message.error(e.message);
+    }
+    setStopping(false);
+  }
+
+  async function restartProxy() {
+    setRestarting(true);
+    try {
+      const data = await api("/pmai/proxy/restart", { method: "POST", body: "{}" });
+      if (data.ok) {
+        message.success("Proxy 已重启");
+        setTimeout(checkProxy, 500);
+      } else {
+        message.error(data.error || "重启失败");
+      }
+    } catch (e) {
+      message.error(e.message);
+    }
+    setRestarting(false);
   }
 
   return (
@@ -96,6 +150,26 @@ export default function SettingsView() {
         <div style={{ color: "#888", fontSize: 12, marginBottom: 12 }}>
           此配置为全局生效，影响所有项目。保存在 ~/.aipmc/config.json。
         </div>
+
+        <div style={{ marginBottom: 16, display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ fontWeight: 500 }}>状态:</span>
+          {proxyStatus ? (
+            <>
+              <Tag color="green">● 运行中</Tag>
+              <span style={{ color: "#888", fontSize: 12 }}>
+                端口 {proxyStatus.port || (form.getFieldValue("proxy_port"))} · 运行 {proxyStatus.uptime || ""} · {proxyStatus.requests || 0} 请求
+              </span>
+              <Button size="small" danger icon={<PauseCircleOutlined />} onClick={stopProxy} loading={stopping}>停止</Button>
+              <Button size="small" icon={<PlayCircleOutlined />} onClick={restartProxy} loading={restarting}>重启</Button>
+            </>
+          ) : (
+            <>
+              <Tag color="default">○ 未运行</Tag>
+              <Button size="small" type="primary" icon={<PlayCircleOutlined />} onClick={restartProxy} loading={restarting}>启动</Button>
+            </>
+          )}
+        </div>
+
         <Form form={form} layout="vertical" onFinish={onFinish}>
           <Form.Item name="upstream_url" label="上游 API 端点 (OpenAI 协议)">
             <Input placeholder="https://api.deepseek.com" />
@@ -104,7 +178,9 @@ export default function SettingsView() {
             <Input placeholder="https://api.deepseek.com/anthropic" />
           </Form.Item>
           <Space>
-            <Form.Item name="proxy_port" label="Proxy 端口">
+            <Form.Item name="proxy_port" label={
+              <span>Proxy 端口 <Tooltip title="修改端口需重启 Proxy 才能生效"><span style={{ color: "#faad14" }}>⚠</span></Tooltip></span>
+            }>
               <Input placeholder="19530" style={{ width: 120 }} />
             </Form.Item>
             <Form.Item name="proxy_model" label="模型覆写 (可选)">

@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -63,12 +62,14 @@ func handleAnthropicPassthrough(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(resp.StatusCode)
 
-	// 8. Stream SSE lines directly to Claude Code
+	// 8. Stream SSE lines directly to Claude Code, capturing for inspector
 	flusher, _ := w.(http.Flusher)
+	var captureBuf bytes.Buffer
+	tee := io.TeeReader(resp.Body, &captureBuf)
 	buf := make([]byte, 4096)
 	var totalBytes int
 	for {
-		n, err := resp.Body.Read(buf)
+		n, err := tee.Read(buf)
 		if n > 0 {
 			w.Write(buf[:n])
 			totalBytes += n
@@ -81,9 +82,8 @@ func handleAnthropicPassthrough(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 9. Complete capture
-	summary := fmt.Sprintf("[anthropic passthrough, %d bytes]", totalBytes)
-	finishCapture(capID, resp.StatusCode, time.Since(startTime), nil, summary, "")
+	// 9. Complete capture with actual response body
+	finishCapture(capID, resp.StatusCode, time.Since(startTime), nil, captureBuf.String(), "")
 
 	if resp.StatusCode >= 400 {
 		log.Printf("[ANTHROPIC_PASSTHROUGH] upstream returned %d", resp.StatusCode)

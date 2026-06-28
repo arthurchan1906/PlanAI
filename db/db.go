@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"aipmc/u"
@@ -551,10 +552,11 @@ func SaveGlobalConfig(cfg GlobalConfig) error {
 
 // ProjectEntry records a registered project in ~/.aipmc/projects.json.
 type ProjectEntry struct {
-	Path      string `json:"path"`
-	Name      string `json:"name"`
-	WebPort   int    `json:"web_port"`
-	ProxyPort int    `json:"proxy_port"`
+	Path         string `json:"path"`
+	Name         string `json:"name"`
+	WebPort      int    `json:"web_port"`
+	ProxyPort    int    `json:"proxy_port"`
+	LastOpenedAt string `json:"last_opened_at"`
 }
 
 func projectsPath() string {
@@ -576,6 +578,37 @@ func LoadProjects() map[string]ProjectEntry {
 		projects = map[string]ProjectEntry{}
 	}
 	return projects
+}
+
+// LoadCleanProjects reads the registry and removes entries whose paths no longer
+// exist on disk. Returns projects sorted by last_opened_at descending.
+func LoadCleanProjects() []ProjectEntry {
+	raw := LoadProjects()
+	dirty := false
+	for path := range raw {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			delete(raw, path)
+			dirty = true
+		}
+	}
+	// Convert to slice and sort by last_opened_at descending
+	list := make([]ProjectEntry, 0, len(raw))
+	for _, e := range raw {
+		list = append(list, e)
+	}
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].LastOpenedAt > list[j].LastOpenedAt
+	})
+	if dirty {
+		m := map[string]ProjectEntry{}
+		for _, e := range list {
+			m[e.Path] = e
+		}
+		path := projectsPath()
+		os.MkdirAll(filepath.Dir(path), 0755)
+		os.WriteFile(path, u.MustMarshal(m), 0644)
+	}
+	return list
 }
 
 // SaveProject registers a project in ~/.aipmc/projects.json.

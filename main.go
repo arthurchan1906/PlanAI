@@ -2,6 +2,7 @@ package main
 
 import (
 	"embed"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
@@ -198,7 +199,8 @@ func main() {
 			proxyURL, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", gcfg.ProxyPort))
 			proxyHandler = httputil.NewSingleHostReverseProxy(proxyURL)
 		}
-		srv := web.NewServer(staticFS, newAPIHandler(), host, port, proxyHandler)
+		cwd, _ := os.Getwd()
+		srv := web.NewServer(staticFS, newAPIHandler(), host, port, proxyHandler, filepath.Base(cwd))
 		srv.Listen()
 		return
 	case "serve":
@@ -323,24 +325,73 @@ func serveCommand() int {
 	// Parse flags
 	noBrowser := false
 	noProxy := false
-	for _, a := range os.Args {
-		switch a {
+	projectFlag := ""
+	for i := 2; i < len(os.Args); i++ {
+		switch os.Args[i] {
 		case "--no-browser":
 			noBrowser = true
 		case "--no-proxy":
 			noProxy = true
+		case "--project", "-p":
+			if i+1 < len(os.Args) {
+				projectFlag = os.Args[i+1]
+				i++
+			}
 		}
 	}
 
 	gcfg := pmdb.LoadGlobalConfig()
 	exe, _ := os.Executable()
+	cwd, _ := os.Getwd()
 
-	// Step 1: Ensure proxy is running
+	// Step 1: Determine project path
+	projectPath := resolveProjectPath(projectFlag, cwd)
+	if projectPath == "" {
+		return 1 // user cancelled or error already printed
+	}
+
+	// Step 2: Check for existing web instance on this project's port
+	cfg := pmdb.LoadConfig()
+	webPort := cfg.WebPort
+	if webPort == 0 {
+		webPort = 8720
+	}
+	// Use saved port from projects.json if available
+	projects := pmdb.LoadProjects()
+	if entry, ok := projects[projectPath]; ok && entry.WebPort > 0 {
+		webPort = entry.WebPort
+	}
+
+	// Step 3: Check if port is occupied by an existing serve instance
+	if isPortInUse(webPort) {
+		if project, ok := checkExistingInstance(webPort); ok {
+			if project == filepath.Base(projectPath) {
+				fmt.Printf("✓ Web 已运行 → http://127.0.0.1:%d (项目: %s)\n", webPort, project)
+				if !noBrowser {
+					openBrowser(fmt.Sprintf("http://127.0.0.1:%d", webPort))
+				}
+				return 0
+			}
+			fmt.Fprintf(os.Stderr, "端口 :%d 已被项目 %s 占用，请先停止该项目\n", webPort, project)
+			return 1
+		}
+		// Not our instance — check PID
+		if procName := portOwnerProcess(webPort); procName != "" {
+			fmt.Fprintf(os.Stderr, "端口 :%d 被进程 %s 占用\n", webPort, procName)
+		} else {
+			fmt.Fprintf(os.Stderr, "端口 :%d 被占用，如果是刚关闭的 aipmc 进程，等待几秒后重试\n", webPort)
+		}
+		return 1
+	}
+
+	// Step 4: Switch to project directory
+	os.Chdir(projectPath)
+
+	// Step 5: Ensure proxy is running
 	proxyAddr := fmt.Sprintf("127.0.0.1:%d", gcfg.ProxyPort)
 	proxyRunning := false
 	if conn, err := net.DialTimeout("tcp", proxyAddr, 500*time.Millisecond); err == nil {
 		conn.Close()
-		// Verify it's actually our proxy
 		resp, err := http.Get(fmt.Sprintf("http://%s/__proxy/status", proxyAddr))
 		if err == nil && resp.StatusCode == 200 {
 			resp.Body.Close()
@@ -357,7 +408,6 @@ func serveCommand() int {
 			fmt.Fprintf(os.Stderr, "无法启动 proxy: %v\n", err)
 			return 1
 		}
-		// Wait for proxy to be ready
 		for i := 0; i < 30; i++ {
 			time.Sleep(200 * time.Millisecond)
 			resp, err := http.Get(fmt.Sprintf("http://%s/__proxy/status", proxyAddr))
@@ -378,31 +428,17 @@ func serveCommand() int {
 		fmt.Printf("⚠ Proxy 未运行 (--no-proxy)，Agent 请求将无法转发\n")
 	}
 
-	// Step 2: Allocate web port
-	cfg := pmdb.LoadConfig()
-	webPort := cfg.WebPort
-	if webPort == 0 {
-		webPort = 8720
-	}
-	for i := 0; i < 100; i++ {
-		ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", webPort))
-		if err == nil {
-			ln.Close()
-			break
-		}
-		webPort++
-	}
-
-	// Step 3: Register project
-	projectPath, _ := os.Getwd()
+	// Step 6: Register/update project
+	projectName := filepath.Base(projectPath)
 	pmdb.SaveProject(pmdb.ProjectEntry{
-		Path:      projectPath,
-		Name:      filepath.Base(projectPath),
-		WebPort:   webPort,
-		ProxyPort: gcfg.ProxyPort,
+		Path:         projectPath,
+		Name:         projectName,
+		WebPort:      webPort,
+		ProxyPort:    gcfg.ProxyPort,
+		LastOpenedAt: time.Now().UTC().Format(time.RFC3339),
 	})
 
-	// Step 4: Create proxy handler for embedding
+	// Step 7: Create web server
 	staticFS, err := fs.Sub(uiFS, "frontend/dist")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "加载 UI 失败: %v\n", err)
@@ -416,25 +452,159 @@ func serveCommand() int {
 		LogDir:       gcfg.ProxyLogDir,
 		AnthropicURL: gcfg.AnthropicURL,
 	})
-	srv := web.NewServer(staticFS, newAPIHandler(), "127.0.0.1", webPort, proxyHandler)
+	srv := web.NewServer(staticFS, newAPIHandler(), "127.0.0.1", webPort, proxyHandler, projectName)
 
-	// Step 5: Auto-open browser (unless --no-browser)
+	// Step 8: Auto-open browser
 	if !noBrowser {
 		go func() {
 			time.Sleep(500 * time.Millisecond)
-			url := fmt.Sprintf("http://127.0.0.1:%d", webPort)
-			openBrowser(url)
+			openBrowser(fmt.Sprintf("http://127.0.0.1:%d", webPort))
 		}()
 	}
 
-	// Step 6: Start web server (blocking)
+	// Step 9: Start web server (blocking)
 	fmt.Printf("✓ Web 启动 :%d → http://127.0.0.1:%d\n", webPort, webPort)
-	fmt.Printf("✓ 项目 %s 已注册\n", filepath.Base(projectPath))
+	fmt.Printf("✓ 项目 %s 已注册\n", projectName)
 	if err := srv.Listen(); err != nil {
 		fmt.Fprintf(os.Stderr, "web error: %v\n", err)
 		return 1
 	}
 	return 0
+}
+
+// resolveProjectPath determines which project to serve.
+func resolveProjectPath(projectFlag, cwd string) string {
+	// --project flag takes highest priority
+	if projectFlag != "" {
+		if _, err := os.Stat(projectFlag); os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "项目路径不存在: %s\n", projectFlag)
+			return ""
+		}
+		return projectFlag
+	}
+
+	projects := pmdb.LoadCleanProjects()
+
+	// CWD already registered — use directly
+	for _, p := range projects {
+		if p.Path == cwd {
+			return cwd
+		}
+	}
+
+	if len(projects) == 0 {
+		fmt.Printf("→ 注册当前目录: %s\n", cwd)
+		return cwd
+	}
+
+	// Single project — auto-select
+	if len(projects) == 1 {
+		fmt.Printf("→ 使用项目: %s (%s)\n", projects[0].Name, projects[0].Path)
+		return projects[0].Path
+	}
+
+	// Multiple projects — show selector
+	fmt.Printf("\n当前目录未注册。已注册 %d 个项目:\n\n", len(projects))
+	for i, p := range projects {
+		rel := formatTimeAgo(p.LastOpenedAt)
+		fmt.Printf("  [%d] %-20s %s %s\n", i+1, p.Name, p.Path, rel)
+	}
+	fmt.Printf("\n输入序号 [1-%d]，或 Enter 注册当前目录: ", len(projects))
+
+	var input string
+	fmt.Scanln(&input)
+	input = strings.TrimSpace(input)
+
+	if input == "" || input == "q" || input == "Q" {
+		if input == "" {
+			fmt.Printf("→ 注册当前目录: %s\n", cwd)
+			return cwd
+		}
+		return ""
+	}
+
+	var idx int
+	if _, err := fmt.Sscanf(input, "%d", &idx); err != nil || idx < 1 || idx > len(projects) {
+		fmt.Fprintf(os.Stderr, "无效输入\n")
+		return ""
+	}
+	return projects[idx-1].Path
+}
+
+func isPortInUse(port int) bool {
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 300*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
+func checkExistingInstance(port int) (project string, ok bool) {
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/health", port))
+	if err != nil {
+		return "", false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return "", false
+	}
+	var body struct {
+		Project string `json:"project"`
+		Status  string `json:"status"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&body) == nil {
+		return body.Project, body.Project != ""
+	}
+	return "", false
+}
+
+func portOwnerProcess(port int) string {
+	// Use platform-specific commands to find the process holding the port
+	switch runtime.GOOS {
+	case "windows":
+		out, err := exec.Command("netstat", "-ano", "-p", "tcp").Output()
+		if err != nil {
+			return ""
+		}
+		lines := strings.Split(string(out), "\n")
+		portStr := fmt.Sprintf(":%d", port)
+		for _, line := range lines {
+			if strings.Contains(line, portStr) && strings.Contains(line, "LISTENING") {
+				fields := strings.Fields(line)
+				if len(fields) >= 5 {
+					return fmt.Sprintf("PID %s", fields[len(fields)-1])
+				}
+			}
+		}
+	default:
+		out, err := exec.Command("lsof", "-ti", fmt.Sprintf(":%d", port)).Output()
+		if err == nil && len(out) > 0 {
+			return fmt.Sprintf("PID %s", strings.TrimSpace(string(out)))
+		}
+	}
+	return ""
+}
+
+func formatTimeAgo(iso string) string {
+	if iso == "" {
+		return ""
+	}
+	t, err := time.Parse(time.RFC3339, iso)
+	if err != nil {
+		return ""
+	}
+	diff := time.Since(t)
+	switch {
+	case diff < time.Minute:
+		return "刚刚"
+	case diff < time.Hour:
+		return fmt.Sprintf("%d分钟前", int(diff.Minutes()))
+	case diff < 24*time.Hour:
+		return fmt.Sprintf("%d小时前", int(diff.Hours()))
+	default:
+		return fmt.Sprintf("%d天前", int(diff.Hours()/24))
+	}
 }
 
 func openBrowser(url string) {
