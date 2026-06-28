@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"fmt"
 	"log"
 	"strings"
 )
@@ -35,6 +36,13 @@ type StreamNormalizer struct {
 func (n *StreamNormalizer) Process(event UnifiedStreamEvent) []UnifiedStreamEvent {
 	switch event.Type {
 	case StreamThinking:
+		const maxReasoningBuf = 64 * 1024
+		if n.ReasoningBuf.Len()+len(event.Delta) > maxReasoningBuf {
+			overflow := n.ReasoningBuf.Len() + len(event.Delta) - maxReasoningBuf
+			existing := n.ReasoningBuf.String()
+			n.ReasoningBuf.Reset()
+			n.ReasoningBuf.WriteString(existing[overflow:])
+		}
 		n.ReasoningBuf.WriteString(event.Delta)
 		return []UnifiedStreamEvent{event}
 
@@ -170,9 +178,23 @@ func NormalizeResponse(resp *OpenAIResponse) {
 				len(msg.ReasoningContent))
 		}
 
-		// ── Think-tag stripping on content ──
+		// ── Think-tag stripping + Gemma inline tool-call parsing ──
 		if s, ok := msg.Content.(string); ok && s != "" {
 			cleaned := stripThinkTags(s)
+
+			// Parse Gemma-style inline tool calls
+			cleaned, gemmaTCs := parseGemmaToolCalls(cleaned)
+			for _, tc := range gemmaTCs {
+				msg.ToolCalls = append(msg.ToolCalls, OpenAIToolCall{
+					ID:   tc.ID,
+					Type: "function",
+					Function: OpenAIToolCallFunction{
+						Name:      tc.Name,
+						Arguments: tc.Arguments,
+					},
+				})
+			}
+
 			if cleaned != s {
 				msg.Content = cleaned
 			}
@@ -265,6 +287,8 @@ func promoteReasoningToContent(raw string) string {
 // Gemma 4 inline tool-call parser
 // =============================================================================
 
+var gemmaCallSeq int
+
 // parseGemmaToolCalls scans text for inline <|tool_call|> blocks and returns
 // cleaned text (with tool-call blocks removed) and parsed tool calls.
 //
@@ -297,7 +321,9 @@ func parseGemmaToolCalls(text string) (cleaned string, toolCalls []UnifiedToolCa
 			}
 			args := parseGemmaArgs(raw[bracePos:])
 			argsJSON := gemmaArgsToJSON(args)
+			gemmaCallSeq++
 			toolCalls = append(toolCalls, UnifiedToolCall{
+				ID:        fmt.Sprintf("gemma_call_%d", gemmaCallSeq),
 				Name:      name,
 				Arguments: argsJSON,
 			})

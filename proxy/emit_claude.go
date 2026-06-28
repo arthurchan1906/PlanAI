@@ -168,11 +168,7 @@ func (e *ClaudeEmitter) Done(finishReason string, usage *UnifiedUsage) {
 	}
 
 	// Emit accumulated tool calls as tool_use blocks
-	for i := 0; i < len(e.toolAcc); i++ {
-		acc, ok := e.toolAcc[i]
-		if !ok {
-			continue
-		}
+	for _, acc := range e.toolAcc {
 		blockIdx := e.nextBlockIndex
 		e.nextBlockIndex++
 		e.emitSSE("content_block_start", map[string]any{
@@ -221,6 +217,8 @@ func (e *ClaudeEmitter) Done(finishReason string, usage *UnifiedUsage) {
 		stopReason = "max_tokens"
 	case "tool_calls":
 		stopReason = "tool_use"
+	case "error":
+		stopReason = "error"
 	}
 
 	e.emitSSE("message_delta", map[string]any{

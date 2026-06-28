@@ -88,22 +88,23 @@ func (e *GeminiEmitter) Done(finishReason string, usage *UnifiedUsage) {
 	// Flush accumulated tool calls
 	if len(e.toolAcc) > 0 {
 		var parts []GeminiPart
-		for i := 0; i < len(e.toolAcc); i++ {
-			if acc, ok := e.toolAcc[i]; ok {
-				var args map[string]any
-				json.Unmarshal([]byte(acc.Arguments), &args)
-				log.Printf("[FUNCTION_CALL STREAM] name=%s args=%s id=%s", acc.Name, acc.Arguments, acc.ID)
-				parts = append(parts, GeminiPart{
-					FunctionCall: &GeminiFuncCall{
-						ID:   acc.ID,
-						Name: acc.Name,
-						Args: args,
-					},
-				})
-			}
+		for _, acc := range e.toolAcc {
+			var args map[string]any
+			json.Unmarshal([]byte(acc.Arguments), &args)
+			log.Printf("[FUNCTION_CALL STREAM] name=%s args=%s id=%s", acc.Name, acc.Arguments, acc.ID)
+			parts = append(parts, GeminiPart{
+				FunctionCall: &GeminiFuncCall{
+					ID:   acc.ID,
+					Name: acc.Name,
+					Args: args,
+				},
+			})
 		}
 		if len(parts) > 0 {
 			fr := e.pendingFinish
+			if fr == "" {
+				fr = finishReason
+			}
 			if fr == "" {
 				fr = "TOOL_CALLS"
 			}
@@ -120,6 +121,9 @@ func (e *GeminiEmitter) Done(finishReason string, usage *UnifiedUsage) {
 
 	// Final chunk with usage
 	reason := e.pendingFinish
+	if reason == "" {
+		reason = finishReason
+	}
 	if reason == "" {
 		reason = "STOP"
 	}

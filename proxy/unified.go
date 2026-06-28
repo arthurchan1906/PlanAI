@@ -224,7 +224,10 @@ func parseUpstreamSSE(r io.Reader) <-chan UnifiedStreamEvent {
 			if len(choices) == 0 {
 				continue
 			}
-			choice := choices[0].(map[string]any)
+			choice, ok := choices[0].(map[string]any)
+			if !ok {
+				continue
+			}
 
 			// Track finish_reason
 			if fr, ok := choice["finish_reason"].(string); ok && fr != "" {
@@ -260,8 +263,15 @@ func parseUpstreamSSE(r io.Reader) <-chan UnifiedStreamEvent {
 			// ── tool_calls → StreamToolCallStart / StreamToolCallDelta ──
 			if tcs, ok := delta["tool_calls"].([]any); ok {
 				for _, tc := range tcs {
-					tcMap := tc.(map[string]any)
-					idx := int(tcMap["index"].(float64))
+					tcMap, ok := tc.(map[string]any)
+					if !ok {
+						continue
+					}
+					rawIdx, ok := tcMap["index"].(float64)
+					if !ok {
+						continue
+					}
+					idx := int(rawIdx)
 
 					id, _ := tcMap["id"].(string)
 					fn, hasFn := tcMap["function"].(map[string]any)

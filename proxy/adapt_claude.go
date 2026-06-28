@@ -150,7 +150,7 @@ func (a *ClaudeAdapter) ConvertResponse(openaiResp *OpenAIResponse, model string
 		var input json.RawMessage
 		if tc.Function.Arguments == "" {
 			input = json.RawMessage("{}")
-		} else if strings.TrimSpace(tc.Function.Arguments)[0] == '{' {
+		} else if s := strings.TrimSpace(tc.Function.Arguments); len(s) > 0 && s[0] == '{' {
 			input = json.RawMessage(tc.Function.Arguments)
 		} else {
 			input = json.RawMessage("{}")

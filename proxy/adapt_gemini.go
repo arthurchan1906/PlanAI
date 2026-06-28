@@ -28,12 +28,19 @@ func (a *GeminiAdapter) ParseRequest(r *http.Request) (*UnifiedReq, error) {
 		return nil, err
 	}
 
-	return a.toUnified(&geminiReq), nil
+	// Extract model name from the URL path (Gemini puts it in /v1/models/{model}:action)
+	model := extractModel(r.URL.Path)
+	return a.toUnified(&geminiReq, model), nil
 }
 
-func (a *GeminiAdapter) toUnified(g *GeminiRequest) *UnifiedReq {
+func (a *GeminiAdapter) toUnified(g *GeminiRequest, urlModel string) *UnifiedReq {
+	// Prefer the URL-path model; effectiveModel overrides with proxyModel if configured
+	model := urlModel
+	if proxyModel != "" {
+		model = proxyModel
+	}
 	req := &UnifiedReq{
-		Model:  effectiveModel(extractModelFromGemini(g)),
+		Model:  model,
 		Stream: false,
 	}
 
@@ -82,12 +89,6 @@ func (a *GeminiAdapter) toUnified(g *GeminiRequest) *UnifiedReq {
 	}
 
 	return req
-}
-
-func extractModelFromGemini(g *GeminiRequest) string {
-	// The model isn't in the Gemini request body; it comes from the URL path.
-	// This is set by the caller via effectiveModel override.
-	return ""
 }
 
 // ConvertResponse converts a normalized OpenAI response to a Gemini response.

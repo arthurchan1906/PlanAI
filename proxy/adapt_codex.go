@@ -80,6 +80,14 @@ func (a *CodexAdapter) toUnified(req *ResponsesRequest) *UnifiedReq {
 	instr := instructionText(req.Instructions)
 	if instr != "" {
 		messages = append(messages, UnifiedMsg{Role: "system", Content: instr})
+	} else {
+		// Mirror old-path behavior: inject a default system prompt so the upstream
+		// model knows it's an AI coding assistant (some models need this hint).
+		log.Printf("[CODEX] WARNING: empty instructions — injecting default system prompt")
+		messages = append(messages, UnifiedMsg{
+			Role:    "system",
+			Content: "You are an AI coding assistant. Use available tools to help the user with their software engineering tasks.",
+		})
 	}
 
 	// Input items → messages

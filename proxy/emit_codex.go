@@ -245,6 +245,8 @@ func (e *CodexEmitter) Done(finishReason string, usage *UnifiedUsage) {
 	status := "completed"
 	if finishReason == "length" {
 		status = "incomplete"
+	} else if finishReason == "error" {
+		status = "failed"
 	}
 	totalTokens := 0
 	if usage != nil {
