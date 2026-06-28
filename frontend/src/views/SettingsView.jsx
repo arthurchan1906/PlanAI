@@ -212,14 +212,8 @@ export default function SettingsView() {
             <Button type="primary" htmlType="submit" loading={loading}>保存</Button>
           </Form.Item>
         </Form>
-        <div style={{ color: "#888", fontSize: 12, marginTop: 8 }}>
-          API Key 通过环境变量 UPSTREAM_KEY 设置，不保存在文件中。<br/>
-          设置 Anthropic 端点后，Claude Code 请求将直接透传，绕过 OpenAI 翻译层，
-          完整保留 thinking/signature/tool_use 结构。
-        </div>
-      </Card>
-
-      <Card size="small" title="Agent 启动器" style={{ marginBottom: 16 }}>
+        <div style={{ borderTop: "1px solid #f0f0f0", margin: "12px 0" }} />
+        <div style={{ fontWeight: 500, marginBottom: 8 }}>启动 Agent</div>
         <Space>
           <Button icon={<RobotOutlined />} loading={launching === "claude"}
             onClick={() => launchAgent("claude")}>Claude Code</Button>
@@ -229,7 +223,9 @@ export default function SettingsView() {
             onClick={() => launchAgent("gemini")}>Gemini CLI</Button>
         </Space>
         <div style={{ color: "#888", fontSize: 12, marginTop: 8 }}>
-          在系统原生终端中启动 AI 编码 Agent，自动配置代理连接。
+          API Key 通过环境变量 UPSTREAM_KEY 设置，不保存在文件中。<br/>
+          设置 Anthropic 端点后，Claude Code 请求将直接透传，绕过 OpenAI 翻译层，
+          完整保留 thinking/signature/tool_use 结构。
         </div>
       </Card>
     </div>
