@@ -52,7 +52,6 @@ import AuditView from "./views/AuditView";
 import DiscussionsView from "./views/DiscussionsView";
 import ActivityView from "./views/ActivityView";
 import SettingsView from "./views/SettingsView";
-import DashboardView from "./views/DashboardView";
 import ChatView from "./views/ChatView";
 
 const { Header, Sider, Content } = Layout;
@@ -76,7 +75,7 @@ function ProjectFooter() {
 function getViewFromHash() {
   const raw = window.location.hash.replace(/^#/, "");
   if (raw && NAV_ITEMS.some(i => i.key === raw)) return raw;
-  return "dashboard";
+  return "activity";
 }
 
 function ConsoleApp() {
@@ -313,7 +312,7 @@ function ConsoleApp() {
           <div>
             <Breadcrumb
               items={[
-                { title: "工作台", onClick: () => setView("dashboard") },
+                
                 { title: NAV_ITEMS.find(i => i.key === view)?.label }
               ]}
               style={{ marginBottom: 8 }}
@@ -322,8 +321,6 @@ function ConsoleApp() {
           </div>
         </Header>
         <Content className={`console-content${view === "chat" ? " console-content-fill" : ""}`}>
-          {view === "dashboard" && <DashboardView />}
-          {false && <DashboardView visions={visions} principles={principles} ideas={ideas} bugs={bugs} dashboard={dashboard} aiContext={aiContext} nextPacket={nextPacket} handoff={handoff} inbox={inbox} canon={canon} loading={loading} onOpenCanon={id => { setCanonForm({...canonForm, decisionId: id || ""}); setView("canon"); }} onOpenDecisions={() => setView("decisions")} onOpenPlans={() => setView("planning")} onOpenCommits={() => setView("commits")} onOpenCommitAttention={handleOpenCommitAttention} onOpenIdeas={() => setView("ideas")} onOpenDocs={() => setView("docs")} onOpenDaily={() => setView("daily")} onOpenPrinciples={() => setView("principles")} />}
           {view === "planning" && (
             <RoadmapView
               roadmaps={roadmaps}
