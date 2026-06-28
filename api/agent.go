@@ -54,6 +54,7 @@ func (s *Server) handleAgentLaunch(w http.ResponseWriter, body map[string]any) {
 		cmd = exec.Command("gemini")
 		cmd.Env = append(os.Environ(),
 			"GEMINI_API_KEY="+os.Getenv("UPSTREAM_KEY"),
+			"GEMINI_API_BASE="+proxyURL,
 		)
 	default:
 		web.SendError(w, 400, fmt.Sprintf("未知 agent: %s (支持 claude/codex/gemini)", agentName))

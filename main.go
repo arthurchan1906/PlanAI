@@ -320,6 +320,18 @@ func main() {
 }
 
 func serveCommand() int {
+	// Parse flags
+	noBrowser := false
+	noProxy := false
+	for _, a := range os.Args {
+		switch a {
+		case "--no-browser":
+			noBrowser = true
+		case "--no-proxy":
+			noProxy = true
+		}
+	}
+
 	gcfg := pmdb.LoadGlobalConfig()
 	exe, _ := os.Executable()
 
@@ -336,7 +348,7 @@ func serveCommand() int {
 		}
 	}
 
-	if !proxyRunning {
+	if !proxyRunning && !noProxy {
 		fmt.Printf("→ Proxy 未运行，启动中...\n")
 		cmd := exec.Command(exe, "proxy")
 		cmd.Stdout = os.Stdout
@@ -360,8 +372,10 @@ func serveCommand() int {
 			return 1
 		}
 		fmt.Printf("✓ Proxy 就绪 :%d\n", gcfg.ProxyPort)
-	} else {
+	} else if !noProxy {
 		fmt.Printf("✓ Proxy 已在运行 :%d\n", gcfg.ProxyPort)
+	} else {
+		fmt.Printf("⚠ Proxy 未运行 (--no-proxy)，Agent 请求将无法转发\n")
 	}
 
 	// Step 2: Allocate web port
@@ -404,12 +418,14 @@ func serveCommand() int {
 	})
 	srv := web.NewServer(staticFS, newAPIHandler(), "127.0.0.1", webPort, proxyHandler)
 
-	// Step 5: Auto-open browser
-	go func() {
-		time.Sleep(500 * time.Millisecond)
-		url := fmt.Sprintf("http://127.0.0.1:%d", webPort)
-		openBrowser(url)
-	}()
+	// Step 5: Auto-open browser (unless --no-browser)
+	if !noBrowser {
+		go func() {
+			time.Sleep(500 * time.Millisecond)
+			url := fmt.Sprintf("http://127.0.0.1:%d", webPort)
+			openBrowser(url)
+		}()
+	}
 
 	// Step 6: Start web server (blocking)
 	fmt.Printf("✓ Web 启动 :%d → http://127.0.0.1:%d\n", webPort, webPort)
