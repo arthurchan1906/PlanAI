@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { Button, Card, Form, Input, Space, Tag, Typography, message, Tooltip } from "antd";
-import { ReloadOutlined, CheckCircleOutlined, PauseCircleOutlined, PlayCircleOutlined } from "@ant-design/icons";
+import { ReloadOutlined, CheckCircleOutlined, PauseCircleOutlined, PlayCircleOutlined, CodeOutlined, RobotOutlined, ThunderboltOutlined } from "@ant-design/icons";
 import { api } from "../utils/api";
 
 const { Title } = Typography;
@@ -12,6 +12,7 @@ export default function SettingsView() {
   const [proxyStatus, setProxyStatus] = useState(null);
   const [stopping, setStopping] = useState(false);
   const [restarting, setRestarting] = useState(false);
+  const [launching, setLaunching] = useState(null);
   const [form] = Form.useForm();
 
   async function load() {
@@ -103,6 +104,23 @@ export default function SettingsView() {
       message.error(e.message);
     }
     setRestarting(false);
+  }
+
+  async function launchAgent(name) {
+    setLaunching(name);
+    try {
+      const data = await api("/pmai/agent/launch", {
+        method: "POST", body: JSON.stringify({ agent: name }),
+      });
+      if (data.ok) {
+        message.success(`${name} 已启动`);
+      } else {
+        message.error(data.error || "启动失败");
+      }
+    } catch (e) {
+      message.error(e.message);
+    }
+    setLaunching(null);
   }
 
   return (
@@ -198,6 +216,20 @@ export default function SettingsView() {
           API Key 通过环境变量 UPSTREAM_KEY 设置，不保存在文件中。<br/>
           设置 Anthropic 端点后，Claude Code 请求将直接透传，绕过 OpenAI 翻译层，
           完整保留 thinking/signature/tool_use 结构。
+        </div>
+      </Card>
+
+      <Card size="small" title="Agent 启动器" style={{ marginBottom: 16 }}>
+        <Space>
+          <Button icon={<RobotOutlined />} loading={launching === "claude"}
+            onClick={() => launchAgent("claude")}>Claude Code</Button>
+          <Button icon={<CodeOutlined />} loading={launching === "codex"}
+            onClick={() => launchAgent("codex")}>Codex CLI</Button>
+          <Button icon={<ThunderboltOutlined />} loading={launching === "gemini"}
+            onClick={() => launchAgent("gemini")}>Gemini CLI</Button>
+        </Space>
+        <div style={{ color: "#888", fontSize: 12, marginTop: 8 }}>
+          在系统原生终端中启动 AI 编码 Agent，自动配置代理连接。
         </div>
       </Card>
     </div>

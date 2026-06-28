@@ -238,7 +238,6 @@ func effectiveModel(agentModel string) string {
 func handler(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	agent := detectAgent(path)
-	log.Printf("→ %s %s", r.Method, path)
 
 	rw := &responseWrapper{ResponseWriter: w, status: 200}
 
@@ -778,7 +777,6 @@ func handleUnifiedNonStream(w http.ResponseWriter, r *http.Request, adapter Prot
 	apiKey := extractAPIKey(r)
 	model := req.Model
 	agent := detectAgent(r.URL.Path)
-	log.Printf("[UNIFIED] → non-stream  model=%s", model)
 
 	// Convert to OpenAI format and send upstream
 	openaiReq := unifiedToOpenAI(req)
@@ -810,7 +808,6 @@ func handleUnifiedNonStream(w http.ResponseWriter, r *http.Request, adapter Prot
 
 	finishCapture(capID, http.StatusOK, time.Since(startTime), nil, string(responseJSON), "")
 
-	log.Printf("[UNIFIED] ← complete  model=%s", model)
 }
 
 // handleUnifiedStream handles a streaming request using the unified pipeline:
@@ -833,7 +830,6 @@ func handleUnifiedStream(w http.ResponseWriter, r *http.Request, adapter Protoco
 	apiKey := extractAPIKey(r)
 	model := req.Model
 	agent := detectAgent(r.URL.Path)
-	log.Printf("[UNIFIED] → stream  model=%s", model)
 
 	openaiReq := unifiedToOpenAI(req)
 
@@ -894,7 +890,6 @@ func handleUnifiedStream(w http.ResponseWriter, r *http.Request, adapter Protoco
 
 	finishCapture(capID, status, time.Since(startTime), nil, cap.responseText(), cap.eventsJSON())
 
-	log.Printf("[UNIFIED] ← stream complete  model=%s  tokens=%d", model, totalTokens)
 }
 
 func firstN[T any](slice []T, n int) []T {

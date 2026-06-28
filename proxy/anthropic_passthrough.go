@@ -44,7 +44,6 @@ func handleAnthropicPassthrough(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 6. Send request to upstream
-	log.Printf("[ANTHROPIC_PASSTHROUGH] → %s %s", r.Method, targetURL)
 	resp, err := http.DefaultClient.Do(proxyReq)
 	if err != nil {
 		log.Printf("[ANTHROPIC_PASSTHROUGH] ERROR upstream: %v", err)
@@ -88,7 +87,6 @@ func handleAnthropicPassthrough(w http.ResponseWriter, r *http.Request) {
 	if resp.StatusCode >= 400 {
 		log.Printf("[ANTHROPIC_PASSTHROUGH] upstream returned %d", resp.StatusCode)
 	} else {
-		log.Printf("[ANTHROPIC_PASSTHROUGH] ← complete  bytes=%d  status=%d", totalBytes, resp.StatusCode)
 	}
 }
 
