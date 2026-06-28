@@ -3,6 +3,8 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	pmdb "aipmc/db"
 	"aipmc/u"
@@ -71,6 +73,16 @@ func (s *Server) handlePostConfig(w http.ResponseWriter, body map[string]any) {
 		return
 	}
 	s.deps.App.ReloadAI()
+
+	// Update projects.json with the new web_port so serve can pick it up
+	if cwd, err := os.Getwd(); err == nil {
+		pmdb.SaveProject(pmdb.ProjectEntry{
+			Path:      cwd,
+			Name:      filepath.Base(cwd),
+			WebPort:   cfg.WebPort,
+			ProxyPort: gcfg.ProxyPort,
+		})
+	}
 
 	// Reload proxy config if proxy is running (best-effort, ignore errors)
 	go func() {
