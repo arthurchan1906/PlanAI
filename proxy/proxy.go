@@ -267,7 +267,6 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	case path == "/v1/models" || path == "/models" || strings.HasPrefix(path, "/v1/"):
 		handlePassthrough(rw, r)
 	default:
-		log.Printf("404: %s %s", r.Method, path)
 		http.Error(rw, "not found", http.StatusNotFound)
 	}
 
