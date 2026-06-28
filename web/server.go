@@ -18,13 +18,14 @@ type Server struct {
 	port         int
 	proxyHandler http.Handler // proxy handler for /__proxy/* requests; nil = skip forwarding
 	projectName  string       // used by /health endpoint
+	projectPath  string       // full filesystem path of the managed project
 }
 
 // NewServer creates a Server. staticFS provides the React frontend files.
 // apiHandler handles /pmai/ API requests. proxyHandler is the proxy's http.Handler
 // for /__proxy/* inspection endpoints; pass nil to skip forwarding.
 // projectName is displayed by /health for instance detection.
-func NewServer(staticFS fs.FS, apiHandler http.Handler, host string, port int, proxyHandler http.Handler, projectName string) *Server {
+func NewServer(staticFS fs.FS, apiHandler http.Handler, host string, port int, proxyHandler http.Handler, projectName string, projectPath string) *Server {
 	return &Server{
 		staticFS:     staticFS,
 		apiHandler:   apiHandler,
@@ -32,6 +33,7 @@ func NewServer(staticFS fs.FS, apiHandler http.Handler, host string, port int, p
 		port:         port,
 		proxyHandler: proxyHandler,
 		projectName:  projectName,
+		projectPath:  projectPath,
 	}
 }
 
@@ -48,7 +50,7 @@ func (s *Server) Listen() error {
 		s.apiHandler.ServeHTTP(w, r)
 	})
 	apiMux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		SendJSON(w, map[string]any{"status": "ok", "project": s.projectName})
+		SendJSON(w, map[string]any{"status": "ok", "project": s.projectName, "path": s.projectPath})
 	})
 
 	fileServer := http.FileServer(http.FS(s.staticFS))

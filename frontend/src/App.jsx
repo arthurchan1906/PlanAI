@@ -58,6 +58,21 @@ import ChatView from "./views/ChatView";
 const { Header, Sider, Content } = Layout;
 const { Title, Text } = Typography;
 
+function ProjectFooter() {
+  const [path, setPath] = useState("");
+  useEffect(() => {
+    fetch("/health").then(r => r.json()).then(d => {
+      if (d.path) setPath(d.path);
+    }).catch(() => {});
+  }, []);
+  if (!path) return null;
+  return (
+    <div style={{ padding: "8px 16px", borderTop: "1px solid #30363d", color: "#8b949e", fontSize: 11, wordBreak: "break-all" }}>
+      {path}
+    </div>
+  );
+}
+
 function getViewFromHash() {
   const raw = window.location.hash.replace(/^#/, "");
   if (raw && NAV_ITEMS.some(i => i.key === raw)) return raw;
@@ -291,6 +306,7 @@ function ConsoleApp() {
           }))}
           onClick={({ key }) => { if (key === "proxy") { window.open("http://localhost:19530/__proxy/inspect", "_blank"); } else { setView(key); } }}
         />
+        <ProjectFooter />
       </Sider>
       <Layout>
         <Header className="console-header">

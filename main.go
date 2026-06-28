@@ -196,7 +196,7 @@ func main() {
 			proxyHandler = httputil.NewSingleHostReverseProxy(proxyURL)
 		}
 		cwd, _ := os.Getwd()
-		srv := web.NewServer(staticFS, newAPIHandler(), host, port, proxyHandler, filepath.Base(cwd))
+		srv := web.NewServer(staticFS, newAPIHandler(), host, port, proxyHandler, filepath.Base(cwd), cwd)
 		srv.Listen()
 		return
 	case "serve":
@@ -446,7 +446,7 @@ func serveCommand() int {
 		LogDir:       gcfg.ProxyLogDir,
 		AnthropicURL: gcfg.AnthropicURL,
 	})
-	srv := web.NewServer(staticFS, newAPIHandler(), "127.0.0.1", webPort, proxyHandler, projectName)
+	srv := web.NewServer(staticFS, newAPIHandler(), "127.0.0.1", webPort, proxyHandler, projectName, projectPath)
 
 	// Step 7: Auto-open browser
 	if !noBrowser {
