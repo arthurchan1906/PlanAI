@@ -54,7 +54,7 @@ func (s *Server) handleAgentLaunch(w http.ResponseWriter, body map[string]any) {
 	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", proxyPort)
 	upstreamKey := os.Getenv("UPSTREAM_KEY")
 
-	cmd := exec.Command("")
+	var cmd *exec.Cmd
 	var envOverrides []string
 	switch agentName {
 	case "claude", "claude-code":
