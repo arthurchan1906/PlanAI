@@ -33,38 +33,6 @@ func (a *CodexAdapter) ParseRequest(r *http.Request) (*UnifiedReq, error) {
 		return nil, err
 	}
 
-	// Log request info
-	var toolNames []string
-	for _, t := range req.Tools {
-		switch t.Type {
-		case "function", "":
-			name := t.Name
-			if name == "" && t.Function != nil {
-				name = t.Function.Name
-			}
-			toolNames = append(toolNames, name)
-		case "namespace":
-			for _, nt := range t.Tools {
-				name := nt.Name
-				if name == "" && nt.Function != nil {
-					name = nt.Function.Name
-				}
-				toolNames = append(toolNames, name)
-			}
-		default:
-			toolNames = append(toolNames, t.Type+":"+t.Name)
-		}
-	}
-	msgCount := 0
-	switch v := req.Input.(type) {
-	case []any:
-		msgCount = len(v)
-	case string:
-		msgCount = 1
-	}
-	log.Printf("[CODEX] → generate  model=%s stream=%v max_tokens=%v tools=%d msgs=%d names=%v",
-		req.Model, req.Stream, req.MaxOutputTokens, len(req.Tools), msgCount, firstN(toolNames, 15))
-
 	return a.toUnified(&req), nil
 }
 
@@ -83,7 +51,6 @@ func (a *CodexAdapter) toUnified(req *ResponsesRequest) *UnifiedReq {
 	} else {
 		// Mirror old-path behavior: inject a default system prompt so the upstream
 		// model knows it's an AI coding assistant (some models need this hint).
-		log.Printf("[CODEX] WARNING: empty instructions — injecting default system prompt")
 		messages = append(messages, UnifiedMsg{
 			Role:    "system",
 			Content: "You are an AI coding assistant. Use available tools to help the user with their software engineering tasks.",
@@ -117,7 +84,6 @@ func (a *CodexAdapter) toUnified(req *ResponsesRequest) *UnifiedReq {
 		case "namespace":
 			chat.Tools = append(chat.Tools, explodeNamespaceToUnified(t)...)
 		default:
-			log.Printf("[CODEX] WARNING: skipping unsupported tool type=%q name=%q", t.Type, t.Name)
 		}
 	}
 
@@ -382,11 +348,9 @@ func codexToolToUnified(tool ResponsesTool) UnifiedTool {
 }
 
 func explodeNamespaceToUnified(tool ResponsesTool) []UnifiedTool {
-	log.Printf("[CODEX] exploding namespace tool %q with %d nested tools", tool.Name, len(tool.Tools))
 	var out []UnifiedTool
 	for _, nt := range tool.Tools {
 		if nt.Type != "" && nt.Type != "function" {
-			log.Printf("[CODEX] WARNING: skipping nested tool type=%q name=%q in namespace %q", nt.Type, nt.Name, tool.Name)
 			continue
 		}
 		name := nt.Name

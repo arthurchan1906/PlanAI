@@ -28,8 +28,7 @@ func (a *ClaudeAdapter) ParseRequest(r *http.Request) (*UnifiedReq, error) {
 		return nil, err
 	}
 
-	model := req.Model
-	log.Printf("[CLAUDE] → messages  model=%s stream=%v", model, req.Stream)
+	
 
 	return a.toUnified(&req), nil
 }

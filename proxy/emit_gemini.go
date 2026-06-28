@@ -91,7 +91,6 @@ func (e *GeminiEmitter) Done(finishReason string, usage *UnifiedUsage) {
 		for _, acc := range e.toolAcc {
 			var args map[string]any
 			json.Unmarshal([]byte(acc.Arguments), &args)
-			log.Printf("[FUNCTION_CALL STREAM] name=%s args=%s id=%s", acc.Name, acc.Arguments, acc.ID)
 			parts = append(parts, GeminiPart{
 				FunctionCall: &GeminiFuncCall{
 					ID:   acc.ID,

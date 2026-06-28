@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 )
@@ -133,7 +132,6 @@ func (a *GeminiAdapter) ConvertResponse(openaiResp *OpenAIResponse, model string
 		for _, tc := range msg.ToolCalls {
 			var args map[string]any
 			json.Unmarshal([]byte(tc.Function.Arguments), &args)
-			log.Printf("[FUNCTION_CALL] name=%s args=%s id=%s", tc.Function.Name, tc.Function.Arguments, tc.ID)
 			parts = append(parts, GeminiPart{
 				FunctionCall: &GeminiFuncCall{
 					ID:   tc.ID,

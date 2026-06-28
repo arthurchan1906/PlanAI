@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"fmt"
-	"log"
 	"strings"
 )
 
@@ -143,8 +142,6 @@ func (n *StreamNormalizer) finalize(event UnifiedStreamEvent) []UnifiedStreamEve
 	if n.ReasoningBuf.Len() > 0 && !n.HasContent {
 		promoted := promoteReasoningToContent(n.ReasoningBuf.String())
 		if promoted != "" {
-			log.Printf("[NORMALIZE] promoting reasoning→content (%d bytes reasoning, no content)",
-				n.ReasoningBuf.Len())
 			out = append(out, UnifiedStreamEvent{Type: StreamText, Delta: promoted})
 		}
 	}
@@ -174,8 +171,6 @@ func NormalizeResponse(resp *OpenAIResponse) {
 		if msg.ReasoningContent != "" && !hasContent {
 			promoted := promoteReasoningToContent(msg.ReasoningContent)
 			msg.Content = promoted
-			log.Printf("[NORMALIZE] non-stream promote reasoning→content (%d bytes)",
-				len(msg.ReasoningContent))
 		}
 
 		// ── Think-tag stripping + Gemma inline tool-call parsing ──
