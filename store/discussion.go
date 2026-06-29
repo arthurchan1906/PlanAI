@@ -803,3 +803,14 @@ func LinkedDiscussionSessions(targetType, targetID string, limit int) ([]map[str
 	}
 	return out, nil
 }
+
+// UpdateDiscussionSessionID writes back a resolved session_id for orphan MCP rows.
+func UpdateDiscussionSessionID(id, sessionID string) error {
+	db, err := pmdb.Open()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	_, err = db.Exec("UPDATE discussion_log SET session_id=? WHERE id=? AND (session_id='' OR session_id='unknown')", sessionID, id)
+	return err
+}

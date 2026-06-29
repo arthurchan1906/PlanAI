@@ -1,8 +1,10 @@
 package session
 
 import (
+	"strings"
 	"time"
 
+	"aipmc/store"
 	"aipmc/u"
 )
 
@@ -38,6 +40,11 @@ func MergeOrphans(
 		}
 		out[key] = append(out[key], o)
 		consumed[id] = true
+		// Write session_id back to discussion_log
+		parts := strings.SplitN(key, "|", 2)
+		if len(parts) == 2 {
+			store.UpdateDiscussionSessionID(id, parts[1])
+		}
 	}
 	return out
 }

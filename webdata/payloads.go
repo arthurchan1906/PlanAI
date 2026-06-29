@@ -2,11 +2,13 @@ package webdata
 
 import (
 	"encoding/json"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
 
 	"aipmc/analyze"
+	pmdb "aipmc/db"
 	"aipmc/store"
 	"aipmc/u"
 )
@@ -176,6 +178,15 @@ func ActivityPayload() map[string]any {
 	fileCounts := map[string]int{}
 	var graphEdges [][3]string // [source, target, relation]
 
+	// ── A: MCP call edges — scan discussion_log for aipm_record_commit/create_task/bug ──
+	mcpEdges := buildMCPEdges()
+
+	// ── C: Commit time-window edges — match sessions to commits by FirstSeen/LastSeen ──
+	commitEdges := buildCommitWindowEdges(sessions)
+
+	graphEdges = append(graphEdges, mcpEdges...)
+	graphEdges = append(graphEdges, commitEdges...)
+
 	for _, s := range sessions {
 		card := activityCard{
 			SessionID:   s.SessionID,
@@ -277,11 +288,126 @@ func ActivityPayload() map[string]any {
 		graphEdges = [][3]string{}
 	}
 
-	return map[string]any{
-		"sessions":    cards,
-		"alerts":      map[string]any{"file_hotspots": hotspots, "tentative_links": tentativeCount},
-		"graph_edges": graphEdges,
+	// Build entity title lookup for graph labels
+	entityLabels := map[string]string{}
+	for _, edge := range graphEdges {
+		for _, id := range []string{edge[0], edge[1]} {
+			if strings.Contains(id, ":") && !strings.HasPrefix(id, "file:") {
+				entityLabels[id] = lookupEntityTitle(id)
+			}
+		}
 	}
+
+	return map[string]any{
+		"sessions":      cards,
+		"alerts":        map[string]any{"file_hotspots": hotspots, "tentative_links": tentativeCount},
+		"graph_edges":   graphEdges,
+		"entity_labels": entityLabels,
+	}
+}
+
+func lookupEntityTitle(id string) string {
+	// id format: "task:task-20260615-xxx" or "bug:bug-20260624-xxx"
+	parts := strings.SplitN(id, ":", 2)
+	if len(parts) < 2 {
+		return id
+	}
+	prefix := parts[0]  // "task", "bug", "commit", "plan", "decision"
+	eid := parts[1]     // "task-20260615-xxx"
+
+	switch prefix {
+	case "task":
+		if t, err := store.GetTaskSimple(eid); err == nil {
+			return u.Str(t["title"])
+		}
+	case "bug":
+		if b, err := store.GetBug(eid); err == nil {
+			return u.Str(b["title"])
+		}
+	case "commit":
+		if c, err := store.GetCommit(eid); err == nil {
+			return u.Str(c["title"])
+		}
+	case "plan":
+		if p, err := store.GetPlan(eid); err == nil {
+			return u.Str(p["title"])
+		}
+	case "decision":
+		if d, err := store.GetDecision(eid); err == nil {
+			return u.Str(d["title"])
+		}
+	}
+	return id
+}
+
+var mcpEntityRE = regexp.MustCompile(`(?i)(task|plan|decision|commit|bug)-\d{8}-\d{6}-[a-f0-9]{6}`)
+
+// buildMCPEdges scans discussion_log for MCP calls with resolved session_ids.
+func buildMCPEdges() [][3]string {
+	db, err := pmdb.Open()
+	if err != nil {
+		return nil
+	}
+	defer db.Close()
+
+	rows, err := db.Query(`SELECT session_id, content FROM discussion_log
+		WHERE (content LIKE '📡 aipm_record_commit%' OR content LIKE '📡 aipm_create_task%' OR content LIKE '📡 aipm_record_bug%')
+		AND session_id != '' AND session_id != 'unknown'
+		ORDER BY created_at DESC LIMIT 500`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var edges [][3]string
+	seen := map[string]bool{}
+	for rows.Next() {
+		var sid, content string
+		rows.Scan(&sid, &content)
+		for _, eid := range mcpEntityRE.FindAllString(content, -1) {
+			key := sid + "|" + eid
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			entityType := "entity"
+			if idx := strings.IndexByte(eid, '-'); idx > 0 {
+				entityType = eid[:idx]
+			}
+			edges = append(edges, [3]string{sid, entityType + ":" + eid, "refers_to:mcp:" + entityType})
+		}
+	}
+	return edges
+}
+
+// buildCommitWindowEdges matches sessions to commits by time window (FirstSeen → LastSeen).
+func buildCommitWindowEdges(sessions []store.AgentSessionSummary) [][3]string {
+	var edges [][3]string
+	seen := map[string]bool{}
+
+	for _, s := range sessions {
+		if s.FirstSeen == "" {
+			continue
+		}
+		end := s.LastSeen
+		if end == "" {
+			end = s.FirstSeen
+		}
+		// Extend window by 30 min on each side
+		commits, err := store.FindCommitsInWindow(s.FirstSeen, end)
+		if err != nil || len(commits) == 0 {
+			continue
+		}
+		for _, c := range commits {
+			key := s.SessionID + "|" + c.ID
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			edges = append(edges, [3]string{s.SessionID, "commit:" + c.ID, "refers_to:commit"})
+		}
+	}
+	return edges
 }
 
 func parseEntityRefs(raw string) []string {
