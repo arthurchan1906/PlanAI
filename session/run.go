@@ -89,6 +89,24 @@ func Run(opts RunOpts) (RunResult, error) {
 		messages := CombineMessages(rows, mergedRows)
 		review := ReviewSession(s.SessionID, s.Source, messages, len(mergedRows), nil)
 
+		// Inject commits in the session's time window as B1 context
+		// Dual source: git log (authoritative) + AIPM commits (entity links)
+		if gitCommits, err := store.FindGitCommitsInWindow(s.FirstSeen, s.LastSeen); err == nil {
+			review.CommitsInWindow = gitCommits
+		}
+		if aipmCommits, err := store.FindCommitsInWindow(s.FirstSeen, s.LastSeen); err == nil {
+			// Merge AIPM commits — if not already present, add for entity context
+			seen := make(map[string]bool)
+			for _, c := range review.CommitsInWindow {
+				seen[c.Title] = true
+			}
+			for _, c := range aipmCommits {
+				if !seen[c.Title] {
+					review.CommitsInWindow = append(review.CommitsInWindow, c)
+				}
+			}
+		}
+
 		// L2 semantic summary (gracefully degrades if AI not configured)
 		summary := ""
 		if opts.Summarizer != nil {

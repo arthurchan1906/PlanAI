@@ -32,8 +32,9 @@ type ReviewResult struct {
 	Positives         []taggedItem   `json:"positives"`
 	MergedMCPCount    int            `json:"merged_mcp_count"`
 	UserPromptCount   int            `json:"user_prompt_count"`
-	ToolCallCount     int            `json:"tool_call_count"`
-	DirectiveSession  bool           `json:"directive_session"`
+	ToolCallCount     int              `json:"tool_call_count"`
+	DirectiveSession  bool             `json:"directive_session"`
+	CommitsInWindow   []store.CommitSummary `json:"-"` // from B1 context, not serialized
 }
 
 type mcpCompliance struct {

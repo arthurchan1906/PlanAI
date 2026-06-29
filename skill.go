@@ -139,6 +139,19 @@ commit → task → plan → roadmap
 
 ---
 
+## Commit 规范
+
+每次完成一个逻辑单元就提交，不要囤积。Commit message 格式：
+  <type>: <做了什么> — <具体细节>
+  例: fix: PalV2 跨平台兼容 — 统一 reserved[6] 字段
+
+要求：
+- 一个 commit 只做一件事（改了 PalV2 就只 commit PalV2，不混入 UI 调整）
+- message 必须说明改了什么，禁止 "fix bug"、"update" 等模糊描述
+- 改完即 commit，不要攒到 session 结束才批量提交
+
+---
+
 ## 禁止事项 (NEVER)
 
 - ❌ 在 aipm_get_briefing 之前开始写代码

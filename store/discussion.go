@@ -2,7 +2,9 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -568,6 +570,97 @@ func EntityExists(entityType, entityID string) bool {
 		return false
 	}
 	return n == 1
+}
+
+// CommitSummary is a lightweight commit record for B1 context injection.
+type CommitSummary struct {
+	ID      string
+	Title   string
+	Files   []string
+}
+
+// FindCommitsInWindow returns commits whose created_at falls between start and end (+2h margin).
+func FindCommitsInWindow(start, end string) ([]CommitSummary, error) {
+	db, err := pmdb.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	rows, err := db.Query(
+		"SELECT id, title, files_json FROM commits WHERE datetime(created_at) >= datetime(?) AND datetime(created_at) <= datetime(?, '+2 hours') ORDER BY created_at",
+		start, end)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []CommitSummary
+	for rows.Next() {
+		var c CommitSummary
+		var filesJSON string
+		if err := rows.Scan(&c.ID, &c.Title, &filesJSON); err != nil {
+			continue
+		}
+		c.Files = parseFilesJSON(filesJSON)
+		result = append(result, c)
+	}
+	return result, nil
+}
+
+func parseFilesJSON(raw string) []string {
+	var arr []string
+	if err := json.Unmarshal([]byte(raw), &arr); err != nil {
+		return nil
+	}
+	return arr
+}
+
+// FindGitCommitsInWindow runs `git log` in the current directory for commits between start and end.
+func FindGitCommitsInWindow(start, end string) ([]CommitSummary, error) {
+	cmd := exec.Command("git", "log",
+		"--since="+start,
+		"--until="+end,
+		"--format=%H|%s",
+		"--name-only",
+	)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	return parseGitLog(string(out)), nil
+}
+
+func parseGitLog(raw string) []CommitSummary {
+	var result []CommitSummary
+	lines := strings.Split(strings.TrimSpace(raw), "\n")
+	var current *CommitSummary
+
+	hashPattern := regexp.MustCompile(`^[a-f0-9]{40}\|`)
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if hashPattern.MatchString(line) {
+			if current != nil {
+				result = append(result, *current)
+			}
+			parts := strings.SplitN(line, "|", 2)
+			shortHash := parts[0][:7]
+			title := ""
+			if len(parts) == 2 {
+				title = parts[1]
+			}
+			current = &CommitSummary{ID: shortHash, Title: title}
+		} else if current != nil {
+			current.Files = append(current.Files, line)
+		}
+	}
+	if current != nil {
+		result = append(result, *current)
+	}
+	return result
 }
 
 func discussionLinkExists(sessionID, targetType, targetID string) (bool, error) {

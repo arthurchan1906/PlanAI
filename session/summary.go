@@ -256,6 +256,13 @@ func buildL2Prompt(extracted string, review ReviewResult) (instruction, text str
 	}
 	ctx.WriteString("- Files mentioned: " + strings.Join(files, ", ") + "\n")
 
+	if len(review.CommitsInWindow) > 0 {
+		ctx.WriteString("- Commits in time window:\n")
+		for _, c := range review.CommitsInWindow {
+			ctx.WriteString("  " + c.Title + "\n")
+		}
+	}
+
 	instruction = loadL2Prompt()
 
 	// Few-shot example — shows model the expected output format
