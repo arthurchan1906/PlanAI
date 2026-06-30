@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -38,6 +39,12 @@ type captureEntry struct {
 	RespHeaders map[string]string `json:"resp_headers,omitempty"`
 	RespBody    string            `json:"resp_body"`     // raw response text
 	RespEvents  string            `json:"resp_events,omitempty"` // SSE events as JSON array
+
+	// Token usage (populated after response completes)
+	PromptTokens      int `json:"prompt_tokens"`
+	CompletionTokens  int `json:"completion_tokens"`
+	CacheHitTokens    int `json:"cache_hit_tokens"`
+	CacheCreationTokens int `json:"cache_creation_tokens"`
 }
 
 var (
@@ -81,6 +88,32 @@ func startCapture(agent, method, path, model string, reqBody []byte, reqHeaders 
 	return id
 }
 
+// SetCaptureTokens sets token usage on an existing capture entry.
+func SetCaptureTokens(id string, promptTokens, completionTokens int) {
+	captureMu.Lock()
+	defer captureMu.Unlock()
+	for i := range captureLog {
+		if captureLog[i].ID == id {
+			captureLog[i].PromptTokens = promptTokens
+			captureLog[i].CompletionTokens = completionTokens
+			return
+		}
+	}
+}
+
+// SetCaptureCacheTokens sets cache token usage on an existing capture entry.
+func SetCaptureCacheTokens(id string, cacheHitTokens, cacheCreationTokens int) {
+	captureMu.Lock()
+	defer captureMu.Unlock()
+	for i := range captureLog {
+		if captureLog[i].ID == id {
+			captureLog[i].CacheHitTokens = cacheHitTokens
+			captureLog[i].CacheCreationTokens = cacheCreationTokens
+			return
+		}
+	}
+}
+
 // finishCapture completes a capture entry with response data.
 func finishCapture(id string, status int, duration time.Duration, respHeaders map[string]string, respBody string, respEvents string) {
 	captureMu.Lock()
@@ -118,30 +151,64 @@ func handleCaptureList(w http.ResponseWriter, r *http.Request) {
 
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Time > entries[j].Time })
 
+	// Pagination
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	perPage, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
+	if perPage < 1 || perPage > 200 {
+		perPage = 50
+	}
+	total := len(entries)
+	totalPages := (total + perPage - 1) / perPage
+	if totalPages < 1 {
+		totalPages = 1
+	}
+	start := (page - 1) * perPage
+	end := start + perPage
+	if start > total {
+		start = total
+	}
+	if end > total {
+		end = total
+	}
+
 	type summary struct {
-		ID       string `json:"id"`
-		Time     string `json:"time"`
-		Agent    string `json:"agent"`
-		Method   string `json:"method"`
-		Path     string `json:"path"`
-		Model    string `json:"model"`
-		Status   int    `json:"status"`
-		Duration string `json:"duration"`
-		ReqSize  int    `json:"req_size"`
-		RespSize int    `json:"resp_size"`
+		ID               string `json:"id"`
+		Time             string `json:"time"`
+		Agent            string `json:"agent"`
+		Method           string `json:"method"`
+		Path             string `json:"path"`
+		Model            string `json:"model"`
+		Status           int    `json:"status"`
+		Duration         string `json:"duration"`
+		ReqSize          int    `json:"req_size"`
+		RespSize         int    `json:"resp_size"`
+		PromptTokens     int    `json:"prompt_tokens"`
+		CompletionTokens int    `json:"completion_tokens"`
+		CacheHitTokens   int    `json:"cache_hit_tokens"`
 	}
 	var list []summary
-	for _, e := range entries {
+	for _, e := range entries[start:end] {
 		list = append(list, summary{
 			ID: e.ID, Time: e.Time, Agent: e.Agent, Method: e.Method,
 			Path: e.Path, Model: e.Model, Status: e.Status,
 			Duration: e.Duration, ReqSize: e.ReqSize, RespSize: e.RespSize,
+			PromptTokens: e.PromptTokens, CompletionTokens: e.CompletionTokens,
+			CacheHitTokens: e.CacheHitTokens,
 		})
 	}
 	if list == nil {
 		list = []summary{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"captures": list})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"captures":    list,
+		"total":       total,
+		"page":        page,
+		"per_page":    perPage,
+		"total_pages": totalPages,
+	})
 }
 
 // handleCaptureDetail returns the full request and response for a single capture.
@@ -291,8 +358,9 @@ pre{background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:12px;f
   <button class="btn btn-danger" onclick="clearAll()">Clear All</button>
 </div>
 <table><thead><tr>
-  <th>Time</th><th>Agent</th><th>Method</th><th>Path</th><th>Model</th><th>Status</th><th>Duration</th><th class="size">Req</th><th class="size">Resp</th><th></th>
+  <th>Time</th><th>Agent</th><th>Method</th><th>Model</th><th>St</th><th class="size">Tokens</th><th class="size">Req</th><th class="size">Resp</th><th></th>
 </tr></thead><tbody id="list"></tbody></table>
+<div id="pager" style="display:flex;align-items:center;gap:6px;margin-top:10px;font-size:12px;color:#8b949e"></div>
 <div id="mask" onclick="closeDrawer()"></div>
 <div id="drawer">
   <button class="close" onclick="closeDrawer()">✕</button>
@@ -314,12 +382,13 @@ let auto=setInterval(loadList,3000);
 function sc(s){return s<400?'s-ok':'s-err'}
 function ac(a){return 'a-'+(a||'unknown')}
 function fs(n){return n>1024?(n/1024).toFixed(1)+'KB':n+'B'}
+function tk(p,c,h){if(!p&&!c)return'';var s=p+'/'+c;if(h){var r=p>0?(h/p*100).toFixed(2):0;return s+'<span style="color:#58a6ff;font-size:11px">·⚡'+h+' ('+r+'%)</span>'}return s}
 function tf(s){if(!s)return '(empty)';try{return JSON.stringify(JSON.parse(s),null,2)}catch(e){return s}}
 async function loadList(){
   const r=await fetch('/__proxy/capture');
   const d=await r.json();
   document.getElementById('list').innerHTML=(d.captures||[]).map(c=>
-    '<tr><td>'+c.time+'</td><td class="'+ac(c.agent)+'">'+c.agent+'</td><td>'+c.method+'</td><td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+c.method+' '+c.path+'">'+c.path+'</td><td>'+c.model+'</td><td class="'+sc(c.status)+'">'+c.status+'</td><td>'+c.duration+'</td><td class="size">'+fs(c.req_size)+'</td><td class="size">'+fs(c.resp_size)+'</td><td><button class="btn" onclick="loadDetail(\''+c.id+'\')">View</button></td></tr>'
+    '<tr><td>'+c.time+'</td><td class="'+ac(c.agent)+'">'+c.agent+'</td><td>'+c.method+'</td><td>'+c.model+'</td><td class="'+sc(c.status)+'">'+c.status+'</td><td class="size">'+tk(c.prompt_tokens,c.completion_tokens,c.cache_hit_tokens)+'</td><td class="size">'+fs(c.req_size)+'</td><td class="size">'+fs(c.resp_size)+'</td><td><button class="btn" onclick="loadDetail(\''+c.id+'\')">View</button></td></tr>'
   ).join('');
 }
 async function loadDetail(id){

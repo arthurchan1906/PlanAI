@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
+
+	"aipmc/store"
 )
 
 // =============================================================================
@@ -23,10 +26,29 @@ type codexToolAcc struct {
 // CodexEmitter emits stream events in the OpenAI Responses API SSE format.
 // It maintains the protocol-specific state: output_index numbering, item
 // lifecycles, and reasoning promotion.
+// resolveMCPName rebuilds the full MCP tool name and namespace from a short tool name.
+// The short name is what the upstream model sees (e.g. "aipm_search_context").
+// The full MCP name is "namespace__shortName" (e.g. "mcp__aipm__aipm_search_context").
+// For non-MCP tools returns ("", shortName).
+func (e *CodexEmitter) resolveMCPName(shortName string) (namespace string) {
+	if e.namespaceMap == nil {
+		return ""
+	}
+	ns, ok := e.namespaceMap[shortName]
+	if !ok {
+		return ""
+	}
+	return ns
+}
+
 type CodexEmitter struct {
 	w       http.ResponseWriter
 	flusher http.Flusher
 	model   string
+
+	sessionID      string // Codex session_id from request metadata
+	namespaceMap   map[string]string // short tool name → namespace
+	accumulatedText strings.Builder
 
 	responseID         string
 	started            bool
@@ -42,12 +64,14 @@ type CodexEmitter struct {
 }
 
 // NewCodexEmitter creates a CodexEmitter ready to emit on w.
-func NewCodexEmitter(w http.ResponseWriter, model string) *CodexEmitter {
+func NewCodexEmitter(w http.ResponseWriter, model string, sessionID string, namespaceMap map[string]string) *CodexEmitter {
 	flusher, _ := w.(http.Flusher)
 	return &CodexEmitter{
 		w:               w,
 		flusher:         flusher,
 		model:           model,
+		sessionID:       sessionID,
+		namespaceMap:    namespaceMap,
 		responseID:      "resp_ccswitch",
 		pendingToolCalls: map[int]*codexToolAcc{},
 	}
@@ -88,6 +112,7 @@ func (e *CodexEmitter) Emit(event UnifiedStreamEvent) {
 		})
 
 	case StreamText:
+		e.accumulatedText.WriteString(event.Delta)
 		if !e.started {
 			e.startResponse()
 		}
@@ -146,17 +171,21 @@ func (e *CodexEmitter) Emit(event UnifiedStreamEvent) {
 			e.outputIndex++
 			acc.itemID = fmt.Sprintf("fc_%s_%d", e.responseID, oi)
 			acc.outputIdx = oi
+			itemMap := map[string]any{
+				"id":        acc.itemID,
+				"type":      "function_call",
+				"status":    "in_progress",
+				"call_id":   acc.ID,
+				"name":      acc.Name,
+				"arguments": "",
+			}
+			if ns := e.resolveMCPName(acc.Name); ns != "" {
+				itemMap["namespace"] = ns
+			}
 			e.emitSSE("response.output_item.added", map[string]any{
 				"type":         "response.output_item.added",
 				"output_index": oi,
-				"item": map[string]any{
-					"id":        acc.itemID,
-					"type":      "function_call",
-					"status":    "in_progress",
-					"call_id":   acc.ID,
-					"name":      acc.Name,
-					"arguments": "",
-				},
+				"item":         itemMap,
 			})
 			if event.Delta != "" {
 				e.emitSSE("response.function_call_arguments.delta", map[string]any{
@@ -193,50 +222,78 @@ func (e *CodexEmitter) Emit(event UnifiedStreamEvent) {
 }
 
 func (e *CodexEmitter) Done(finishReason string, usage *UnifiedUsage) {
-	// Complete in-progress reasoning item
+	// Save accumulated assistant text to discussion_log
+	if e.sessionID != "" {
+		text := strings.TrimSpace(e.accumulatedText.String())
+		if text != "" {
+			meta := fmt.Sprintf(`{"_type":"proxy_capture","source":"codex_proxy"}`)
+			store.LogDiscussion(e.sessionID, "assistant", "codex-cli", text, meta)
+		}
+	}
+
+	// Complete in-progress reasoning item — include summary so history is
+	// complete (reasoning items also need content in output_item.done).
 	if e.reasoningAdded {
 		e.emitSSE("response.output_item.done", map[string]any{
 			"type":         "response.output_item.done",
 			"output_index": e.reasoningOutputIdx,
 			"item": map[string]any{
-				"id":     e.reasoningItemID,
-				"type":   "reasoning",
-				"status": "completed",
+				"id":      e.reasoningItemID,
+				"type":    "reasoning",
+				"status":  "completed",
+				"summary": []any{},
 			},
 		})
 	}
 
-	// Complete in-progress text item
+	// Complete in-progress text item — include accumulated text content
+	// so Codex persists the assistant message to history (output_item.done
+	// must carry the full item including content for the rollout).
 	if e.textAdded {
+		text := e.accumulatedText.String()
+		contentParts := []map[string]any{}
+		if text != "" {
+			contentParts = append(contentParts, map[string]any{
+				"type":        "output_text",
+				"text":        text,
+				"annotations": []any{},
+			})
+		}
 		e.emitSSE("response.output_item.done", map[string]any{
 			"type":         "response.output_item.done",
 			"output_index": e.textOutputIdx,
 			"item": map[string]any{
-				"id":     e.textItemID,
-				"type":   "message",
-				"status": "completed",
+				"id":      e.textItemID,
+				"type":    "message",
+				"role":    "assistant",
+				"status":  "completed",
+				"content": contentParts,
 			},
 		})
 	}
 
-	// Complete tool calls
+	// Complete tool calls — for MCP tools add namespace field
 	for _, acc := range e.pendingToolCalls {
 		if acc.itemID != "" {
 			args := acc.Arguments
 			if args == "" {
 				args = "{}"
 			}
+			itemMap := map[string]any{
+				"id":        acc.itemID,
+				"type":      "function_call",
+				"status":    "completed",
+				"call_id":   acc.ID,
+				"name":      acc.Name,
+				"arguments": args,
+			}
+			if ns := e.resolveMCPName(acc.Name); ns != "" {
+				itemMap["namespace"] = ns
+			}
 			e.emitSSE("response.output_item.done", map[string]any{
 				"type":         "response.output_item.done",
 				"output_index": acc.outputIdx,
-				"item": map[string]any{
-					"id":        acc.itemID,
-					"type":      "function_call",
-					"status":    "completed",
-					"call_id":   acc.ID,
-					"name":      acc.Name,
-					"arguments": args,
-				},
+				"item":         itemMap,
 			})
 		}
 	}

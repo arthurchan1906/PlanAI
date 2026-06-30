@@ -19,6 +19,7 @@ type ResponsesRequest struct {
 	Temperature     *float64            `json:"temperature,omitempty"`
 	TopP            *float64            `json:"top_p,omitempty"`
 	MaxOutputTokens *int                `json:"max_output_tokens,omitempty"`
+	ClientMetadata  map[string]string    `json:"client_metadata,omitempty"`
 	Stream          bool                `json:"stream,omitempty"`
 	ToolChoice      any                 `json:"tool_choice,omitempty"`
 	Reasoning       *ResponsesReasoning `json:"reasoning,omitempty"`

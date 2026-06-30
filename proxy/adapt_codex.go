@@ -15,7 +15,10 @@ import (
 
 // CodexAdapter implements ProtocolAdapter for the Codex CLI (OpenAI Responses API).
 // Types (ResponsesRequest, ResponsesResponseWrapper, etc.) are defined in responses.go.
-type CodexAdapter struct{}
+type CodexAdapter struct {
+	SessionID    string
+	namespaceMap map[string]string // short tool name → namespace (for MCP tools)
+}
 
 func (a *CodexAdapter) ParseRequest(r *http.Request) (*UnifiedReq, error) {
 	body, err := io.ReadAll(r.Body)
@@ -37,6 +40,12 @@ func (a *CodexAdapter) ParseRequest(r *http.Request) (*UnifiedReq, error) {
 }
 
 func (a *CodexAdapter) toUnified(req *ResponsesRequest) *UnifiedReq {
+	// Extract session_id from request client_metadata
+	if req.ClientMetadata != nil {
+		if sid, ok := req.ClientMetadata["session_id"]; ok && sid != "" {
+			a.SessionID = sid
+		}
+	}
 	chat := &UnifiedReq{
 		Model:  effectiveModel(req.Model),
 		Stream: req.Stream,
@@ -77,11 +86,25 @@ func (a *CodexAdapter) toUnified(req *ResponsesRequest) *UnifiedReq {
 		chat.MaxTokens = &defaultMax
 	}
 
-	for _, t := range req.Tools {
+for _, t := range req.Tools {
 		switch t.Type {
 		case "", "function":
 			chat.Tools = append(chat.Tools, codexToolToUnified(t))
 		case "namespace":
+			// Record namespace mapping: short tool name → namespace
+			// so the emitter can rebuild full MCP names when the model calls back.
+			if a.namespaceMap == nil {
+				a.namespaceMap = make(map[string]string)
+			}
+			for _, nt := range t.Tools {
+				shortName := nt.Name
+				if shortName == "" && nt.Function != nil {
+					shortName = nt.Function.Name
+				}
+				if shortName != "" {
+					a.namespaceMap[shortName] = t.Name
+				}
+			}
 			chat.Tools = append(chat.Tools, explodeNamespaceToUnified(t)...)
 		default:
 		}
@@ -175,7 +198,7 @@ func (a *CodexAdapter) ConvertResponse(openaiResp *OpenAIResponse, model string)
 }
 
 func (a *CodexAdapter) NewEmitter(w http.ResponseWriter, model string) Emitter {
-	return NewCodexEmitter(w, model)
+	return NewCodexEmitter(w, model, a.SessionID, a.namespaceMap)
 }
 
 // =============================================================================
@@ -242,6 +265,22 @@ func appendCodexInputItems(items []any, messages *[]UnifiedMsg) {
 			}
 			*messages = append(*messages, msg)
 
+		case "reasoning":
+			// Codex reasoning items — append thinking text to the last assistant message
+			// or create a standalone assistant message if none exists yet.
+			// Codex UI hides reasoning by default; proxy preserves the text as thinking.
+			summary := extractReasoningSummary(m["summary"])
+			if summary != "" {
+				if len(*messages) > 0 && (*messages)[len(*messages)-1].Role == "assistant" {
+					(*messages)[len(*messages)-1].Thinking = summary
+				} else {
+					*messages = append(*messages, UnifiedMsg{
+						Role:     "user",
+						Content:  "[reasoning] " + summary,
+					})
+				}
+			}
+
 		default:
 			if role, ok := m["role"].(string); ok {
 				content := codexContentToString(m["content"])
@@ -261,6 +300,31 @@ func appendCodexInputItems(items []any, messages *[]UnifiedMsg) {
 	}
 }
 
+func extractReasoningSummary(summary any) string {
+	if summary == nil {
+		return ""
+	}
+	arr, ok := summary.([]any)
+	if !ok {
+		return ""
+	}
+	var parts []string
+	for _, item := range arr {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		t, _ := m["type"].(string)
+		txt, _ := m["text"].(string)
+		switch t {
+		case "summary_text":
+			if txt != "" {
+				parts = append(parts, txt)
+			}
+		}
+	}
+	return strings.Join(parts, "\n")
+}
 func codexRoleToUnified(role string) string {
 	switch role {
 	case "system":

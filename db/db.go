@@ -237,6 +237,7 @@ func migrate(d *sql.DB) error {
 	if !tableOrVTableExists(d, "discussion_log") {
 		d.Exec(`CREATE TABLE IF NOT EXISTS discussion_log (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, role TEXT NOT NULL, source TEXT NOT NULL DEFAULT '', content TEXT NOT NULL, created_at TEXT NOT NULL)`)
 	}
+
 	if !ColumnExists(d, "discussion_log", "source") {
 		d.Exec("ALTER TABLE discussion_log ADD COLUMN source TEXT NOT NULL DEFAULT ''")
 	}
@@ -486,13 +487,49 @@ func SaveConfig(cfg Config) error {
 	return os.WriteFile(filepath.Join(dir, "config.json"), u.MustMarshal(cfg), 0644)
 }
 
+// ClaudeProfile stores Claude Code–specific launch configuration.
+type ClaudeProfile struct {
+	Model          string            `json:"model"`             // → ANTHROPIC_MODEL
+	SubAgentModel  string            `json:"sub_agent_model"`   // → CLAUDE_CODE_SUBAGENT_MODEL
+	OpusModel      string            `json:"opus_model"`        // → ANTHROPIC_DEFAULT_OPUS_MODEL
+	SonnetModel    string            `json:"sonnet_model"`      // → ANTHROPIC_DEFAULT_SONNET_MODEL
+	HaikuModel     string            `json:"haiku_model"`       // → ANTHROPIC_DEFAULT_HAIKU_MODEL
+	SmallFastModel string            `json:"small_fast_model"`  // → ANTHROPIC_SMALL_FAST_MODEL
+	EffortLevel    string            `json:"effort_level"`      // → CLAUDE_CODE_EFFORT_LEVEL
+	ExtraEnv       map[string]string `json:"extra_env,omitempty"`
+}
+
+// CodexProfile stores Codex CLI–specific launch configuration.
+type CodexProfile struct {
+	Model           string            `json:"model"`             // → proxy.config.toml model
+	ReasoningEffort string            `json:"reasoning_effort"`  // → proxy.config.toml model_reasoning_effort
+	ExtraEnv        map[string]string `json:"extra_env,omitempty"`
+}
+
+// GeminiProfile stores Gemini CLI–specific launch configuration.
+type GeminiProfile struct {
+	ExtraEnv map[string]string `json:"extra_env,omitempty"`
+}
+
+// OpenCodeProfile stores OpenCode–specific launch configuration.
+type OpenCodeProfile struct {
+	Models   []string          `json:"models"`
+	ExtraEnv map[string]string `json:"extra_env,omitempty"`
+}
+
 // GlobalConfig holds proxy configuration stored at ~/.aipmc/config.json.
 type GlobalConfig struct {
-	ProxyPort    int    `json:"proxy_port"`
-	UpstreamURL  string `json:"upstream_url"`
-	ProxyModel   string `json:"proxy_model"`
-	ProxyLogDir  string `json:"proxy_log_dir"`
-	AnthropicURL string `json:"anthropic_url"`
+	ProxyPort    int               `json:"proxy_port"`
+	UpstreamURL  string            `json:"upstream_url"`
+	ProxyModel   string            `json:"proxy_model"`    // deprecated: use per-agent profiles
+	ProxyLogDir  string            `json:"proxy_log_dir"`
+	AnthropicURL string            `json:"anthropic_url"`
+	ExtraEnv     map[string]string `json:"extra_env,omitempty"` // deprecated: use per-agent profiles
+
+	Claude ClaudeProfile `json:"claude"`
+	Codex  CodexProfile  `json:"codex"`
+	Gemini GeminiProfile `json:"gemini"`
+	OpenCode OpenCodeProfile `json:"opencode"`
 }
 
 func globalConfigPath() string {
@@ -500,11 +537,75 @@ func globalConfigPath() string {
 	return filepath.Join(home, ".aipmc", "config.json")
 }
 
+// SyncOpencodeModels writes the given model list into opencode.json's
+// provider.aipm.models section, preserving all other keys (MCP, $schema, etc.).
+// If models is empty, the aipm provider entry is left untouched.
+func SyncOpencodeModels(projectRoot string, models []string) error {
+	if projectRoot == "" {
+		return nil
+	}
+	configPath := filepath.Join(projectRoot, "opencode.json")
+
+	cfg := map[string]any{}
+	if data, err := os.ReadFile(configPath); err != nil {
+		// No existing opencode.json — nothing to sync into
+		return nil
+	} else if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil
+	}
+
+	provRaw, _ := cfg["provider"]
+	prov, _ := provRaw.(map[string]any)
+	if prov == nil {
+		prov = map[string]any{}
+	}
+
+	aipmRaw, _ := prov["aipm"]
+	aipm, _ := aipmRaw.(map[string]any)
+	if aipm == nil {
+		aipm = map[string]any{}
+	}
+
+	// Always ensure the provider has the required opencode fields
+	aipm["name"] = "AIPM Proxy"
+	aipm["npm"] = "@ai-sdk/openai-compatible"
+
+	proxyPort := LoadGlobalConfig().ProxyPort
+	proxyBaseURL := fmt.Sprintf("http://localhost:%d/v1", proxyPort)
+	if optsRaw, ok := aipm["options"]; ok {
+		if opts, ok := optsRaw.(map[string]any); ok {
+			opts["baseURL"] = proxyBaseURL
+		}
+	} else {
+		aipm["options"] = map[string]any{"baseURL": proxyBaseURL}
+	}
+
+	if len(models) == 0 {
+		delete(aipm, "models")
+	} else {
+		m := map[string]any{}
+		for _, name := range models {
+			m[name] = map[string]any{"name": name}
+		}
+		aipm["models"] = m
+	}
+	prov["aipm"] = aipm
+	cfg["provider"] = prov
+
+	data, _ := json.MarshalIndent(cfg, "", "  ")
+	return os.WriteFile(configPath, data, 0644)
+}
+
 // LoadGlobalConfig reads ~/.aipmc/config.json with env var overrides.
 func LoadGlobalConfig() GlobalConfig {
 	cfg := GlobalConfig{
 		ProxyPort:   19530,
 		UpstreamURL: "http://localhost:8080/v1",
+	}
+	// Overlay file config first, then env vars take precedence.
+	data, err := os.ReadFile(globalConfigPath())
+	if err == nil {
+		json.Unmarshal(data, &cfg)
 	}
 	if v := os.Getenv("PROXY_PORT"); v != "" {
 		fmt.Sscanf(v, "%d", &cfg.ProxyPort)
@@ -518,29 +619,51 @@ func LoadGlobalConfig() GlobalConfig {
 	if v := os.Getenv("ANTHROPIC_URL"); v != "" {
 		cfg.AnthropicURL = v
 	}
-	data, err := os.ReadFile(globalConfigPath())
-	if err != nil {
-		return cfg
-	}
-	var raw map[string]any
-	if json.Unmarshal(data, &raw) == nil {
-		if p, ok := raw["proxy_port"].(float64); ok && cfg.ProxyPort == 19530 {
-			cfg.ProxyPort = int(p)
-		}
-		if v, ok := raw["upstream_url"].(string); ok && cfg.UpstreamURL == "http://localhost:8080/v1" {
-			cfg.UpstreamURL = v
-		}
-		if v, ok := raw["proxy_model"].(string); ok && cfg.ProxyModel == "" {
-			cfg.ProxyModel = v
-		}
-		if v, ok := raw["proxy_log_dir"].(string); ok && cfg.ProxyLogDir == "" {
-			cfg.ProxyLogDir = v
-		}
-		if v, ok := raw["anthropic_url"].(string); ok && cfg.AnthropicURL == "" {
-			cfg.AnthropicURL = v
-		}
-	}
 	return cfg
+}
+
+// EffectiveAgentModel returns the model for an agent, falling back from
+// agent profile → deprecated global ProxyModel → empty string.
+func (g GlobalConfig) EffectiveAgentModel(agent string) string {
+	var profileModel string
+	switch agent {
+	case "claude", "claude-code":
+		profileModel = g.Claude.Model
+	case "codex", "openai-codex":
+		profileModel = g.Codex.Model
+	case "opencode", "oc":
+		if len(g.OpenCode.Models) > 0 {
+			profileModel = g.OpenCode.Models[0]
+		}
+	}
+	if profileModel != "" {
+		return profileModel
+	}
+	return g.ProxyModel
+}
+
+// EffectiveEnv returns the merged env vars for an agent. Global ExtraEnv
+// provides defaults; the agent's own ExtraEnv takes precedence.
+func (g GlobalConfig) EffectiveEnv(agent string) map[string]string {
+	out := map[string]string{}
+	for k, v := range g.ExtraEnv {
+		out[k] = v
+	}
+	var agentEnv map[string]string
+	switch agent {
+	case "claude", "claude-code":
+		agentEnv = g.Claude.ExtraEnv
+	case "codex", "openai-codex":
+		agentEnv = g.Codex.ExtraEnv
+	case "gemini", "gemini-cli":
+		agentEnv = g.Gemini.ExtraEnv
+	case "opencode", "oc":
+		agentEnv = g.OpenCode.ExtraEnv
+	}
+	for k, v := range agentEnv {
+		out[k] = v
+	}
+	return out
 }
 
 // SaveGlobalConfig writes ~/.aipmc/config.json.

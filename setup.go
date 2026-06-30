@@ -218,6 +218,45 @@ func setupMCP(targetPlatform string) error {
 	return nil
 }
 
+// replaceTomlSection replaces a TOML section block (e.g. [mcp_servers.aipm])
+// with new content. Returns the updated string, or unchanged if section not found.
+func replaceTomlSection(toml, sectionHeader, newContent string) string {
+	lines := strings.Split(toml, "\n")
+	var out []string
+	inSection := false
+	replaced := false
+
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
+		trimmed := strings.TrimSpace(line)
+
+		if trimmed == sectionHeader {
+			inSection = true
+			if !replaced {
+				out = append(out, strings.TrimRight(newContent, "\n"))
+				replaced = true
+			}
+			continue
+		}
+
+		if inSection {
+			// End of section: blank line or next section header
+			if trimmed == "" || strings.HasPrefix(trimmed, "[") {
+				inSection = false
+				out = append(out, line)
+			}
+			continue
+		}
+
+		out = append(out, line)
+	}
+
+	if !replaced {
+		return toml
+	}
+	return strings.Join(out, "\n")
+}
+
 // setupCodexMCP writes the MCP server entry to Codex's user-level TOML config,
 // and generates a proxy profile (~/.codex/proxy.config.toml) for connecting through aipmc proxy.
 func setupCodexMCP(binaryPath string) error {
@@ -232,19 +271,27 @@ func setupCodexMCP(binaryPath string) error {
 		return fmt.Errorf("cannot create .codex dir: %w", err)
 	}
 
-	// 1. Write MCP server entry to main config.toml
+	// 1. Write/update MCP server entry in main config.toml
 	existing := ""
 	if data, err := os.ReadFile(configPath); err == nil {
 		existing = string(data)
 	}
 
 	entry := fmt.Sprintf("[mcp_servers.aipm]\ncommand = \"%s\"\nargs = [\"mcp\"]\n\n", binaryPath)
-	if containsStrIn(existing, "[mcp_servers.aipm]") {
-		fmt.Printf("  ℹ️  Codex MCP already configured (skipped)\n")
+	updated := replaceTomlSection(existing, "[mcp_servers.aipm]", entry)
+	if updated != existing {
+		if err := os.WriteFile(configPath, []byte(updated), 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "  ⚠️  Codex MCP config write failed: %v\n", err)
+		} else {
+			fmt.Printf("  ✅ Codex MCP updated → %s mcp\n", binaryPath)
+		}
 	} else {
+		// Section not found — append
 		newConfig := existing + entry
 		if err := os.WriteFile(configPath, []byte(newConfig), 0644); err != nil {
 			fmt.Fprintf(os.Stderr, "  ⚠️  Codex MCP config write failed: %v\n", err)
+		} else {
+			fmt.Printf("  ✅ Codex MCP added → %s mcp\n", binaryPath)
 		}
 	}
 
@@ -284,7 +331,18 @@ env_key_instructions = "not needed for local proxy — key is set on the proxy s
 }
 
 // setupOpencodeMCP writes the MCP server entry to opencode.json.
-// OpenCode uses {"mcp": {"name": {"type":"local","command":["cmd","arg"],"enabled":true}}}
+// Provider configuration (baseURL, models) is handled manually in opencode.json.
+// Resulting opencode.json (example with ProxyModel = "deepseek-v4-pro"):
+// Resulting opencode.json:
+//
+//	{
+//	  "$schema": "https://opencode.ai/config.json",
+//	  "mcp": { "aipm": {"type":"local","command":["aipmc","mcp"],"enabled":true} },
+//t}
+//	}
+//
+// Users still need to /connect inside OpenCode to set an API key (any value is fine —
+// the proxy replaces it with UPSTREAM_KEY).
 func setupOpencodeMCP(projectRoot, binaryPath string) error {
 	configPath := filepath.Join(projectRoot, "opencode.json")
 
@@ -295,31 +353,43 @@ func setupOpencodeMCP(projectRoot, binaryPath string) error {
 		}
 	}
 
+	// Ensure $schema is present (OpenCode requires it)
+	if _, ok := cfg["$schema"]; !ok {
+		cfg["$schema"] = "https://opencode.ai/config.json"
+	}
+
+	// ── MCP ──
 	mcpRaw, _ := cfg["mcp"]
 	mcp, _ := mcpRaw.(map[string]any)
 	if mcp == nil {
 		mcp = map[string]any{}
 	}
-
-	// Check if already configured
+	changed := false
 	if existing, ok := mcp["aipm"]; ok {
 		if em, ok := existing.(map[string]any); ok {
 			if cmd, ok := em["command"]; ok {
 				if cmdArr, ok := cmd.([]any); ok && len(cmdArr) > 0 {
-					if cmdStr, ok := cmdArr[0].(string); ok && cmdStr == binaryPath {
-						return nil
+					if cmdStr, ok := cmdArr[0].(string); ok && cmdStr != binaryPath {
+						changed = true
 					}
 				}
 			}
 		}
+	} else {
+		changed = true
+	}
+	if changed {
+		mcp["aipm"] = map[string]any{
+			"type":    "local",
+			"command": []any{binaryPath, "mcp"},
+			"enabled": true,
+		}
+		cfg["mcp"] = mcp
 	}
 
-	mcp["aipm"] = map[string]any{
-		"type":    "local",
-		"command": []any{binaryPath, "mcp"},
-		"enabled": true,
+	if !changed {
+		return nil
 	}
-	cfg["mcp"] = mcp
 
 	data, _ := json.MarshalIndent(cfg, "", "  ")
 	return os.WriteFile(configPath, data, 0644)

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -27,7 +28,19 @@ func (s *Server) handleGetConfig(w http.ResponseWriter) {
 		"proxy_model":           gcfg.ProxyModel,
 		"proxy_log_dir":         gcfg.ProxyLogDir,
 		"anthropic_url":         gcfg.AnthropicURL,
+		"extra_env":             gcfg.ExtraEnv,
+		"claude":                gcfg.Claude,
+		"codex":                 gcfg.Codex,
+		"gemini":                gcfg.Gemini,
 	})
+}
+
+// mapProfile round-trips a map[string]any through JSON to a typed struct.
+func mapProfile[T any](m map[string]any) T {
+	data, _ := json.Marshal(m)
+	var p T
+	json.Unmarshal(data, &p)
+	return p
 }
 
 func (s *Server) handlePostConfig(w http.ResponseWriter, body map[string]any) {
@@ -64,6 +77,33 @@ func (s *Server) handlePostConfig(w http.ResponseWriter, body map[string]any) {
 	gcfg.ProxyModel = u.Str(body["proxy_model"])
 	gcfg.ProxyLogDir = u.Str(body["proxy_log_dir"])
 	gcfg.AnthropicURL = u.Str(body["anthropic_url"])
+
+	// Parse per-agent profiles via json round-trip
+	if v, ok := body["claude"].(map[string]any); ok {
+		gcfg.Claude = mapProfile[pmdb.ClaudeProfile](v)
+	}
+	if v, ok := body["codex"].(map[string]any); ok {
+		gcfg.Codex = mapProfile[pmdb.CodexProfile](v)
+	}
+	if v, ok := body["gemini"].(map[string]any); ok {
+		gcfg.Gemini = mapProfile[pmdb.GeminiProfile](v)
+	}
+	if v, ok := body["opencode"].(map[string]any); ok {
+		gcfg.OpenCode = mapProfile[pmdb.OpenCodeProfile](v)
+	}
+
+	if v, ok := body["extra_env"]; ok {
+		if m, ok := v.(map[string]any); ok {
+			gcfg.ExtraEnv = make(map[string]string)
+			for k, val := range m {
+				if s, ok := val.(string); ok {
+					gcfg.ExtraEnv[k] = s
+				}
+			}
+		}
+	} else {
+		gcfg.ExtraEnv = nil
+	}
 	if err := pmdb.SaveConfig(cfg); err != nil {
 		web.SendError(w, 500, err.Error())
 		return
@@ -71,6 +111,10 @@ func (s *Server) handlePostConfig(w http.ResponseWriter, body map[string]any) {
 	if err := pmdb.SaveGlobalConfig(gcfg); err != nil {
 		web.SendError(w, 500, err.Error())
 		return
+	}
+	// Sync opencode.json provider models with the saved model list
+	if cwd, err := os.Getwd(); err == nil {
+		pmdb.SyncOpencodeModels(cwd, gcfg.OpenCode.Models)
 	}
 	s.deps.App.ReloadAI()
 

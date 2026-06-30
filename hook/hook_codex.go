@@ -759,6 +759,13 @@ func SetupCodexHooks(commandPath string) error {
 
 	os.MkdirAll(codexDir, 0755)
 	data, _ := json.MarshalIndent(cfg, "", "  ")
+
+	// Skip write if hooks.json already has identical content.
+	// Avoids triggering Codex trust prompts when nothing actually changed.
+	if existing, err := os.ReadFile(hooksPath); err == nil && string(existing) == string(data) {
+		return nil
+	}
+
 	if err := os.WriteFile(hooksPath, data, 0644); err != nil {
 		return fmt.Errorf("write hooks.json: %w", err)
 	}

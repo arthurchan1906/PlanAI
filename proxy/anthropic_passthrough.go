@@ -84,6 +84,21 @@ func handleAnthropicPassthrough(w http.ResponseWriter, r *http.Request) {
 	// 9. Complete capture with actual response body
 	finishCapture(capID, resp.StatusCode, time.Since(startTime), nil, captureBuf.String(), "")
 
+	// Record token usage from Anthropic SSE events
+	if inputT, outputT, cacheHit, cacheCreate := extractAnthropicStreamUsage(captureBuf.String()); inputT > 0 || outputT > 0 || cacheHit > 0 {
+		totalPrompt := inputT + cacheHit // Anthropic: input_tokens excludes cache reads
+		RecordTokenUsage(TokenUsageRecord{
+			Agent:              "claude",
+			Model:              loadCfg().proxyModel,
+			PromptTokens:       totalPrompt,
+			CompletionTokens:   outputT,
+			CacheHitTokens:     cacheHit,
+			CacheCreationTokens: cacheCreate,
+		})
+		SetCaptureTokens(capID, totalPrompt, outputT)
+		SetCaptureCacheTokens(capID, cacheHit, cacheCreate)
+	}
+
 	if resp.StatusCode >= 400 {
 		log.Printf("[ANTHROPIC_PASSTHROUGH] upstream returned %d", resp.StatusCode)
 	} else {

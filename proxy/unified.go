@@ -53,11 +53,13 @@ type UnifiedToolCall struct {
 	Arguments string // JSON string
 }
 
-// UnifiedUsage carries token counts.
+// UnifiedUsage carries token counts including cache.
 type UnifiedUsage struct {
-	PromptTokens     int
-	CompletionTokens int
-	TotalTokens      int
+	PromptTokens      int
+	CompletionTokens  int
+	TotalTokens       int
+	CacheHitTokens    int // prompt_cache_hit_tokens (OpenAI) or cache_read_input_tokens (Anthropic)
+	CacheCreationTokens int // cache_creation_input_tokens (Anthropic)
 }
 
 // =============================================================================
@@ -209,14 +211,16 @@ func parseUpstreamSSE(r io.Reader) <-chan UnifiedStreamEvent {
 				}
 			}
 
-			// Track usage
+			// Track usage (including cache)
 			if u, ok := raw["usage"].(map[string]any); ok {
 				pt, _ := u["prompt_tokens"].(float64)
 				ct, _ := u["completion_tokens"].(float64)
+				cht, _ := u["prompt_cache_hit_tokens"].(float64)
 				latestUsage = &UnifiedUsage{
 					PromptTokens:     int(pt),
 					CompletionTokens: int(ct),
 					TotalTokens:      int(pt) + int(ct),
+					CacheHitTokens:   int(cht),
 				}
 			}
 
@@ -262,6 +266,7 @@ func parseUpstreamSSE(r io.Reader) <-chan UnifiedStreamEvent {
 
 			// ── tool_calls → StreamToolCallStart / StreamToolCallDelta ──
 			if tcs, ok := delta["tool_calls"].([]any); ok {
+
 				for _, tc := range tcs {
 					tcMap, ok := tc.(map[string]any)
 					if !ok {

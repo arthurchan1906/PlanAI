@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
-import { Button, Card, Form, Input, Space, Tag, Typography, message, Tooltip } from "antd";
-import { ReloadOutlined, CheckCircleOutlined, PauseCircleOutlined, PlayCircleOutlined, CodeOutlined, RobotOutlined, ThunderboltOutlined } from "@ant-design/icons";
+import { Button, Card, Form, Input, Space, Tag, Tooltip, Typography, message } from "antd";
+import { ReloadOutlined, CheckCircleOutlined, PauseCircleOutlined, PlayCircleOutlined, CodeOutlined, RobotOutlined, ThunderboltOutlined, ApiOutlined } from "@ant-design/icons";
 import { api } from "../utils/api";
+import AgentConfigView from "./AgentConfigView";
 
 const { Title } = Typography;
 
@@ -13,6 +14,7 @@ export default function SettingsView() {
   const [stopping, setStopping] = useState(false);
   const [restarting, setRestarting] = useState(false);
   const [launching, setLaunching] = useState(null);
+  const [agentKey, setAgentKey] = useState(0);
   const [form] = Form.useForm();
 
   async function load() {
@@ -47,6 +49,7 @@ export default function SettingsView() {
     await api("/pmai/config", { method: "POST", body: JSON.stringify(values) });
     message.success("配置已保存");
     load();
+    setAgentKey(k => k + 1);
     setTimeout(checkProxy, 500);
   }
 
@@ -212,6 +215,8 @@ export default function SettingsView() {
             <Button type="primary" htmlType="submit" loading={loading}>保存</Button>
           </Form.Item>
         </Form>
+
+
         <div style={{ borderTop: "1px solid #f0f0f0", margin: "12px 0" }} />
         <div style={{ fontWeight: 500, marginBottom: 8 }}>启动 Agent</div>
         <Space>
@@ -221,6 +226,8 @@ export default function SettingsView() {
             onClick={() => launchAgent("codex")}>Codex CLI</Button>
           <Button icon={<ThunderboltOutlined />} loading={launching === "gemini"}
             onClick={() => launchAgent("gemini")}>Gemini CLI</Button>
+          <Button icon={<ApiOutlined />} loading={launching === "opencode"}
+            onClick={() => launchAgent("opencode")}>OpenCode</Button>
         </Space>
         <div style={{ color: "#888", fontSize: 12, marginTop: 8 }}>
           API Key 通过环境变量 UPSTREAM_KEY 设置，不保存在文件中。<br/>
@@ -228,6 +235,7 @@ export default function SettingsView() {
           完整保留 thinking/signature/tool_use 结构。
         </div>
       </Card>
+    <AgentConfigView key={agentKey} />
     </div>
   );
 }

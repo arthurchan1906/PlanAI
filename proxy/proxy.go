@@ -4,6 +4,7 @@
 package proxy
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -93,6 +94,7 @@ func NewHandler(opts Options) http.Handler {
 	mux.HandleFunc("/__proxy/capture/clear", handleCaptureClear)
 	mux.HandleFunc("/__proxy/inspect", handleInspectPage)
 	mux.HandleFunc("/__proxy/reload", handleProxyReload)
+	mux.HandleFunc("/__proxy/tokens", handleTokenUsage)
 	mux.HandleFunc("/", handler)
 	return mux
 }
@@ -149,11 +151,29 @@ func detectAgent(path string) string {
 		return "gemini"
 	case strings.Contains(path, "/v1/responses"):
 		return "codex"
+	case strings.Contains(path, "/chat/completions"):
+		return "opencode"
 	case strings.Contains(path, "/v1/messages"):
 		return "claude"
 	default:
 		return "cursor"
 	}
+}
+
+func handleTokenUsage(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "DELETE" {
+		tokenUsageMu.Lock()
+		tokenUsageLog = nil
+		tokenUsageAgg = TokenUsageAggregate{}
+		tokenUsageMu.Unlock()
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+	entries, agg := TokenUsageSnapshot()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"records":   entries,
+		"aggregate": agg,
+	})
 }
 
 func handleProxyStatus(w http.ResponseWriter, r *http.Request) {
@@ -207,7 +227,7 @@ func handleProxyReload(w http.ResponseWriter, r *http.Request) {
 		upstreamAnthropicURL: strings.TrimRight(gcfg.AnthropicURL, "/"),
 		startTime:            loadCfg().startTime, // preserve original start time
 	})
-	log.Printf("[PROXY] config reloaded upstream=%s model=%s", loadCfg().upstreamURL, loadCfg().proxyModel)
+	log.Printf("[PROXY] config reloaded upstream=%s", loadCfg().upstreamURL)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -228,9 +248,13 @@ func (rw *responseWrapper) Write(b []byte) (int, error) {
 	return n, err
 }
 
+// effectiveModel returns the model to send upstream.
+// The [1m] suffix is NOT stripped — DeepSeek (and other providers
+// accessed via Anthropic-compatible APIs) use it as part of the model
+// identifier, not as an Anthropic-specific context-window hint.
 func effectiveModel(agentModel string) string {
-	if loadCfg().proxyModel != "" {
-		return loadCfg().proxyModel
+	if pm := loadCfg().proxyModel; pm != "" {
+		return pm
 	}
 	return agentModel
 }
@@ -264,6 +288,8 @@ func handler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		handleCodexUnified(rw, r)
+	case path == "/v1/chat/completions":
+		handleOpenAIChatPassthrough(rw, r)
 	case path == "/v1/models" || path == "/models" || strings.HasPrefix(path, "/v1/"):
 		handlePassthrough(rw, r)
 	default:
@@ -448,6 +474,7 @@ type OpenAIUsage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
+	CacheHitTokens   int `json:"prompt_cache_hit_tokens"`
 }
 
 type GeminiResponse struct {
@@ -807,6 +834,19 @@ func handleUnifiedNonStream(w http.ResponseWriter, r *http.Request, adapter Prot
 
 	finishCapture(capID, http.StatusOK, time.Since(startTime), nil, string(responseJSON), "")
 
+	// Record token usage on both ring buffer and capture entry
+	if openaiResp.Usage != nil {
+		RecordTokenUsage(TokenUsageRecord{
+			Agent:            agent,
+			Model:            model,
+			PromptTokens:     openaiResp.Usage.PromptTokens,
+			CompletionTokens: openaiResp.Usage.CompletionTokens,
+			CacheHitTokens:   openaiResp.Usage.CacheHitTokens,
+		})
+		SetCaptureTokens(capID, openaiResp.Usage.PromptTokens, openaiResp.Usage.CompletionTokens)
+		SetCaptureCacheTokens(capID, openaiResp.Usage.CacheHitTokens, 0)
+	}
+
 }
 
 // handleUnifiedStream handles a streaming request using the unified pipeline:
@@ -853,6 +893,10 @@ func handleUnifiedStream(w http.ResponseWriter, r *http.Request, adapter Protoco
 	normalizer := &StreamNormalizer{}
 	var totalTokens int
 	var finishReason string
+	var streamPromptTokens int
+	var streamCompletionTokens int
+	var streamCacheHitTokens int
+	var streamCacheCreationTokens int
 	status := http.StatusOK
 	doneCalled := false
 
@@ -862,6 +906,10 @@ func handleUnifiedStream(w http.ResponseWriter, r *http.Request, adapter Protoco
 		if event.Type == StreamDone {
 			if event.Usage != nil {
 				totalTokens = event.Usage.TotalTokens
+				streamPromptTokens = event.Usage.PromptTokens
+				streamCompletionTokens = event.Usage.CompletionTokens
+				streamCacheHitTokens = event.Usage.CacheHitTokens
+				streamCacheCreationTokens = event.Usage.CacheCreationTokens
 			}
 			finishReason = event.FinishReason
 		}
@@ -889,6 +937,20 @@ func handleUnifiedStream(w http.ResponseWriter, r *http.Request, adapter Protoco
 
 	finishCapture(capID, status, time.Since(startTime), nil, cap.responseText(), cap.eventsJSON())
 
+	// Record token usage on both ring buffer and capture entry
+	if streamPromptTokens > 0 || streamCompletionTokens > 0 {
+		RecordTokenUsage(TokenUsageRecord{
+			Agent:              agent,
+			Model:              model,
+			PromptTokens:       streamPromptTokens,
+			CompletionTokens:   streamCompletionTokens,
+			CacheHitTokens:     streamCacheHitTokens,
+			CacheCreationTokens: streamCacheCreationTokens,
+		})
+		SetCaptureTokens(capID, streamPromptTokens, streamCompletionTokens)
+		SetCaptureCacheTokens(capID, streamCacheHitTokens, streamCacheCreationTokens)
+	}
+
 }
 
 func firstN[T any](slice []T, n int) []T {
@@ -903,3 +965,122 @@ func writeJSON(w http.ResponseWriter, status int, data any) {
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(data)
 }
+
+// handleOpenAIChatPassthrough forwards /v1/chat/completions requests to upstream
+// with token-usage tracking.  Handles both non-streaming and streaming (SSE).
+//
+// Non-streaming:  forwardToUpstream → parse usage → write response
+// Streaming:      forwardToUpstreamStream → scan SSE lines → extract usage from
+//                 the last data chunk before [DONE] → record after stream ends
+func handleOpenAIChatPassthrough(w http.ResponseWriter, r *http.Request) {
+	rawBody, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	r.Body.Close()
+
+	var reqBody map[string]any
+	if err := json.Unmarshal(rawBody, &reqBody); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	apiKey := extractAPIKey(r)
+	model, _ := reqBody["model"].(string)
+	stream, _ := reqBody["stream"].(bool)
+	agent := detectAgent(r.URL.Path)
+
+	// ── Capture (for Proxy Inspector) ──
+	capID := startCapture(agent, r.Method, r.URL.Path, model, rawBody, copyHeaders(r), nil)
+	startTime := time.Now()
+
+	if !stream {
+		// ── Non-streaming ──
+		respBytes, err := forwardToUpstream("chat/completions", reqBody, apiKey)
+		if err != nil {
+			log.Printf("[OPENAICHAT] ERROR upstream: %v", err)
+			finishCapture(capID, http.StatusBadGateway, time.Since(startTime), nil, "", "")
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+
+		var oai OpenAIResponse
+		if json.Unmarshal(respBytes, &oai) == nil && oai.Usage != nil {
+			RecordTokenUsage(TokenUsageRecord{
+				Agent:            agent,
+				Model:            model,
+				PromptTokens:     oai.Usage.PromptTokens,
+				CompletionTokens: oai.Usage.CompletionTokens,
+				CacheHitTokens:   oai.Usage.CacheHitTokens,
+			})
+			SetCaptureTokens(capID, oai.Usage.PromptTokens, oai.Usage.CompletionTokens)
+			SetCaptureCacheTokens(capID, oai.Usage.CacheHitTokens, 0)
+		}
+
+		finishCapture(capID, http.StatusOK, time.Since(startTime), nil, string(respBytes), "")
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(respBytes)
+		return
+	}
+
+	// ── Streaming (SSE) ──
+	respBody, err := forwardToUpstreamStream("chat/completions", reqBody, apiKey)
+	if err != nil {
+		log.Printf("[OPENAICHAT] ERROR upstream stream: %v", err)
+		finishCapture(capID, http.StatusBadGateway, time.Since(startTime), nil, "", "")
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer respBody.Close()
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	flusher, _ := w.(http.Flusher)
+
+	var lastUsage *OpenAIUsage
+	var sseBuf strings.Builder
+	scanner := bufio.NewScanner(respBody)
+	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		fmt.Fprintln(w, line)
+		sseBuf.WriteString(line + "\n")
+		if flusher != nil {
+			flusher.Flush()
+		}
+
+		if strings.HasPrefix(line, "data: ") {
+			data := strings.TrimPrefix(line, "data: ")
+			if data != "[DONE]" {
+				var chunk struct {
+					Usage *OpenAIUsage `json:"usage,omitempty"`
+				}
+				if json.Unmarshal([]byte(data), &chunk) == nil && chunk.Usage != nil {
+					lastUsage = chunk.Usage
+				}
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		log.Printf("[OPENAICHAT] SSE scan error: %v", err)
+	}
+
+	if lastUsage != nil {
+		RecordTokenUsage(TokenUsageRecord{
+			Agent:            agent,
+			Model:            model,
+			PromptTokens:     lastUsage.PromptTokens,
+			CompletionTokens: lastUsage.CompletionTokens,
+			CacheHitTokens:   lastUsage.CacheHitTokens,
+		})
+		SetCaptureTokens(capID, lastUsage.PromptTokens, lastUsage.CompletionTokens)
+		SetCaptureCacheTokens(capID, lastUsage.CacheHitTokens, 0)
+	}
+
+	finishCapture(capID, http.StatusOK, time.Since(startTime), nil, sseBuf.String(), sseBuf.String())
+}
+
