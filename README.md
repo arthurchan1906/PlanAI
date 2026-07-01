@@ -40,7 +40,6 @@ go build -o aipmc .
 |------|------|
 | `aipmc serve` | 启动 proxy + web（自动选择项目，默认 :8720） |
 | `aipmc serve --project <路径>` | 指定项目启动 |
-| `aipmc serve --no-browser` | 不自动打开浏览器 |
 | `aipmc proxy` | 仅启动代理 (:19530) |
 | `aipmc web` | 仅启动 Web (:8720) |
 | `aipmc agent <claude\|codex\|gemini>` | 启动预配置的 Agent |

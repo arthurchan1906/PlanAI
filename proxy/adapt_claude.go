@@ -35,6 +35,7 @@ func (a *ClaudeAdapter) ParseRequest(r *http.Request) (*UnifiedReq, error) {
 
 func (a *ClaudeAdapter) toUnified(req *AnthropicRequest) *UnifiedReq {
 	chat := &UnifiedReq{
+		VirtualModel: req.Model,
 		Model:    effectiveModel(req.Model),
 		Stream:   req.Stream,
 		MaxTokens: &req.MaxTokens,

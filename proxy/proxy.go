@@ -4,6 +4,7 @@
 package proxy
 
 import (
+	"bytes"
 	"bufio"
 	"encoding/json"
 	"fmt"
@@ -32,6 +33,7 @@ type proxyCfg struct {
 	proxyModel           string
 	upstreamAnthropicURL string
 	startTime            time.Time
+	router               *ModelRouter
 }
 
 var cfg atomic.Value // stores *proxyCfg
@@ -85,6 +87,7 @@ func NewHandler(opts Options) http.Handler {
 		proxyModel:           opts.Model,
 		upstreamAnthropicURL: strings.TrimRight(opts.AnthropicURL, "/"),
 		startTime:            time.Now(),
+			router:               NewModelRouter(),
 	})
 
 	mux := http.NewServeMux()
@@ -94,6 +97,7 @@ func NewHandler(opts Options) http.Handler {
 	mux.HandleFunc("/__proxy/capture/clear", handleCaptureClear)
 	mux.HandleFunc("/__proxy/inspect", handleInspectPage)
 	mux.HandleFunc("/__proxy/reload", handleProxyReload)
+		mux.HandleFunc("/__proxy/models/reload", handleModelsReload)
 	mux.HandleFunc("/__proxy/tokens", handleTokenUsage)
 	mux.HandleFunc("/", handler)
 	return mux
@@ -225,9 +229,29 @@ func handleProxyReload(w http.ResponseWriter, r *http.Request) {
 		upstreamKey:          os.Getenv("UPSTREAM_KEY"),
 		proxyModel:           gcfg.ProxyModel,
 		upstreamAnthropicURL: strings.TrimRight(gcfg.AnthropicURL, "/"),
-		startTime:            loadCfg().startTime, // preserve original start time
+		startTime:            loadCfg().startTime, 
+			router:               NewModelRouter(),
 	})
 	log.Printf("[PROXY] config reloaded upstream=%s", loadCfg().upstreamURL)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleModelsReload re-reads models.json and swaps the registry atomically.
+func handleModelsReload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	router := loadCfg().router
+	if router == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "router not initialized"})
+		return
+	}
+	if err := router.Reload(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	log.Printf("[PROXY] models.json reloaded")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -273,6 +297,17 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	case strings.Contains(path, ":countTokens"):
 		handleCountTokens(rw, r)
 	case path == "/v1/messages":
+			router := loadCfg().router
+			if router != nil && router.IsActive() {
+				body, _ := io.ReadAll(r.Body)
+				r.Body = io.NopCloser(bytes.NewReader(body))
+				model := peekModel(body)
+				if model != "" && router.ShouldPassthrough(model) {
+					handleAnthropicPassthrough(rw, r)
+				} else {
+					handleClaudeUnified(rw, r)
+				}
+			} else
 		if loadCfg().upstreamAnthropicURL != "" {
 			handleAnthropicPassthrough(rw, r)
 		} else {
@@ -590,6 +625,15 @@ func handlePassthrough(w http.ResponseWriter, r *http.Request) {
 // handleModelsList transforms the upstream model list into a format compatible
 // with both standard OpenAI clients and Codex (which requires "slug" fields).
 func handleModelsList(w http.ResponseWriter, r *http.Request) {
+	// When virtual model routing is active, return the virtual model list
+	// instead of forwarding to the upstream.
+	if router := loadCfg().router; router != nil && router.IsActive() {
+		result := router.ListOpenAIModels()
+		result["models"] = router.ListCodexModels()
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
+
 	url := loadCfg().upstreamURL + "/models"
 	if r.URL.RawQuery != "" {
 		url += "?" + r.URL.RawQuery
@@ -810,7 +854,7 @@ func handleUnifiedNonStream(w http.ResponseWriter, r *http.Request, adapter Prot
 	capID := startCapture(agent, r.Method, r.URL.Path, model, rawBody, copyHeaders(r), req)
 	startTime := time.Now()
 
-	respBody, err := forwardToUpstream("chat/completions", openaiReq, apiKey)
+	respBody, err := forwardToUpstream("chat/completions", openaiReq, apiKey, req.VirtualModel)
 	if err != nil {
 		log.Printf("[UNIFIED] ERROR upstream: %v", err)
 		finishCapture(capID, http.StatusBadGateway, time.Since(startTime), nil, err.Error(), "")
@@ -876,7 +920,7 @@ func handleUnifiedStream(w http.ResponseWriter, r *http.Request, adapter Protoco
 	startTime := time.Now()
 	cap := newStreamCapture()
 
-	respBody, err := forwardToUpstreamStream("chat/completions", openaiReq, apiKey)
+	respBody, err := forwardToUpstreamStream("chat/completions", openaiReq, apiKey, req.VirtualModel)
 	if err != nil {
 		log.Printf("[UNIFIED] ERROR upstream stream: %v", err)
 		finishCapture(capID, http.StatusBadGateway, time.Since(startTime), nil, err.Error(), "")
@@ -997,7 +1041,7 @@ func handleOpenAIChatPassthrough(w http.ResponseWriter, r *http.Request) {
 
 	if !stream {
 		// ── Non-streaming ──
-		respBytes, err := forwardToUpstream("chat/completions", reqBody, apiKey)
+		respBytes, err := forwardToUpstream("chat/completions", reqBody, apiKey, "")
 		if err != nil {
 			log.Printf("[OPENAICHAT] ERROR upstream: %v", err)
 			finishCapture(capID, http.StatusBadGateway, time.Since(startTime), nil, "", "")
@@ -1026,7 +1070,7 @@ func handleOpenAIChatPassthrough(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ── Streaming (SSE) ──
-	respBody, err := forwardToUpstreamStream("chat/completions", reqBody, apiKey)
+	respBody, err := forwardToUpstreamStream("chat/completions", reqBody, apiKey, "")
 	if err != nil {
 		log.Printf("[OPENAICHAT] ERROR upstream stream: %v", err)
 		finishCapture(capID, http.StatusBadGateway, time.Since(startTime), nil, "", "")

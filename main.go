@@ -218,6 +218,49 @@ func main() {
 			os.Exit(1)
 		}
 		return
+	case "models":
+		if len(os.Args) < 3 || os.Args[2] == "list" {
+			reg := pmdb.LoadModelRegistry()
+			if reg == nil || !reg.IsActive() {
+				fmt.Println("No virtual models configured. Create ~/.aipmc/models.json to enable virtual model routing.")
+				return
+			}
+			fmt.Println("Providers:")
+			for _, p := range reg.Providers {
+				anthro := ""
+				if p.AnthropicURL != "" {
+					anthro = fmt.Sprintf(" anthropic=%s", p.AnthropicURL)
+				}
+				fmt.Printf("  %-15s openai=%s%s", p.Name, p.OpenAIURL, anthro)
+				if p.APIKeyEnv != "" {
+					fmt.Printf(" key=$%s", p.APIKeyEnv)
+				}
+				fmt.Println()
+			}
+			fmt.Println()
+			fmt.Println("Virtual Models:")
+			for _, m := range reg.Models {
+				protocols := ""
+				if m.Anthropic != "" {
+					protocols += fmt.Sprintf(" anthropic=%s", m.Anthropic)
+				}
+				if m.OpenAI != "" {
+					protocols += fmt.Sprintf(" openai=%s", m.OpenAI)
+				}
+				if protocols == "" {
+					protocols = " (passthrough)"
+				}
+				fmt.Printf("  %-25s provider=%-12s%s", m.ID, m.Provider, protocols)
+				if len(m.Tags) > 0 {
+					fmt.Printf(" [%s]", strings.Join(m.Tags, ", "))
+				}
+				fmt.Println()
+			}
+			return
+		}
+		fmt.Println("Usage: aipmc models list")
+		os.Exit(0)
+
 	case "agent":
 		if len(os.Args) < 3 {
 			fmt.Println("Usage: aipmc agent <claude|gemini|codex>")
@@ -318,13 +361,10 @@ func main() {
 }
 
 func serveCommand() int {
-	noBrowser := false
 	noProxy := false
 	projectFlag := ""
 	for i := 2; i < len(os.Args); i++ {
 		switch os.Args[i] {
-		case "--no-browser":
-			noBrowser = true
 		case "--no-proxy":
 			noProxy = true
 		case "--project", "-p":
@@ -376,9 +416,6 @@ func serveCommand() int {
 		if project, ok := checkExistingInstance(webPort); ok {
 			if project == projectName {
 				fmt.Printf("✓ Web 已运行 → http://127.0.0.1:%d (项目: %s)\n", webPort, project)
-				if !noBrowser {
-					openBrowser(fmt.Sprintf("http://127.0.0.1:%d", webPort))
-				}
 				return 0
 			}
 			fmt.Fprintf(os.Stderr, "端口 :%d 已被项目 %s 占用，请先停止该项目\n", webPort, project)
@@ -458,15 +495,7 @@ func serveCommand() int {
 	})
 	srv := web.NewServer(staticFS, newAPIHandler(), "127.0.0.1", webPort, proxyHandler, projectName, projectPath)
 
-	// Step 7: Auto-open browser
-	if !noBrowser {
-		go func() {
-			time.Sleep(500 * time.Millisecond)
-			openBrowser(fmt.Sprintf("http://127.0.0.1:%d", webPort))
-		}()
-	}
-
-	// Step 8: Start web server (blocking)
+	// Step 7: Start web server (blocking)
 	fmt.Printf("✓ Web 启动 :%d → http://127.0.0.1:%d\n", webPort, webPort)
 	fmt.Printf("✓ 项目 %s 已注册\n", projectName)
 	if err := srv.Listen(); err != nil {
@@ -600,17 +629,6 @@ func formatTimeAgo(iso string) string {
 	}
 }
 
-func openBrowser(url string) {
-	switch runtime.GOOS {
-	case "windows":
-		exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
-	case "darwin":
-		exec.Command("open", url).Start()
-	default:
-		exec.Command("xdg-open", url).Start()
-	}
-}
-
 func newAPIHandler() http.Handler {
 	return apipkg.New(apipkg.Deps{App: application}).Handler()
 }
@@ -643,21 +661,40 @@ func runDoctor(dbPath string) map[string]any {
 func runAgent(name string) {
 	gcfg := pmdb.LoadGlobalConfig()
 	port := gcfg.ProxyPort
-	model := gcfg.ProxyModel
-	if model == "" {
-		model = "gpt-4o"
-	}
 	proxyURL := fmt.Sprintf("http://localhost:%d", port)
+	model := gcfg.EffectiveAgentModel(name)
 
 	var cmd *exec.Cmd
 	switch strings.ToLower(name) {
 	case "claude", "claude-code", "cc":
 		cmd = exec.Command("claude")
-		cmd.Env = append(os.Environ(),
+		p := gcfg.Claude
+		env := append(os.Environ(),
 			"ANTHROPIC_BASE_URL="+proxyURL,
 			"ANTHROPIC_AUTH_TOKEN=local",
-			"ANTHROPIC_MODEL="+model,
 		)
+		if model != "" {
+			env = append(env, "ANTHROPIC_MODEL="+model)
+		}
+		if p.SubAgentModel != "" {
+			env = append(env, "CLAUDE_CODE_SUBAGENT_MODEL="+p.SubAgentModel)
+		}
+		if p.OpusModel != "" {
+			env = append(env, "ANTHROPIC_DEFAULT_OPUS_MODEL="+p.OpusModel)
+		}
+		if p.SonnetModel != "" {
+			env = append(env, "ANTHROPIC_DEFAULT_SONNET_MODEL="+p.SonnetModel)
+		}
+		if p.HaikuModel != "" {
+			env = append(env, "ANTHROPIC_DEFAULT_HAIKU_MODEL="+p.HaikuModel)
+		}
+		if p.SmallFastModel != "" {
+			env = append(env, "ANTHROPIC_SMALL_FAST_MODEL="+p.SmallFastModel)
+		}
+		if p.EffortLevel != "" {
+			env = append(env, "CLAUDE_CODE_EFFORT_LEVEL="+p.EffortLevel)
+		}
+		cmd.Env = env
 	case "gemini", "gemini-cli", "gc":
 		cmd = exec.Command("gemini")
 		cmd.Env = append(os.Environ(),

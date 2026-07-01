@@ -18,8 +18,17 @@ func handleAnthropicPassthrough(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
 	r.Body.Close()
 
-	// 2. Optionally replace model field if proxyModel override is configured
-	if loadCfg().proxyModel != "" {
+	// 2. Resolve virtual model routing, or use proxyModel fallback
+	var route *Route
+	if router := loadCfg().router; router != nil && router.IsActive() {
+		model := peekModel(body)
+		if model != "" {
+			route = router.Resolve(model, "anthropic")
+		}
+	}
+	if route != nil {
+		body = replaceModelField(body, route.RealModel)
+	} else if loadCfg().proxyModel != "" {
 		body = replaceModelField(body, loadCfg().proxyModel)
 	}
 
@@ -28,8 +37,15 @@ func handleAnthropicPassthrough(w http.ResponseWriter, r *http.Request) {
 	capID := startCapture(agent, r.Method, r.URL.Path, loadCfg().proxyModel, body, copyHeaders(r), nil)
 	startTime := time.Now()
 
-	// 4. Build upstream request: {anthropicURL}/v1/messages
+	// 4. Build upstream request URL
 	targetURL := loadCfg().upstreamAnthropicURL + "/v1/messages"
+	apiKey := loadCfg().upstreamKey
+	if route != nil {
+		targetURL = strings.TrimRight(route.BaseURL, "/") + "/v1/messages"
+		if route.APIKey != "" {
+			apiKey = route.APIKey
+		}
+	}
 	proxyReq, err := http.NewRequest(r.Method, targetURL, bytes.NewReader(body))
 	if err != nil {
 		finishCapture(capID, http.StatusInternalServerError, time.Since(startTime), nil, err.Error(), "")
@@ -39,8 +55,8 @@ func handleAnthropicPassthrough(w http.ResponseWriter, r *http.Request) {
 
 	// 5. Copy request headers (keep Claude Code's headers, replace Authorization)
 	proxyReq.Header = r.Header.Clone()
-	if loadCfg().upstreamKey != "" {
-		proxyReq.Header.Set("Authorization", "Bearer "+loadCfg().upstreamKey)
+	if apiKey != "" {
+		proxyReq.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
 	// 6. Send request to upstream

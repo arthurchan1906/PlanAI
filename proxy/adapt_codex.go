@@ -47,6 +47,7 @@ func (a *CodexAdapter) toUnified(req *ResponsesRequest) *UnifiedReq {
 		}
 	}
 	chat := &UnifiedReq{
+		VirtualModel: req.Model,
 		Model:  effectiveModel(req.Model),
 		Stream: req.Stream,
 	}

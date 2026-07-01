@@ -412,14 +412,43 @@ func RebuildFTS5Index(d *sql.DB) {
 
 // ── Config ────────────────────────────────────────────────────────────
 
+// AgentOverride mirrors the key fields of agent profiles for per-project overrides.
+// Empty fields are not applied — the global value is kept.
+type AgentOverride struct {
+	Model          string            `json:"model,omitempty"`
+	EffortLevel    string            `json:"effort_level,omitempty"`
+	SubAgentModel  string            `json:"sub_agent_model,omitempty"`
+	OpusModel      string            `json:"opus_model,omitempty"`
+	SonnetModel    string            `json:"sonnet_model,omitempty"`
+	HaikuModel     string            `json:"haiku_model,omitempty"`
+	SmallFastModel string            `json:"small_fast_model,omitempty"`
+	ReasoningEffort string           `json:"reasoning_effort,omitempty"`
+	ExtraEnv       map[string]string `json:"extra_env,omitempty"`
+}
+
+// AgentRuntime is the resolved agent configuration after merging global profile + project overrides.
+type AgentRuntime struct {
+	Model          string
+	EffortLevel    string
+	SubAgentModel  string
+	OpusModel      string
+	SonnetModel    string
+	HaikuModel     string
+	SmallFastModel string
+	ReasoningEffort string
+	ExtraEnv       map[string]string
+}
+
 // Config holds runtime configuration.
 type Config struct {
-	WebHost             string `json:"web_host"`
-	WebPort             int    `json:"web_port"`
-	AIEndpoint          string `json:"ai_endpoint,omitempty"`
-	AIEmbeddingEndpoint string `json:"ai_embedding_endpoint,omitempty"`
-	AIModel             string `json:"ai_model,omitempty"`
-	AIChatModel         string `json:"ai_chat_model,omitempty"`
+	WebHost             string                   `json:"web_host"`
+	WebPort             int                      `json:"web_port"`
+	AIEndpoint          string                   `json:"ai_endpoint,omitempty"`
+	AIEmbeddingEndpoint string                   `json:"ai_embedding_endpoint,omitempty"`
+	AIModel             string                   `json:"ai_model,omitempty"`
+	AIChatModel         string                   `json:"ai_chat_model,omitempty"`
+	Model               string                   `json:"model,omitempty"`               // per-project default virtual model
+	AgentOverrides      map[string]AgentOverride `json:"agent_overrides,omitempty"`     // per-project per-agent overrides
 }
 
 // LoadConfig reads config from environment and config.json.
@@ -526,9 +555,12 @@ type GlobalConfig struct {
 	AnthropicURL string            `json:"anthropic_url"`
 	ExtraEnv     map[string]string `json:"extra_env,omitempty"` // deprecated: use per-agent profiles
 
-	Claude ClaudeProfile `json:"claude"`
-	Codex  CodexProfile  `json:"codex"`
-	Gemini GeminiProfile `json:"gemini"`
+	// DefaultModel is the fallback virtual model used when no per-agent model is configured.
+	DefaultModel string `json:"default_model,omitempty"`
+
+	Claude   ClaudeProfile   `json:"claude"`
+	Codex    CodexProfile    `json:"codex"`
+	Gemini   GeminiProfile   `json:"gemini"`
 	OpenCode OpenCodeProfile `json:"opencode"`
 }
 
@@ -623,7 +655,7 @@ func LoadGlobalConfig() GlobalConfig {
 }
 
 // EffectiveAgentModel returns the model for an agent, falling back from
-// agent profile → deprecated global ProxyModel → empty string.
+// agent profile → DefaultModel → deprecated global ProxyModel → empty string.
 func (g GlobalConfig) EffectiveAgentModel(agent string) string {
 	var profileModel string
 	switch agent {
@@ -638,6 +670,9 @@ func (g GlobalConfig) EffectiveAgentModel(agent string) string {
 	}
 	if profileModel != "" {
 		return profileModel
+	}
+	if g.DefaultModel != "" {
+		return g.DefaultModel
 	}
 	return g.ProxyModel
 }
@@ -671,6 +706,106 @@ func SaveGlobalConfig(cfg GlobalConfig) error {
 	path := globalConfigPath()
 	os.MkdirAll(filepath.Dir(path), 0755)
 	return os.WriteFile(path, u.MustMarshal(cfg), 0644)
+}
+
+// ResolveAgentConfig merges the global agent profile with per-project overrides.
+// Priority chain: project agent_overrides → agent profile → DefaultModel → error.
+// Empty override fields are not applied — the global value is kept.
+// All model-name fields should be filled with virtual model names.
+func ResolveAgentConfig(agentType string, global GlobalConfig, project Config) (AgentRuntime, error) {
+	rt := AgentRuntime{
+		ExtraEnv: map[string]string{},
+	}
+
+	// Determine base profile from global config
+	switch agentType {
+	case "claude", "claude-code":
+		rt.Model = global.Claude.Model
+		rt.EffortLevel = global.Claude.EffortLevel
+		rt.SubAgentModel = global.Claude.SubAgentModel
+		rt.OpusModel = global.Claude.OpusModel
+		rt.SonnetModel = global.Claude.SonnetModel
+		rt.HaikuModel = global.Claude.HaikuModel
+		rt.SmallFastModel = global.Claude.SmallFastModel
+		for k, v := range global.Claude.ExtraEnv {
+			rt.ExtraEnv[k] = v
+		}
+	case "codex", "openai-codex":
+		rt.Model = global.Codex.Model
+		rt.ReasoningEffort = global.Codex.ReasoningEffort
+		for k, v := range global.Codex.ExtraEnv {
+			rt.ExtraEnv[k] = v
+		}
+	case "gemini", "gemini-cli":
+		for k, v := range global.Gemini.ExtraEnv {
+			rt.ExtraEnv[k] = v
+		}
+	case "opencode", "oc":
+		if len(global.OpenCode.Models) > 0 {
+			rt.Model = global.OpenCode.Models[0]
+		}
+		for k, v := range global.OpenCode.ExtraEnv {
+			rt.ExtraEnv[k] = v
+		}
+	default:
+		rt.Model = global.ProxyModel
+	}
+
+	// Merge global ExtraEnv as base
+	for k, v := range global.ExtraEnv {
+		if _, ok := rt.ExtraEnv[k]; !ok {
+			rt.ExtraEnv[k] = v
+		}
+	}
+
+	// Apply project-level overrides (non-empty only)
+	if ov, ok := project.AgentOverrides[agentType]; ok {
+		if ov.Model != "" {
+			rt.Model = ov.Model
+		}
+		if ov.EffortLevel != "" {
+			rt.EffortLevel = ov.EffortLevel
+		}
+		if ov.SubAgentModel != "" {
+			rt.SubAgentModel = ov.SubAgentModel
+		}
+		if ov.OpusModel != "" {
+			rt.OpusModel = ov.OpusModel
+		}
+		if ov.SonnetModel != "" {
+			rt.SonnetModel = ov.SonnetModel
+		}
+		if ov.HaikuModel != "" {
+			rt.HaikuModel = ov.HaikuModel
+		}
+		if ov.SmallFastModel != "" {
+			rt.SmallFastModel = ov.SmallFastModel
+		}
+		if ov.ReasoningEffort != "" {
+			rt.ReasoningEffort = ov.ReasoningEffort
+		}
+		for k, v := range ov.ExtraEnv {
+			rt.ExtraEnv[k] = v
+		}
+	}
+
+	// Fallback chain for model (highest to lowest priority):
+	//   agent_overrides → agent profile → project.model → DefaultModel → ProxyModel
+	if rt.Model == "" {
+		rt.Model = project.Model
+	}
+	if rt.Model == "" {
+		rt.Model = global.DefaultModel
+	}
+	if rt.Model == "" {
+		rt.Model = global.ProxyModel
+	}
+
+	if rt.Model == "" {
+		return rt, fmt.Errorf("no model configured for agent %s", agentType)
+	}
+
+	return rt, nil
 }
 
 // ProjectEntry records a registered project in ~/.aipmc/projects.json.

@@ -74,10 +74,35 @@ func unifiedToOpenAI(req *UnifiedReq) *OpenAIRequest {
 // HTTP transport — send requests to upstream LLM
 // =============================================================================
 
+// resolveVirtualRoute applies virtual model routing to the request URL, body, and API key.
+// It modifies url, bodyJSON, and apiKey in-place. When virtual routing is inactive
+// or the model is unknown, the parameters are left unchanged.
+func resolveVirtualRoute(virtualModel, endpoint string, bodyJSON []byte, apiKey *string) (url string, body []byte) {
+	url = loadCfg().upstreamURL + "/" + endpoint
+	body = bodyJSON
+	if virtualModel == "" {
+		return
+	}
+	router := loadCfg().router
+	if router == nil || !router.IsActive() {
+		return
+	}
+	route := router.Resolve(virtualModel, "openai")
+	if route == nil {
+		return
+	}
+	url = strings.TrimRight(route.BaseURL, "/") + "/" + endpoint
+	body = replaceModelInBody(bodyJSON, route.RealModel)
+	if route.APIKey != "" {
+		*apiKey = route.APIKey
+	}
+	return
+}
+
 // forwardToUpstream sends a non-streaming POST request to the upstream endpoint.
-func forwardToUpstream(endpoint string, body any, apiKey string) ([]byte, error) {
+func forwardToUpstream(endpoint string, body any, apiKey string, virtualModel string) ([]byte, error) {
 	bodyJSON, _ := json.Marshal(body)
-	url := loadCfg().upstreamURL + "/" + endpoint
+	url, bodyJSON := resolveVirtualRoute(virtualModel, endpoint, bodyJSON, &apiKey)
 
 	req, _ := http.NewRequest("POST", url, strings.NewReader(string(bodyJSON)))
 	req.Header.Set("Content-Type", "application/json")
@@ -104,9 +129,9 @@ func forwardToUpstream(endpoint string, body any, apiKey string) ([]byte, error)
 
 // forwardToUpstreamStream sends a streaming POST request to the upstream endpoint.
 // The caller MUST close the returned body when done.
-func forwardToUpstreamStream(endpoint string, body any, apiKey string) (io.ReadCloser, error) {
+func forwardToUpstreamStream(endpoint string, body any, apiKey string, virtualModel string) (io.ReadCloser, error) {
 	bodyJSON, _ := json.Marshal(body)
-	url := loadCfg().upstreamURL + "/" + endpoint
+	url, bodyJSON := resolveVirtualRoute(virtualModel, endpoint, bodyJSON, &apiKey)
 
 	req, _ := http.NewRequest("POST", url, strings.NewReader(string(bodyJSON)))
 	req.Header.Set("Content-Type", "application/json")

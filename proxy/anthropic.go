@@ -447,7 +447,7 @@ func handleAnthropicMessages(w http.ResponseWriter, r *http.Request) {
 
 func handleAnthropicNonStream(w http.ResponseWriter, req *AnthropicRequest, model, apiKey string) {
 	chatReq := anthropicToChat(req)
-	respBody, err := forwardToUpstream("chat/completions", chatReq, apiKey)
+	respBody, err := forwardToUpstream("chat/completions", chatReq, apiKey, "")
 	if err != nil {
 		log.Printf("[ANTHROPIC] ERROR upstream: %v", err)
 		http.Error(w, err.Error(), http.StatusBadGateway)
@@ -470,7 +470,7 @@ func handleAnthropicStream(w http.ResponseWriter, req *AnthropicRequest, model, 
 	chatReq := anthropicToChat(req)
 	chatReq.Stream = true
 
-	respBody, err := forwardToUpstreamStream("chat/completions", chatReq, apiKey)
+	respBody, err := forwardToUpstreamStream("chat/completions", chatReq, apiKey, "")
 	if err != nil {
 		log.Printf("[ANTHROPIC] ERROR upstream stream: %v", err)
 		http.Error(w, err.Error(), http.StatusBadGateway)

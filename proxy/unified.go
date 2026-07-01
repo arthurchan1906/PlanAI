@@ -17,6 +17,7 @@ import (
 // its native protocol into this single type.
 type UnifiedReq struct {
 	Model           string
+	VirtualModel    string // original virtual model name before any override
 	Messages        []UnifiedMsg
 	Stream          bool
 	Temperature     *float64

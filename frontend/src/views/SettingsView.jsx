@@ -151,6 +151,15 @@ export default function SettingsView() {
           </Space>
           <Space>
             <Form.Item>
+	        <div style={{ borderTop: "1px solid #f0f0f0", margin: "12px 0" }} />
+	        <div style={{ fontWeight: 500, marginBottom: 8 }}>LLM Providers &amp; 虚拟模型 (models.json)</div>
+	        <p style={{ color: "#888", fontSize: 12, marginBottom: 8 }}>
+	          配置多个 LLM 后端后，Agent 可通过虚拟模型名自由切换。运行 <code>aipmc models list</code> 查看当前可用模型。
+	        </p>
+	        <Form.Item name="default_model" label="全局默认模型">
+	          <Input placeholder="deepseek-v4-pro" style={{ maxWidth: 300 }} />
+	        </Form.Item>
+
               <Button type="primary" htmlType="submit" loading={loading}>保存</Button>
             </Form.Item>
             <Form.Item>
@@ -212,6 +221,15 @@ export default function SettingsView() {
             <Input placeholder="/tmp/aipmc-traces" />
           </Form.Item>
           <Form.Item>
+	        <div style={{ borderTop: "1px solid #f0f0f0", margin: "12px 0" }} />
+	        <div style={{ fontWeight: 500, marginBottom: 8 }}>LLM Providers &amp; 虚拟模型 (models.json)</div>
+	        <p style={{ color: "#888", fontSize: 12, marginBottom: 8 }}>
+	          配置多个 LLM 后端后，Agent 可通过虚拟模型名自由切换。运行 <code>aipmc models list</code> 查看当前可用模型。
+	        </p>
+	        <Form.Item name="default_model" label="全局默认模型">
+	          <Input placeholder="deepseek-v4-pro" style={{ maxWidth: 300 }} />
+	        </Form.Item>
+
             <Button type="primary" htmlType="submit" loading={loading}>保存</Button>
           </Form.Item>
         </Form>

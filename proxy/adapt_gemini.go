@@ -39,6 +39,7 @@ func (a *GeminiAdapter) toUnified(g *GeminiRequest, urlModel string) *UnifiedReq
 		model = loadCfg().proxyModel
 	}
 	req := &UnifiedReq{
+		VirtualModel: urlModel,
 		Model:  model,
 		Stream: false,
 	}

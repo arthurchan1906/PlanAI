@@ -178,8 +178,8 @@ export default function AgentConfigView() {
   // ── Claude Code Tab ──
   const claudeTab = (
     <Form form={claudeForm} layout="vertical" key="claude-form">
-      <Form.Item name="model" label="模型" tooltip="→ ANTHROPIC_MODEL。支持 [1m] 后缀指定上下文长度。" style={{ maxWidth: 400 }}>
-        <Input placeholder="deepseek-v4-pro[1m]" />
+      <Form.Item name="model" label="模型" tooltip="→ ANTHROPIC_MODEL。输入虚拟模型名，运行 aipmc models list 查看可用列表。" style={{ maxWidth: 400 }}>
+        <Input placeholder="deepseek-v4-pro" />
       </Form.Item>
       <Space wrap>
         <Form.Item name="sub_agent_model" label="子 Agent 模型" tooltip="→ CLAUDE_CODE_SUBAGENT_MODEL">
