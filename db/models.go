@@ -9,20 +9,19 @@ import (
 	"aipmc/u"
 )
 
-// ── Model Registry (virtual model routing) ──────────────────────────────
+// 鈹€鈹€ Model Registry (virtual model routing) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 // Provider defines a real LLM backend that the proxy can route to.
 type Provider struct {
 	Name         string `json:"name"`                    // e.g. "deepseek"
 	OpenAIURL    string `json:"openai_url"`              // OpenAI-compatible base URL
 	AnthropicURL string `json:"anthropic_url,omitempty"` // optional Anthropic-compatible base URL
-	APIKeyEnv    string `json:"api_key_env,omitempty"`   // env var name for API key, e.g. "DEEPSEEK_API_KEY"
 }
 
 // VirtualModel maps a user-facing model name to a real backend + protocol-specific real model names.
 type VirtualModel struct {
 	ID          string   `json:"id"`                    // virtual name agent sees, e.g. "deepseek-v4-pro"
-	Provider    string   `json:"provider"`              // → Provider.Name
+	Provider    string   `json:"provider"`              // 鈫?Provider.Name
 	DisplayName string   `json:"display_name,omitempty"` // human-readable label
 	Anthropic   string   `json:"anthropic,omitempty"`   // real model name for Anthropic protocol
 	OpenAI      string   `json:"openai,omitempty"`      // real model name for OpenAI protocol
@@ -45,7 +44,7 @@ func modelsPath() string {
 }
 
 // LoadModelRegistry reads models.json. Returns an empty registry (not error)
-// when the file doesn't exist — this is the backward-compat path.
+// when the file doesn't exist 鈥?this is the backward-compat path.
 func LoadModelRegistry() *ModelRegistry {
 	data, err := os.ReadFile(modelsPath())
 	if err != nil {
@@ -113,24 +112,21 @@ func (r *ModelRegistry) ResolveModelForProtocol(virtualModelID, protocol string)
 }
 
 // ResolveAPIKey returns the effective API key for a provider.
-// Priority: env var named by Provider.APIKeyEnv → global UPSTREAM_KEY.
+// Priority: encrypted credential store.
 func (r *ModelRegistry) ResolveAPIKey(providerName string) string {
-	prov := r.FindProvider(providerName)
-	if prov != nil && prov.APIKeyEnv != "" {
-		if key := os.Getenv(prov.APIKeyEnv); key != "" {
-			return key
-		}
+	if store := GetCredentialStore(); store != nil {
+		return store.Get(providerName)
 	}
-	return os.Getenv("UPSTREAM_KEY")
+	return ""
 }
 
 // ModelForAgentProto picks the best real model name for a given agent's native protocol.
 // Agent native protocol mapping:
 //
-//	claude → anthropic
-//	codex  → responses (falls back to openai — no provider supports responses natively)
-//	gemini → openai (fallback; gemini native not used by proxy)
-//	other  → openai
+//	claude 鈫?anthropic
+//	codex  鈫?responses (falls back to openai 鈥?no provider supports responses natively)
+//	gemini 鈫?openai (fallback; gemini native not used by proxy)
+//	other  鈫?openai
 func (r *ModelRegistry) ModelForAgentProto(virtualModelID, agentType string) string {
 	vm := r.FindModel(virtualModelID)
 	if vm == nil {
@@ -147,6 +143,136 @@ func (r *ModelRegistry) ModelForAgentProto(virtualModelID, agentType string) str
 		return vm.OpenAI
 	}
 	return virtualModelID
+}
+
+// ═══ Current model selection (per-agent) ════════════════════════════════════
+
+// currentModelPath returns ~/.aipmc/current_model.
+func currentModelPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".aipmc", "current_model")
+}
+
+// loadCurrentModelMap reads the full per-agent model map from disk.
+func loadCurrentModelMap() map[string]string {
+	data, err := os.ReadFile(currentModelPath())
+	if err != nil {
+		return map[string]string{}
+	}
+	var m map[string]string
+	if json.Unmarshal(data, &m) != nil {
+		return map[string]string{}
+	}
+	return m
+}
+
+// saveCurrentModelMap writes the per-agent model map to disk (removing empty entries).
+func saveCurrentModelMap(m map[string]string) error {
+	path := currentModelPath()
+	os.MkdirAll(filepath.Dir(path), 0755)
+	cleaned := map[string]string{}
+	for k, v := range m {
+		if v != "" {
+			cleaned[k] = v
+		}
+	}
+	if len(cleaned) == 0 {
+		os.Remove(path)
+		return nil
+	}
+	out, err := json.Marshal(cleaned)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, out, 0644)
+}
+
+// LoadCurrentModel reads the per-agent override for a given agent.
+// Returns "" when no override is set (Auto mode / passthrough).
+// Valid agents: "claude", "codex", "opencode", "gemini", "cursor"
+func LoadCurrentModel(agent string) string {
+	return loadCurrentModelMap()[agent]
+}
+
+// SaveCurrentModel persists a per-agent model override.
+// When model is "" (Auto mode), the agent's entry is removed from the map.
+// When model is non-empty, it is validated against the ModelRegistry before writing.
+func SaveCurrentModel(agent, model string) error {
+	m := loadCurrentModelMap()
+	if model == "" {
+		delete(m, agent)
+		return saveCurrentModelMap(m)
+	}
+	reg := LoadModelRegistry()
+	if reg.FindModel(model) == nil {
+		return fmt.Errorf("unknown model: %s", model)
+	}
+	m[agent] = model
+	return saveCurrentModelMap(m)
+}
+
+// LoadAllCurrentModels returns all per-agent overrides as a map.
+func LoadAllCurrentModels() map[string]string {
+	return loadCurrentModelMap()
+}
+
+// CurrentModelProvider returns the provider name for the current model of an agent.
+func CurrentModelProvider(agent string) string {
+	cm := LoadCurrentModel(agent)
+	if cm == "" {
+		return ""
+	}
+	reg := LoadModelRegistry()
+	if vm := reg.FindModel(cm); vm != nil {
+		return vm.Provider
+	}
+	return ""
+}
+
+// 鈹€鈹€ Mutation helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+
+// AddProvider appends a provider, or replaces an existing one with the same name.
+func (r *ModelRegistry) AddProvider(p Provider) {
+	for i := range r.Providers {
+		if r.Providers[i].Name == p.Name {
+			r.Providers[i] = p
+			return
+		}
+	}
+	r.Providers = append(r.Providers, p)
+}
+
+// RemoveProvider deletes a provider by name. Returns false if not found.
+func (r *ModelRegistry) RemoveProvider(name string) bool {
+	for i := range r.Providers {
+		if r.Providers[i].Name == name {
+			r.Providers = append(r.Providers[:i], r.Providers[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+// AddModel appends a virtual model, or replaces an existing one with the same ID.
+func (r *ModelRegistry) AddModel(m VirtualModel) {
+	for i := range r.Models {
+		if r.Models[i].ID == m.ID {
+			r.Models[i] = m
+			return
+		}
+	}
+	r.Models = append(r.Models, m)
+}
+
+// RemoveModel deletes a virtual model by ID. Returns false if not found.
+func (r *ModelRegistry) RemoveModel(id string) bool {
+	for i := range r.Models {
+		if r.Models[i].ID == id {
+			r.Models = append(r.Models[:i], r.Models[i+1:]...)
+			return true
+		}
+	}
+	return false
 }
 
 // Validate returns an error if the registry has structural problems
@@ -180,3 +306,4 @@ func (r *ModelRegistry) Validate() error {
 	}
 	return nil
 }
+

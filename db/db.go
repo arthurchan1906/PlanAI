@@ -801,7 +801,8 @@ func ResolveAgentConfig(agentType string, global GlobalConfig, project Config) (
 		rt.Model = global.ProxyModel
 	}
 
-	if rt.Model == "" {
+	// Model is not strictly required for OpenCode and Gemini
+	if rt.Model == "" && (agentType == "claude" || agentType == "claude-code" || agentType == "codex" || agentType == "openai-codex") {
 		return rt, fmt.Errorf("no model configured for agent %s", agentType)
 	}
 

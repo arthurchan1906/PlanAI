@@ -1,310 +1,268 @@
 import { useState, useEffect } from "react";
-import { Button, Card, Form, Input, Collapse, Space, Tabs, Typography, message, Tag } from "antd";
+import { Button, Card, Form, Input, Select, Collapse, Space, Tabs, Checkbox, Typography, message, Tag } from "antd";
 import { api } from "../utils/api";
 
 const { Title, Text } = Typography;
 
-// ── Convert extra_env map → Form.List array ──
 function extraEnvToArray(obj) {
   if (!obj || typeof obj !== "object" || Array.isArray(obj)) return [];
   return Object.entries(obj).map(([key, value]) => ({ key, value: String(value) }));
 }
-
-// ── Convert Form.List array → extra_env map ──
 function extraEnvToMap(arr) {
   if (!Array.isArray(arr)) return {};
   const map = {};
-  for (const item of arr) {
-    if (item && item.key) map[item.key] = item.value || "";
-  }
+  for (const item of arr) { if (item && item.key) map[item.key] = item.value || ""; }
   return map;
 }
 
-// ── Auto-injected env vars (read-only, shown for reference) ──
+const EFFORT_OPTS = [{ value: "min", label: "min" }, { value: "medium", label: "medium" }, { value: "max", label: "max" }];
+const REASON_OPTS = [
+  { value: "low", label: "low" }, { value: "medium", label: "medium" }, { value: "high", label: "high" },
+];
+
 const AUTO_INJECT = {
   claude: [
-    { key: "ANTHROPIC_BASE_URL",       desc: "Proxy 地址" },
-    { key: "ANTHROPIC_AUTH_TOKEN",     desc: "API Key" },
-    { key: "ANTHROPIC_MODEL",          desc: "模型名（来自上方配置）" },
-    { key: "CLAUDE_CODE_SUBAGENT_MODEL", desc: "子 Agent 模型（来自上方配置）" },
+    { key: "ANTHROPIC_BASE_URL", desc: "Proxy address" },
+    { key: "ANTHROPIC_AUTH_TOKEN", desc: "local" },
+    { key: "ANTHROPIC_MODEL", desc: "model name (from config above)" },
+    { key: "CLAUDE_CODE_SUBAGENT_MODEL", desc: "SubAgent model" },
+    { key: "ANTHROPIC_DEFAULT_OPUS_MODEL", desc: "Opus model" },
+    { key: "ANTHROPIC_DEFAULT_SONNET_MODEL", desc: "Sonnet model" },
+    { key: "ANTHROPIC_DEFAULT_HAIKU_MODEL", desc: "Haiku model" },
+    { key: "ANTHROPIC_SMALL_FAST_MODEL", desc: "SmallFast model" },
+    { key: "CLAUDE_CODE_EFFORT_LEVEL", desc: "Effort Level" },
   ],
   codex: [
-    { key: "OPENAI_API_KEY",   desc: "API Key" },
-    { key: "OPENAI_BASE_URL",  desc: "由 proxy.config.toml 指定" },
+    { key: "OPENAI_API_KEY", desc: "local" },
+    { key: "OPENAI_BASE_URL", desc: "specified by proxy.config.toml" },
   ],
   gemini: [
-    { key: "GEMINI_API_KEY",        desc: "API Key" },
-    { key: "GOOGLE_API_KEY",        desc: "API Key (备用)" },
-    { key: "GEMINI_API_BASE",       desc: "Proxy 地址" },
-    { key: "GOOGLE_API_BASE",       desc: "Proxy 地址 (备用)" },
-    { key: "GOOGLE_GEMINI_BASE_URL", desc: "Proxy 地址 (备用)" },
+    { key: "GEMINI_API_KEY", desc: "local" }, { key: "GOOGLE_API_KEY", desc: "local" },
+    { key: "GEMINI_API_BASE", desc: "Proxy address" }, { key: "GOOGLE_API_BASE", desc: "Proxy address" },
+    { key: "GOOGLE_GEMINI_BASE_URL", desc: "Proxy address" },
   ],
 };
 
 const AGENT_LABELS = { claude: "Claude Code", codex: "Codex CLI", gemini: "Gemini CLI", opencode: "OpenCode" };
 
-export default function AgentConfigView() {
+export default function AgentConfigView({ models = [] }) {
   const [activeTab, setActiveTab] = useState("claude");
   const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(null); // which agent is saving
+  const [saving, setSaving] = useState(null);
+  const [modelList, setModelList] = useState(models);
+  const [currentModel, setCurrentModel] = useState({});
+  const [switchingModel, setSwitchingModel] = useState(false);
   const [claudeForm] = Form.useForm();
   const [codexForm] = Form.useForm();
   const [geminiForm] = Form.useForm();
   const [opencodeForm] = Form.useForm();
 
+  const modelOpts = (models.length > 0 ? models : modelList).map(m => ({ value: m.id, label: `${m.id} (${m.provider})` }));
+
   async function loadProfiles() {
     setLoading(true);
     try {
       const data = await api("/pmai/config");
-      if (data.claude) {
-        claudeForm.setFieldsValue({
-          ...data.claude,
-          extra_env: extraEnvToArray(data.claude.extra_env),
-        });
-      }
-      if (data.codex) {
-        codexForm.setFieldsValue({
-          ...data.codex,
-          extra_env: extraEnvToArray(data.codex.extra_env),
-        });
-      }
-      if (data.gemini) {
-        geminiForm.setFieldsValue({
-          ...data.gemini,
-          extra_env: extraEnvToArray(data.gemini.extra_env),
-        });
-      }
+      setModelList(data.models || []);
+      if (data.claude) claudeForm.setFieldsValue({ ...data.claude, extra_env: extraEnvToArray(data.claude.extra_env) });
+      if (data.codex) codexForm.setFieldsValue({ ...data.codex, extra_env: extraEnvToArray(data.codex.extra_env) });
+      if (data.gemini) geminiForm.setFieldsValue({ ...data.gemini, extra_env: extraEnvToArray(data.gemini.extra_env) });
       if (data.opencode) {
-        opencodeForm.setFieldsValue({
-          ...data.opencode,
-          extra_env: extraEnvToArray(data.opencode.extra_env),
-          models: (data.opencode.models || []).map(m => ({ name: m })),
-        });
+        const o = data.opencode;
+        opencodeForm.setFieldsValue({ ...o, extra_env: extraEnvToArray(o.extra_env), models: o.models || [] });
       }
-    } catch (e) {
-      // ignore
-    }
+    } catch (e) { /* */ }
     setLoading(false);
   }
 
-  useEffect(() => { loadProfiles(); }, []);
+  async function fetchCurrentModels() {
+    try { const m = await api("/pmai/model"); setCurrentModel(m.current || {}); } catch (e) { /* */ }
+  }
+
+  async function switchModel(agent, modelId) {
+    setSwitchingModel(true);
+    try {
+      const d = await api("/pmai/model/switch", {
+        method: "POST",
+        body: JSON.stringify({ model: modelId, agent }),
+      });
+      if (d.ok) {
+        message.success(modelId ? `${agent} switched to ${modelId}` : `${agent} switched to Auto`);
+        setCurrentModel(prev => ({ ...prev, [agent]: modelId || "" }));
+      } else message.error(d.error);
+    } catch (e) { message.error(e.message); }
+    setSwitchingModel(false);
+  }
+
+  useEffect(() => { loadProfiles(); fetchCurrentModels(); }, []);
 
   async function saveProfile(agent) {
     setSaving(agent);
-    let form;
-    switch (agent) {
-      case "claude": form = claudeForm; break;
-      case "codex":  form = codexForm; break;
-      case "gemini":   form = geminiForm;   break;
-      case "opencode": form = opencodeForm; break;
-    }
-    const values = form.getFieldsValue();
-    // Convert Form.List extra_env array back to map
-    if (values.extra_env) {
-      values.extra_env = extraEnvToMap(values.extra_env);
-    }
-    // Convert Form.List models array back to string array (for opencode)
-    if (values.models && Array.isArray(values.models)) {
-      values.models = values.models.map(m => m.name).filter(Boolean);
-    }
+    const map = { claude: claudeForm, codex: codexForm, gemini: geminiForm, opencode: opencodeForm };
+    const values = map[agent].getFieldsValue();
+    if (values.extra_env) values.extra_env = extraEnvToMap(values.extra_env);
     try {
-      await api("/pmai/config", {
-        method: "POST",
-        body: JSON.stringify({ [agent]: values }),
-      });
-      message.success(`${AGENT_LABELS[agent]} 配置已保存`);
-    } catch (e) {
-      message.error(e.message);
-    }
+      await api("/pmai/config", { method: "POST", body: JSON.stringify({ [agent]: values }) });
+      message.success(`${AGENT_LABELS[agent]} saved`);
+    } catch (e) { message.error(e.message); }
     setSaving(null);
   }
 
-  // ── Shared ExtraEnv Form.List section ──
   function extraEnvSection(form) {
     return (
-      <Collapse ghost size="small" items={[{
-        key: "extra",
-        label: "额外环境变量（高级）",
-        children: (
-          <Form.Item noStyle>
-            <Form.List name="extra_env">
-              {(fields, { add, remove }) => (
-                <>
-                  <Text type="secondary" style={{ display: "block", marginBottom: 8, fontSize: 12 }}>
-                    不常用的配置项以 KEY=VALUE 形式注入。Agent 自身的 extra_env 会覆盖全局设置。
-                  </Text>
-                  {fields.map(({ key, name }) => (
-                    <Space key={key} style={{ display: "flex", marginBottom: 8 }} align="baseline">
-                      <Form.Item name={[name, "key"]} noStyle>
-                        <Input placeholder="变量名" style={{ width: 260 }} />
-                      </Form.Item>
-                      <Form.Item name={[name, "value"]} noStyle>
-                        <Input placeholder="值" style={{ width: 260 }} />
-                      </Form.Item>
-                      <Button size="small" danger onClick={() => remove(name)}>×</Button>
-                    </Space>
-                  ))}
-                  <Button type="dashed" onClick={() => add({ key: "", value: "" })} block>
-                    + 添加
-                  </Button>
-                </>
-              )}
-            </Form.List>
-          </Form.Item>
-        ),
-      }]} />
+      <Collapse ghost size="small" items={[{ key: "extra", label: "Extra Env (advanced)", children: (
+        <Form.Item noStyle><Form.List name="extra_env">{(fields, { add, remove }) => (<>
+          <Text type="secondary" style={{ display: "block", marginBottom: 8, fontSize: 12 }}>Custom KEY=VALUE pairs. Agent extra_env overrides global.</Text>
+          {fields.map(({ key, name }) => (
+            <Space key={key} style={{ display: "flex", marginBottom: 8 }} align="baseline">
+              <Form.Item name={[name, "key"]} noStyle><Input placeholder="KEY" style={{ width: 260 }} /></Form.Item>
+              <Form.Item name={[name, "value"]} noStyle><Input placeholder="VALUE" style={{ width: 260 }} /></Form.Item>
+              <Button size="small" danger onClick={() => remove(name)}>&times;</Button>
+            </Space>
+          ))}
+          <Button type="dashed" onClick={() => add({ key: "", value: "" })}>+ Add</Button>
+        </>)}</Form.List></Form.Item>
+      )}]} />
     );
   }
 
-  // ── Auto-injected env vars (read-only) ──
   function injectedSection(agent) {
+    const entries = AUTO_INJECT[agent];
+    if (!entries || entries.length === 0) return null;
     return (
-      <Collapse ghost size="small" items={[{
-        key: "injected",
-        label: "自动注入的环境变量（只读）",
-        children: (
-          <div style={{ fontFamily: "monospace", fontSize: 12, color: "#8b949e" }}>
-            {AUTO_INJECT[agent].map((env) => (
-              <div key={env.key} style={{ marginBottom: 2 }}>
-                <code>{env.key}</code> — {env.desc}
-              </div>
-            ))}
-          </div>
-        ),
-      }]} />
+      <Collapse ghost size="small" items={[{ key: "injected", label: "Auto-injected env vars (view only)", children: (
+        <div>
+          <Text type="secondary" style={{ display: "block", marginBottom: 8, fontSize: 12 }}>These are automatically set when the agent is launched. No manual config needed.</Text>
+          {entries.map(({ key, desc }) => (
+            <div key={key} style={{ marginBottom: 4 }}>
+              <Tag style={{ fontFamily: "monospace" }}>{key}</Tag>
+              <Text type="secondary" style={{ fontSize: 12 }}>{desc}</Text>
+            </div>
+          ))}
+        </div>
+      )}]} />
     );
   }
 
-  // ── Claude Code Tab ──
+  function currentModelSelect(agent) {
+    const allModels = models.length > 0 ? models : modelList;
+    return (
+      <div style={{ marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>
+        <Text strong style={{ fontSize: 12, whiteSpace: "nowrap" }}>Current:</Text>
+        <Select
+          value={currentModel[agent] || undefined}
+          placeholder="Auto (use default)"
+          style={{ width: 200 }}
+          size="small"
+          loading={switchingModel}
+          onChange={v => switchModel(agent, v || "")}
+          allowClear
+          options={[
+            { value: "", label: "Auto (use default)" },
+            ...allModels.map(m => ({ value: m.id, label: m.display_name || m.id })),
+          ]}
+        />
+      </div>
+    );
+  }
+
   const claudeTab = (
     <Form form={claudeForm} layout="vertical" key="claude-form">
-      <Form.Item name="model" label="模型" tooltip="→ ANTHROPIC_MODEL。输入虚拟模型名，运行 aipmc models list 查看可用列表。" style={{ maxWidth: 400 }}>
-        <Input placeholder="deepseek-v4-pro" />
+      {currentModelSelect("claude")}
+      <Form.Item name="model" label="Default Model" tooltip="ANTHROPIC_MODEL. Virtual model name from LLM Gateway." style={{ maxWidth: 400 }}>
+        <Select placeholder="select virtual model" options={modelOpts} allowClear showSearch />
       </Form.Item>
       <Space wrap>
-        <Form.Item name="sub_agent_model" label="子 Agent 模型" tooltip="→ CLAUDE_CODE_SUBAGENT_MODEL">
-          <Input placeholder="deepseek-v4-flash" style={{ width: 220 }} />
+        <Form.Item name="sub_agent_model" label="SubAgent Model" style={{ width: 300 }}>
+          <Select placeholder="optional" options={modelOpts} allowClear showSearch />
         </Form.Item>
-        <Form.Item name="effort_level" label="Effort Level" tooltip="→ CLAUDE_CODE_EFFORT_LEVEL (min / medium / max)">
-          <Input placeholder="max" style={{ width: 120 }} />
-        </Form.Item>
-      </Space>
-      <Space wrap>
-        <Form.Item name="opus_model" label="Opus 模型" tooltip="→ ANTHROPIC_DEFAULT_OPUS_MODEL">
-          <Input placeholder="deepseek-v4-pro[1m]" style={{ width: 220 }} />
-        </Form.Item>
-        <Form.Item name="sonnet_model" label="Sonnet 模型" tooltip="→ ANTHROPIC_DEFAULT_SONNET_MODEL">
-          <Input placeholder="deepseek-v4-pro[1m]" style={{ width: 220 }} />
+        <Form.Item name="effort_level" label="Effort Level" style={{ width: 180 }}>
+          <Select placeholder="medium" options={EFFORT_OPTS} allowClear />
         </Form.Item>
       </Space>
-      <Space wrap>
-        <Form.Item name="haiku_model" label="Haiku 模型" tooltip="→ ANTHROPIC_DEFAULT_HAIKU_MODEL">
-          <Input placeholder="deepseek-v4-flash" style={{ width: 220 }} />
-        </Form.Item>
-        <Form.Item name="small_fast_model" label="Small Fast 模型" tooltip="→ ANTHROPIC_SMALL_FAST_MODEL">
-          <Input placeholder="deepseek-v4-flash" style={{ width: 220 }} />
-        </Form.Item>
-      </Space>
+
+      <Collapse ghost size="small" items={[{ key: "advanced", label: "Complexity-based auto routing (advanced)", children: (
+        <div>
+          <Space wrap>
+            <Form.Item name="opus_model" label="Opus (complex)" style={{ width: 280 }}>
+              <Select placeholder="optional" options={modelOpts} allowClear showSearch />
+            </Form.Item>
+            <Form.Item name="sonnet_model" label="Sonnet (medium)" style={{ width: 280 }}>
+              <Select placeholder="optional" options={modelOpts} allowClear showSearch />
+            </Form.Item>
+          </Space>
+          <Space wrap>
+            <Form.Item name="haiku_model" label="Haiku (simple)" style={{ width: 280 }}>
+              <Select placeholder="optional" options={modelOpts} allowClear showSearch />
+            </Form.Item>
+            <Form.Item name="small_fast_model" label="SmallFast (quick)" style={{ width: 280 }}>
+              <Select placeholder="optional" options={modelOpts} allowClear showSearch />
+            </Form.Item>
+          </Space>
+        </div>
+      )}]} />
+
       {extraEnvSection(claudeForm)}
       {injectedSection("claude")}
       <Form.Item style={{ marginTop: 12 }}>
-        <Button type="primary" onClick={() => saveProfile("claude")} loading={saving === "claude"}>
-          保存 Claude Code 配置
-        </Button>
+        <Button type="primary" onClick={() => saveProfile("claude")} loading={saving === "claude"}>Save Claude Code</Button>
       </Form.Item>
     </Form>
   );
 
-  // ── Codex CLI Tab ──
   const codexTab = (
     <Form form={codexForm} layout="vertical" key="codex-form">
-      <Form.Item name="model" label={
-        <span>模型 <Tag color="processing" style={{ fontSize: 10, marginLeft: 6 }}>不含 [1m] 后缀</Tag></span>
-      } tooltip="→ 写入 proxy.config.toml。Anthopic 专用的 [1m] 等后缀无需填写。" style={{ maxWidth: 400 }}>
-        <Input placeholder="deepseek-v4-pro" />
+      {currentModelSelect("codex")}
+      <Form.Item name="model" label="Default Model" style={{ maxWidth: 400 }}>
+        <Select placeholder="select virtual model" options={modelOpts} allowClear showSearch />
       </Form.Item>
-      <Form.Item name="reasoning_effort" label="Reasoning Effort" tooltip="→ proxy.config.toml model_reasoning_effort (low / medium / high)" style={{ maxWidth: 240 }}>
-        <Input placeholder="medium" />
+      <Form.Item name="reasoning_effort" label="Reasoning Effort" style={{ width: 200 }}>
+        <Select placeholder="medium" options={REASON_OPTS} allowClear />
       </Form.Item>
       {extraEnvSection(codexForm)}
       {injectedSection("codex")}
       <Form.Item style={{ marginTop: 12 }}>
-        <Button type="primary" onClick={() => saveProfile("codex")} loading={saving === "codex"}>
-          保存 Codex CLI 配置
-        </Button>
+        <Button type="primary" onClick={() => saveProfile("codex")} loading={saving === "codex"}>Save Codex CLI</Button>
       </Form.Item>
     </Form>
   );
 
-  // ── Gemini CLI Tab ──
   const geminiTab = (
     <Form form={geminiForm} layout="vertical" key="gemini-form">
-      <Text type="secondary" style={{ display: "block", marginBottom: 16 }}>
-        Gemini 的模型由 proxy 根据请求动态选择，无需在此配置。
-      </Text>
+      <Text type="secondary" style={{ display: "block", marginBottom: 16 }}>Gemini model is resolved by proxy dynamically. No model config needed.</Text>
       {extraEnvSection(geminiForm)}
       {injectedSection("gemini")}
       <Form.Item style={{ marginTop: 12 }}>
-        <Button type="primary" onClick={() => saveProfile("gemini")} loading={saving === "gemini"}>
-          保存 Gemini CLI 配置
-        </Button>
+        <Button type="primary" onClick={() => saveProfile("gemini")} loading={saving === "gemini"}>Save Gemini CLI</Button>
       </Form.Item>
     </Form>
   );
 
-  // ── OpenCode Tab ──
   const opencodeTab = (
     <Form form={opencodeForm} layout="vertical" key="opencode-form">
-      <Text type="secondary" style={{ display: "block", marginBottom: 16 }}>
-        OpenCode 通过 opencode.json 自定义 provider 连接 AIPM proxy。<br/>
-        每个模型会写入 <code>provider.aipm.models</code>，启动时传入第一个模型。<br/>
-        Provider（baseURL 等）请在 opencode.json 中手动配置。
-      </Text>
-      <Form.Item label="模型列表" tooltip="写入 opencode.json 的 provider.aipm.models。保存后自动同步。" style={{ maxWidth: 500 }}>
-        <Form.List name="models">
-          {(fields, { add, remove }) => (
-            <>
-              {fields.map(({ key, name }) => (
-                <Space key={key} style={{ display: "flex", marginBottom: 8 }} align="baseline">
-                  <Form.Item name={[name, "name"]} noStyle>
-                    <Input placeholder="deepseek-v4-pro" style={{ width: 300 }} />
-                  </Form.Item>
-                  <Button size="small" danger onClick={() => remove(name)}>×</Button>
-                </Space>
-              ))}
-              <Button type="dashed" onClick={() => add({ name: "" })} block>
-                + 添加模型
-              </Button>
-            </>
-          )}
-        </Form.List>
+      {currentModelSelect("opencode")}
+      <Form.Item name="model" label="Default Model" style={{ maxWidth: 400 }}>
+        <Select placeholder="select virtual model" options={modelOpts} allowClear showSearch />
+      </Form.Item>
+      <Form.Item name="models" label="Available Models" tooltip="Checked models are written to opencode.json for /model switching.">
+        {(models.length > 0 ? models : modelList).length === 0
+          ? <Text type="secondary">No models in Gateway. Add models first.</Text>
+          : <Checkbox.Group><Space direction="vertical">{(models.length > 0 ? models : modelList).map(m => <Checkbox key={m.id} value={m.id}>{m.id} ({m.provider})</Checkbox>)}</Space></Checkbox.Group>}
       </Form.Item>
       {extraEnvSection(opencodeForm)}
       <Form.Item style={{ marginTop: 12 }}>
-        <Button type="primary" onClick={() => saveProfile("opencode")} loading={saving === "opencode"}>
-          保存 OpenCode 配置
-        </Button>
+        <Button type="primary" onClick={() => saveProfile("opencode")} loading={saving === "opencode"}>Save OpenCode</Button>
       </Form.Item>
     </Form>
   );
 
   return (
-    <Card
-      size="small"
-      title={<Title level={5} style={{ margin: 0 }}>Agent 配置</Title>}
-      extra={<Button size="small" onClick={loadProfiles} loading={loading}>刷新</Button>}
-      style={{ marginTop: 16 }}
-    >
-      <Tabs
-        activeKey={activeTab}
-        onChange={setActiveTab}
-        items={[
-          { key: "claude", label: "Claude Code", children: claudeTab },
-          { key: "codex",  label: "Codex CLI",  children: codexTab },
-          { key: "gemini",   label: "Gemini CLI", children: geminiTab },
-          { key: "opencode", label: "OpenCode",    children: opencodeTab },
-        ]}
-      />
-    </Card>
+    <Tabs activeKey={activeTab} onChange={setActiveTab}
+      items={[
+        { key: "claude", label: "Claude Code", children: claudeTab },
+        { key: "codex",  label: "Codex CLI",  children: codexTab },
+        { key: "opencode", label: "OpenCode",    children: opencodeTab },
+        { key: "gemini",   label: "Gemini CLI", children: geminiTab },
+      ]} />
   );
 }

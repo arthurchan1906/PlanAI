@@ -18,28 +18,44 @@ func handleAnthropicPassthrough(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
 	r.Body.Close()
 
-	// 2. Resolve virtual model routing, or use proxyModel fallback
+	// 2. currentModel override: when user has selected a model via Web UI/CLI,
+	// replace the peeked model and body before routing.
+	peekedModel := peekModel(body)
+	if cm := loadCurrentModel("claude"); cm != "" {
+		peekedModel = cm
+		body = replaceModelInBody(body, cm)
+	}
+
+	// 3. Resolve virtual model routing, or use proxyModel fallback
 	var route *Route
 	if router := loadCfg().router; router != nil && router.IsActive() {
-		model := peekModel(body)
-		if model != "" {
-			route = router.Resolve(model, "anthropic")
+		if peekedModel != "" {
+			route = router.Resolve(peekedModel, "anthropic")
 		}
 	}
 	if route != nil {
-		body = replaceModelField(body, route.RealModel)
+		body = replaceModelInBody(body, route.RealModel)
 	} else if loadCfg().proxyModel != "" {
-		body = replaceModelField(body, loadCfg().proxyModel)
+		body = replaceModelInBody(body, loadCfg().proxyModel)
 	}
 
-	// 3. Start capture recording
+	// 4. Determine effective model name for capture/token recording
+	effectiveModelName := route.RealModel
+	if effectiveModelName == "" {
+		effectiveModelName = loadCfg().proxyModel
+	}
+	if effectiveModelName == "" {
+		effectiveModelName = peekedModel
+	}
+
+	// 5. Start capture recording
 	agent := "claude"
-	capID := startCapture(agent, r.Method, r.URL.Path, loadCfg().proxyModel, body, copyHeaders(r), nil)
+	capID := startCapture(agent, r.Method, r.URL.Path, effectiveModelName, body, copyHeaders(r), nil)
 	startTime := time.Now()
 
-	// 4. Build upstream request URL
+	// 6. Build upstream request URL
 	targetURL := loadCfg().upstreamAnthropicURL + "/v1/messages"
-	apiKey := loadCfg().upstreamKey
+	apiKey := ""
 	if route != nil {
 		targetURL = strings.TrimRight(route.BaseURL, "/") + "/v1/messages"
 		if route.APIKey != "" {
@@ -53,13 +69,13 @@ func handleAnthropicPassthrough(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 5. Copy request headers (keep Claude Code's headers, replace Authorization)
+	// 7. Copy request headers (keep Claude Code's headers, replace Authorization)
 	proxyReq.Header = r.Header.Clone()
 	if apiKey != "" {
 		proxyReq.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
-	// 6. Send request to upstream
+	// 8. Send request to upstream
 	resp, err := http.DefaultClient.Do(proxyReq)
 	if err != nil {
 		log.Printf("[ANTHROPIC_PASSTHROUGH] ERROR upstream: %v", err)
@@ -69,7 +85,7 @@ func handleAnthropicPassthrough(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	// 7. Copy response headers to downstream (Claude Code needs Content-Type: text/event-stream)
+	// 9. Copy response headers to downstream (Claude Code needs Content-Type: text/event-stream)
 	for k, vs := range resp.Header {
 		for _, v := range vs {
 			w.Header().Add(k, v)
@@ -77,7 +93,7 @@ func handleAnthropicPassthrough(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(resp.StatusCode)
 
-	// 8. Stream SSE lines directly to Claude Code, capturing for inspector
+	// 10. Stream SSE lines directly to Claude Code, capturing for inspector
 	flusher, _ := w.(http.Flusher)
 	var captureBuf bytes.Buffer
 	tee := io.TeeReader(resp.Body, &captureBuf)
@@ -97,7 +113,7 @@ func handleAnthropicPassthrough(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 9. Complete capture with actual response body
+	// 11. Complete capture with actual response body
 	finishCapture(capID, resp.StatusCode, time.Since(startTime), nil, captureBuf.String(), "")
 
 	// Record token usage from Anthropic SSE events
@@ -105,7 +121,7 @@ func handleAnthropicPassthrough(w http.ResponseWriter, r *http.Request) {
 		totalPrompt := inputT + cacheHit // Anthropic: input_tokens excludes cache reads
 		RecordTokenUsage(TokenUsageRecord{
 			Agent:              "claude",
-			Model:              loadCfg().proxyModel,
+			Model:              effectiveModelName,
 			PromptTokens:       totalPrompt,
 			CompletionTokens:   outputT,
 			CacheHitTokens:     cacheHit,
@@ -119,36 +135,4 @@ func handleAnthropicPassthrough(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[ANTHROPIC_PASSTHROUGH] upstream returned %d", resp.StatusCode)
 	} else {
 	}
-}
-
-// replaceModelField replaces the "model" field value in an Anthropic JSON request body.
-// Uses lightweight string scanning — does not fully parse the JSON.
-func replaceModelField(body []byte, model string) []byte {
-	s := string(body)
-	idx := strings.Index(s, `"model"`)
-	if idx < 0 {
-		return body
-	}
-	colonPos := strings.Index(s[idx:], ":")
-	if colonPos < 0 {
-		return body
-	}
-	colonPos += idx
-	// Find the value start and end positions
-	valStart := -1
-	for i := colonPos + 1; i < len(s); i++ {
-		if s[i] == '"' {
-			valStart = i
-			break
-		}
-	}
-	if valStart < 0 {
-		return body
-	}
-	valEnd := strings.Index(s[valStart+1:], `"`)
-	if valEnd < 0 {
-		return body
-	}
-	valEnd += valStart + 1
-	return []byte(s[:valStart+1] + model + s[valEnd:])
 }

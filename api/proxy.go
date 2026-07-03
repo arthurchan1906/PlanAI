@@ -68,6 +68,13 @@ func (s *Server) handleProxyRestart(w http.ResponseWriter, body map[string]any) 
 	cmd := exec.Command(exe, "proxy")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	// If credentials are unlocked in this session, pass the master password
+	// so the proxy subprocess can decrypt without interactive prompt.
+	if store := pmdb.GetCredentialStore(); store != nil {
+		if pw := store.SessionPassword(); len(pw) > 0 {
+			cmd.Env = append(os.Environ(), "AIPMC_MASTER_PASSWORD="+string(pw))
+		}
+	}
 	if err := cmd.Start(); err != nil {
 		web.SendError(w, 500, fmt.Sprintf("启动 Proxy 失败: %v", err))
 		return

@@ -39,6 +39,7 @@ func (s *Server) handleGetConfig(w http.ResponseWriter) {
 		"models":                reg.Models,
 		"project_model":         cfg.Model,
 		"agent_overrides":       cfg.AgentOverrides,
+		"api_keys":              credentialKeyList(),
 	})
 }
 
@@ -144,6 +145,10 @@ func (s *Server) handlePostConfig(w http.ResponseWriter, body map[string]any) {
 		reg := pmdb.LoadModelRegistry()
 		if hasProviders {
 			if provs, ok := body["providers"].([]any); ok {
+				if len(provs) == 0 {
+					web.SendError(w, 400, "providers cannot be an empty array — send null or omit the field to keep existing providers")
+					return
+				}
 				reg.Providers = make([]pmdb.Provider, 0, len(provs))
 				for _, p := range provs {
 					if pm, ok := p.(map[string]any); ok {
@@ -151,14 +156,20 @@ func (s *Server) handlePostConfig(w http.ResponseWriter, body map[string]any) {
 							Name:         u.Str(pm["name"]),
 							OpenAIURL:    u.Str(pm["openai_url"]),
 							AnthropicURL: u.Str(pm["anthropic_url"]),
-							APIKeyEnv:    u.Str(pm["api_key_env"]),
 						})
 					}
 				}
+			} else {
+				web.SendError(w, 400, "providers must be a JSON array")
+				return
 			}
 		}
 		if hasModels {
 			if mods, ok := body["models"].([]any); ok {
+				if len(mods) == 0 {
+					web.SendError(w, 400, "models cannot be an empty array — send null or omit the field to keep existing models")
+					return
+				}
 				reg.Models = make([]pmdb.VirtualModel, 0, len(mods))
 				for _, m := range mods {
 					if mm, ok := m.(map[string]any); ok {
@@ -183,6 +194,9 @@ func (s *Server) handlePostConfig(w http.ResponseWriter, body map[string]any) {
 						reg.Models = append(reg.Models, vm)
 					}
 				}
+			} else {
+				web.SendError(w, 400, "models must be a JSON array")
+				return
 			}
 		}
 		reg.Version = 1
@@ -223,4 +237,100 @@ func (s *Server) handlePostConfig(w http.ResponseWriter, body map[string]any) {
 	}()
 
 	web.SendJSON(w, map[string]any{"ok": true, "ai_enabled": cfg.AIEndpoint != ""})
+}
+
+// ── Credentials API ────────────────────────────────────────────────────
+
+// credentialKeyList returns the list of keys from the in-memory store (masked).
+func credentialKeyList() map[string]string {
+	store := pmdb.GetCredentialStore()
+	if store == nil {
+		return nil
+	}
+	out := map[string]string{}
+	for _, name := range store.List() {
+		key := store.Get(name)
+		if len(key) > 10 {
+			out[name] = key[:6] + "..." + key[len(key)-4:]
+		} else {
+			out[name] = key
+		}
+	}
+	return out
+}
+
+// handleCredentials handles POST /pmai/credentials.
+// Actions: unlock, lock, init, set, delete, passwd
+func (s *Server) handleCredentials(w http.ResponseWriter, body map[string]any) {
+	action, _ := body["action"].(string)
+
+	switch action {
+	case "unlock":
+		password, _ := body["password"].(string)
+		if password == "" { web.SendError(w, 400, "password required"); return }
+		store, err := pmdb.LoadCredentials([]byte(password))
+		if err != nil || store == nil { web.SendError(w, 401, "wrong password"); return }
+		store.UnlockSession([]byte(password))
+		pmdb.SetCredentialStore(store)
+		web.SendJSON(w, map[string]any{"ok": true, "unlocked": len(store.Keys), "timeout": 1800})
+
+	case "lock":
+		pmdb.Lock()
+		web.SendJSON(w, map[string]any{"ok": true})
+
+	case "init":
+		password, _ := body["password"].(string)
+		if password == "" { web.SendError(w, 400, "password required"); return }
+		if pmdb.CredentialsExist() { web.SendError(w, 409, "credentials already exist"); return }
+		store := &pmdb.CredentialStore{Keys: map[string]string{}}
+		if err := pmdb.SaveCredentials(store, []byte(password)); err != nil { web.SendError(w, 500, err.Error()); return }
+		web.SendJSON(w, map[string]any{"ok": true})
+
+	case "set":
+		provider, _ := body["provider"].(string)
+		key, _ := body["key"].(string)
+		if provider == "" || key == "" { web.SendError(w, 400, "provider and key required"); return }
+
+		store := pmdb.GetCredentialStore()
+		if store == nil {
+			password, _ := body["password"].(string)
+			if password == "" { web.SendError(w, 400, "password required"); return }
+			store, err := pmdb.LoadCredentials([]byte(password))
+			if err != nil || store == nil { web.SendError(w, 401, "wrong password"); return }
+			store.Set(provider, key)
+			pmdb.SaveCredentials(store, []byte(password))
+		} else {
+			store.Set(provider, key)
+			store.SaveToFile()
+		}
+		web.SendJSON(w, map[string]any{"ok": true})
+
+	case "delete":
+		provider, _ := body["provider"].(string)
+		if provider == "" { web.SendError(w, 400, "provider required"); return }
+
+		store := pmdb.GetCredentialStore()
+		if store == nil {
+			password, _ := body["password"].(string)
+			if password == "" { web.SendError(w, 400, "password required"); return }
+			store, err := pmdb.LoadCredentials([]byte(password))
+			if err != nil || store == nil { web.SendError(w, 401, "wrong password"); return }
+			store.Remove(provider)
+			pmdb.SaveCredentials(store, []byte(password))
+		} else {
+			store.Remove(provider)
+			store.SaveToFile()
+		}
+		web.SendJSON(w, map[string]any{"ok": true})
+
+	case "passwd":
+		oldPass, _ := body["old_password"].(string)
+		newPass, _ := body["new_password"].(string)
+		if oldPass == "" || newPass == "" { web.SendError(w, 400, "old_password and new_password required"); return }
+		if err := pmdb.ChangePassword([]byte(oldPass), []byte(newPass)); err != nil { web.SendError(w, 401, err.Error()); return }
+		web.SendJSON(w, map[string]any{"ok": true})
+
+	default:
+		web.SendError(w, 400, "unknown action: "+action)
+	}
 }

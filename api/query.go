@@ -65,10 +65,30 @@ func (s *Server) handleQueryRoutes(w http.ResponseWriter, method, path string, q
 		web.SendJSON(w, map[string]any{"sources": sources})
 	case "config":
 		s.handleGetConfig(w)
+	case "credentials":
+		web.SendJSON(w, map[string]any{
+			"keys":     credentialKeyList(),
+			"exists":   pmdb.CredentialsExist(),
+			"unlocked": pmdb.IsUnlocked(),
+		})
 	case "proxy-status":
 		proxyForward(w, "status")
 	case "proxy-traffic":
 		proxyForward(w, "traffic")
+	case "model":
+		reg := pmdb.LoadModelRegistry()
+		models := make([]map[string]string, 0, len(reg.Models))
+		for _, vm := range reg.Models {
+			models = append(models, map[string]string{
+				"id":           vm.ID,
+				"display_name": vm.DisplayName,
+				"provider":     vm.Provider,
+			})
+		}
+		web.SendJSON(w, map[string]any{
+			"current": pmdb.LoadAllCurrentModels(),
+			"models":  models,
+		})
 	case "agent/sessions":
 		s.handleAgentSessions(w)
 	default:
@@ -120,6 +140,20 @@ func (s *Server) handleMutateRoutes(w http.ResponseWriter, method, path string, 
 		s.handleProxyRestart(w, body)
 	case method == "POST" && path == "config":
 		s.handlePostConfig(w, body)
+	case method == "POST" && path == "model/switch":
+		model := u.Str(body["model"])
+		agent := u.Str(body["agent"])
+		if agent == "" {
+			web.SendError(w, 400, "agent is required (claude, codex, opencode, gemini, cursor)")
+			return true
+		}
+		if err := pmdb.SaveCurrentModel(agent, model); err != nil {
+			web.SendError(w, 400, err.Error())
+			return true
+		}
+		web.SendJSON(w, map[string]any{"ok": true, "current": model, "agent": agent})
+	case method == "POST" && path == "credentials":
+		s.handleCredentials(w, body)
 	case method == "DELETE" && path == "proxy-traffic":
 		proxyForwardDelete(w, "traffic")
 	default:

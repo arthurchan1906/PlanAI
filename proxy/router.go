@@ -3,6 +3,7 @@ package proxy
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"sort"
 	"sync"
 
@@ -25,8 +26,14 @@ type ModelRouter struct {
 
 // NewModelRouter loads the model registry from disk and returns a router.
 // Returns an inactive router when no models.json exists.
+// Logs a warning if models.json has structural problems.
 func NewModelRouter() *ModelRouter {
 	reg := pmdb.LoadModelRegistry()
+	if reg.IsActive() {
+		if err := reg.Validate(); err != nil {
+			log.Printf("[PROXY] models.json validation warning: %v", err)
+		}
+	}
 	return &ModelRouter{registry: reg}
 }
 
@@ -224,8 +231,8 @@ func peekModel(body []byte) string {
 }
 
 // replaceModelInBody replaces the "model" field in a JSON body with a new value.
-// Uses simple string scanning to avoid full re-marshal. When the model field
-// is not found, the body is returned unchanged.
+// Uses json.Unmarshal → modify → json.Marshal for correctness with nested keys.
+// When the model field is not found, the body is returned unchanged.
 func replaceModelInBody(bodyJSON []byte, newModel string) []byte {
 	if newModel == "" {
 		return bodyJSON

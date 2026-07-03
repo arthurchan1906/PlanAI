@@ -48,8 +48,8 @@ func (a *CodexAdapter) toUnified(req *ResponsesRequest) *UnifiedReq {
 	}
 	chat := &UnifiedReq{
 		VirtualModel: req.Model,
-		Model:  effectiveModel(req.Model),
-		Stream: req.Stream,
+		Model:        effectiveModel(req.Model),
+		Stream:       req.Stream,
 	}
 
 	var messages []UnifiedMsg
@@ -87,7 +87,7 @@ func (a *CodexAdapter) toUnified(req *ResponsesRequest) *UnifiedReq {
 		chat.MaxTokens = &defaultMax
 	}
 
-for _, t := range req.Tools {
+	for _, t := range req.Tools {
 		switch t.Type {
 		case "", "function":
 			chat.Tools = append(chat.Tools, codexToolToUnified(t))
@@ -276,8 +276,8 @@ func appendCodexInputItems(items []any, messages *[]UnifiedMsg) {
 					(*messages)[len(*messages)-1].Thinking = summary
 				} else {
 					*messages = append(*messages, UnifiedMsg{
-						Role:     "user",
-						Content:  "[reasoning] " + summary,
+						Role:    "user",
+						Content: "[reasoning] " + summary,
 					})
 				}
 			}

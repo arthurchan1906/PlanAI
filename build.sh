@@ -21,25 +21,29 @@ if [ "$SKIP_FRONTEND" = false ] && [ -f "./frontend/package.json" ]; then
   echo "Frontend built to frontend/dist/"
 fi
 
-# 动态获取当前系统类型，如果是 Windows 则加上 .exe 后缀
+# 当前平台
 CURRENT_OS=$(go env GOOS)
 CURRENT_OUTPUT="aipmc"
 if [ "$CURRENT_OS" == "windows" ]; then
   CURRENT_OUTPUT="aipmc.exe"
 fi
 
-# Requires Go 1.21+
+# ── 当前平台编译（CGO + GmSSL）───────────────────────────────────────
 echo ""
-echo "Building for current platform..."
-go build -ldflags="-s -w" -o "$OUTDIR/$CURRENT_OUTPUT" .
+echo "Building for current platform ($CURRENT_OS)..."
 
-echo ""
-echo "Cross-compiling..."
-GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o "$OUTDIR/aipmc-darwin-amd64" .
-GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o "$OUTDIR/aipmc-darwin-arm64" .
-GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o "$OUTDIR/aipmc-linux-amd64" .
-GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o "$OUTDIR/aipmc-windows-amd64.exe" .
+GMSSL_DIR="$PWD/gmssl"
+if [ -f "$GMSSL_DIR/include/gmssl/sm4.h" ]; then
+  export CGO_ENABLED=1
+  export CGO_CFLAGS="-I$GMSSL_DIR/include"
+  export CGO_LDFLAGS="$GMSSL_DIR/lib/libgmssl.a"
+  go build -ldflags="-s -w" -o "$OUTDIR/$CURRENT_OUTPUT" .
+  echo "  → credentials (SM4-GCM) enabled (static)"
+else
+  echo "  → gmssl/ not found, CGO disabled (no credentials support)"
+  CGO_ENABLED=0 go build -ldflags="-s -w" -o "$OUTDIR/$CURRENT_OUTPUT" .
+fi
 
 echo ""
 echo "=== Build complete ==="
-ls -lh "$OUTDIR/"
+ls -lh "$OUTDIR/$CURRENT_OUTPUT"

@@ -50,70 +50,71 @@ func (s *Server) handleAgentLaunch(w http.ResponseWriter, body map[string]any) {
 	agentName = strings.ToLower(agentName)
 
 	gcfg := pmdb.LoadGlobalConfig()
+	cfg := pmdb.LoadConfig()
 	proxyPort := gcfg.ProxyPort
 	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", proxyPort)
-	upstreamKey := os.Getenv("UPSTREAM_KEY")
+	// Resolve effective agent config: global profile + project-level overrides
+	rt, err := pmdb.ResolveAgentConfig(agentName, gcfg, cfg)
+	if err != nil {
+		web.SendError(w, 400, fmt.Sprintf("agent 配置错误: %v", err))
+		return
+	}
 
 	var cmd *exec.Cmd
 	var envOverrides []string
 	switch agentName {
 	case "claude", "claude-code":
 		cmd = exec.Command("claude")
-		p := gcfg.Claude
-		model := gcfg.EffectiveAgentModel(agentName)
 		envOverrides = []string{
 			"ANTHROPIC_BASE_URL=" + proxyURL,
-			"ANTHROPIC_AUTH_TOKEN=" + upstreamKey,
+			"ANTHROPIC_AUTH_TOKEN=local",
 		}
-		if model != "" {
-			envOverrides = append(envOverrides, "ANTHROPIC_MODEL="+model)
+		if rt.Model != "" {
+			envOverrides = append(envOverrides, "ANTHROPIC_MODEL="+rt.Model)
 		}
-		if p.SubAgentModel != "" {
-			envOverrides = append(envOverrides, "CLAUDE_CODE_SUBAGENT_MODEL="+p.SubAgentModel)
+		if rt.SubAgentModel != "" {
+			envOverrides = append(envOverrides, "CLAUDE_CODE_SUBAGENT_MODEL="+rt.SubAgentModel)
 		}
-		if p.OpusModel != "" {
-			envOverrides = append(envOverrides, "ANTHROPIC_DEFAULT_OPUS_MODEL="+p.OpusModel)
+		if rt.OpusModel != "" {
+			envOverrides = append(envOverrides, "ANTHROPIC_DEFAULT_OPUS_MODEL="+rt.OpusModel)
 		}
-		if p.SonnetModel != "" {
-			envOverrides = append(envOverrides, "ANTHROPIC_DEFAULT_SONNET_MODEL="+p.SonnetModel)
+		if rt.SonnetModel != "" {
+			envOverrides = append(envOverrides, "ANTHROPIC_DEFAULT_SONNET_MODEL="+rt.SonnetModel)
 		}
-		if p.HaikuModel != "" {
-			envOverrides = append(envOverrides, "ANTHROPIC_DEFAULT_HAIKU_MODEL="+p.HaikuModel)
+		if rt.HaikuModel != "" {
+			envOverrides = append(envOverrides, "ANTHROPIC_DEFAULT_HAIKU_MODEL="+rt.HaikuModel)
 		}
-		if p.SmallFastModel != "" {
-			envOverrides = append(envOverrides, "ANTHROPIC_SMALL_FAST_MODEL="+p.SmallFastModel)
+		if rt.SmallFastModel != "" {
+			envOverrides = append(envOverrides, "ANTHROPIC_SMALL_FAST_MODEL="+rt.SmallFastModel)
 		}
-		if p.EffortLevel != "" {
-			envOverrides = append(envOverrides, "CLAUDE_CODE_EFFORT_LEVEL="+p.EffortLevel)
+		if rt.EffortLevel != "" {
+			envOverrides = append(envOverrides, "CLAUDE_CODE_EFFORT_LEVEL="+rt.EffortLevel)
 		}
 	case "codex", "openai-codex":
-		p := gcfg.Codex
-		model := gcfg.EffectiveAgentModel(agentName)
-		effort := p.ReasoningEffort
+		effort := rt.ReasoningEffort
 		if effort == "" {
 			effort = "medium"
 		}
-		if err := codexWriteProxyProfile(proxyURL, model, effort); err != nil {
+		if err := codexWriteProxyProfile(proxyURL, rt.Model, effort); err != nil {
 			web.SendError(w, 500, fmt.Sprintf("Codex 配置失败: %v", err))
 			return
 		}
 		cmd = exec.Command("codex", "-p", "proxy")
 		envOverrides = []string{
-			"OPENAI_API_KEY=" + upstreamKey,
+			"OPENAI_API_KEY=local",
 		}
 	case "gemini", "gemini-cli":
 		cmd = exec.Command("gemini")
 		envOverrides = []string{
-			"GEMINI_API_KEY=" + upstreamKey,
-			"GOOGLE_API_KEY=" + upstreamKey,
+			"GEMINI_API_KEY=local",
+			"GOOGLE_API_KEY=local",
 			"GEMINI_API_BASE=" + proxyURL,
 			"GOOGLE_API_BASE=" + proxyURL,
 			"GOOGLE_GEMINI_BASE_URL=" + proxyURL,
 		}
 	case "opencode", "oc":
-		model := gcfg.EffectiveAgentModel(agentName)
-		if model != "" {
-			cmd = exec.Command("opencode", "--model", "aipm/"+model)
+		if rt.Model != "" {
+			cmd = exec.Command("opencode", "--model", "aipm/"+rt.Model)
 		} else {
 			cmd = exec.Command("opencode")
 		}
@@ -124,8 +125,8 @@ func (s *Server) handleAgentLaunch(w http.ResponseWriter, body map[string]any) {
 	}
 
 	essential := essentialSystemEnv()
-	// Merge agent-specific ExtraEnv (global + agent overrides)
-	for k, v := range gcfg.EffectiveEnv(agentName) {
+	// Apply resolved extra env vars (merged global + profile + project overrides)
+	for k, v := range rt.ExtraEnv {
 		envOverrides = append(envOverrides, k+"="+v)
 	}
 	cmd.Env = append(essential, envOverrides...)

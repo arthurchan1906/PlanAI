@@ -8,6 +8,7 @@ import (
 	"aipmc/ai"
 	"aipmc/cli"
 	"aipmc/mcp"
+	pmdb "aipmc/db"
 	"aipmc/store"
 	"aipmc/analyze"
 	"aipmc/session"
@@ -557,6 +558,208 @@ func dispatchFeedback(subcmd string, args *cli.Args) {
 		cli.PrintJSON(fb)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown feedback subcommand: %s\n", subcmd)
+		os.Exit(1)
+	}
+}
+
+func dispatchModels(subcmd string, args *cli.Args) {
+	reg := pmdb.LoadModelRegistry()
+
+	switch subcmd {
+	case "", "list":
+		if !reg.IsActive() {
+			fmt.Println("No virtual models configured. Create ~/.aipmc/models.json or use 'aipmc models provider add'.")
+			return
+		}
+		fmt.Println("Providers:")
+		for _, p := range reg.Providers {
+			anthro := ""
+			if p.AnthropicURL != "" {
+				anthro = fmt.Sprintf(" anthropic=%s", p.AnthropicURL)
+			}
+			fmt.Printf("  %-15s openai=%s%s\n", p.Name, p.OpenAIURL, anthro)
+		}
+		fmt.Println()
+		fmt.Println("Virtual Models:")
+		for _, m := range reg.Models {
+			protocols := ""
+			if m.Anthropic != "" {
+				protocols += fmt.Sprintf(" anthropic=%s", m.Anthropic)
+			}
+			if m.OpenAI != "" {
+				protocols += fmt.Sprintf(" openai=%s", m.OpenAI)
+			}
+			if protocols == "" {
+				protocols = " (passthrough)"
+			}
+			fmt.Printf("  %-25s provider=%-12s%s", m.ID, m.Provider, protocols)
+			if len(m.Tags) > 0 {
+				fmt.Printf(" [%s]", strings.Join(m.Tags, ", "))
+			}
+			fmt.Println()
+		}
+
+	case "current":
+		all := pmdb.LoadAllCurrentModels()
+		if len(all) == 0 {
+			fmt.Println("All agents: Auto (using agent defaults)")
+		} else {
+			for _, a := range []string{"claude", "codex", "opencode", "gemini", "cursor"} {
+				if cm, ok := all[a]; ok {
+					provider := pmdb.CurrentModelProvider(a)
+					if provider != "" {
+						fmt.Printf("  %-10s %s (%s)\n", a+":", cm, provider)
+					} else {
+						fmt.Printf("  %-10s %s\n", a+":", cm)
+					}
+				} else {
+					fmt.Printf("  %-10s Auto\n", a+":")
+				}
+			}
+		}
+
+	case "switch":
+		modelID := ""
+		agent := ""
+		if len(os.Args) > 3 {
+			modelID = os.Args[3]
+		}
+		if len(os.Args) > 4 {
+			agent = os.Args[4]
+		}
+		if modelID == "" {
+			fmt.Fprintln(os.Stderr, "Usage: aipmc models switch <model-id|--auto> --agent <agent>")
+			os.Exit(1)
+		}
+		if agent == "--agent" {
+			if len(os.Args) > 5 {
+				agent = os.Args[5]
+			}
+		}
+		if agent == "" || agent == "--agent" {
+			fmt.Fprintln(os.Stderr, "Usage: aipmc models switch <model-id|--auto> --agent <agent>")
+			fmt.Fprintln(os.Stderr, "  agent: claude, codex, opencode, gemini, cursor")
+			os.Exit(1)
+		}
+		if modelID == "--auto" {
+			if err := pmdb.SaveCurrentModel(agent, ""); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Switched %s to Auto\n", agent)
+			return
+		}
+		if err := pmdb.SaveCurrentModel(agent, modelID); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Switched %s to: %s\n", agent, modelID)
+
+	case "provider":
+		provSub := ""
+		if len(os.Args) > 3 {
+			provSub = os.Args[3]
+		}
+		switch provSub {
+		case "add":
+			name := args.Get("name")
+			openaiURL := args.Get("openai_url")
+			if name == "" || openaiURL == "" {
+				fmt.Fprintln(os.Stderr, "Usage: aipmc models provider add --name <name> --openai_url <url> [--anthropic_url <url>]")
+				os.Exit(1)
+			}
+			reg.AddProvider(pmdb.Provider{
+				Name:         name,
+				OpenAIURL:    openaiURL,
+				AnthropicURL: args.Str("anthropic_url", ""),
+			})
+			if err := pmdb.SaveModelRegistry(reg); err != nil {
+				fmt.Fprintf(os.Stderr, "save failed: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Provider %q added.\n", name)
+		case "rm", "remove":
+			name := args.Get("name")
+			if name == "" {
+				fmt.Fprintln(os.Stderr, "Usage: aipmc models provider rm --name <name>")
+				os.Exit(1)
+			}
+			if !reg.RemoveProvider(name) {
+				fmt.Fprintf(os.Stderr, "provider %q not found\n", name)
+				os.Exit(1)
+			}
+			// Also remove models referencing this provider
+			var keep []pmdb.VirtualModel
+			for _, m := range reg.Models {
+				if m.Provider != name {
+					keep = append(keep, m)
+				}
+			}
+			reg.Models = keep
+			if err := pmdb.SaveModelRegistry(reg); err != nil {
+				fmt.Fprintf(os.Stderr, "save failed: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Provider %q removed.\n", name)
+		default:
+			fmt.Fprintf(os.Stderr, "Usage: aipmc models provider <add|rm>\n")
+			os.Exit(1)
+		}
+
+	case "add":
+		id := args.Get("id")
+		provider := args.Get("provider")
+		if id == "" || provider == "" {
+			fmt.Fprintln(os.Stderr, "Usage: aipmc models add --id <name> --provider <name> [--anthropic <model>] [--openai <model>] [--tags t1,t2] [--priority N]")
+			os.Exit(1)
+		}
+		if reg.FindProvider(provider) == nil {
+			fmt.Fprintf(os.Stderr, "provider %q not found — add it first: aipmc models provider add --name %s --openai_url <url>\n", provider, provider)
+			os.Exit(1)
+		}
+		tags := strings.Split(args.Str("tags", ""), ",")
+		if len(tags) == 1 && tags[0] == "" {
+			tags = nil
+		}
+		reg.AddModel(pmdb.VirtualModel{
+			ID:          id,
+			Provider:    provider,
+			DisplayName: args.Str("display_name", ""),
+			Anthropic:   args.Str("anthropic", ""),
+			OpenAI:      args.Str("openai", ""),
+			Tags:        tags,
+			Priority:    args.Int("priority", 0),
+		})
+		if err := pmdb.SaveModelRegistry(reg); err != nil {
+			fmt.Fprintf(os.Stderr, "save failed: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Model %q added.\n", id)
+
+	case "rm", "remove":
+		id := args.Get("id")
+		if id == "" {
+			fmt.Fprintln(os.Stderr, "Usage: aipmc models rm --id <name>")
+			os.Exit(1)
+		}
+		if !reg.RemoveModel(id) {
+			fmt.Fprintf(os.Stderr, "model %q not found\n", id)
+			os.Exit(1)
+		}
+		if err := pmdb.SaveModelRegistry(reg); err != nil {
+			fmt.Fprintf(os.Stderr, "save failed: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Model %q removed.\n", id)
+
+	default:
+		fmt.Fprintf(os.Stderr, "Usage:\n")
+		fmt.Fprintf(os.Stderr, "  aipmc models current\n")
+		fmt.Fprintf(os.Stderr, "  aipmc models switch <model-id|--auto> --agent <agent>\n")
+		fmt.Fprintf(os.Stderr, "  aipmc models provider add --name <name> --openai_url <url> [--anthropic_url <url>]\n")
+		fmt.Fprintf(os.Stderr, "  aipmc models provider rm --name <name>\n")
+		fmt.Fprintf(os.Stderr, "  aipmc models add --id <name> --provider <name> [--anthropic <model>] [--openai <model>] [--tags t1,t2] [--priority N]\n")
+		fmt.Fprintf(os.Stderr, "  aipmc models rm --id <name>\n")
 		os.Exit(1)
 	}
 }

@@ -29,7 +29,6 @@ import (
 // it atomically.
 type proxyCfg struct {
 	upstreamURL          string
-	upstreamKey          string
 	proxyModel           string
 	upstreamAnthropicURL string
 	startTime            time.Time
@@ -50,7 +49,6 @@ func storeCfg(c *proxyCfg) { cfg.Store(c) }
 type Options struct {
 	Port         int
 	UpstreamURL  string
-	UpstreamKey  string
 	Model        string
 	LogDir       string
 	AnthropicURL string
@@ -83,7 +81,7 @@ func NewHandler(opts Options) http.Handler {
 	}
 	storeCfg(&proxyCfg{
 		upstreamURL:          u,
-		upstreamKey:          opts.UpstreamKey,
+		
 		proxyModel:           opts.Model,
 		upstreamAnthropicURL: strings.TrimRight(opts.AnthropicURL, "/"),
 		startTime:            time.Now(),
@@ -226,7 +224,7 @@ func handleProxyReload(w http.ResponseWriter, r *http.Request) {
 	}
 	storeCfg(&proxyCfg{
 		upstreamURL:          u,
-		upstreamKey:          os.Getenv("UPSTREAM_KEY"),
+		
 		proxyModel:           gcfg.ProxyModel,
 		upstreamAnthropicURL: strings.TrimRight(gcfg.AnthropicURL, "/"),
 		startTime:            loadCfg().startTime, 
@@ -297,18 +295,22 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	case strings.Contains(path, ":countTokens"):
 		handleCountTokens(rw, r)
 	case path == "/v1/messages":
-			router := loadCfg().router
-			if router != nil && router.IsActive() {
-				body, _ := io.ReadAll(r.Body)
-				r.Body = io.NopCloser(bytes.NewReader(body))
-				model := peekModel(body)
-				if model != "" && router.ShouldPassthrough(model) {
-					handleAnthropicPassthrough(rw, r)
-				} else {
-					handleClaudeUnified(rw, r)
-				}
-			} else
-		if loadCfg().upstreamAnthropicURL != "" {
+		router := loadCfg().router
+		if router != nil && router.IsActive() {
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				log.Printf("[PROXY] ERROR reading /v1/messages body: %v", err)
+				http.Error(rw, "failed to read request body", http.StatusBadRequest)
+				return
+			}
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			model := peekModel(body)
+			if model != "" && router.ShouldPassthrough(model) {
+				handleAnthropicPassthrough(rw, r)
+			} else {
+				handleClaudeUnified(rw, r)
+			}
+		} else if loadCfg().upstreamAnthropicURL != "" {
 			handleAnthropicPassthrough(rw, r)
 		} else {
 			handleClaudeUnified(rw, r)
@@ -599,10 +601,7 @@ func handlePassthrough(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	proxyReq.Header = r.Header
-	// When upstreamKey is configured, always use it (ignore incoming auth)
-	if loadCfg().upstreamKey != "" {
-		proxyReq.Header.Set("Authorization", "Bearer "+loadCfg().upstreamKey)
-	} else if apiKey := extractAPIKey(r); apiKey != "" && proxyReq.Header.Get("Authorization") == "" {
+	if apiKey := extractAPIKey(r); apiKey != "" && proxyReq.Header.Get("Authorization") == "" {
 		proxyReq.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
@@ -641,10 +640,7 @@ func handleModelsList(w http.ResponseWriter, r *http.Request) {
 
 	proxyReq, _ := http.NewRequest("GET", url, nil)
 	proxyReq.Header = r.Header
-	// When upstreamKey is configured, always use it (ignore incoming auth)
-	if loadCfg().upstreamKey != "" {
-		proxyReq.Header.Set("Authorization", "Bearer "+loadCfg().upstreamKey)
-	} else if apiKey := extractAPIKey(r); apiKey != "" && proxyReq.Header.Get("Authorization") == "" {
+	if apiKey := extractAPIKey(r); apiKey != "" && proxyReq.Header.Get("Authorization") == "" {
 		proxyReq.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
@@ -760,9 +756,6 @@ func modelIDToSlug(id string) string {
 // =============================================================================
 
 func extractAPIKey(r *http.Request) string {
-	if loadCfg().upstreamKey != "" {
-		return loadCfg().upstreamKey
-	}
 	if key := r.Header.Get("x-goog-api-key"); key != "" {
 		return key
 	}
@@ -854,7 +847,7 @@ func handleUnifiedNonStream(w http.ResponseWriter, r *http.Request, adapter Prot
 	capID := startCapture(agent, r.Method, r.URL.Path, model, rawBody, copyHeaders(r), req)
 	startTime := time.Now()
 
-	respBody, err := forwardToUpstream("chat/completions", openaiReq, apiKey, req.VirtualModel)
+	respBody, err := forwardToUpstream("chat/completions", openaiReq, apiKey, req.VirtualModel, agent)
 	if err != nil {
 		log.Printf("[UNIFIED] ERROR upstream: %v", err)
 		finishCapture(capID, http.StatusBadGateway, time.Since(startTime), nil, err.Error(), "")
@@ -920,7 +913,7 @@ func handleUnifiedStream(w http.ResponseWriter, r *http.Request, adapter Protoco
 	startTime := time.Now()
 	cap := newStreamCapture()
 
-	respBody, err := forwardToUpstreamStream("chat/completions", openaiReq, apiKey, req.VirtualModel)
+	respBody, err := forwardToUpstreamStream("chat/completions", openaiReq, apiKey, req.VirtualModel, agent)
 	if err != nil {
 		log.Printf("[UNIFIED] ERROR upstream stream: %v", err)
 		finishCapture(capID, http.StatusBadGateway, time.Since(startTime), nil, err.Error(), "")
@@ -1041,7 +1034,7 @@ func handleOpenAIChatPassthrough(w http.ResponseWriter, r *http.Request) {
 
 	if !stream {
 		// ── Non-streaming ──
-		respBytes, err := forwardToUpstream("chat/completions", reqBody, apiKey, "")
+		respBytes, err := forwardToUpstream("chat/completions", reqBody, apiKey, "", agent)
 		if err != nil {
 			log.Printf("[OPENAICHAT] ERROR upstream: %v", err)
 			finishCapture(capID, http.StatusBadGateway, time.Since(startTime), nil, "", "")
@@ -1070,7 +1063,7 @@ func handleOpenAIChatPassthrough(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ── Streaming (SSE) ──
-	respBody, err := forwardToUpstreamStream("chat/completions", reqBody, apiKey, "")
+	respBody, err := forwardToUpstreamStream("chat/completions", reqBody, apiKey, "", agent)
 	if err != nil {
 		log.Printf("[OPENAICHAT] ERROR upstream stream: %v", err)
 		finishCapture(capID, http.StatusBadGateway, time.Since(startTime), nil, "", "")

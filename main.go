@@ -9,8 +9,6 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -171,45 +169,17 @@ func main() {
 			os.Exit(1)
 		}
 		return
-	case "web":
-		port := 0
-		host := ""
-		for i := 2; i < len(os.Args); i++ {
-			switch os.Args[i] {
-			case "--port", "-p":
-				if i+1 < len(os.Args) { fmt.Sscanf(os.Args[i+1], "%d", &port); i++ }
-			case "--host", "-h":
-				if i+1 < len(os.Args) { host = os.Args[i+1]; i++ }
-			}
-		}
-		if host == "" { host = "127.0.0.1" }
-		if port == 0 { port = 8720 }
-		staticFS, err := fs.Sub(uiFS, "frontend/dist")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to load embedded UI: %v\n", err)
-			os.Exit(1)
-		}
-		gcfg := pmdb.LoadGlobalConfig()
-		var proxyHandler http.Handler
-		if gcfg.ProxyPort > 0 {
-			proxyURL, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", gcfg.ProxyPort))
-			proxyHandler = httputil.NewSingleHostReverseProxy(proxyURL)
-		}
-		cwd, _ := os.Getwd()
-		srv := web.NewServer(staticFS, newAPIHandler(), host, port, proxyHandler, filepath.Base(cwd), cwd)
-		srv.Listen()
-		return
 	case "serve":
 		os.Exit(serveCommand())
 	case "chat":
 		chatcli.Run(application)
 		return
 	case "proxy":
+		loadCredentialsOnStartup()
 		gcfg := pmdb.LoadGlobalConfig()
 		if err := proxy.Run(proxy.Options{
 			Port:         gcfg.ProxyPort,
 			UpstreamURL:  gcfg.UpstreamURL,
-			UpstreamKey:  os.Getenv("UPSTREAM_KEY"),
 			Model:        gcfg.ProxyModel,
 			LogDir:       gcfg.ProxyLogDir,
 			AnthropicURL: gcfg.AnthropicURL,
@@ -219,48 +189,14 @@ func main() {
 		}
 		return
 	case "models":
-		if len(os.Args) < 3 || os.Args[2] == "list" {
-			reg := pmdb.LoadModelRegistry()
-			if reg == nil || !reg.IsActive() {
-				fmt.Println("No virtual models configured. Create ~/.aipmc/models.json to enable virtual model routing.")
-				return
-			}
-			fmt.Println("Providers:")
-			for _, p := range reg.Providers {
-				anthro := ""
-				if p.AnthropicURL != "" {
-					anthro = fmt.Sprintf(" anthropic=%s", p.AnthropicURL)
-				}
-				fmt.Printf("  %-15s openai=%s%s", p.Name, p.OpenAIURL, anthro)
-				if p.APIKeyEnv != "" {
-					fmt.Printf(" key=$%s", p.APIKeyEnv)
-				}
-				fmt.Println()
-			}
-			fmt.Println()
-			fmt.Println("Virtual Models:")
-			for _, m := range reg.Models {
-				protocols := ""
-				if m.Anthropic != "" {
-					protocols += fmt.Sprintf(" anthropic=%s", m.Anthropic)
-				}
-				if m.OpenAI != "" {
-					protocols += fmt.Sprintf(" openai=%s", m.OpenAI)
-				}
-				if protocols == "" {
-					protocols = " (passthrough)"
-				}
-				fmt.Printf("  %-25s provider=%-12s%s", m.ID, m.Provider, protocols)
-				if len(m.Tags) > 0 {
-					fmt.Printf(" [%s]", strings.Join(m.Tags, ", "))
-				}
-				fmt.Println()
-			}
-			return
-		}
-		fmt.Println("Usage: aipmc models list")
-		os.Exit(0)
-
+		subcmd := ""
+		var rawArgs []string
+		if len(os.Args) > 2 { subcmd = os.Args[2]; rawArgs = os.Args[3:] }
+		dispatchModels(subcmd, cli.ParseArgs(rawArgs))
+		return
+	case "key":
+		dispatchKey(os.Args)
+		return
 	case "agent":
 		if len(os.Args) < 3 {
 			fmt.Println("Usage: aipmc agent <claude|gemini|codex>")
@@ -361,12 +297,9 @@ func main() {
 }
 
 func serveCommand() int {
-	noProxy := false
 	projectFlag := ""
 	for i := 2; i < len(os.Args); i++ {
 		switch os.Args[i] {
-		case "--no-proxy":
-			noProxy = true
 		case "--project", "-p":
 			if i+1 < len(os.Args) {
 				projectFlag = os.Args[i+1]
@@ -376,7 +309,6 @@ func serveCommand() int {
 	}
 
 	gcfg := pmdb.LoadGlobalConfig()
-	exe, _ := os.Executable()
 	cwd, _ := os.Getwd()
 
 	// Step 1: Determine project path and switch to it immediately
@@ -429,7 +361,7 @@ func serveCommand() int {
 		return 1
 	}
 
-	// Step 4: Ensure proxy is running
+	// Step 4: Check proxy status
 	proxyAddr := fmt.Sprintf("127.0.0.1:%d", gcfg.ProxyPort)
 	proxyRunning := false
 	if conn, err := net.DialTimeout("tcp", proxyAddr, 500*time.Millisecond); err == nil {
@@ -441,33 +373,10 @@ func serveCommand() int {
 		}
 	}
 
-	if !proxyRunning && !noProxy {
-		fmt.Printf("→ Proxy 未运行，启动中...\n")
-		cmd := exec.Command(exe, "proxy")
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Start(); err != nil {
-			fmt.Fprintf(os.Stderr, "无法启动 proxy: %v\n", err)
-			return 1
-		}
-		for i := 0; i < 30; i++ {
-			time.Sleep(200 * time.Millisecond)
-			resp, err := http.Get(fmt.Sprintf("http://%s/__proxy/status", proxyAddr))
-			if err == nil && resp.StatusCode == 200 {
-				resp.Body.Close()
-				proxyRunning = true
-				break
-			}
-		}
-		if !proxyRunning {
-			fmt.Fprintf(os.Stderr, "Proxy 6s 内未就绪\n")
-			return 1
-		}
-		fmt.Printf("✓ Proxy 就绪 :%d\n", gcfg.ProxyPort)
-	} else if !noProxy {
+	if proxyRunning {
 		fmt.Printf("✓ Proxy 已在运行 :%d\n", gcfg.ProxyPort)
 	} else {
-		fmt.Printf("⚠ Proxy 未运行 (--no-proxy)，Agent 请求将无法转发\n")
+		fmt.Printf("⚠ Proxy 未运行 — 运行 `aipmc proxy` 或在 Web UI 中启动\n")
 	}
 
 	// Step 5: Register/update project
@@ -488,7 +397,6 @@ func serveCommand() int {
 	proxyHandler := proxy.NewHandler(proxy.Options{
 		Port:         gcfg.ProxyPort,
 		UpstreamURL:  gcfg.UpstreamURL,
-		UpstreamKey:  os.Getenv("UPSTREAM_KEY"),
 		Model:        gcfg.ProxyModel,
 		LogDir:       gcfg.ProxyLogDir,
 		AnthropicURL: gcfg.AnthropicURL,
@@ -660,39 +568,41 @@ func runDoctor(dbPath string) map[string]any {
 
 func runAgent(name string) {
 	gcfg := pmdb.LoadGlobalConfig()
+	cfg := pmdb.LoadConfig()
 	port := gcfg.ProxyPort
 	proxyURL := fmt.Sprintf("http://localhost:%d", port)
-	model := gcfg.EffectiveAgentModel(name)
+
+	rt, err := pmdb.ResolveAgentConfig(name, gcfg, cfg)
+	if err != nil { fmt.Fprintf(os.Stderr, "agent config: %v\n", err); os.Exit(1) }
 
 	var cmd *exec.Cmd
 	switch strings.ToLower(name) {
 	case "claude", "claude-code", "cc":
 		cmd = exec.Command("claude")
-		p := gcfg.Claude
 		env := append(os.Environ(),
 			"ANTHROPIC_BASE_URL="+proxyURL,
 			"ANTHROPIC_AUTH_TOKEN=local",
 		)
-		if model != "" {
-			env = append(env, "ANTHROPIC_MODEL="+model)
+		if rt.Model != "" {
+			env = append(env, "ANTHROPIC_MODEL="+rt.Model)
 		}
-		if p.SubAgentModel != "" {
-			env = append(env, "CLAUDE_CODE_SUBAGENT_MODEL="+p.SubAgentModel)
+		if rt.SubAgentModel != "" {
+			env = append(env, "CLAUDE_CODE_SUBAGENT_MODEL="+rt.SubAgentModel)
 		}
-		if p.OpusModel != "" {
-			env = append(env, "ANTHROPIC_DEFAULT_OPUS_MODEL="+p.OpusModel)
+		if rt.OpusModel != "" {
+			env = append(env, "ANTHROPIC_DEFAULT_OPUS_MODEL="+rt.OpusModel)
 		}
-		if p.SonnetModel != "" {
-			env = append(env, "ANTHROPIC_DEFAULT_SONNET_MODEL="+p.SonnetModel)
+		if rt.SonnetModel != "" {
+			env = append(env, "ANTHROPIC_DEFAULT_SONNET_MODEL="+rt.SonnetModel)
 		}
-		if p.HaikuModel != "" {
-			env = append(env, "ANTHROPIC_DEFAULT_HAIKU_MODEL="+p.HaikuModel)
+		if rt.HaikuModel != "" {
+			env = append(env, "ANTHROPIC_DEFAULT_HAIKU_MODEL="+rt.HaikuModel)
 		}
-		if p.SmallFastModel != "" {
-			env = append(env, "ANTHROPIC_SMALL_FAST_MODEL="+p.SmallFastModel)
+		if rt.SmallFastModel != "" {
+			env = append(env, "ANTHROPIC_SMALL_FAST_MODEL="+rt.SmallFastModel)
 		}
-		if p.EffortLevel != "" {
-			env = append(env, "CLAUDE_CODE_EFFORT_LEVEL="+p.EffortLevel)
+		if rt.EffortLevel != "" {
+			env = append(env, "CLAUDE_CODE_EFFORT_LEVEL="+rt.EffortLevel)
 		}
 		cmd.Env = env
 	case "gemini", "gemini-cli", "gc":
@@ -713,5 +623,115 @@ func runAgent(name string) {
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		os.Exit(1)
+	}
+}
+
+func loadCredentialsOnStartup() {
+	if !pmdb.CredentialsExist() { return }
+	// Check env var first — set by web UI when spawning proxy subprocess
+	if pass := os.Getenv("AIPMC_MASTER_PASSWORD"); pass != "" {
+		store, err := pmdb.LoadCredentials([]byte(pass))
+		if err != nil { fmt.Fprintf(os.Stderr, "credentials: %v\n", err); os.Exit(1) }
+		if store != nil { pmdb.SetCredentialStore(store); fmt.Println("✓ credentials unlocked") }
+		return
+	}
+	fmt.Print("Master password for credentials: ")
+	pw, err := pmdb.PromptPassword()
+	if err != nil { fmt.Fprintf(os.Stderr, "failed to read password: %v\n", err); os.Exit(1) }
+	fmt.Println()
+	store, err := pmdb.LoadCredentials(pw)
+	for i := range pw { pw[i] = 0 }
+	if err != nil { fmt.Fprintf(os.Stderr, "credentials: %v\n", err); os.Exit(1) }
+	if store != nil { pmdb.SetCredentialStore(store); fmt.Println("✓ credentials unlocked") }
+}
+
+func getPassword(prompt string) []byte {
+	fmt.Print(prompt)
+	pw, err := pmdb.PromptPassword()
+	if err != nil { fmt.Fprintf(os.Stderr, "read password: %v\n", err); os.Exit(1) }
+	fmt.Println()
+	return pw
+}
+
+func dispatchKey(argv []string) {
+	if len(argv) < 3 {
+		fmt.Println("Usage: aipmc key <init|set|rm|list|show|passwd|status>")
+		os.Exit(0)
+	}
+	switch argv[2] {
+	case "init":
+		if pmdb.CredentialsExist() {
+			fmt.Fprintln(os.Stderr, "credentials already exist. Use 'aipmc key passwd' to change password, or delete ~/.aipmc/credentials first.")
+			os.Exit(1)
+		}
+		fmt.Print("Set master password: ")
+		p1, err := pmdb.PromptPassword()
+		if err != nil { fmt.Fprintf(os.Stderr, "read password: %v\n", err); os.Exit(1) }
+		fmt.Println()
+		fmt.Print("Confirm master password: ")
+		p2, err := pmdb.PromptPassword()
+		if err != nil { fmt.Fprintf(os.Stderr, "read password: %v\n", err); os.Exit(1) }
+		fmt.Println()
+		if string(p1) != string(p2) { fmt.Fprintln(os.Stderr, "passwords do not match"); os.Exit(1) }
+		store := &pmdb.CredentialStore{Keys: map[string]string{}}
+		if err := pmdb.SaveCredentials(store, p1); err != nil { fmt.Fprintf(os.Stderr, "init failed: %v\n", err); os.Exit(1) }
+		fmt.Println("✓ credentials initialized")
+	case "set":
+		if len(argv) < 5 { fmt.Fprintln(os.Stderr, "Usage: aipmc key set <name> <value>"); os.Exit(1) }
+		name, value := argv[3], argv[4]
+		pass := getPassword("Master password: ")
+		store, err := pmdb.LoadCredentials(pass)
+		if err != nil || store == nil { fmt.Fprintln(os.Stderr, "wrong password or no credentials file"); os.Exit(1) }
+		store.Set(name, value)
+		if err := pmdb.SaveCredentials(store, pass); err != nil { fmt.Fprintf(os.Stderr, "save failed: %v\n", err); os.Exit(1) }
+		fmt.Printf("✓ key for %q saved\n", name)
+	case "rm":
+		if len(argv) < 4 { fmt.Fprintln(os.Stderr, "Usage: aipmc key rm <name>"); os.Exit(1) }
+		pass := getPassword("Master password: ")
+		store, err := pmdb.LoadCredentials(pass)
+		if err != nil || store == nil { fmt.Fprintln(os.Stderr, "wrong password or no credentials file"); os.Exit(1) }
+		if !store.Remove(argv[3]) { fmt.Fprintf(os.Stderr, "key %q not found\n", argv[3]); os.Exit(1) }
+		if err := pmdb.SaveCredentials(store, pass); err != nil { fmt.Fprintf(os.Stderr, "save failed: %v\n", err); os.Exit(1) }
+		fmt.Printf("✓ key %q removed\n", argv[3])
+	case "list":
+		pass := getPassword("Master password: ")
+		store, err := pmdb.LoadCredentials(pass)
+		if err != nil || store == nil { fmt.Fprintln(os.Stderr, "wrong password or no credentials file"); os.Exit(1) }
+		for _, n := range store.List() {
+			k := store.Get(n); m := k
+			if len(k) > 10 { m = k[:6] + "..." + k[len(k)-4:] }
+			fmt.Printf("  %-15s %s\n", n, m)
+		}
+	case "show":
+		if len(argv) < 4 { fmt.Fprintln(os.Stderr, "Usage: aipmc key show <name>"); os.Exit(1) }
+		pass := getPassword("Master password: ")
+		store, err := pmdb.LoadCredentials(pass)
+		if err != nil || store == nil { fmt.Fprintln(os.Stderr, "wrong password or no credentials file"); os.Exit(1) }
+		if k := store.Get(argv[3]); k != "" { fmt.Println(k) } else { fmt.Fprintln(os.Stderr, "not found"); os.Exit(1) }
+	case "passwd":
+		fmt.Print("Old password: ")
+		oldP, err := pmdb.PromptPassword()
+		if err != nil { fmt.Fprintf(os.Stderr, "read password: %v\n", err); os.Exit(1) }
+		fmt.Println()
+		fmt.Print("New password: ")
+		newP, err := pmdb.PromptPassword()
+		if err != nil { fmt.Fprintf(os.Stderr, "read password: %v\n", err); os.Exit(1) }
+		fmt.Println()
+		fmt.Print("Confirm new password: ")
+		confirmP, err := pmdb.PromptPassword()
+		if err != nil { fmt.Fprintf(os.Stderr, "read password: %v\n", err); os.Exit(1) }
+		fmt.Println()
+		if string(newP) != string(confirmP) { fmt.Fprintln(os.Stderr, "passwords do not match"); os.Exit(1) }
+		if err := pmdb.ChangePassword(oldP, newP); err != nil { fmt.Fprintf(os.Stderr, "change failed: %v\n", err); os.Exit(1) }
+		fmt.Println("✓ password changed")
+	case "status":
+		if pmdb.CredentialsExist() {
+			if s := pmdb.GetCredentialStore(); s != nil {
+				fmt.Printf("✓ credentials unlocked — %d provider(s)\n", len(s.Keys))
+				for _, n := range s.List() { fmt.Printf("  %s\n", n) }
+			} else { fmt.Println("credentials file exists (locked — run 'aipmc serve')") }
+		} else { fmt.Println("no credentials file — run 'aipmc key init'") }
+	default:
+		fmt.Fprintf(os.Stderr, "unknown key subcommand: %s\n", argv[2]); os.Exit(1)
 	}
 }

@@ -409,7 +409,15 @@ function ConsoleApp() {
 
 export default function App() {
   return (
-    <ConfigProvider theme={{ token: { colorPrimary: "#2f6fec", borderRadius: 16 } }}>
+    <ConfigProvider theme={{
+      token: {
+        colorPrimary: "#2f6fec",
+        borderRadius: 8,
+      },
+      components: {
+        Button: { primaryShadow: "none" },
+      },
+    }}>
       <AntdApp><ConsoleApp /></AntdApp>
     </ConfigProvider>
   );

@@ -9,7 +9,7 @@ import (
 )
 
 // =============================================================================
-// Unified → OpenAI Chat Completions conversion
+// Unified 鈫?OpenAI Chat Completions conversion
 // =============================================================================
 
 // unifiedToOpenAI converts a UnifiedReq to an OpenAI Chat Completions request.
@@ -71,15 +71,23 @@ func unifiedToOpenAI(req *UnifiedReq) *OpenAIRequest {
 }
 
 // =============================================================================
-// HTTP transport — send requests to upstream LLM
+// HTTP transport 鈥?send requests to upstream LLM
 // =============================================================================
 
 // resolveVirtualRoute applies virtual model routing to the request URL, body, and API key.
 // It modifies url, bodyJSON, and apiKey in-place. When virtual routing is inactive
 // or the model is unknown, the parameters are left unchanged.
-func resolveVirtualRoute(virtualModel, endpoint string, bodyJSON []byte, apiKey *string) (url string, body []byte) {
+func resolveVirtualRoute(virtualModel, endpoint, agent string, bodyJSON []byte, apiKey *string) (url string, body []byte) {
 	url = loadCfg().upstreamURL + "/" + endpoint
 	body = bodyJSON
+
+	// currentModel override: when a user has selected a model via Web UI or CLI,
+	// force all requests for this agent to use that model.
+	// Empty ("") means Auto mode — passthrough, no override.
+	if cm := loadCurrentModel(agent); cm != "" {
+		virtualModel = cm
+		body = replaceModelInBody(bodyJSON, cm)
+	}
 	if virtualModel == "" {
 		return
 	}
@@ -100,9 +108,9 @@ func resolveVirtualRoute(virtualModel, endpoint string, bodyJSON []byte, apiKey 
 }
 
 // forwardToUpstream sends a non-streaming POST request to the upstream endpoint.
-func forwardToUpstream(endpoint string, body any, apiKey string, virtualModel string) ([]byte, error) {
+func forwardToUpstream(endpoint string, body any, apiKey string, virtualModel, agent string) ([]byte, error) {
 	bodyJSON, _ := json.Marshal(body)
-	url, bodyJSON := resolveVirtualRoute(virtualModel, endpoint, bodyJSON, &apiKey)
+	url, bodyJSON := resolveVirtualRoute(virtualModel, endpoint, agent, bodyJSON, &apiKey)
 
 	req, _ := http.NewRequest("POST", url, strings.NewReader(string(bodyJSON)))
 	req.Header.Set("Content-Type", "application/json")
@@ -129,9 +137,9 @@ func forwardToUpstream(endpoint string, body any, apiKey string, virtualModel st
 
 // forwardToUpstreamStream sends a streaming POST request to the upstream endpoint.
 // The caller MUST close the returned body when done.
-func forwardToUpstreamStream(endpoint string, body any, apiKey string, virtualModel string) (io.ReadCloser, error) {
+func forwardToUpstreamStream(endpoint string, body any, apiKey string, virtualModel, agent string) (io.ReadCloser, error) {
 	bodyJSON, _ := json.Marshal(body)
-	url, bodyJSON := resolveVirtualRoute(virtualModel, endpoint, bodyJSON, &apiKey)
+	url, bodyJSON := resolveVirtualRoute(virtualModel, endpoint, agent, bodyJSON, &apiKey)
 
 	req, _ := http.NewRequest("POST", url, strings.NewReader(string(bodyJSON)))
 	req.Header.Set("Content-Type", "application/json")
