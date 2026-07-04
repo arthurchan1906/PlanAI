@@ -66,6 +66,8 @@ func loadCGO(password []byte) (*CredentialStore, error) {
 	if err := json.Unmarshal(plaintext, &store); err != nil {
 		return nil, fmt.Errorf("invalid decrypted data: %w", err)
 	}
+	// Preserve the session key so SessionPassword() works for subprocess spawning.
+	store.UnlockSession(password)
 	return &store, nil
 }
 

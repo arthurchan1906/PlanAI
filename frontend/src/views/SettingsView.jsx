@@ -28,7 +28,7 @@ export default function SettingsView() {
         api("/pmai/config"),
         api("/pmai/credentials").catch(() => ({})),
       ]);
-      aiForm.setFieldsValue(cfg); proxyForm.setFieldsValue(cfg); gateForm.setFieldsValue(cfg);
+      aiForm.setFieldsValue(cfg); proxyForm.setFieldsValue(cfg);
       setAiStatus(cfg.ai_enabled ? "enabled" : "disabled");
       // Fetch per-agent current models
       setProviders(cfg.providers || []);
