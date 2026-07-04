@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+
 	"net/http"
 	"strings"
 )
@@ -91,7 +91,6 @@ func resolveVirtualRoute(virtualModel, endpoint, agent string, bodyJSON []byte, 
 	// force all requests for this agent to use that model.
 	// Empty ("") means Auto mode 鈥?passthrough, no override.
 	if cm := loadCurrentModel(agent); cm != "" {
-		log.Printf("[RESOLVE] agent=%q override %q 鈫?%q", agent, virtualModel, cm)
 		virtualModel = cm
 		body = replaceModelInBody(bodyJSON, cm)
 	}

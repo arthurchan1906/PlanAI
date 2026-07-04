@@ -1,11 +1,10 @@
-package proxy
+﻿package proxy
 
 import (
 	"encoding/json"
 	"fmt"
 	"log"
 	"sort"
-	"strings"
 	"sync"
 
 	pmdb "aipmc/db"
@@ -108,14 +107,6 @@ func (r *ModelRouter) Resolve(virtualModel string, protocol string) *Route {
 
 	apiKey := reg.ResolveAPIKey(vm.Provider)
 	// Debug: also log all available credential keys
-	credKeys := ""
-	if store := pmdb.GetCredentialStore(); store != nil {
-		credKeys = strings.Join(store.List(), ",")
-	} else {
-		credKeys = "(store=nil)"
-	}
-	log.Printf("[ROUTER] Resolve model=%q proto=%q → provider=%q realModel=%q baseURL=%q apiKey=%s credKeys=[%s]",
-		virtualModel, protocol, vm.Provider, realModel, baseURL, maskKeyStr(apiKey), credKeys)
 	return &Route{
 		Provider:  vm.Provider,
 		RealModel: realModel,

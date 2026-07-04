@@ -284,7 +284,6 @@ func effectiveModel(agentModel string) string {
 func handler(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	agent := detectAgent(path)
-	log.Printf("[REQ] %%s %%s agent=%%s", r.Method, path, agent)
 
 	rw := &responseWrapper{ResponseWriter: w, status: 200}
 
