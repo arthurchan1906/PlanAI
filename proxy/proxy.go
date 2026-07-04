@@ -1,4 +1,4 @@
-// Package proxy translates between AI agent API protocols and OpenAI Chat Completions.
+﻿// Package proxy translates between AI agent API protocols and OpenAI Chat Completions.
 // Supported agents: Claude Code (Anthropic Messages), Gemini CLI (Google Gemini),
 // Codex CLI (OpenAI Responses), Cursor (OpenAI passthrough).
 package proxy
@@ -288,6 +288,18 @@ func handler(w http.ResponseWriter, r *http.Request) {
 
 	rw := &responseWrapper{ResponseWriter: w, status: 200}
 
+
+	// Model command interception (&aipmc-model switch/auto/current/list)
+	body, _ := io.ReadAll(r.Body)
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	var intercepted bool
+	if bytes.Contains(body, []byte("&aipmc-model")) {
+		intercepted = tryModelCommand(rw, r, agent, body, r.URL.Path)
+	}
+
+	if !intercepted {
+		r.Body = io.NopCloser(bytes.NewReader(body))
+
 	switch {
 	case strings.Contains(path, ":generateContent") && !strings.Contains(path, "stream"):
 		handleUnifiedNonStream(rw, r, &GeminiAdapter{})
@@ -333,6 +345,8 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(rw, "not found", http.StatusNotFound)
 	}
+
+	} // end if !intercepted
 
 	recordTraffic(agent, r.Method, path, rw.status, rw.size)
 }
