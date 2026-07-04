@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 )
@@ -24,6 +25,11 @@ func unifiedToOpenAI(req *UnifiedReq) *OpenAIRequest {
 		Stop:            req.Stop,
 		ReasoningEffort: req.ReasoningEffort,
 		ToolChoice:      req.ToolChoice,
+	}
+	// GLM/ZhipuAI requires thinking:{"type":"enabled"} for reasoning.
+	// Send it whenever reasoning is requested (DeepSeek ignores unknown fields).
+	if req.ReasoningEffort != nil {
+		openai.Thinking = &OpenAIThinking{Type: "enabled"}
 	}
 
 	// Convert messages
@@ -85,6 +91,7 @@ func resolveVirtualRoute(virtualModel, endpoint, agent string, bodyJSON []byte, 
 	// force all requests for this agent to use that model.
 	// Empty ("") means Auto mode — passthrough, no override.
 	if cm := loadCurrentModel(agent); cm != "" {
+		log.Printf("[RESOLVE] agent=%q override %q → %q", agent, virtualModel, cm)
 		virtualModel = cm
 		body = replaceModelInBody(bodyJSON, cm)
 	}

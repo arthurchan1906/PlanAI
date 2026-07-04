@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 	"sync"
 
 	pmdb "aipmc/db"
@@ -105,12 +106,33 @@ func (r *ModelRouter) Resolve(virtualModel string, protocol string) *Route {
 		return nil
 	}
 
+	apiKey := reg.ResolveAPIKey(vm.Provider)
+	// Debug: also log all available credential keys
+	credKeys := ""
+	if store := pmdb.GetCredentialStore(); store != nil {
+		credKeys = strings.Join(store.List(), ",")
+	} else {
+		credKeys = "(store=nil)"
+	}
+	log.Printf("[ROUTER] Resolve model=%q proto=%q → provider=%q realModel=%q baseURL=%q apiKey=%s credKeys=[%s]",
+		virtualModel, protocol, vm.Provider, realModel, baseURL, maskKeyStr(apiKey), credKeys)
 	return &Route{
 		Provider:  vm.Provider,
 		RealModel: realModel,
 		BaseURL:   baseURL,
-		APIKey:    reg.ResolveAPIKey(vm.Provider),
+		APIKey:    apiKey,
 	}
+}
+
+// maskKeyStr returns a masked key string for logging.
+func maskKeyStr(key string) string {
+	if key == "" {
+		return "(empty)"
+	}
+	if len(key) <= 10 {
+		return key[:2] + "***"
+	}
+	return key[:6] + "..." + key[len(key)-4:]
 }
 
 // ShouldPassthrough checks whether a virtual model supports Anthropic protocol

@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -299,10 +300,15 @@ func (s *Server) handleCredentials(w http.ResponseWriter, body map[string]any) {
 			if err != nil || store == nil { web.SendError(w, 401, "wrong password"); return }
 			store.Set(provider, key)
 			pmdb.SaveCredentials(store, []byte(password))
+			pmdb.SetCredentialStore(store) // unlock session so proxy subprocess can inherit
 		} else {
 			store.Set(provider, key)
-			store.SaveToFile()
+			if err := store.SaveToFile(); err != nil {
+				web.SendError(w, 500, fmt.Sprintf("save key failed: %v", err))
+				return
+			}
 		}
+		log.Printf("[CRED] set key provider=%q keyPrefix=%s", provider, key[:min(8, len(key))])
 		web.SendJSON(w, map[string]any{"ok": true})
 
 	case "delete":
@@ -317,6 +323,7 @@ func (s *Server) handleCredentials(w http.ResponseWriter, body map[string]any) {
 			if err != nil || store == nil { web.SendError(w, 401, "wrong password"); return }
 			store.Remove(provider)
 			pmdb.SaveCredentials(store, []byte(password))
+			pmdb.SetCredentialStore(store) // unlock session so proxy subprocess can inherit
 		} else {
 			store.Remove(provider)
 			store.SaveToFile()

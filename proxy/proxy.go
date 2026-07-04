@@ -284,6 +284,7 @@ func effectiveModel(agentModel string) string {
 func handler(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	agent := detectAgent(path)
+	log.Printf("[REQ] %%s %%s agent=%%s", r.Method, path, agent)
 
 	rw := &responseWrapper{ResponseWriter: w, status: 200}
 
@@ -417,6 +418,7 @@ type GeminiFuncDecl struct {
 type OpenAIRequest struct {
 	Model           string          `json:"model"`
 	Messages        []OpenAIMessage `json:"messages"`
+	Thinking        *OpenAIThinking `json:"thinking,omitempty"`
 	Temperature     *float64        `json:"temperature,omitempty"`
 	MaxTokens       *int            `json:"max_tokens,omitempty"`
 	TopP            *float64        `json:"top_p,omitempty"`
@@ -425,6 +427,11 @@ type OpenAIRequest struct {
 	Stream          bool            `json:"stream"`
 	Tools           []OpenAITool    `json:"tools,omitempty"`
 	ToolChoice      any             `json:"tool_choice,omitempty"`
+}
+
+// OpenAIThinking maps to GLM/ZhipuAI's thinking control ({"type": "enabled"}).
+type OpenAIThinking struct {
+	Type string `json:"type"`
 }
 
 type OpenAIMessage struct {
@@ -838,8 +845,12 @@ func handleUnifiedNonStream(w http.ResponseWriter, r *http.Request, adapter Prot
 	}
 
 	apiKey := extractAPIKey(r)
-	model := req.Model
 	agent := detectAgent(r.URL.Path)
+	// Use per-agent override for capture display (same logic as resolveVirtualRoute).
+	model := req.Model
+	if cm := loadCurrentModel(agent); cm != "" {
+		model = cm
+	}
 
 	// Convert to OpenAI format and send upstream
 	openaiReq := unifiedToOpenAI(req)
@@ -904,8 +915,12 @@ func handleUnifiedStream(w http.ResponseWriter, r *http.Request, adapter Protoco
 
 	req.Stream = true
 	apiKey := extractAPIKey(r)
-	model := req.Model
 	agent := detectAgent(r.URL.Path)
+	// Use per-agent override for capture display (same logic as resolveVirtualRoute).
+	model := req.Model
+	if cm := loadCurrentModel(agent); cm != "" {
+		model = cm
+	}
 
 	openaiReq := unifiedToOpenAI(req)
 
