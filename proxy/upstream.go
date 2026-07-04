@@ -1,4 +1,4 @@
-package proxy
+﻿package proxy
 
 import (
 	"encoding/json"
@@ -10,7 +10,7 @@ import (
 )
 
 // =============================================================================
-// Unified 鈫?OpenAI Chat Completions conversion
+// Unified 閳?OpenAI Chat Completions conversion
 // =============================================================================
 
 // unifiedToOpenAI converts a UnifiedReq to an OpenAI Chat Completions request.
@@ -69,7 +69,7 @@ func unifiedToOpenAI(req *UnifiedReq) *OpenAIRequest {
 
 	// Ensure max_tokens is never null (llama.cpp rejects null)
 	if openai.MaxTokens == nil {
-		defaultMax := 4096
+		defaultMax := 65536
 		openai.MaxTokens = &defaultMax
 	}
 
@@ -77,7 +77,7 @@ func unifiedToOpenAI(req *UnifiedReq) *OpenAIRequest {
 }
 
 // =============================================================================
-// HTTP transport 鈥?send requests to upstream LLM
+// HTTP transport 閳?send requests to upstream LLM
 // =============================================================================
 
 // resolveVirtualRoute applies virtual model routing to the request URL, body, and API key.
@@ -89,9 +89,9 @@ func resolveVirtualRoute(virtualModel, endpoint, agent string, bodyJSON []byte, 
 
 	// currentModel override: when a user has selected a model via Web UI or CLI,
 	// force all requests for this agent to use that model.
-	// Empty ("") means Auto mode — passthrough, no override.
+	// Empty ("") means Auto mode 鈥?passthrough, no override.
 	if cm := loadCurrentModel(agent); cm != "" {
-		log.Printf("[RESOLVE] agent=%q override %q → %q", agent, virtualModel, cm)
+		log.Printf("[RESOLVE] agent=%q override %q 鈫?%q", agent, virtualModel, cm)
 		virtualModel = cm
 		body = replaceModelInBody(bodyJSON, cm)
 	}
@@ -166,3 +166,4 @@ func forwardToUpstreamStream(endpoint string, body any, apiKey string, virtualMo
 
 	return resp.Body, nil
 }
+

@@ -1,4 +1,4 @@
-package proxy
+﻿package proxy
 
 import (
 	"encoding/json"
@@ -10,14 +10,14 @@ import (
 )
 
 // =============================================================================
-// CodexAdapter — translates OpenAI Responses API protocol ↔ UnifiedReq
+// CodexAdapter 鈥?translates OpenAI Responses API protocol 鈫?UnifiedReq
 // =============================================================================
 
 // CodexAdapter implements ProtocolAdapter for the Codex CLI (OpenAI Responses API).
 // Types (ResponsesRequest, ResponsesResponseWrapper, etc.) are defined in responses.go.
 type CodexAdapter struct {
 	SessionID    string
-	namespaceMap map[string]string // short tool name → namespace (for MCP tools)
+	namespaceMap map[string]string // short tool name 鈫?namespace (for MCP tools)
 }
 
 func (a *CodexAdapter) ParseRequest(r *http.Request) (*UnifiedReq, error) {
@@ -32,7 +32,7 @@ func (a *CodexAdapter) ParseRequest(r *http.Request) (*UnifiedReq, error) {
 		if len(preview) > 200 {
 			preview = preview[:200]
 		}
-		log.Printf("[CODEX] ERROR parsing request: %v — body: %s", err, preview)
+		log.Printf("[CODEX] ERROR parsing request: %v 鈥?body: %s", err, preview)
 		return nil, err
 	}
 
@@ -54,7 +54,7 @@ func (a *CodexAdapter) toUnified(req *ResponsesRequest) *UnifiedReq {
 
 	var messages []UnifiedMsg
 
-	// Instructions → system message
+	// Instructions 鈫?system message
 	instr := instructionText(req.Instructions)
 	if instr != "" {
 		messages = append(messages, UnifiedMsg{Role: "system", Content: instr})
@@ -67,7 +67,7 @@ func (a *CodexAdapter) toUnified(req *ResponsesRequest) *UnifiedReq {
 		})
 	}
 
-	// Input items → messages
+	// Input items 鈫?messages
 	switch v := req.Input.(type) {
 	case string:
 		messages = append(messages, UnifiedMsg{Role: "user", Content: v})
@@ -83,7 +83,7 @@ func (a *CodexAdapter) toUnified(req *ResponsesRequest) *UnifiedReq {
 	if req.MaxOutputTokens != nil {
 		chat.MaxTokens = req.MaxOutputTokens
 	} else {
-		defaultMax := 4096
+		defaultMax := 65536
 		chat.MaxTokens = &defaultMax
 	}
 
@@ -92,7 +92,7 @@ func (a *CodexAdapter) toUnified(req *ResponsesRequest) *UnifiedReq {
 		case "", "function":
 			chat.Tools = append(chat.Tools, codexToolToUnified(t))
 		case "namespace":
-			// Record namespace mapping: short tool name → namespace
+			// Record namespace mapping: short tool name 鈫?namespace
 			// so the emitter can rebuild full MCP names when the model calls back.
 			if a.namespaceMap == nil {
 				a.namespaceMap = make(map[string]string)
@@ -203,7 +203,7 @@ func (a *CodexAdapter) NewEmitter(w http.ResponseWriter, model string) Emitter {
 }
 
 // =============================================================================
-// Helpers for Codex → Unified conversion
+// Helpers for Codex 鈫?Unified conversion
 // =============================================================================
 
 func appendCodexInputItems(items []any, messages *[]UnifiedMsg) {
@@ -267,7 +267,7 @@ func appendCodexInputItems(items []any, messages *[]UnifiedMsg) {
 			*messages = append(*messages, msg)
 
 		case "reasoning":
-			// Codex reasoning items — append thinking text to the last assistant message
+			// Codex reasoning items 鈥?append thinking text to the last assistant message
 			// or create a standalone assistant message if none exists yet.
 			// Codex UI hides reasoning by default; proxy preserves the text as thinking.
 			summary := extractReasoningSummary(m["summary"])
@@ -501,3 +501,4 @@ func collapseUnifiedSystemMessages(msgs []UnifiedMsg) []UnifiedMsg {
 	out = append(out, rest...)
 	return out
 }
+
