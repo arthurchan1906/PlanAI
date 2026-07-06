@@ -6,6 +6,7 @@ package proxy
 import (
 	"bytes"
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -22,7 +23,12 @@ import (
 	"time"
 
 	pmdb "aipmc/db"
+	"aipmc/u"
 )
+
+type ctxKey int
+
+const ctxInjected ctxKey = iota
 
 // proxyCfg holds all proxy configuration. It is stored in an atomic.Value
 // so that handlers can read it without locking, and /__proxy/reload can swap
@@ -297,6 +303,11 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !intercepted {
+		origLen := len(body)
+		body = InjectSessionContext(body, agent)
+		if len(body) != origLen {
+			r = r.WithContext(context.WithValue(r.Context(), ctxInjected, true))
+		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
 
 	switch {
@@ -896,7 +907,10 @@ func handleUnifiedNonStream(w http.ResponseWriter, r *http.Request, adapter Prot
 	finishCapture(capID, http.StatusOK, time.Since(startTime), nil, string(responseJSON), "")
 
 	// Record token usage on both ring buffer and capture entry
+	inTok, outTok := 0, 0
 	if openaiResp.Usage != nil {
+		inTok = openaiResp.Usage.PromptTokens
+		outTok = openaiResp.Usage.CompletionTokens
 		RecordTokenUsage(TokenUsageRecord{
 			Agent:            agent,
 			Model:            model,
@@ -907,9 +921,10 @@ func handleUnifiedNonStream(w http.ResponseWriter, r *http.Request, adapter Prot
 		SetCaptureTokens(capID, openaiResp.Usage.PromptTokens, openaiResp.Usage.CompletionTokens)
 		SetCaptureCacheTokens(capID, openaiResp.Usage.CacheHitTokens, 0)
 	}
+	// Log LLM request/response to shared log (always, 0 when usage is nil)
+	u.LogShared("LLM", "agent=%s model=%s in_tok=%d out_tok=%d injected=%s lat=%.1fs", agent, model, inTok, outTok, injectedFlag(r), time.Since(startTime).Seconds())
 
 }
-
 // handleUnifiedStream handles a streaming request using the unified pipeline:
 //
 //	Adapter.ParseRequest → unifiedToOpenAI → forwardToUpstreamStream →
@@ -1015,7 +1030,16 @@ func handleUnifiedStream(w http.ResponseWriter, r *http.Request, adapter Protoco
 		SetCaptureTokens(capID, streamPromptTokens, streamCompletionTokens)
 		SetCaptureCacheTokens(capID, streamCacheHitTokens, streamCacheCreationTokens)
 	}
+	// Log LLM request/response to shared log
+	u.LogShared("LLM", "agent=%s model=%s in_tok=%d out_tok=%d cache_hit=%d injected=%s lat=%.1fs", agent, model, streamPromptTokens, streamCompletionTokens, streamCacheHitTokens, injectedFlag(r), time.Since(startTime).Seconds())
 
+}
+
+func injectedFlag(r *http.Request) string {
+	if v, _ := r.Context().Value(ctxInjected).(bool); v {
+		return "Y"
+	}
+	return "N"
 }
 
 func firstN[T any](slice []T, n int) []T {
@@ -1071,7 +1095,11 @@ func handleOpenAIChatPassthrough(w http.ResponseWriter, r *http.Request) {
 		}
 
 		var oai OpenAIResponse
+		// Count tokens and log (always, 0 when usage is nil)
+		oaiInTok, oaiOutTok := 0, 0
 		if json.Unmarshal(respBytes, &oai) == nil && oai.Usage != nil {
+			oaiInTok = oai.Usage.PromptTokens
+			oaiOutTok = oai.Usage.CompletionTokens
 			RecordTokenUsage(TokenUsageRecord{
 				Agent:            agent,
 				Model:            model,
@@ -1082,6 +1110,7 @@ func handleOpenAIChatPassthrough(w http.ResponseWriter, r *http.Request) {
 			SetCaptureTokens(capID, oai.Usage.PromptTokens, oai.Usage.CompletionTokens)
 			SetCaptureCacheTokens(capID, oai.Usage.CacheHitTokens, 0)
 		}
+		u.LogShared("LLM", "agent=%s model=%s in_tok=%d out_tok=%d injected=%s lat=%.1fs", agent, model, oaiInTok, oaiOutTok, injectedFlag(r), time.Since(startTime).Seconds())
 
 		finishCapture(capID, http.StatusOK, time.Since(startTime), nil, string(respBytes), "")
 
@@ -1134,17 +1163,22 @@ func handleOpenAIChatPassthrough(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[OPENAICHAT] SSE scan error: %v", err)
 	}
 
-	if lastUsage != nil {
-		RecordTokenUsage(TokenUsageRecord{
-			Agent:            agent,
-			Model:            model,
-			PromptTokens:     lastUsage.PromptTokens,
-			CompletionTokens: lastUsage.CompletionTokens,
-			CacheHitTokens:   lastUsage.CacheHitTokens,
-		})
-		SetCaptureTokens(capID, lastUsage.PromptTokens, lastUsage.CompletionTokens)
-		SetCaptureCacheTokens(capID, lastUsage.CacheHitTokens, 0)
-	}
+		inTok, outTok := 0, 0
+		if lastUsage != nil {
+			inTok = lastUsage.PromptTokens
+			outTok = lastUsage.CompletionTokens
+			RecordTokenUsage(TokenUsageRecord{
+				Agent:            agent,
+				Model:            model,
+				PromptTokens:     lastUsage.PromptTokens,
+				CompletionTokens: lastUsage.CompletionTokens,
+				CacheHitTokens:   lastUsage.CacheHitTokens,
+			})
+			SetCaptureTokens(capID, lastUsage.PromptTokens, lastUsage.CompletionTokens)
+			SetCaptureCacheTokens(capID, lastUsage.CacheHitTokens, 0)
+		}
+		// Log LLM request/response to shared log (always, 0 when usage is nil)
+		u.LogShared("LLM", "agent=%s model=%s in_tok=%d out_tok=%d injected=%s lat=%.1fs", agent, model, inTok, outTok, injectedFlag(r), time.Since(startTime).Seconds())
 
 	finishCapture(capID, http.StatusOK, time.Since(startTime), nil, sseBuf.String(), sseBuf.String())
 }

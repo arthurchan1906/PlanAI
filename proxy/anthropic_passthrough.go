@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"aipmc/u"
 )
 
 // handleAnthropicPassthrough forwards Claude Code's Anthropic request directly
@@ -145,6 +147,8 @@ func handleAnthropicPassthrough(w http.ResponseWriter, r *http.Request) {
 		})
 		SetCaptureTokens(capID, totalPrompt, outputT)
 		SetCaptureCacheTokens(capID, cacheHit, cacheCreate)
+		// Log LLM request/response to shared log
+		u.LogShared("LLM", "agent=claude model=%s in_tok=%d out_tok=%d cache_hit=%d cache_create=%d injected=%s lat=%.1fs", effectiveModelName, inputT+cacheHit, outputT, cacheHit, cacheCreate, injectedFlag(r), time.Since(startTime).Seconds())
 	}
 
 	if resp.StatusCode >= 400 {

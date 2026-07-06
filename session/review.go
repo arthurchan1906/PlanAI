@@ -439,6 +439,28 @@ func (r ReviewResult) ReviewJSON() string {
 	return u.JsonStr(p)
 }
 
+// Layer0FilePaths returns file paths from layer0 file_overlap edges.
+func (r ReviewResult) Layer0FilePaths() []string {
+	var files []string
+	for _, e := range r.Layer0Edges {
+		if e.Type == "file_overlap" {
+			files = append(files, e.To)
+		}
+	}
+	return files
+}
+
+// Layer0EntityIDs returns entity IDs from layer0 entity_ref edges.
+func (r ReviewResult) Layer0EntityIDs() []string {
+	var ids []string
+	for _, e := range r.Layer0Edges {
+		if e.Type == "entity_ref" {
+			ids = append(ids, e.To)
+		}
+	}
+	return ids
+}
+
 // EntityRefsJSON returns entity refs from layer0 entity edges.
 func (r ReviewResult) EntityRefsJSON() string {
 	var refs []string

@@ -2,7 +2,6 @@ package session
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"sort"
 	"strings"
@@ -62,6 +61,35 @@ func AggregateCrossSessionKnowledge(summaries []store.SessionSummary) CrossSessi
 		items = append(items, parsed{sessionID: s.SessionID, summary: l2})
 	}
 	out.SessionsAnalyzed = len(items)
+	// Fallback: when L2 AI summaries are completely unavailable (AI not configured),
+	// extract file overlap and entity refs from B1 ReviewJSON Layer0Edges.
+	// Only triggers when no L2 data exists — avoids double-counting sessions
+	// that already have both L2 and B1 data.
+	if len(items) == 0 {
+		fallbackCount := 0
+		for _, s := range summaries {
+			if s.ReviewJSON == "" {
+				continue
+			}
+			var review ReviewResult
+			if err := json.Unmarshal([]byte(s.ReviewJSON), &review); err != nil {
+				continue
+			}
+			for _, edge := range review.Layer0Edges {
+				switch edge.Type {
+				case "file_overlap":
+					path := strings.TrimPrefix(edge.To, "file:")
+					item := parsed{sessionID: s.SessionID, summary: SessionL2Summary{Files: []string{path}}}
+					items = append(items, item)
+				case "entity_ref":
+					item := parsed{sessionID: s.SessionID, summary: SessionL2Summary{Entities: []string{edge.To}}}
+					items = append(items, item)
+				}
+			}
+			fallbackCount++
+		}
+		out.SessionsAnalyzed = fallbackCount
+	}
 	if len(items) == 0 {
 		return out
 	}
@@ -165,39 +193,16 @@ func topN(counts map[string]int, n int) []string {
 	return out
 }
 
-// WriteLessonsFile generates a markdown file with aggregated cross-session lessons.
-// Path is typically ".aipm/cache/recent_lessons.md".
+// WriteLessonsFile writes aggregated cross-session knowledge as JSON.
+// Path is typically ".pmai/cache/recent_lessons.json".
 func WriteLessonsFile(path string, knowledge CrossSessionKnowledge) error {
-	var buf strings.Builder
-	buf.WriteString("# Recent Lessons from Agent Sessions\n\n")
-	buf.WriteString(fmt.Sprintf("Generated: %s\n", knowledge.GeneratedAt))
-	buf.WriteString(fmt.Sprintf("Sessions analyzed: %d\n\n", knowledge.SessionsAnalyzed))
-
-	if len(knowledge.RecurringLessons) > 0 {
-		buf.WriteString("## 经验教训\n\n")
-		for _, lesson := range knowledge.RecurringLessons {
-			buf.WriteString(fmt.Sprintf("- %s\n", lesson))
-		}
-		buf.WriteString("\n")
+	body, err := json.MarshalIndent(knowledge, "", "  ")
+	if err != nil {
+		return err
 	}
-
-	if len(knowledge.FilePatterns) > 0 {
-		buf.WriteString("## 高频文件\n\n")
-		for _, fp := range knowledge.FilePatterns {
-			buf.WriteString(fmt.Sprintf("- **%s** (%d sessions)\n", fp.FilePath, fp.SessionCount))
-			if len(fp.CommonIssues) > 0 {
-				for _, issue := range fp.CommonIssues {
-					buf.WriteString(fmt.Sprintf("  - %s\n", issue))
-				}
-			}
-		}
-		buf.WriteString("\n")
-	}
-
-	return os.WriteFile(path, []byte(buf.String()), 0644)
+	return os.WriteFile(path, body, 0644)
 }
 
-// splitEntityID splits an entity ID like "task-20260615-..." into [type, id].
 func splitEntityID(eid string) [2]string {
 	parts := [2]string{}
 	for i, ch := range eid {

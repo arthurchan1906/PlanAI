@@ -1357,6 +1357,14 @@ func (s *mcpServer) handleToolsCall(msg *jsonrpcMessage) {
 	// Claude Code hooks, so we log them here for full traceability.
 	mcpLogDiscussion(call.Name, call.Arguments, result)
 
+	// Also write to shared observability log
+	status := "OK"
+	if result.IsError {
+		status = "ERR"
+	}
+	u.LogShared("MCP", "tool=%s status=%s | %s", call.Name, status, mcpLogSummary(call.Name, call.Arguments))
+
+
 	s.sendResult(msg.ID, result)
 }
 
@@ -1465,6 +1473,51 @@ func mcpLogDiscussion(toolName string, args map[string]interface{}, result mcpTo
 
 	store.LogDiscussion("", "assistant", "claude-code", summary, metaJSON)
 }
+
+// mcpLogSummary extracts a concise identifier from MCP tool arguments for logging.
+func mcpLogSummary(tool string, args map[string]interface{}) string {
+	switch tool {
+	case "aipm_record_commit":
+		return fmt.Sprintf("task=%s title=%s", strArg(args, "task_id"), truncArg(args, "title", 60))
+	case "aipm_create_task":
+		return fmt.Sprintf("title=%s plan=%s", truncArg(args, "title", 60), strArg(args, "plan_id"))
+	case "aipm_record_bug":
+		return fmt.Sprintf("title=%s severity=%s", truncArg(args, "title", 60), strArg(args, "severity"))
+	case "aipm_update_task_status":
+		return fmt.Sprintf("task=%s status=%s", strArg(args, "task_id"), strArg(args, "status"))
+	case "aipm_search_context", "aipm_smart_search", "aipm_search_discussions":
+		return fmt.Sprintf("q=%s", truncArg(args, "query", 50))
+	case "aipm_read_discussions":
+		return fmt.Sprintf("src=%s last_n=%s", strArg(args, "source"), strArg(args, "last_n"))
+	case "aipm_link_entities":
+		return fmt.Sprintf("%s.%s -> %s.%s", strArg(args, "source_type"), strArg(args, "source_id"), strArg(args, "target_type"), strArg(args, "target_id"))
+	case "aipm_record_decision":
+		return fmt.Sprintf("title=%s", truncArg(args, "title", 60))
+	case "aipm_create_thread":
+		return fmt.Sprintf("title=%s", truncArg(args, "title", 60))
+	case "aipm_append_task_note":
+		return fmt.Sprintf("task=%s", strArg(args, "task_id"))
+	default:
+		return ""
+	}
+}
+
+func strArg(args map[string]interface{}, key string) string {
+	v, _ := args[key].(string)
+	if v == "" {
+		return "-"
+	}
+	return v
+}
+
+func truncArg(args map[string]interface{}, key string, max int) string {
+	s := strArg(args, key)
+	if len(s) > max {
+		return s[:max] + "..."
+	}
+	return s
+}
+
 
 // ---- Helpers ----
 

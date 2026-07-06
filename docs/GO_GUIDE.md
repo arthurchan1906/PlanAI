@@ -880,3 +880,501 @@ Go 的 goroutine 是更底层的并发原语——你管理 goroutine 和 channe
 | **学习曲线** | 短。25 关键字，一天上手 | 长。SwiftUI + protocol + actor + ... |
 
 两者都在各自的领地做到了最好。Go 统治了云基础设施，Swift 统治了 Apple 平台。它们不直接竞争——交叉地带（服务器端 Swift vs 桌面端 Go）目前都是小众。
+
+
+---
+
+# 实战篇 — 通过 AIPM 代码学 Go 核心模式
+
+> 以下每个主题都用项目真实代码讲解。文件路径点击可打开。
+
+---
+
+## 1. Interface 驱动设计 — `ai/interface.go` + `ai/http_client.go` + `ai/noop.go`
+
+这是 Go 最重要也最常用的设计模式：定义接口 → 写真实实现 → 写空实现（用于降级/测试）。
+
+### 接口定义 (`ai/interface.go`)
+
+```go
+type Summarizer interface {
+    Summarize(text, instruction string) (string, error)
+}
+```
+
+只有 4 行。不需要声明"谁实现了它"——Go 编译器自动检测。
+
+### 真实实现 (`ai/http_client.go`)
+
+```go
+type Client struct {
+    endpoint string
+    model    string
+    apiKey   string
+}
+
+// Client 自动实现 Summarizer — 因为有 Summarize 方法
+func (c *Client) Summarize(text, instruction string) (string, error) {
+    // ... HTTP 调用真实 LLM ...
+}
+```
+
+注意：`Client` 的 struct 定义里**没有任何 `implements Summarizer` 标记**。Go 的 interface 满足是隐式的——编译器看到 `Client` 有 `Summarize(text, instruction string) (string, error)` 方法，就自动认为它实现了 `Summarizer`。
+
+### 空实现 / 降级 (`ai/noop.go`)
+
+```go
+type noopSummarizer struct{}
+
+func (noopSummarizer) Summarize(text, instruction string) (string, error) {
+    return "", nil  // 不报错，返回空结果
+}
+```
+
+### 消费方代码怎么用 (`dispatch.go`)
+
+```go
+var summarizer ai.Summarizer           // 声明为接口类型
+if application.AI != nil && application.AI.Enabled() {
+    summarizer = application.AI        // 有 AI → 用真实实现
+}                                      // 否则 summarizer = nil
+result, _ := session.Run(session.RunOpts{
+    Summarizer: summarizer,            // 可以是 nil！
+})
+```
+
+**关键**：`session.Run` 接收 `ai.Summarizer` 类型，但允许 nil 传入——内部有 nil check，AI 不可用时自动降级：
+
+```go
+// session/summary.go
+func GenerateL2Summary(messages []map[string]any, review ReviewResult, summarizer ai.Summarizer) string {
+    if summarizer == nil {
+        return ""   // 优雅降级
+    }
+    // ...
+}
+```
+
+**为什么这样设计**：不用到处写 `if config.AIEnabled { ... }`。调用方只需决定"有没有 summarizer"，实现方自己处理 nil。这比 Python 的 optional + None check 更清晰——接口本身就是 nil-able 的。
+
+### 对比：Python 怎么做这件事
+
+```python
+# Python 的 Protocol（需要显式标记或 runtime check）
+from typing import Protocol
+
+class Summarizer(Protocol):
+    def summarize(self, text: str, instruction: str) -> str: ...
+
+# 或者更常见：直接传 Optional[Callable]
+def generate_l2_summary(messages, summarizer=None):
+    if summarizer is None:
+        return ""   # 同样的 nil check
+```
+
+Go 版本有两个优势：
+- 接口在编译时检查——拼错方法名或参数类型，编译器立即报错
+- 不需要 `Optional[Callable]` 这种复杂类型标注——`ai.Summarizer` 就是 nil-able
+
+---
+
+## 2. Goroutine 后台任务 — `session/auto.go` + `main.go`
+
+### 启动后台 goroutine (`main.go`)
+
+```go
+// serveCommand() 中，srv.Listen() 之前：
+session.RunAuto(application.AI, 30*time.Minute)
+```
+
+### 实现 (`session/auto.go`)
+
+```go
+func RunAuto(summarizer ai.Summarizer, interval time.Duration) {
+    go func() {                    // ← goroutine 在这里启动
+        time.Sleep(5 * time.Second) // 等数据库就绪
+        runOnce(summarizer)
+        ticker := time.NewTicker(interval)
+        defer ticker.Stop()
+        for range ticker.C {       // ← 每 30 分钟触发一次
+            runOnce(summarizer)
+        }
+    }()
+}
+```
+
+**逐行解释**：
+1. `go func() { ... }()` — 启动一个 goroutine。这个匿名函数在**新 goroutine** 中执行，不会阻塞主函数
+2. `time.Sleep(5 * time.Second)` — 暂停 5 秒等 DB 连接池初始化
+3. `ticker := time.NewTicker(30 * time.Minute)` — 创建一个每 30 分钟触发一次的定时器
+4. `defer ticker.Stop()` — 函数退出时停止 ticker，释放资源
+5. `for range ticker.C { ... }` — 每次 ticker 触发时执行 `runOnce`
+
+**注意**：`defer` 在 goroutine 退出时执行。如果主进程结束（`srv.Listen()` 返回），这个 goroutine 会被强制杀死，`defer` 不保证执行。Web 服务是长时运行的所以没关系；CLI 短命令中 goroutine 的 defer 可能不执行。
+
+### 和 Python 的对比
+
+```python
+# Python asyncio
+async def run_auto(summarizer, interval):
+    await asyncio.sleep(5)
+    while True:
+        await run_once(summarizer)
+        await asyncio.sleep(interval)
+
+asyncio.create_task(run_auto(summarizer, 1800))
+```
+
+Go 的 goroutine 更像轻量级 OS 线程——可以被 Go runtime 调度到多个 CPU 核上并行执行。Python 的 asyncio 是协程——所有协程跑在同一个线程里。
+
+---
+
+## 3. sync 包 — Mutex / RWMutex / Map
+
+### `sync.Mutex` — 互斥锁 (`u/log.go`)
+
+```go
+var logMu sync.Mutex
+
+func LogShared(tag string, format string, args ...any) {
+    logMu.Lock()
+    defer logMu.Unlock()
+    // ... 写文件 ...  ← 同一时刻只有一个 goroutine 能执行这段
+}
+```
+
+**为什么用 Mutex**：日志函数被 pipeline goroutine 和 proxy handler 并发调用。不加锁会导致文件写入交错、数据损坏。
+
+**`defer logMu.Unlock()`** 保证 unlock 一定会执行——即使写文件 panic 也能 unlock。这是 Go 的惯用写法：lock 后立即 defer unlock。
+
+### `sync.RWMutex` — 读写锁 (`proxy/context_inject.go`)
+
+```go
+var sessionCache struct {
+    mu        sync.RWMutex   // ← 注意：是 RWMutex，不是 Mutex
+    goals     []string
+    updatedAt time.Time
+}
+
+func getCachedSessionGoals() []string {
+    sessionCache.mu.RLock()          // ← 读锁 — 多个 goroutine 可同时持有
+    if cacheValid() {
+        defer sessionCache.mu.RUnlock()
+        return sessionCache.goals
+    }
+    sessionCache.mu.RUnlock()        // ← 释放读锁
+    
+    sessionCache.mu.Lock()           // ← 写锁 — 独占
+    defer sessionCache.mu.Unlock()
+    // ... 查数据库并更新缓存 ...
+}
+```
+
+**为什么要区分读写锁**：`goals` 被**频繁读取**（每次 LLM 请求都读一次）但**很少写入**（60s TTL 才刷新一次）。RWMutex 允许多个 goroutine 同时读——10 个并发的 LLM 请求不会互相阻塞。
+
+这是 Go 中比 Mutex 更细腻的并发控制：如果你的数据结构**读多写少**，用 RWMutex 替代 Mutex 能大幅减少锁竞争。
+
+### `sync.Map` — 并发安全 map (`proxy/context_inject.go`)
+
+```go
+var injectTracker sync.Map  // 不需要 make，零值即可用
+
+func shouldInject(key string) bool {
+    last, ok := injectTracker.Load(key)
+    if !ok || time.Since(last.(time.Time)) > 5*time.Minute {
+        injectTracker.Store(key, time.Now())
+        return true
+    }
+    return false
+}
+```
+
+**为什么不用普通 `map` + RWMutex**：普通 map 不是并发安全的——两个 goroutine 同时读/写会 crash。通常做法是 `map + sync.RWMutex`，但 `sync.Map` 在**读写分离、key 稳定**的场景下更简洁。不过要注意 `sync.Map` 的值是 `any` 类型，取值时需要 .(type) 类型断言。
+
+---
+
+## 4. Struct Embedding — Go 的"继承"替代方案
+
+Go 没有类继承。用 struct embedding 复用字段和方法。
+
+### 例子 (`proxy/context_inject.go`)
+
+```go
+var sessionCache struct {      // ← 匿名 struct
+    mu        sync.RWMutex     // ← embedding: sessionCache 自动获得 Lock/Unlock/Rlock/RUnlock
+    goals     []string
+    updatedAt time.Time
+    ttl       time.Duration
+}
+```
+
+**关键**：`sync.RWMutex` 被匿名嵌入。效果：
+- `sessionCache.mu.Lock()` — 通过字段名访问（也可以省略 `.mu` 直接用 `sessionCache.Lock()`，但不推荐——会掩盖调用意图）
+
+### 更典型的例子 (`session/knowledge.go`)
+
+```go
+type CrossSessionKnowledge struct {
+    SessionsAnalyzed int            `json:"sessions_analyzed"`
+    FilePatterns     []FilePattern  `json:"file_patterns"`
+    // ...
+    GeneratedAt      string         `json:"generated_at"`
+}
+```
+
+struct tag (`json:"..."`) 控制 JSON 序列化的字段名。Python 没有对应的机制——通常是手动写 `to_dict()` / `from_dict()` 方法。
+
+---
+
+## 5. Error Handling — 返回而非抛出
+
+### 标准模式
+
+```go
+result, err := someFunction()
+if err != nil {
+    return nil, fmt.Errorf("step X failed: %w", err)  // %w 包装错误，保留原错误链
+}
+// 继续用 result
+```
+
+### 项目中的实际例子 (`session/run.go`)
+
+```go
+messages, err := store.GetSessionMessages(s.SessionID)
+if err != nil {
+    continue  // 这个 session 有异常，跳过它继续下一个
+}
+
+review := ReviewSession(s.SessionID, s.Source, messages, len(mergedRows), nil)
+```
+
+**`continue` 而非 `return`**：这是一个批处理循环。单个 session 失败不应该阻止其他 session 的处理。Go 的错误处理让你可以在每一层精确决定"这个错误应该向上传递还是就地处理"。
+
+### nil-able interface — Go 特有的陷阱
+
+```go
+var summarizer ai.Summarizer = getClient()
+if summarizer != nil {
+    summarizer.Summarize(...)  // 可能 panic!
+}
+```
+
+如果 `getClient()` 返回 `(*Client)(nil)`（即一个 nil 指针但类型是 `*Client`），`summarizer != nil` 会返回 **true**——因为 interface 值包含 (type, value) 两个部分，即使 value 是 nil，type 不为 nil 时 interface 就不是 nil。
+
+**正确做法**：返回 interface 的方法应显式返回 nil：
+
+```go
+func newSummarizer() ai.Summarizer {
+    if !enabled {
+        return nil  // ← 直接返回 nil，不是 nil 指针
+    }
+    return &Client{...}
+}
+```
+
+---
+
+## 6. HTTP Handler 模式 — `proxy/proxy.go`
+
+### 基本结构
+
+```go
+func handler(w http.ResponseWriter, r *http.Request) {
+    path := r.URL.Path
+    agent := detectAgent(path)
+    
+    rw := &responseWrapper{ResponseWriter: w, status: 200}
+    
+    // 读请求体
+    body, _ := io.ReadAll(r.Body)
+    r.Body = io.NopCloser(bytes.NewReader(body))  // ← 恢复 r.Body（读完就没）
+    
+    // 路由分发
+    switch {
+    case path == "/v1/messages":
+        handleClaudeUnified(rw, r)
+    case path == "/v1/responses":
+        handleCodexUnified(rw, r)
+    }
+    
+    recordTraffic(agent, r.Method, path, rw.status, rw.size)
+}
+```
+
+### 关键技术点
+
+**`io.NopCloser` 恢复 `r.Body`**：`http.Request.Body` 是 `io.ReadCloser`，只能读一次。`io.ReadAll` 读完后必须用 `io.NopCloser(bytes.NewReader(body))` 重建，否则后续 handler 读不到数据。
+
+**`responseWrapper` 捕获状态码**：
+```go
+type responseWrapper struct {
+    http.ResponseWriter
+    status int
+    size   int
+}
+func (rw *responseWrapper) WriteHeader(code int) {
+    rw.status = code
+    rw.ResponseWriter.WriteHeader(code)
+}
+```
+因为 `http.ResponseWriter` 的 status code 只能写一次且写入后不可读。Wrapper 拦截 `WriteHeader` 记录状态码供统计使用。这是 Go 中扩展接口行为的标准做法——wrapper 实现相同接口，拦截感兴趣的方法，其余透传给原始实现。
+
+---
+
+## 7. JSON 处理 — marshal / unmarshal / 类型断言
+
+### `json.Marshal` — Go struct → JSON
+
+```go
+type ReviewResult struct {
+    SessionID string `json:"session_id"`
+    Intent    string `json:"intent"`
+    Score     int    `json:"-"`
+}
+
+r := ReviewResult{SessionID: "abc123", Intent: "coding", Score: 70}
+b, _ := json.Marshal(r)
+// → {"session_id":"abc123","intent":"coding"}
+//   Score 被忽略 — json:"-" 表示跳过
+```
+
+### `json.Unmarshal` — JSON → Go struct
+
+```go
+var l2 SessionL2Summary
+if err := json.Unmarshal([]byte(ss.Summary), &l2); err != nil {
+    continue  // JSON 格式异常，跳过
+}
+```
+
+**`&l2`** 传指针——Unmarshal 需要修改结构体的内容，所以必须传地址。
+
+### 处理动态 JSON — `map[string]any`
+
+项目中对未知结构的 JSON 常用 `map[string]any`：
+
+```go
+var raw map[string]any
+json.Unmarshal(body, &raw)
+messages, ok := raw["messages"].([]any)  // 类型断言
+if !ok {
+    return body  // 格式不对，原样返回
+}
+```
+
+**`raw["messages"].([]any)`** 是类型断言——把 `any` 类型断言为 `[]any`。如果类型不匹配，`ok` 为 false。这是 Go 处理动态 JSON 的关键技巧。
+
+---
+
+## 8. Defer — 资源清理的金标准
+
+### 三个最常见用法
+
+```go
+// 1. 关闭文件
+f, _ := os.Open("data.txt")
+defer f.Close()
+
+// 2. 释放锁
+mu.Lock()
+defer mu.Unlock()
+
+// 3. 停止 ticker
+ticker := time.NewTicker(30 * time.Minute)
+defer ticker.Stop()
+```
+
+**执行顺序**：后进先出（LIFO）。如果注册了多个 defer，最后 defer 的最先执行。
+
+**实际例子 (`session/auto.go`)**：
+
+```go
+go func() {
+    time.Sleep(5 * time.Second)
+    runOnce(summarizer)
+    ticker := time.NewTicker(interval)
+    defer ticker.Stop()          // goroutine 退出时停止 ticker
+    for range ticker.C {
+        runOnce(summarizer)
+    }
+}()
+```
+
+`defer` 在函数返回时执行，不是块结束时——注意 goroutine 内部也是一个函数作用域。
+
+---
+
+## 9. 包管理 — Go module 工作原理
+
+### `go.mod` 文件
+
+```
+module aipmc          ← 模块名——所有内部 import 都以此开头
+
+go 1.21               ← Go 版本
+
+require (
+    modernc.org/sqlite v1.29.5
+    // ...
+)
+```
+
+### 项目内引用
+
+```go
+import "aipmc/ai"      // 指向项目根目录下的 ai/ 子目录
+import "aipmc/store"   // 指向 store/ 子目录
+```
+
+`aipmc` 是 module 名，`ai` 是相对于 module root 的目录路径。两者拼接就是 Go 编译器查找代码的路径。
+
+### 可见性规则
+
+```go
+func PublicFunction() {}   // 大写开头 = 导出（其他包可用）
+func privateFunction() {}  // 小写开头 = 包内私有
+
+type ExportedType struct {}  // 大写 = 导出
+var privateVar string         // 小写 = 私有
+```
+
+没有 `public` / `private` 关键字——靠首字母大小写区分。这是 Go 最简洁的设计之一：一眼看出可见性。
+
+---
+
+## 10. 字符串和字节 — string vs []byte
+
+```go
+s := "hello"           // string — 只读，UTF-8 编码
+b := []byte(s)          // []byte — 可读写，用于 I/O、JSON 解析
+s2 := string(b)         // []byte → string
+```
+
+### 项目中的转换链路
+
+```go
+// proxy/context_inject.go
+body []byte                      // HTTP 请求体原始字节
+↓
+var raw map[string]any           // 需要先转为 map 才能操作
+json.Unmarshal(body, &raw)       // []byte → map
+↓
+raw["instructions"] = ...        // 修改
+↓
+b, _ := json.Marshal(raw)        // map → []byte
+return b                          // 返回修改后的字节
+```
+
+**为什么 `json.Unmarshal` 接受 `[]byte` 而非 `string`**：JSON 数据本质是字节流。接受 `[]byte` 避免了 `string(data)` 的额外内存分配。这是 Go 的零拷贝哲学——能用 []byte 的地方不用 string。
+
+---
+
+## 学习建议
+
+1. **先读 `ai/interface.go` + `ai/http_client.go` + `ai/noop.go`** — 理解 Go 的 interface 驱动设计，这是 Go 的核心思维模式
+2. **再读 `proxy/context_inject.go`** — 了解 sync.RWMutex、sync.Map、函数式 insert、JSON 动态处理
+3. **再读 `session/auto.go` + `main.go:412`** — 理解 goroutine、ticker、defer
+4. **最后读 `proxy/proxy.go`** — 理解 HTTP handler、中间件模式、response wrapper
+
+修改代码时先跑 `go vet ./...`（静态分析）再跑 `go build`（编译），两关都过了才算 safe。

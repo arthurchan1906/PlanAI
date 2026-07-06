@@ -109,14 +109,41 @@ func Run(opts RunOpts) (RunResult, error) {
 
 		// L2 semantic summary (gracefully degrades if AI not configured)
 		summary := ""
+		l2status := "skip_no_ai"
 		if opts.Summarizer != nil {
 			summary = GenerateL2Summary(messages, review, opts.Summarizer)
+			if summary != "" {
+				l2status = "ok"
+			} else {
+				l2status = "skip_empty"
+			}
 		}
 		// Preserve existing summary if current run produced nothing
 		if summary == "" {
 			if old, _ := store.GetSessionSummary(s.SessionID); old != nil && old.Summary != "" {
 				summary = old.Summary
+				l2status = "cached"
 			}
+		}
+		// Per-session observability log
+		goalPreview := ""
+		if summary != "" {
+			var l2 SessionL2Summary
+			if json.Unmarshal([]byte(summary), &l2) == nil && l2.Goal != "" {
+				goalPreview = l2.Goal
+				if len(goalPreview) > 60 {
+					goalPreview = goalPreview[:60] + "..."
+				}
+			}
+		}
+		if goalPreview != "" {
+			u.LogShared("PIPELINE", "session=%s src=%s intent=%s score=%d files=%d entities=%d L2=%s goal=%s",
+				s.SessionID[:8], s.Source, review.Intent, review.QualityScoreValue(),
+				len(review.Layer0FilePaths()), len(review.Layer0EntityIDs()), l2status, goalPreview)
+		} else {
+			u.LogShared("PIPELINE", "session=%s src=%s intent=%s score=%d files=%d entities=%d L2=%s",
+				s.SessionID[:8], s.Source, review.Intent, review.QualityScoreValue(),
+				len(review.Layer0FilePaths()), len(review.Layer0EntityIDs()), l2status)
 		}
 
 		entityRefs := review.EntityRefsJSON()
@@ -153,7 +180,7 @@ func Run(opts RunOpts) (RunResult, error) {
 	// Write cross-session lessons file if L2 summaries exist
 	if summaries, err := store.ListSessionSummariesWithSummary("", 50); err == nil && len(summaries) > 0 {
 		knowledge := AggregateCrossSessionKnowledge(summaries)
-		lessonsPath := ".pmai/cache/recent_lessons.md"
+		lessonsPath := ".pmai/cache/recent_lessons.json"
 		if err := WriteLessonsFile(lessonsPath, knowledge); err != nil {
 				// non-fatal
 			}

@@ -345,6 +345,20 @@ tr:hover{background:#161b22}
 .tab.on{background:#1f6feb;color:#fff;border-color:#1f6feb}
 .pane{display:none}.pane.on{display:block}
 pre{background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:12px;font-size:12px;white-space:pre-wrap;word-break:break-all;max-height:60vh;overflow:auto}
+/* Messages tab */
+.msg-item{border:1px solid #21262d;border-radius:4px;margin-bottom:4px;overflow:hidden}
+.msg-header{display:flex;align-items:center;gap:8px;padding:6px 10px;cursor:pointer;font-size:12px;background:#0d1117}
+.msg-header:hover{background:#161b22}
+.msg-role{display:inline-block;padding:1px 6px;border-radius:3px;font-size:11px;font-weight:600;text-transform:uppercase;flex-shrink:0;min-width:60px;text-align:center}
+.msg-role.user{background:#1f6feb22;color:#58a6ff;border:1px solid #1f6feb44}
+.msg-role.assistant{background:#3fb95022;color:#3fb950;border:1px solid #3fb95044}
+.msg-role.tool{background:#f0883e22;color:#f0883e;border:1px solid #f0883e44}
+.msg-preview{color:#8b949e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;font-size:11px}
+.msg-body{padding:10px;background:#0d1117;border-top:1px solid #21262d;font-size:12px;white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,monospace;color:#c9d1d9;max-height:350px;overflow:auto;display:none}
+.msg-body.open{display:block}
+.msg-arrow{color:#484f58;font-size:10px;flex-shrink:0;transition:transform .15s}
+.msg-arrow.open{transform:rotate(90deg)}
+.msg-count{font-size:11px;color:#484f58;margin-bottom:6px}
 .meta{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:8px;font-size:12px;color:#8b949e}
 .controls{display:flex;align-items:center;margin-bottom:12px}
 .close{position:absolute;top:12px;right:16px;cursor:pointer;font-size:20px;color:#8b949e;background:none;border:none}
@@ -371,11 +385,13 @@ pre{background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:12px;f
     <div class="tab" onclick="switchTab('unified')">Unified</div>
     <div class="tab" onclick="switchTab('response')">Response</div>
     <div class="tab" onclick="switchTab('events')">SSE Events</div>
+    <div class="tab" onclick="switchTab('messages')">Messages</div>
   </div>
   <div class="pane on" id="preq"><pre></pre></div>
   <div class="pane" id="punified"><pre></pre></div>
   <div class="pane" id="presp"><pre></pre></div>
   <div class="pane" id="pevents"><pre></pre></div>
+  <div class="pane" id="pmsg"><div id="msgcnt"></div><div id="msglist"></div></div>
 </div>
 <script>
 let auto=setInterval(loadList,3000);
@@ -400,6 +416,7 @@ async function loadDetail(id){
   document.querySelector('#punified pre').textContent=tf(c.req_unified||'(not captured)');
   document.querySelector('#presp pre').textContent=tf(c.resp_body);
   document.querySelector('#pevents pre').textContent=tf(c.resp_events||'(not captured)');
+  renderMessages(c);
   switchTab('request');
   openDrawer();
 }
@@ -407,10 +424,85 @@ function switchTab(n){
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('on'));
   document.querySelectorAll('.pane').forEach(p=>p.classList.remove('on'));
   document.querySelector('.tab[onclick*="'+n+'"]').classList.add('on');
-  document.getElementById(n=='request'?'preq':n=='unified'?'punified':n=='response'?'presp':'pevents').classList.add('on');
+  var m={'request':'preq','unified':'punified','response':'presp','events':'pevents','messages':'pmsg'};
+  document.getElementById(m[n]||'preq').classList.add('on');
 }
 function openDrawer(){document.getElementById('drawer').classList.add('open');document.getElementById('mask').classList.add('on')}
 function closeDrawer(){document.getElementById('drawer').classList.remove('open');document.getElementById('mask').classList.remove('on')}
+// -- Messages tab --
+// Extract normalized {role, content, toolCallID, toolCalls} from unified or raw JSON.
+function extractMessages(c){
+  // 1) UnifiedRequest path (Gemini/Codex/non-passthrough Claude)
+  if(c.req_unified){
+    try{
+      var u=JSON.parse(c.req_unified);
+      if(u.messages&&Array.isArray(u.messages)) return u.messages.map(function(m,i){
+        return {role:m.Role||m.role||'?',content:m.Content||m.content||'',thinking:m.Thinking||'',toolCallID:m.ToolCallID||'',toolCalls:m.ToolCalls||null,idx:i+1};
+      });
+    }catch(e){}
+  }
+  // 2) Raw body fallback — support Anthropic / OpenAI / Gemini / Codex formats
+  if(!c.req_body) return [];
+  try{
+    var raw=JSON.parse(c.req_body);
+    // Anthropic passthrough / OpenAI chat-completions: top-level "messages"
+    if(raw.messages&&Array.isArray(raw.messages)){
+      return raw.messages.map(function(m,i){
+        var content=m.content;
+        if(Array.isArray(content)){
+          // Anthropic content-block array: [{type:"text",text:"..."},{type:"tool_use",...}]
+          content=content.map(function(b){return b.text||(b.type+'('+(b.name||b.id||'')+')');}).join('\n');
+        }
+        return {role:m.role||'?',content:content||'',idx:i+1};
+      });
+    }
+    // Gemini: "contents" array
+    if(raw.contents&&Array.isArray(raw.contents)){
+      return raw.contents.map(function(m,i){
+        var text='';
+        if(m.parts&&Array.isArray(m.parts)) text=m.parts.map(function(p){return p.text||'';}).join('\n');
+        return {role:m.role||'?',content:text,idx:i+1};
+      });
+    }
+    // Codex Responses API: "input" array
+    if(raw.input&&Array.isArray(raw.input)){
+      return raw.input.map(function(m,i){
+        var content=m.content||'';
+        if(Array.isArray(content)) content=content.map(function(b){return b.text||'';}).join('\n');
+        return {role:m.role||'?',content:content,idx:i+1};
+      });
+    }
+  }catch(e){}
+  return [];
+}
+function renderMessages(c){
+  var msgs=extractMessages(c);
+  var cnt=document.getElementById('msgcnt');
+  var list=document.getElementById('msglist');
+  if(!msgs.length){cnt.textContent='(no messages)';list.innerHTML='';return;}
+  cnt.textContent=msgs.length+' messages';
+  list.innerHTML=msgs.map(function(m){
+    var role=m.role||'?';
+    // Preview: first line of content, max 80 chars, collapse whitespace
+    var preview=(m.content||'').replace(/\n/g,' ').replace(/\s+/g,' ').trim();
+    if(preview.length>80) preview=preview.slice(0,80)+'…';
+    if(!preview&&m.thinking) preview='[thinking '+(m.thinking.length>60?m.thinking.slice(0,60)+'…':m.thinking)+']';
+    if(!preview&&m.toolCallID) preview='[tool result: '+m.toolCallID+']';
+    if(!preview) preview='(empty)';
+    // Format content for display: escape HTML entities, preserve real newlines
+    var body=(m.content||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    if(m.thinking) body+='\n\n[thinking]\n'+m.thinking.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+    if(m.toolCallID) body+='\n\n[tool_call_id]\n'+m.toolCallID;
+    return '<div class="msg-item">'+
+      '<div class="msg-header" onclick="var b=this.nextElementSibling;var a=this.querySelector(\'.msg-arrow\');b.classList.toggle(\'open\');a.classList.toggle(\'open\')">'+
+        '<span class="msg-arrow">▶</span>'+
+        '<span class="msg-role '+role+'">#'+m.idx+' '+role+'</span>'+
+        '<span class="msg-preview">'+preview+'</span>'+
+      '</div>'+
+      '<div class="msg-body">'+body+'</div>'+
+    '</div>';
+  }).join('');
+}
 async function clearAll(){if(confirm('Clear?')){await fetch('/__proxy/capture/clear',{method:'POST'});loadList()}}
 loadList();
 </script>
