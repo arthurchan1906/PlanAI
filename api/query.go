@@ -91,6 +91,8 @@ func (s *Server) handleQueryRoutes(w http.ResponseWriter, method, path string, q
 		})
 	case "agent/sessions":
 		s.handleAgentSessions(w)
+	case "agent/cmd":
+		s.handleAgentCmd(w, q.Get("agent"))
 	default:
 		return false
 	}

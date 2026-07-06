@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Button, Card, Form, Input, Select, Tag, Typography, message, Collapse, Space, Tooltip, Row, Col, Divider, Modal } from "antd";
-import { PauseCircleOutlined, PlayCircleOutlined, CodeOutlined, RobotOutlined, ThunderboltOutlined, ApiOutlined, CloudServerOutlined, SettingOutlined, KeyOutlined, LockOutlined, UnlockOutlined } from "@ant-design/icons";
+import { Button, Card, Form, Input, Select, Tag, Typography, message, Collapse, Space, Tooltip, Row, Col, Divider, Modal, Dropdown } from "antd";
+import { PauseCircleOutlined, PlayCircleOutlined, CodeOutlined, RobotOutlined, ThunderboltOutlined, ApiOutlined, CloudServerOutlined, SettingOutlined, KeyOutlined, LockOutlined, UnlockOutlined, CopyOutlined } from "@ant-design/icons";
 import { api } from "../utils/api";
 import AgentConfigView from "./AgentConfigView";
 import ModelRegistryEditor from "../components/ModelRegistryEditor";
@@ -93,6 +93,23 @@ export default function SettingsView() {
     } catch (e) { message.error(e.message); }
     setLaunching(null);
   }
+  async function copyAgentCmd(name, fmt) {
+    try {
+      const d = await api(`/pmai/web/agent/cmd?agent=${name}`);
+      if (d.error) { message.error(d.error); return; }
+      const cmd = (fmt === "win") ? d.win : d.unix;
+      const label = (fmt === "win") ? "CMD" : "Terminal / Git Bash";
+      try {
+        await navigator.clipboard.writeText(cmd);
+      } catch (_) {
+        const ta = document.createElement("textarea");
+        ta.value = cmd; ta.style.position = "fixed"; ta.style.opacity = "0";
+        document.body.appendChild(ta); ta.select();
+        document.execCommand("copy"); document.body.removeChild(ta);
+      }
+      message.success(`已复制 ${name} 命令 (${label})`);
+    } catch (e) { message.error(e.message); }
+  }
   async function testAI() {
     setTesting(true);
     const d = await api("/pmai/ai-test", { method: "POST" });
@@ -155,7 +172,17 @@ export default function SettingsView() {
           { k: "codex", icon: <CodeOutlined />, label: "Codex CLI" },
           { k: "opencode", icon: <ApiOutlined />, label: "OpenCode" },
           { k: "gemini", icon: <ThunderboltOutlined />, label: "Gemini CLI" }].map(a => (
-            <Button key={a.k} icon={a.icon} loading={launching === a.k} onClick={() => launchAgent(a.k)}>{a.label}</Button>
+            <Button.Group key={a.k}>
+              <Button icon={a.icon} loading={launching === a.k} onClick={() => launchAgent(a.k)}>{a.label}</Button>
+              <Dropdown menu={{ items: [
+                { key: "unix", label: "复制命令 (Terminal / Git Bash)", onClick: () => copyAgentCmd(a.k, "unix") },
+                { key: "win",  label: "复制命令 (CMD)", onClick: () => copyAgentCmd(a.k, "win") },
+              ]}} trigger={["click"]}>
+                <Tooltip title="复制启动命令">
+                  <Button icon={<CopyOutlined />} />
+                </Tooltip>
+              </Dropdown>
+            </Button.Group>
           ))}
         </Space>
         <AgentConfigView key={agentKey} models={models} />

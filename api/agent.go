@@ -148,6 +148,71 @@ func (s *Server) handleAgentLaunch(w http.ResponseWriter, body map[string]any) {
 	web.SendJSON(w, map[string]any{"ok": true, "agent": agentName})
 }
 
+// handleAgentCmd returns the shell command to launch an agent so users can
+// copy and run it manually (useful on Windows where auto-launch may not work).
+// GET /pmai/web/agent/cmd?agent=claude
+func (s *Server) handleAgentCmd(w http.ResponseWriter, agentName string) {
+	agentName = strings.ToLower(agentName)
+	if agentName == "" {
+		web.SendError(w, 400, "缺少 'agent' 参数")
+		return
+	}
+
+	gcfg := pmdb.LoadGlobalConfig()
+	cfg := pmdb.LoadConfig()
+	proxyPort := gcfg.ProxyPort
+	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", proxyPort)
+	rt, err := pmdb.ResolveAgentConfig(agentName, gcfg, cfg)
+	if err != nil {
+		web.SendError(w, 400, fmt.Sprintf("agent 配置错误: %v", err))
+		return
+	}
+
+	var envs []string
+	var cmdLine string
+	switch agentName {
+	case "claude", "claude-code":
+		envs = append(envs, "ANTHROPIC_BASE_URL="+proxyURL, "ANTHROPIC_AUTH_TOKEN=local")
+		if rt.Model != "" {
+			envs = append(envs, "ANTHROPIC_MODEL="+rt.Model)
+		}
+		cmdLine = "claude"
+	case "codex", "openai-codex":
+		cmdLine = "codex -p proxy"
+		envs = append(envs, "OPENAI_API_KEY=local")
+	case "gemini", "gemini-cli":
+		envs = append(envs,
+			"GEMINI_API_KEY=local", "GOOGLE_API_KEY=local",
+			"GEMINI_API_BASE="+proxyURL, "GOOGLE_API_BASE="+proxyURL, "GOOGLE_GEMINI_BASE_URL="+proxyURL,
+		)
+		cmdLine = "gemini"
+	case "opencode", "oc":
+		if rt.Model != "" {
+			cmdLine = "opencode --model aipm/" + rt.Model
+		} else {
+			cmdLine = "opencode"
+		}
+	default:
+		web.SendError(w, 400, "未知 agent: "+agentName)
+		return
+	}
+
+	// Build Unix and Windows command strings
+	unixCmd := strings.Join(envs, " ") + " " + cmdLine
+	winCmd := strings.Join(envs, " && set ") + " && " + cmdLine
+	if len(envs) > 0 {
+		winCmd = "set " + winCmd
+	}
+
+	web.SendJSON(w, map[string]any{
+		"agent":  agentName,
+		"unix":   unixCmd,
+		"win":    winCmd,
+		"cmdline": cmdLine,
+		"envs":   envs,
+	})
+}
+
 func (s *Server) handleAgentSessions(w http.ResponseWriter) {
 	s.ensureSessionGC()
 	s.sessionsMu.Lock()
