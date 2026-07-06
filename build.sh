@@ -33,12 +33,17 @@ echo ""
 echo "Building for current platform ($CURRENT_OS)..."
 
 GMSSL_DIR="$PWD/gmssl"
-if [ -f "$GMSSL_DIR/include/gmssl/sm4.h" ]; then
+GMSSL_LIB="$GMSSL_DIR/lib/$CURRENT_OS/libgmssl.a"
+if [ -f "$GMSSL_DIR/include/gmssl/sm4.h" ] && [ -f "$GMSSL_LIB" ]; then
   export CGO_ENABLED=1
   export CGO_CFLAGS="-I$GMSSL_DIR/include"
-  export CGO_LDFLAGS="$GMSSL_DIR/lib/libgmssl.a"
+  export CGO_LDFLAGS="$GMSSL_LIB"
   go build -ldflags="-s -w" -o "$OUTDIR/$CURRENT_OUTPUT" .
-  echo "  → credentials (SM4-GCM) enabled (static)"
+  echo "  → credentials (SM4-GCM) enabled ($GMSSL_LIB)"
+elif [ -f "$GMSSL_DIR/include/gmssl/sm4.h" ]; then
+  echo "  → gmssl headers found but no prebuilt lib for $CURRENT_OS, CGO disabled"
+  echo "    (expected: gmssl/lib/$CURRENT_OS/libgmssl.a)"
+  CGO_ENABLED=0 go build -ldflags="-s -w" -o "$OUTDIR/$CURRENT_OUTPUT" .
 else
   echo "  → gmssl/ not found, CGO disabled (no credentials support)"
   CGO_ENABLED=0 go build -ldflags="-s -w" -o "$OUTDIR/$CURRENT_OUTPUT" .
