@@ -66,10 +66,14 @@ func (s *Server) handleQueryRoutes(w http.ResponseWriter, method, path string, q
 	case "config":
 		s.handleGetConfig(w)
 	case "credentials":
+		profile := q.Get("profile")
+		if profile == "" { profile = "default" }
 		web.SendJSON(w, map[string]any{
-			"keys":     credentialKeyList(),
-			"exists":   pmdb.CredentialsExist(),
-			"unlocked": pmdb.IsUnlocked(),
+			"keys":           credentialKeyList(),
+			"exists":         pmdb.CredentialsExistForProfile(profile),
+			"unlocked":       pmdb.IsUnlocked(),
+			"profile":        profile,
+			"all_profiles":   pmdb.ListProfiles(),
 		})
 	case "proxy-status":
 		proxyForward(w, "status")

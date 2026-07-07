@@ -41,6 +41,8 @@ func (s *Server) handleGetConfig(w http.ResponseWriter) {
 		"project_model":         cfg.Model,
 		"agent_overrides":       cfg.AgentOverrides,
 		"api_keys":              credentialKeyList(),
+		"current_profile":       pmdb.CurrentProfile(),
+		"all_profiles":           pmdb.ListProfiles(),
 	})
 }
 
@@ -261,19 +263,21 @@ func credentialKeyList() map[string]string {
 }
 
 // handleCredentials handles POST /pmai/credentials.
-// Actions: unlock, lock, init, set, delete, passwd
+// Actions: unlock, lock, init, set, delete, passwd, list-profiles, create-profile, delete-profile
 func (s *Server) handleCredentials(w http.ResponseWriter, body map[string]any) {
 	action, _ := body["action"].(string)
+	profile, _ := body["profile"].(string)
+	if profile == "" { profile = "default" }
 
 	switch action {
 	case "unlock":
 		password, _ := body["password"].(string)
 		if password == "" { web.SendError(w, 400, "password required"); return }
-		store, err := pmdb.LoadCredentials([]byte(password))
+		store, err := pmdb.LoadCredentialsProfile([]byte(password), profile)
 		if err != nil || store == nil { web.SendError(w, 401, "wrong password"); return }
 		store.UnlockSession([]byte(password))
 		pmdb.SetCredentialStore(store)
-		web.SendJSON(w, map[string]any{"ok": true, "unlocked": len(store.Keys), "timeout": 1800})
+		web.SendJSON(w, map[string]any{"ok": true, "unlocked": len(store.Keys), "timeout": 1800, "profile": profile})
 
 	case "lock":
 		pmdb.Lock()
@@ -282,59 +286,66 @@ func (s *Server) handleCredentials(w http.ResponseWriter, body map[string]any) {
 	case "init":
 		password, _ := body["password"].(string)
 		if password == "" { web.SendError(w, 400, "password required"); return }
-		if pmdb.CredentialsExist() { web.SendError(w, 409, "credentials already exist"); return }
-		store := &pmdb.CredentialStore{Keys: map[string]string{}}
-		if err := pmdb.SaveCredentials(store, []byte(password)); err != nil { web.SendError(w, 500, err.Error()); return }
-		web.SendJSON(w, map[string]any{"ok": true})
+		if pmdb.CredentialsExistForProfile(profile) { web.SendError(w, 409, "credentials already exist for profile "+profile); return }
+		store := &pmdb.CredentialStore{Keys: map[string]string{}, Profile: profile}
+		if err := pmdb.SaveCredentialsToProfile(store, []byte(password), profile); err != nil { web.SendError(w, 500, err.Error()); return }
+		web.SendJSON(w, map[string]any{"ok": true, "profile": profile})
 
 	case "set":
 		provider, _ := body["provider"].(string)
 		key, _ := body["key"].(string)
 		if provider == "" || key == "" { web.SendError(w, 400, "provider and key required"); return }
-
-		store := pmdb.GetCredentialStore()
-		if store == nil {
-			password, _ := body["password"].(string)
-			if password == "" { web.SendError(w, 400, "password required"); return }
-			store, err := pmdb.LoadCredentials([]byte(password))
-			if err != nil || store == nil { web.SendError(w, 401, "wrong password"); return }
-			store.Set(provider, key)
-			pmdb.SaveCredentials(store, []byte(password))
-			pmdb.SetCredentialStore(store) // unlock session so proxy subprocess can inherit
-		} else {
-			store.Set(provider, key)
-			if err := store.SaveToFile(); err != nil {
-				web.SendError(w, 500, fmt.Sprintf("save key failed: %v", err))
-				return
-			}
-		}
-		log.Printf("[CRED] set key provider=%q keyPrefix=%s", provider, key[:min(8, len(key))])
+		// Always require password for key modification
+		password, _ := body["password"].(string)
+		if password == "" { web.SendError(w, 400, "password required to modify keys"); return }
+		store, err := pmdb.LoadCredentialsProfile([]byte(password), profile)
+		if err != nil || store == nil { web.SendError(w, 401, "wrong password"); return }
+		store.Set(provider, key)
+		store.Profile = profile
+		pmdb.SaveCredentialsToProfile(store, []byte(password), profile)
+		if old := pmdb.GetCredentialStore(); old != nil && old != store { old.Lock() }
+		pmdb.SetCredentialStore(store)
+		log.Printf("[CRED] set key provider=%q keyPrefix=%s profile=%s", provider, key[:min(8, len(key))], profile)
 		web.SendJSON(w, map[string]any{"ok": true})
 
 	case "delete":
 		provider, _ := body["provider"].(string)
 		if provider == "" { web.SendError(w, 400, "provider required"); return }
-
-		store := pmdb.GetCredentialStore()
-		if store == nil {
-			password, _ := body["password"].(string)
-			if password == "" { web.SendError(w, 400, "password required"); return }
-			store, err := pmdb.LoadCredentials([]byte(password))
-			if err != nil || store == nil { web.SendError(w, 401, "wrong password"); return }
-			store.Remove(provider)
-			pmdb.SaveCredentials(store, []byte(password))
-			pmdb.SetCredentialStore(store) // unlock session so proxy subprocess can inherit
-		} else {
-			store.Remove(provider)
-			store.SaveToFile()
-		}
+		// Always require password for key modification
+		password, _ := body["password"].(string)
+		if password == "" { web.SendError(w, 400, "password required to modify keys"); return }
+		store, err := pmdb.LoadCredentialsProfile([]byte(password), profile)
+		if err != nil || store == nil { web.SendError(w, 401, "wrong password"); return }
+		store.Remove(provider)
+		store.Profile = profile
+		pmdb.SaveCredentialsToProfile(store, []byte(password), profile)
+		if old := pmdb.GetCredentialStore(); old != nil && old != store { old.Lock() }
+		pmdb.SetCredentialStore(store)
 		web.SendJSON(w, map[string]any{"ok": true})
 
 	case "passwd":
 		oldPass, _ := body["old_password"].(string)
 		newPass, _ := body["new_password"].(string)
 		if oldPass == "" || newPass == "" { web.SendError(w, 400, "old_password and new_password required"); return }
-		if err := pmdb.ChangePassword([]byte(oldPass), []byte(newPass)); err != nil { web.SendError(w, 401, err.Error()); return }
+		if err := pmdb.ChangePasswordForProfile([]byte(oldPass), []byte(newPass), profile); err != nil { web.SendError(w, 401, err.Error()); return }
+		web.SendJSON(w, map[string]any{"ok": true})
+
+	case "list-profiles":
+		web.SendJSON(w, map[string]any{
+			"profiles": pmdb.ListProfiles(),
+		})
+
+	case "create-profile":
+		name, _ := body["profile"].(string)
+		password, _ := body["password"].(string)
+		if name == "" || password == "" { web.SendError(w, 400, "profile name and password required"); return }
+		if err := pmdb.CreateProfile(name, password); err != nil { web.SendError(w, 409, err.Error()); return }
+		web.SendJSON(w, map[string]any{"ok": true, "profile": name})
+
+	case "delete-profile":
+		name, _ := body["profile"].(string)
+		if name == "" { web.SendError(w, 400, "profile name required"); return }
+		if err := pmdb.DeleteProfile(name); err != nil { web.SendError(w, 400, err.Error()); return }
 		web.SendJSON(w, map[string]any{"ok": true})
 
 	default:

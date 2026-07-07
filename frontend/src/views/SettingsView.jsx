@@ -18,6 +18,8 @@ export default function SettingsView() {
   const [keyUnlocked, setKeyUn] = useState(false);
   const [keyExists, setKeyExists] = useState(false);
   const [keyModal, setKeyModal] = useState({ open: false, type: "" });
+  const [profile, setProfile] = useState(() => sessionStorage.getItem("aipmc_profile") || "default");
+  const [profileList, setProfileList] = useState([]);
   const [aiForm] = Form.useForm();
   const [proxyForm] = Form.useForm();
   const [keyForm] = Form.useForm();
@@ -26,7 +28,7 @@ export default function SettingsView() {
     try {
       const [cfg, cred] = await Promise.all([
         api("/pmai/config"),
-        api("/pmai/credentials").catch(() => ({})),
+        api(`/pmai/credentials?profile=${encodeURIComponent(profile)}`).catch(() => ({})),
       ]);
       aiForm.setFieldsValue(cfg); proxyForm.setFieldsValue(cfg);
       setAiStatus(cfg.ai_enabled ? "enabled" : "disabled");
@@ -36,13 +38,14 @@ export default function SettingsView() {
       setKeys(cred.keys || {});
       setKeyUn(cred.unlocked || false);
       setKeyExists(cred.exists || false);
+      setProfileList(cfg.all_profiles || []);
     } catch (e) { /* */ }
     setLoading(false);
   }
   async function handleKeyChange(provider, key, password) {
     await api("/pmai/credentials", {
       method: "POST",
-      body: JSON.stringify({ action: "set", provider, key, password }),
+        body: JSON.stringify({ action: "set", provider, key, password, profile }),
     });
     setKeys(prev => ({ ...prev, [provider]: key.startsWith("sk-") ? key.slice(0, 6) + "..." + key.slice(-4) : "***" }));
     if (password) { setKeyUn(true); setKeyExists(true); }
@@ -117,7 +120,7 @@ export default function SettingsView() {
     setTesting(false);
   }
   async function handleKeySession(v) {
-    const body = { action: keyModal.type, ...v };
+    const body = { action: keyModal.type, profile, ...v };
     if (keyModal.type === "passwd") { body.old_password = v.oldPassword; body.new_password = v.newPassword; }
     try {
       const res = await api("/pmai/credentials", { method: "POST", body: JSON.stringify(body) });
@@ -127,25 +130,103 @@ export default function SettingsView() {
     } catch (e) { message.error(e.message); }
   }
   function openKeyModal(type) { keyForm.resetFields(); setKeyModal({ open: true, type }); }
-  // ── Section: LLM 中转代理 ──────────────────────────────────────
+  async function switchProfile(name) {
+    setProfile(name); sessionStorage.setItem("aipmc_profile", name); setKeys({}); setKeyUn(false);
+    // Reload credentials for new profile
+    try {
+      const cred = await api(`/pmai/credentials?profile=${encodeURIComponent(name)}`).catch(() => ({}));
+      setKeys(cred.keys || {});
+      setKeyUn(cred.unlocked || false);
+      setKeyExists(cred.exists || false);
+    } catch (_) {}
+  }
+  async function createProfile(name, password) {
+    try {
+      await api("/pmai/credentials", { method: "POST", body: JSON.stringify({ action: "create-profile", profile: name, password }) });
+      message.success(`Profile "${name}" created`);
+      load(); setProfile(name); sessionStorage.setItem("aipmc_profile", name);
+    } catch (e) { message.error(e.message); }
+  }
+  async function deleteProfile(name) {
+    try {
+      await api("/pmai/credentials", { method: "POST", body: JSON.stringify({ action: "delete-profile", profile: name }) });
+      message.success(`Profile "${name}" deleted`);
+      if (name === profile) { setProfile("default"); sessionStorage.removeItem("aipmc_profile"); setKeys({}); setKeyUn(false); }
+      load();
+    } catch (e) { message.error(e.message); }
+  }
+  // ?? Section: LLM ???? ?????????????????????????????????
   const proxySection = (
     <div style={{ marginBottom: 24 }}>
-      <Title level={5} style={{ marginBottom: 12 }}><CloudServerOutlined /> LLM 中转代理</Title>
+      <Title level={5} style={{ marginBottom: 12 }}><CloudServerOutlined /> LLM ????</Title>
+
+      {/* Profile Selector */}
+      <Card size="small" style={{ marginBottom: 12 }}>
+        <Row align="middle" gutter={16}>
+          <Col flex="auto">
+            <Space size={8} align="center">
+              <Text strong style={{ fontSize: 13 }}><KeyOutlined /> Credentials Profile</Text>
+              <Select
+                value={profile}
+                onChange={switchProfile}
+                style={{ width: 160 }}
+                size="small"
+                dropdownRender={menu => (
+                  <>
+                    {menu}
+                    <Divider style={{ margin: "4px 0" }} />
+                    <Space style={{ padding: "4px 8px" }}>
+                      <Button type="text" size="small" icon={<KeyOutlined />}
+                        onClick={() => {
+                          const name = prompt("New profile name:");
+                          if (!name) return;
+                          const pw = prompt("Set master password for this profile:");
+                          if (!pw) return;
+                          createProfile(name, pw);
+                        }}
+                      >New Profile</Button>
+                    </Space>
+                  </>
+                )}
+              >
+                {(profileList.length > 0 ? profileList : ["default"]).map(p => (
+                  <Select.Option key={p} value={p}>{p}</Select.Option>
+                ))}
+              </Select>
+              {!keyExists && (
+                <Button type="link" size="small" onClick={() => openKeyModal("init")}>
+                  Init this profile
+                </Button>
+              )}
+              {keyExists && !keyUnlocked && (
+                <Button type="link" size="small" onClick={() => openKeyModal("unlock")}>
+                  <UnlockOutlined /> Unlock
+                </Button>
+              )}
+              {keyExists && keyUnlocked && (
+                <Space size={4}>
+                  <Tag color="green" style={{ margin: 0 }}>unlocked</Tag>
+                  <Button type="link" size="small" onClick={() => openKeyModal("passwd")}>passwd</Button>
+                  <Button type="link" size="small" danger onClick={() => openKeyModal("lock")}>lock</Button>
+                  {profile !== "default" && (
+                    <Button type="link" size="small" danger
+                      onClick={() => { if (confirm(`Delete profile "${profile}"?`)) deleteProfile(profile); }}
+                    >delete</Button>
+                  )}
+                </Space>
+              )}
+            </Space>
+          </Col>
+        </Row>
+      </Card>
+
       <Card size="small" title="LLM Gateway" extra={<Text type="secondary" style={{ fontSize: 11 }}>models.json</Text>}>
         <ModelRegistryEditor key={providers.length + "-" + models.length}
           providers={providers} models={models}
           keys={apiKeys} unlocked={keyUnlocked}
           onKeyChange={handleKeyChange} onChange={saveRegistry} />
-        {!keyExists && <div style={{ marginTop: 12, borderTop: "1px solid #f0f0f0", paddingTop: 8 }}>
-          <Button type="link" size="small" onClick={() => openKeyModal("init")}>Init credentials</Button>
-        </div>}
-        {keyExists && keyUnlocked && <div style={{ marginTop: 12, borderTop: "1px solid #f0f0f0", paddingTop: 8 }}>
-          <Space size={8}>
-            <Button type="link" size="small" onClick={() => openKeyModal("passwd")}>Change password</Button>
-            <Button type="link" size="small" danger onClick={() => openKeyModal("lock")}>Lock keys</Button>
-          </Space>
-        </div>}
       </Card>
+
       <Card size="small" title={<Space><span style={{ width: 8, height: 8, borderRadius: "50%", background: proxyStatus ? "#52c41a" : "#d9d9d9", display: "inline-block" }} /><Text>{proxyStatus ? <>Proxy · running <Text type="secondary" style={{ fontSize: 11, fontWeight: "normal" }}>:{proxyStatus.port} · {proxyStatus.uptime} · {proxyStatus.requests || 0} req</Text></> : "Proxy · stopped"}</Text></Space>} extra={<Text type="secondary" style={{ fontSize: 11 }}>config.json</Text>}
         style={{ marginTop: 12 }}>
         <Form form={proxyForm} layout="inline" onFinish={v => save("Proxy", v)} style={{ flexWrap: "nowrap" }}>

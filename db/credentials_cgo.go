@@ -1,4 +1,4 @@
-//go:build cgo
+﻿//go:build cgo
 
 package db
 
@@ -13,14 +13,25 @@ import (
 func init() {
 	loadImpl = loadCGO
 	saveImpl = saveCGO
+	loadProfileImpl = loadCGOWithProfile
+	saveProfileImpl = saveCGOWithProfile
 }
 
 func clearBytes(b []byte) { for i := range b { b[i] = 0 } }
 
-func loadCGO(password []byte) (*CredentialStore, error) {
+// loadCGOWithProfile loads credentials from a specific profile (or active if empty).
+func loadCGOWithProfile(password []byte, profile string) (*CredentialStore, error) {
 	defer clearBytes(password)
-	path := credentialsPath()
+
+	// Try new profile path first
+	path := credentialsPath(profile)
 	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) && profile == "" {
+		// Fall back to legacy path
+		legacy := filepath.Join(aipmcDir(), "credentials")
+		data, err = os.ReadFile(legacy)
+		path = legacy
+	}
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -46,8 +57,6 @@ func loadCGO(password []byte) (*CredentialStore, error) {
 		return nil, fmt.Errorf("bad data: %w", err)
 	}
 
-	// Must use the exact iter from the file — it was used to derive the key.
-	// Changing it would produce a different key and decryption would fail.
 	if cf.Iter == 0 {
 		return nil, fmt.Errorf("invalid credentials: iter=0")
 	}
@@ -66,19 +75,23 @@ func loadCGO(password []byte) (*CredentialStore, error) {
 	if err := json.Unmarshal(plaintext, &store); err != nil {
 		return nil, fmt.Errorf("invalid decrypted data: %w", err)
 	}
-	// Preserve the session key so SessionPassword() works for subprocess spawning.
 	store.UnlockSession(password)
 	return &store, nil
 }
 
-func saveCGO(store *CredentialStore, password []byte) error {
+// loadCGO is the legacy signature used by the init() dispatch table.
+func loadCGO(password []byte) (*CredentialStore, error) {
+	return loadCGOWithProfile(password, "")
+}
+
+// saveCGOWithProfile saves credentials to a specific profile (or active if empty).
+func saveCGOWithProfile(store *CredentialStore, password []byte, profile string) error {
 	defer clearBytes(password)
 	plaintext, err := json.Marshal(store)
 	if err != nil {
 		return err
 	}
 
-	// Security parameters: PBKDF2 100K iterations, 16-byte salt (NIST SP 800-132)
 	const saltSize = 16
 	const pbkdf2Iter = 100000
 
@@ -108,11 +121,16 @@ func saveCGO(store *CredentialStore, password []byte) error {
 		Data: base64.StdEncoding.EncodeToString(ciphertext),
 	}
 
-	path := credentialsPath()
+	path := credentialsPath(profile)
 	os.MkdirAll(filepath.Dir(path), 0755)
 	out, err := json.MarshalIndent(cf, "", "  ")
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(path, out, 0600)
+}
+
+// saveCGO is the legacy signature used by the init() dispatch table.
+func saveCGO(store *CredentialStore, password []byte) error {
+	return saveCGOWithProfile(store, password, "")
 }

@@ -26,7 +26,7 @@ func RunDoctor(dbPath string, dbOpen func() (interface{ Close() error }, error))
 
 func RunInfo(dbPath string) {
 	PrintJSON(map[string]any{"tool": "aipmc", "db_path": dbPath,
-		"commands": []string{"init", "search", "start", "next", "status", "doctor", "info", "web",
+		"commands": []string{"init", "search", "start", "next", "status", "doctor", "info", "web", "key", "models", "proxy",
 			"task {list,show,add,update,note,notes,plan,checkpoint}",
 			"commit {list,show,add,update}", "plan {list,show,add,update}",
 			"bug {list,show,add,update}", "decision {list,show,add,review}",
@@ -58,6 +58,18 @@ CLI (legacy / debug):
   aipmc search|start|next|status|context|inbox|analyze|briefing
   aipmc task|commit|plan|bug|decision|idea|roadmap|principle [CRUD]
   aipmc doctor|info|event|link|daily|docs|canon
+
+KEY MANAGEMENT (API credentials — multi-profile, encrypted):
+  aipmc key init [--profile <name>]       Create a new credentials profile
+  aipmc key set <name> <value> [--profile <name>]   Save a provider API key
+  aipmc key rm <name> [--profile <name>]  Remove a provider API key
+  aipmc key list [--profile <name>]       List all provider key names (masked)
+  aipmc key show <name> [--profile <name>]   Show full API key (unmasked)
+  aipmc key passwd [--profile <name>]     Change master password for a profile
+  aipmc key status [--profile <name>]     Show credential state for a profile
+
+PROXY:
+  aipmc proxy [--profile <name>]          Run proxy specifying which credential profile to use
 
 HIERARCHY: commit → task → plan → roadmap (no orphans, no back-fill)`)
 }
