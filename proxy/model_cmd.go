@@ -1,4 +1,4 @@
-﻿package proxy
+package proxy
 
 import (
 	"bytes"
@@ -120,19 +120,29 @@ func parseModelCommand(text string) *ModelCommand {
 	}
 }
 
+// modelProvidersDisplay returns a display string for a model's provider routes.
+func modelProvidersDisplay(vm *pmdb.VirtualModel) string {
+	providers := pmdb.LoadModelRegistry().ListModelProviders(vm.ID)
+	if len(providers) == 0 {
+		return ""
+	}
+	return strings.Join(providers, ", ")
+}
+
 // executeModelCommand runs the command and returns a user-facing result string.
 func executeModelCommand(cmd *ModelCommand, agent string) string {
 	switch cmd.Subcommand {
 	case "switch":
 		reg := pmdb.LoadModelRegistry()
-		if reg.FindModel(cmd.ModelID) == nil {
+		vm := reg.FindModel(cmd.ModelID)
+		if vm == nil {
 			return fmt.Sprintf("✗ Unknown model: %s", cmd.ModelID)
 		}
 		if err := saveCurrentModel(agent, cmd.ModelID); err != nil {
 			return fmt.Sprintf("✗ Failed to switch: %v", err)
 		}
-		provider := pmdb.CurrentModelProvider(agent)
-		return fmt.Sprintf("✓ %s → %s (%s)", agent, cmd.ModelID, provider)
+		providers := modelProvidersDisplay(vm)
+		return fmt.Sprintf("✓ %s → %s (%s)", agent, cmd.ModelID, providers)
 
 	case "auto":
 		if err := saveCurrentModel(agent, ""); err != nil {
@@ -145,8 +155,13 @@ func executeModelCommand(cmd *ModelCommand, agent string) string {
 		if cm == "" {
 			return fmt.Sprintf("%s: Auto (passthrough)", agent)
 		}
-		provider := pmdb.CurrentModelProvider(agent)
-		return fmt.Sprintf("%s: %s (%s)", agent, cm, provider)
+		reg := pmdb.LoadModelRegistry()
+		vm := reg.FindModel(cm)
+		providers := ""
+		if vm != nil {
+			providers = " (" + modelProvidersDisplay(vm) + ")"
+		}
+		return fmt.Sprintf("%s: %s%s", agent, cm, providers)
 
 	case "list":
 		reg := pmdb.LoadModelRegistry()
@@ -155,9 +170,10 @@ func executeModelCommand(cmd *ModelCommand, agent string) string {
 		}
 		var lines []string
 		for _, vm := range reg.Models {
-			line := fmt.Sprintf("  %s (%s)", vm.ID, vm.Provider)
+			providers := modelProvidersDisplay(&vm)
+			line := fmt.Sprintf("  %s (%s)", vm.ID, providers)
 			if vm.DisplayName != "" {
-				line = fmt.Sprintf("  %s — %s (%s)", vm.ID, vm.DisplayName, vm.Provider)
+				line = fmt.Sprintf("  %s — %s (%s)", vm.ID, vm.DisplayName, providers)
 			}
 			lines = append(lines, line)
 		}

@@ -178,11 +178,31 @@ func (s *Server) handlePostConfig(w http.ResponseWriter, body map[string]any) {
 					if mm, ok := m.(map[string]any); ok {
 						vm := pmdb.VirtualModel{
 							ID:          u.Str(mm["id"]),
-							Provider:    u.Str(mm["provider"]),
 							DisplayName: u.Str(mm["display_name"]),
-							Anthropic:   u.Str(mm["anthropic"]),
-							OpenAI:      u.Str(mm["openai"]),
 							VisibleTo:   u.Str(mm["visible_to"]),
+						}
+						// Parse routes (new format).
+						if routes, ok := mm["routes"].([]any); ok {
+							for _, r := range routes {
+								if rm, ok := r.(map[string]any); ok {
+									vm.Routes = append(vm.Routes, pmdb.ModelRoute{
+										Provider:       u.Str(rm["provider"]),
+										ModelOpenAI:    u.Str(rm["model_openai"]),
+										ModelAnthropic: u.Str(rm["model_anthropic"]),
+									})
+								}
+							}
+						}
+						// Backward compat: if no routes but provider is set, create single route.
+						if len(vm.Routes) == 0 {
+							provider := u.Str(mm["provider"])
+							if provider != "" {
+								vm.Routes = []pmdb.ModelRoute{{
+									Provider:       provider,
+									ModelAnthropic: u.Str(mm["anthropic"]),
+									ModelOpenAI:    u.Str(mm["openai"]),
+								}}
+							}
 						}
 						if tags, ok := mm["tags"].([]any); ok {
 							for _, t := range tags {

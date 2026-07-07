@@ -9,7 +9,7 @@ import (
 	"aipmc/u"
 )
 
-// 鈹€鈹€ Model Registry (virtual model routing) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ── Model Registry (virtual model routing) ──────────────────────────────────
 
 // Provider defines a real LLM backend that the proxy can route to.
 type Provider struct {
@@ -18,16 +18,51 @@ type Provider struct {
 	AnthropicURL string `json:"anthropic_url,omitempty"` // optional Anthropic-compatible base URL
 }
 
-// VirtualModel maps a user-facing model name to a real backend + protocol-specific real model names.
+// ModelRoute describes how to reach a virtual model through a specific Provider.
+// A VirtualModel can have multiple Routes, ordered by priority (index 0 first).
+// Route selection at request time depends on which Provider the current
+// credential profile has an API key for.
+type ModelRoute struct {
+	Provider       string `json:"provider"`                  // → Provider.Name
+	ModelOpenAI    string `json:"model_openai,omitempty"`    // real model name for OpenAI protocol
+	ModelAnthropic string `json:"model_anthropic,omitempty"` // real model name for Anthropic protocol
+}
+
+// VirtualModel maps a user-facing model name to one or more provider routes.
 type VirtualModel struct {
-	ID          string   `json:"id"`                    // virtual name agent sees, e.g. "deepseek-v4-pro"
-	Provider    string   `json:"provider"`              // 鈫?Provider.Name
-	DisplayName string   `json:"display_name,omitempty"` // human-readable label
-	Anthropic   string   `json:"anthropic,omitempty"`   // real model name for Anthropic protocol
-	OpenAI      string   `json:"openai,omitempty"`      // real model name for OpenAI protocol
-	Tags        []string `json:"tags,omitempty"`        // e.g. ["reasoning", "fast"]
-	VisibleTo   string   `json:"visible_to,omitempty"`  // "*" or "project-A,project-B"
-	Priority    int      `json:"priority,omitempty"`    // sort order (lower = higher priority)
+	ID          string       `json:"id"`                    // virtual name agent sees, e.g. "deepseek-v4-pro"
+	DisplayName string       `json:"display_name,omitempty"` // human-readable label
+	Routes      []ModelRoute `json:"routes"`                // priority-ordered provider routes
+	Tags        []string     `json:"tags,omitempty"`        // e.g. ["reasoning", "fast"]
+	VisibleTo   string       `json:"visible_to,omitempty"`  // "*" or "project-A,project-B"
+	Priority    int          `json:"priority,omitempty"`    // sort order (lower = higher priority)
+
+	// Legacy fields kept for migration only (json:"-" = not serialized to disk).
+	// When loading old models.json, these are populated and then converted to Routes.
+	Provider  string `json:"-"`
+	Anthropic string `json:"-"`
+	OpenAI    string `json:"-"`
+}
+
+// ── Legacy compatibility struct for reading old models.json ─────────────────
+
+// legacyVirtualModel is the old format with flat Provider/Anthropic/OpenAI fields.
+type legacyVirtualModel struct {
+	ID          string   `json:"id"`
+	Provider    string   `json:"provider"`
+	DisplayName string   `json:"display_name,omitempty"`
+	Anthropic   string   `json:"anthropic,omitempty"`
+	OpenAI      string   `json:"openai,omitempty"`
+	Tags        []string `json:"tags,omitempty"`
+	VisibleTo   string   `json:"visible_to,omitempty"`
+	Priority    int      `json:"priority,omitempty"`
+}
+
+// legacyModelRegistry is the old flat-format models.json.
+type legacyModelRegistry struct {
+	Version   int                  `json:"version"`
+	Providers []Provider           `json:"providers"`
+	Models    []legacyVirtualModel `json:"models"`
 }
 
 // ModelRegistry is the full contents of models.json.
@@ -44,17 +79,81 @@ func modelsPath() string {
 }
 
 // LoadModelRegistry reads models.json. Returns an empty registry (not error)
-// when the file doesn't exist 鈥?this is the backward-compat path.
+// when the file doesn't exist — this is the backward-compat path.
+// Automatically migrates old flat-format (Provider/Anthropic/OpenAI on VirtualModel)
+// to the new Routes-based format.
 func LoadModelRegistry() *ModelRegistry {
 	data, err := os.ReadFile(modelsPath())
 	if err != nil {
 		return &ModelRegistry{}
 	}
+
+	// Try new format first.
 	var reg ModelRegistry
-	if json.Unmarshal(data, &reg) != nil {
+	if json.Unmarshal(data, &reg) == nil && len(reg.Models) > 0 {
+		// Check if any model still has legacy format (Routes empty, old Provider set in json:"-").
+		// Re-read as legacy to detect.
+		var legacy legacyModelRegistry
+		if json.Unmarshal(data, &legacy) == nil {
+			needsMigration := false
+			for i := range reg.Models {
+				if len(reg.Models[i].Routes) == 0 && legacyModelsFindProvider(&legacy, reg.Models[i].ID) != "" {
+					needsMigration = true
+					break
+				}
+			}
+			if needsMigration {
+				migrateLegacyToRoutes(&reg, &legacy)
+			}
+		}
+		return &reg
+	}
+
+	// Try legacy format.
+	var legacy legacyModelRegistry
+	if json.Unmarshal(data, &legacy) != nil {
 		return &ModelRegistry{}
 	}
+	reg = migrateLegacyToRoutes(&ModelRegistry{Version: legacy.Version, Providers: legacy.Providers}, &legacy)
 	return &reg
+}
+
+func legacyModelsFindProvider(legacy *legacyModelRegistry, id string) string {
+	for _, m := range legacy.Models {
+		if m.ID == id {
+			return m.Provider
+		}
+	}
+	return ""
+}
+
+// migrateLegacyToRoutes converts old flat-format models to Routes-based format.
+func migrateLegacyToRoutes(reg *ModelRegistry, legacy *legacyModelRegistry) ModelRegistry {
+	reg.Version = legacy.Version
+	if reg.Providers == nil {
+		reg.Providers = legacy.Providers
+	}
+	reg.Models = make([]VirtualModel, 0, len(legacy.Models))
+	for _, lm := range legacy.Models {
+		vm := VirtualModel{
+			ID:          lm.ID,
+			DisplayName: lm.DisplayName,
+			Tags:        lm.Tags,
+			VisibleTo:   lm.VisibleTo,
+			Priority:    lm.Priority,
+			Routes: []ModelRoute{{
+				Provider:       lm.Provider,
+				ModelOpenAI:    lm.OpenAI,
+				ModelAnthropic: lm.Anthropic,
+			}},
+			// Keep legacy fields for in-memory fallback.
+			Provider:  lm.Provider,
+			Anthropic: lm.Anthropic,
+			OpenAI:    lm.OpenAI,
+		}
+		reg.Models = append(reg.Models, vm)
+	}
+	return *reg
 }
 
 // SaveModelRegistry writes models.json.
@@ -89,14 +188,30 @@ func (r *ModelRegistry) IsActive() bool {
 	return r != nil && len(r.Models) > 0
 }
 
+// ── Route-aware helpers ──────────────────────────────────────────────────────
+
 // ResolveModelForProtocol returns the real model name for a given virtual model
-// and target protocol. Falls back to the virtual model ID if no protocol-specific
-// mapping exists.
+// and target protocol. It uses the Routes array: for each route, checks if it
+// has a protocol-specific name.
 func (r *ModelRegistry) ResolveModelForProtocol(virtualModelID, protocol string) string {
 	vm := r.FindModel(virtualModelID)
 	if vm == nil {
 		return virtualModelID
 	}
+	// Check Routes first (new format).
+	for _, rt := range vm.Routes {
+		switch protocol {
+		case "anthropic":
+			if rt.ModelAnthropic != "" {
+				return rt.ModelAnthropic
+			}
+		case "openai":
+			if rt.ModelOpenAI != "" {
+				return rt.ModelOpenAI
+			}
+		}
+	}
+	// Fallback: check legacy fields.
 	switch protocol {
 	case "anthropic":
 		if vm.Anthropic != "" {
@@ -107,8 +222,22 @@ func (r *ModelRegistry) ResolveModelForProtocol(virtualModelID, protocol string)
 			return vm.OpenAI
 		}
 	}
-	// Fallback: use virtual model ID as-is
 	return virtualModelID
+}
+
+// realModelForRoute returns the protocol-specific real model name for a route.
+func realModelForRoute(rt *ModelRoute, protocol string) string {
+	switch protocol {
+	case "anthropic":
+		if rt.ModelAnthropic != "" {
+			return rt.ModelAnthropic
+		}
+	case "openai":
+		if rt.ModelOpenAI != "" {
+			return rt.ModelOpenAI
+		}
+	}
+	return ""
 }
 
 // ResolveAPIKey returns the effective API key for a provider.
@@ -122,30 +251,57 @@ func (r *ModelRegistry) ResolveAPIKey(providerName string) string {
 
 // ModelForAgentProto picks the best real model name for a given agent's native protocol.
 // Agent native protocol mapping:
-//
-//	claude 鈫?anthropic
-//	codex  鈫?responses (falls back to openai 鈥?no provider supports responses natively)
-//	gemini 鈫?openai (fallback; gemini native not used by proxy)
-//	other  鈫?openai
+//   claude  → anthropic
+//   codex   → responses (falls back to openai — no provider supports responses natively)
+//   gemini  → openai (fallback; gemini native not used by proxy)
+//   other   → openai
 func (r *ModelRegistry) ModelForAgentProto(virtualModelID, agentType string) string {
 	vm := r.FindModel(virtualModelID)
 	if vm == nil {
 		return virtualModelID
 	}
-	// Anthropic-native agents (Claude Code): prefer Anthropic protocol name
+	targetProto := "openai"
 	if agentType == "claude" || agentType == "claude-code" {
-		if vm.Anthropic != "" {
-			return vm.Anthropic
+		targetProto = "anthropic"
+	}
+	// Walk Routes: prefer the route that has a protocol-specific name.
+	for _, rt := range vm.Routes {
+		if name := realModelForRoute(&rt, targetProto); name != "" {
+			return name
 		}
 	}
-	// All other agents (Codex, Gemini, OpenCode, Cursor): use OpenAI protocol name
+	// Fallback to legacy fields.
+	if targetProto == "anthropic" && vm.Anthropic != "" {
+		return vm.Anthropic
+	}
 	if vm.OpenAI != "" {
 		return vm.OpenAI
 	}
 	return virtualModelID
 }
 
-// ═══ Current model selection (per-agent) ════════════════════════════════════
+// ListModelProviders returns all provider names across all routes for a model.
+func (r *ModelRegistry) ListModelProviders(virtualModelID string) []string {
+	vm := r.FindModel(virtualModelID)
+	if vm == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var names []string
+	for _, rt := range vm.Routes {
+		if !seen[rt.Provider] {
+			seen[rt.Provider] = true
+			names = append(names, rt.Provider)
+		}
+	}
+	// Legacy fallback.
+	if len(names) == 0 && vm.Provider != "" && !seen[vm.Provider] {
+		names = append(names, vm.Provider)
+	}
+	return names
+}
+
+// ── Current model selection (per-agent overrides) ──────────────────────────
 
 // currentModelPath returns ~/.aipmc/current_model.
 func currentModelPath() string {
@@ -216,20 +372,7 @@ func LoadAllCurrentModels() map[string]string {
 	return loadCurrentModelMap()
 }
 
-// CurrentModelProvider returns the provider name for the current model of an agent.
-func CurrentModelProvider(agent string) string {
-	cm := LoadCurrentModel(agent)
-	if cm == "" {
-		return ""
-	}
-	reg := LoadModelRegistry()
-	if vm := reg.FindModel(cm); vm != nil {
-		return vm.Provider
-	}
-	return ""
-}
-
-// 鈹€鈹€ Mutation helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ── Mutation helpers ─────────────────────────────────────────────────────────
 
 // AddProvider appends a provider, or replaces an existing one with the same name.
 func (r *ModelRegistry) AddProvider(p Provider) {
@@ -276,7 +419,7 @@ func (r *ModelRegistry) RemoveModel(id string) bool {
 }
 
 // Validate returns an error if the registry has structural problems
-// (duplicate IDs, references to unknown providers, etc.).
+// (duplicate IDs, references to unknown providers, missing routes, etc.).
 func (r *ModelRegistry) Validate() error {
 	seenModels := map[string]bool{}
 	for _, m := range r.Models {
@@ -287,8 +430,26 @@ func (r *ModelRegistry) Validate() error {
 			return fmt.Errorf("duplicate model id: %s", m.ID)
 		}
 		seenModels[m.ID] = true
-		if r.FindProvider(m.Provider) == nil {
-			return fmt.Errorf("model %s references unknown provider: %s", m.ID, m.Provider)
+
+		// Check routes.
+		if len(m.Routes) == 0 {
+			// Allow legacy-only (Provider field set, no routes yet — migration pending).
+			if m.Provider == "" {
+				return fmt.Errorf("model %s has no routes", m.ID)
+			}
+		}
+		seenProviders := map[string]bool{}
+		for _, rt := range m.Routes {
+			if rt.Provider == "" {
+				return fmt.Errorf("model %s has route with empty provider", m.ID)
+			}
+			if seenProviders[rt.Provider] {
+				return fmt.Errorf("model %s has duplicate route provider: %s", m.ID, rt.Provider)
+			}
+			seenProviders[rt.Provider] = true
+			if r.FindProvider(rt.Provider) == nil {
+				return fmt.Errorf("model %s route references unknown provider: %s", m.ID, rt.Provider)
+			}
 		}
 	}
 	seenProviders := map[string]bool{}
@@ -306,4 +467,3 @@ func (r *ModelRegistry) Validate() error {
 	}
 	return nil
 }
-

@@ -45,7 +45,7 @@ const AUTO_INJECT = {
 
 const AGENT_LABELS = { claude: "Claude Code", codex: "Codex CLI", gemini: "Gemini CLI", opencode: "OpenCode" };
 
-export default function AgentConfigView({ models = [] }) {
+export default function AgentConfigView({ models = [], keys = {} }) {
   const [activeTab, setActiveTab] = useState("claude");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(null);
@@ -57,7 +57,19 @@ export default function AgentConfigView({ models = [] }) {
   const [geminiForm] = Form.useForm();
   const [opencodeForm] = Form.useForm();
 
-  const modelOpts = (models.length > 0 ? models : modelList).map(m => ({ value: m.id, label: `${m.id} (${m.provider})` }));
+    // Build model option label showing provider key status.
+  function modelLabel(m) {
+    const routes = m.routes || [];
+    const parts = routes.map(r => {
+      const hasKey = !!keys[r.provider];
+      return r.provider + (hasKey ? "✓" : "✗");
+    });
+    const anyKey = routes.some(r => keys[r.provider]);
+    const label = m.id + " (" + (parts.join(", ") || "-") + ")";
+    return { value: m.id, label, disabled: !anyKey && routes.length > 0 };
+  }
+
+const modelOpts = (models.length > 0 ? models : modelList).map(m => modelLabel(m));
 
   async function loadProfiles() {
     setLoading(true);
@@ -247,7 +259,7 @@ export default function AgentConfigView({ models = [] }) {
       <Form.Item name="models" label="Available Models" tooltip="Checked models are written to opencode.json for /model switching.">
         {(models.length > 0 ? models : modelList).length === 0
           ? <Text type="secondary">No models in Gateway. Add models first.</Text>
-          : <Checkbox.Group><Space direction="vertical">{(models.length > 0 ? models : modelList).map(m => <Checkbox key={m.id} value={m.id}>{m.id} ({m.provider})</Checkbox>)}</Space></Checkbox.Group>}
+          : <Checkbox.Group><Space direction="vertical">{(models.length > 0 ? models : modelList).map(m => <Checkbox key={m.id} value={m.id} disabled={modelLabel(m).disabled}>{modelLabel(m).label}</Checkbox>)}</Space></Checkbox.Group>}
       </Form.Item>
       {extraEnvSection(opencodeForm)}
       <Form.Item style={{ marginTop: 12 }}>

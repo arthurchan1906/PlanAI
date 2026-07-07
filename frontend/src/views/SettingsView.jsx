@@ -158,7 +158,7 @@ export default function SettingsView() {
   // ?? Section: LLM ???? ?????????????????????????????????
   const proxySection = (
     <div style={{ marginBottom: 24 }}>
-      <Title level={5} style={{ marginBottom: 12 }}><CloudServerOutlined /> LLM ????</Title>
+      <Title level={5} style={{ marginBottom: 12 }}><CloudServerOutlined /> LLM KEY Profile</Title>
 
       {/* Profile Selector */}
       <Card size="small" style={{ marginBottom: 12 }}>
@@ -266,7 +266,7 @@ export default function SettingsView() {
             </Button.Group>
           ))}
         </Space>
-        <AgentConfigView key={agentKey} models={models} />
+        <AgentConfigView key={agentKey} models={models} keys={apiKeys} />
       </Card>
     </div>
   );

@@ -582,17 +582,26 @@ func dispatchModels(subcmd string, args *cli.Args) {
 		fmt.Println()
 		fmt.Println("Virtual Models:")
 		for _, m := range reg.Models {
-			protocols := ""
-			if m.Anthropic != "" {
-				protocols += fmt.Sprintf(" anthropic=%s", m.Anthropic)
+			providers := reg.ListModelProviders(m.ID)
+			routeDetails := ""
+			for _, rt := range m.Routes {
+				proto := ""
+				if rt.ModelAnthropic != "" {
+					proto += fmt.Sprintf(" anthropic=%s", rt.ModelAnthropic)
+				}
+				if rt.ModelOpenAI != "" {
+					proto += fmt.Sprintf(" openai=%s", rt.ModelOpenAI)
+				}
+				if proto != "" {
+					routeDetails += fmt.Sprintf(" [%s%s]", rt.Provider, proto)
+				} else {
+					routeDetails += fmt.Sprintf(" [%s]", rt.Provider)
+				}
 			}
-			if m.OpenAI != "" {
-				protocols += fmt.Sprintf(" openai=%s", m.OpenAI)
+			if routeDetails == "" {
+				routeDetails = " (passthrough)"
 			}
-			if protocols == "" {
-				protocols = " (passthrough)"
-			}
-			fmt.Printf("  %-25s provider=%-12s%s", m.ID, m.Provider, protocols)
+			fmt.Printf("  %-25s providers=%-12s%s", m.ID, strings.Join(providers, ", "), routeDetails)
 			if len(m.Tags) > 0 {
 				fmt.Printf(" [%s]", strings.Join(m.Tags, ", "))
 			}
@@ -604,11 +613,12 @@ func dispatchModels(subcmd string, args *cli.Args) {
 		if len(all) == 0 {
 			fmt.Println("All agents: Auto (using agent defaults)")
 		} else {
+			reg2 := pmdb.LoadModelRegistry()
 			for _, a := range []string{"claude", "codex", "opencode", "gemini", "cursor"} {
 				if cm, ok := all[a]; ok {
-					provider := pmdb.CurrentModelProvider(a)
-					if provider != "" {
-						fmt.Printf("  %-10s %s (%s)\n", a+":", cm, provider)
+					providers := reg2.ListModelProviders(cm)
+					if len(providers) > 0 {
+						fmt.Printf("  %-10s %s (%s)\n", a+":", cm, strings.Join(providers, ", "))
 					} else {
 						fmt.Printf("  %-10s %s\n", a+":", cm)
 					}
@@ -688,10 +698,20 @@ func dispatchModels(subcmd string, args *cli.Args) {
 				fmt.Fprintf(os.Stderr, "provider %q not found\n", name)
 				os.Exit(1)
 			}
-			// Also remove models referencing this provider
+			// Also remove models that only have routes to this provider
 			var keep []pmdb.VirtualModel
 			for _, m := range reg.Models {
-				if m.Provider != name {
+				keepModel := false
+				for _, rt := range m.Routes {
+					if rt.Provider != name {
+						keepModel = true
+						break
+					}
+				}
+				if keepModel {
+					keep = append(keep, m)
+				} else if len(m.Routes) == 0 && m.Provider != "" && m.Provider != name {
+					// Legacy model with no routes: keep if its Provider is not the deleted one.
 					keep = append(keep, m)
 				}
 			}
@@ -714,7 +734,7 @@ func dispatchModels(subcmd string, args *cli.Args) {
 			os.Exit(1)
 		}
 		if reg.FindProvider(provider) == nil {
-			fmt.Fprintf(os.Stderr, "provider %q not found — add it first: aipmc models provider add --name %s --openai_url <url>\n", provider, provider)
+			fmt.Fprintf(os.Stderr, "provider %q not found \u2014 add it first: aipmc models provider add --name %s --openai_url <url>\n", provider, provider)
 			os.Exit(1)
 		}
 		tags := strings.Split(args.Str("tags", ""), ",")
@@ -723,12 +743,14 @@ func dispatchModels(subcmd string, args *cli.Args) {
 		}
 		reg.AddModel(pmdb.VirtualModel{
 			ID:          id,
-			Provider:    provider,
 			DisplayName: args.Str("display_name", ""),
-			Anthropic:   args.Str("anthropic", ""),
-			OpenAI:      args.Str("openai", ""),
-			Tags:        tags,
-			Priority:    args.Int("priority", 0),
+			Routes: []pmdb.ModelRoute{{
+				Provider:       provider,
+				ModelAnthropic: args.Str("anthropic", ""),
+				ModelOpenAI:    args.Str("openai", ""),
+			}},
+			Tags:     tags,
+			Priority: args.Int("priority", 0),
 		})
 		if err := pmdb.SaveModelRegistry(reg); err != nil {
 			fmt.Fprintf(os.Stderr, "save failed: %v\n", err)

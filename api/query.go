@@ -11,6 +11,7 @@ import (
 	"aipmc/store"
 	"aipmc/u"
 	"aipmc/web"
+	"strings"
 )
 
 func (s *Server) handleQueryRoutes(w http.ResponseWriter, method, path string, q url.Values) bool {
@@ -83,10 +84,11 @@ func (s *Server) handleQueryRoutes(w http.ResponseWriter, method, path string, q
 		reg := pmdb.LoadModelRegistry()
 		models := make([]map[string]string, 0, len(reg.Models))
 		for _, vm := range reg.Models {
+			providers := reg.ListModelProviders(vm.ID)
 			models = append(models, map[string]string{
 				"id":           vm.ID,
 				"display_name": vm.DisplayName,
-				"provider":     vm.Provider,
+				"provider":     strings.Join(providers, ", "),
 			})
 		}
 		web.SendJSON(w, map[string]any{

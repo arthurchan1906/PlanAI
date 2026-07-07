@@ -1,10 +1,11 @@
-﻿package proxy
+package proxy
 
 import (
 	"encoding/json"
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 	"sync"
 
 	pmdb "aipmc/db"
@@ -65,13 +66,17 @@ func (r *ModelRouter) IsActive() bool {
 }
 
 // Resolve maps a virtual model + target protocol to a Route.
-// The protocol parameter should be the real protocol being used to call the
-// upstream: "openai" for OpenAI Chat Completions, "anthropic" for Anthropic
-// Messages passthrough.
+// It iterates the model's Routes in priority order, picking the first route
+// whose provider has an API key in the credential store.
 //
-// If the router is not active, returns an empty Route (caller falls back).
-// If the virtual model isn't found, the real model is set to the virtual
-// model itself and the global upstream is used as fallback.
+// If the router is not active, returns nil (caller falls back).
+// If the virtual model isn't found, returns nil.
+// If no route has a credential-store key, falls back to the first route
+// with any non-empty API key (from legacy env) or returns nil.
+//
+// Strategy extension point: future per-request routing strategies
+// (e.g. "cheapest", "best-match") can be plugged in here before the
+// priority-ordered loop.
 func (r *ModelRouter) Resolve(virtualModel string, protocol string) *Route {
 	if !r.IsActive() {
 		return nil
@@ -80,38 +85,89 @@ func (r *ModelRouter) Resolve(virtualModel string, protocol string) *Route {
 
 	vm := reg.FindModel(virtualModel)
 	if vm == nil {
-		// Unknown virtual model: return nil so caller uses global fallback
 		return nil
 	}
 
-	prov := reg.FindProvider(vm.Provider)
+	store := pmdb.GetCredentialStore()
+
+	// Try each route in priority order: pick the first one whose provider
+	// has an API key in the credential store.
+	var firstRoute *pmdb.ModelRoute
+	for i := range vm.Routes {
+		rt := &vm.Routes[i]
+		if firstRoute == nil {
+			firstRoute = rt
+		}
+		// Check if the current credential profile has a key for this provider.
+		if store != nil && store.Get(rt.Provider) != "" {
+			return r.buildRoute(reg, rt, protocol, store.Get(rt.Provider))
+		}
+	}
+
+	// No route has a key in the store. Fall back to the first route with
+	// a legacy (env-based) key, or the very first route.
+	if firstRoute != nil {
+		apiKey := reg.ResolveAPIKey(firstRoute.Provider)
+		if apiKey != "" || store == nil {
+			return r.buildRoute(reg, firstRoute, protocol, apiKey)
+		}
+	}
+
+	// Legacy fallback: model still has old Provider field set.
+	if vm.Provider != "" {
+		prov := reg.FindProvider(vm.Provider)
+		if prov != nil {
+			return r.buildLegacyRoute(reg, vm, prov, protocol)
+		}
+	}
+
+	return nil
+}
+
+// buildRoute constructs a Route from a ModelRoute entry.
+func (r *ModelRouter) buildRoute(reg *pmdb.ModelRegistry, rt *pmdb.ModelRoute, protocol, apiKey string) *Route {
+	prov := reg.FindProvider(rt.Provider)
 	if prov == nil {
 		return nil
 	}
 
-	realModel := reg.ResolveModelForProtocol(virtualModel, protocol)
-
-	var baseURL string
-	switch protocol {
-	case "anthropic":
-		baseURL = prov.AnthropicURL
-	case "openai":
-		baseURL = prov.OpenAIURL
-	default:
-		baseURL = prov.OpenAIURL
+	realModel := rt.ModelOpenAI
+	baseURL := prov.OpenAIURL
+	if protocol == "anthropic" {
+		if rt.ModelAnthropic != "" {
+			realModel = rt.ModelAnthropic
+		}
+		if prov.AnthropicURL != "" {
+			baseURL = prov.AnthropicURL
+		}
+	}
+	if realModel == "" {
+		realModel = rt.ModelOpenAI // fallback
 	}
 
+	return &Route{
+		Provider:  rt.Provider,
+		RealModel: realModel,
+		BaseURL:   baseURL,
+		APIKey:    apiKey,
+	}
+}
+
+// buildLegacyRoute handles the old single-provider format during migration.
+func (r *ModelRouter) buildLegacyRoute(reg *pmdb.ModelRegistry, vm *pmdb.VirtualModel, prov *pmdb.Provider, protocol string) *Route {
+	realModel := reg.ResolveModelForProtocol(vm.ID, protocol)
+	baseURL := prov.OpenAIURL
+	if protocol == "anthropic" && prov.AnthropicURL != "" {
+		baseURL = prov.AnthropicURL
+	}
 	if baseURL == "" {
 		return nil
 	}
-
-	apiKey := reg.ResolveAPIKey(vm.Provider)
-	// Debug: also log all available credential keys
 	return &Route{
 		Provider:  vm.Provider,
 		RealModel: realModel,
 		BaseURL:   baseURL,
-		APIKey:    apiKey,
+		APIKey:    reg.ResolveAPIKey(vm.Provider),
 	}
 }
 
@@ -127,9 +183,9 @@ func maskKeyStr(key string) string {
 }
 
 // ShouldPassthrough checks whether a virtual model supports Anthropic protocol
-// natively (i.e., its provider has an anthropic_url and the model has an
-// Anthropic protocol name). Used by the handler to decide whether to route
-// /v1/messages through Anthropic passthrough or through the translation pipeline.
+// natively (i.e., at least one route has a provider with anthropic_url and the
+// route has a ModelAnthropic name). Used by the handler to decide whether to
+// route /v1/messages through Anthropic passthrough or through the translation pipeline.
 func (r *ModelRouter) ShouldPassthrough(virtualModel string) bool {
 	if !r.IsActive() {
 		return false
@@ -139,11 +195,34 @@ func (r *ModelRouter) ShouldPassthrough(virtualModel string) bool {
 	if vm == nil {
 		return false
 	}
-	prov := reg.FindProvider(vm.Provider)
-	if prov == nil {
-		return false
+	// Check routes first.
+	for _, rt := range vm.Routes {
+		prov := reg.FindProvider(rt.Provider)
+		if prov != nil && prov.AnthropicURL != "" && rt.ModelAnthropic != "" {
+			return true
+		}
 	}
-	return prov.AnthropicURL != "" && vm.Anthropic != ""
+	// Legacy fallback.
+	if vm.Provider != "" {
+		prov := reg.FindProvider(vm.Provider)
+		return prov != nil && prov.AnthropicURL != "" && vm.Anthropic != ""
+	}
+	return false
+}
+
+// joinedProviders returns a comma-separated list of provider names from the model's routes.
+func joinedProviders(vm *pmdb.VirtualModel) string {
+	if len(vm.Routes) == 0 {
+		if vm.Provider != "" {
+			return vm.Provider
+		}
+		return "unknown"
+	}
+	names := make([]string, 0, len(vm.Routes))
+	for _, rt := range vm.Routes {
+		names = append(names, rt.Provider)
+	}
+	return strings.Join(names, ", ")
 }
 
 // ListOpenAIModels returns the virtual model list in OpenAI /v1/models format.
@@ -151,10 +230,11 @@ func (r *ModelRouter) ListOpenAIModels() map[string]any {
 	reg := r.getRegistry()
 	models := make([]map[string]any, 0, len(reg.Models))
 	for _, vm := range reg.Models {
+		ownedBy := joinedProviders(&vm)
 		models = append(models, map[string]any{
 			"id":       vm.ID,
 			"object":   "model",
-			"owned_by": vm.Provider,
+			"owned_by": ownedBy,
 		})
 	}
 	return map[string]any{
@@ -204,10 +284,12 @@ func (r *ModelRouter) ListCodexModels() []map[string]any {
 			defReasonLevel = &s
 		}
 
+		providers := joinedProviders(&vm)
+
 		models = append(models, map[string]any{
 			"slug":                        slug,
 			"display_name":                display,
-			"description":                 fmt.Sprintf("Virtual model via %s", vm.Provider),
+			"description":                 fmt.Sprintf("Virtual model via %s", providers),
 			"shell_type":                  shellType,
 			"visibility":                  "list",
 			"supported_in_api":            true,
