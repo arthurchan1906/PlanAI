@@ -60,3 +60,6 @@ frontend/dist/aipmc.exe~
 aipmc.exe~
 .opencode/plugins/test.js
 opencode.json
+
+build/
+vendor/

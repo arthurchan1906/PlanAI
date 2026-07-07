@@ -26,7 +26,11 @@ func tryModelCommand(w http.ResponseWriter, r *http.Request, agent string, body 
 
 	text := getLastUserText(body, agent)
 	text = strings.TrimSpace(text)
-	if text == "" || !strings.HasPrefix(text, "&aipmc-model") {
+	// Claude may wrap the user message in <session> or <system-reminder> tags;
+	// search for the command substring instead of requiring it at position 0.
+	if idx := strings.Index(text, "&aipmc-model"); idx >= 0 {
+		text = text[idx:]
+	} else {
 		return false
 	}
 

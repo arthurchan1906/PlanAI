@@ -436,7 +436,7 @@ function extractMessages(c){
   if(c.req_unified){
     try{
       var u=JSON.parse(c.req_unified);
-      if(u.messages&&Array.isArray(u.messages)) return u.messages.map(function(m,i){
+      var umsgs=u.Messages||u.messages;if(umsgs&&Array.isArray(umsgs)) return umsgs.map(function(m,i){
         return {role:m.Role||m.role||'?',content:m.Content||m.content||'',thinking:m.Thinking||'',toolCallID:m.ToolCallID||'',toolCalls:m.ToolCalls||null,idx:i+1};
       });
     }catch(e){}
@@ -451,7 +451,7 @@ function extractMessages(c){
         var content=m.content;
         if(Array.isArray(content)){
           // Anthropic content-block array: [{type:"text",text:"..."},{type:"tool_use",...}]
-          content=content.map(function(b){return b.text||(b.type+'('+(b.name||b.id||'')+')');}).join('\n');
+          content=content.map(function(b){if(b.type==="tool_result")return b.type+"("+(b.tool_use_id||"")+"): "+JSON.stringify(b.content);if(b.type==="tool_use")return b.type+"("+(b.name||"")+"): "+JSON.stringify(b.input||"");return b.text||(b.type+"("+(b.name||b.id||"")+")");}).join('\n');
         }
         return {role:m.role||'?',content:content||'',idx:i+1};
       });
@@ -467,9 +467,11 @@ function extractMessages(c){
     // Codex Responses API: "input" array
     if(raw.input&&Array.isArray(raw.input)){
       return raw.input.map(function(m,i){
+        var role=m.role||'?';
         var content=m.content||'';
-        if(Array.isArray(content)) content=content.map(function(b){return b.text||'';}).join('\n');
-        return {role:m.role||'?',content:content,idx:i+1};
+        if(m.type==="function_call"){role='assistant';content='call: '+m.name}else if(m.type==="function_call_output"){role='tool';content='result: '+String(m.output||'').slice(0,200)}
+        else if(Array.isArray(content)) content=content.map(function(b){return b.text||'';}).join('\n');
+        return {role:role,content:content,idx:i+1};
       });
     }
   }catch(e){}
@@ -487,11 +489,13 @@ function renderMessages(c){
     var preview=(m.content||'').replace(/\n/g,' ').replace(/\s+/g,' ').trim();
     if(preview.length>80) preview=preview.slice(0,80)+'…';
     if(!preview&&m.thinking) preview='[thinking '+(m.thinking.length>60?m.thinking.slice(0,60)+'…':m.thinking)+']';
+    if(!preview&&m.toolCalls&&m.toolCalls.length){var tcs=m.toolCalls.map(function(t){return t.Name||'?';});preview='[call: '+tcs.join(',')+']'}
     if(!preview&&m.toolCallID) preview='[tool result: '+m.toolCallID+']';
     if(!preview) preview='(empty)';
     // Format content for display: escape HTML entities, preserve real newlines
     var body=(m.content||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     if(m.thinking) body+='\n\n[thinking]\n'+m.thinking.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+    if(m.toolCalls&&m.toolCalls.length){body+='\n\n[tool calls]\n';m.toolCalls.forEach(function(t){body+=t.Name+'('+(t.Arguments||'')+')\n';})}
     if(m.toolCallID) body+='\n\n[tool_call_id]\n'+m.toolCallID;
     return '<div class="msg-item">'+
       '<div class="msg-header" onclick="var b=this.nextElementSibling;var a=this.querySelector(\'.msg-arrow\');b.classList.toggle(\'open\');a.classList.toggle(\'open\')">'+
