@@ -3,7 +3,6 @@ package proxy
 import (
 	"bytes"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -63,12 +62,7 @@ func handleAnthropicPassthrough(w http.ResponseWriter, r *http.Request) {
 		if route.APIKey != "" {
 			apiKey = route.APIKey
 		}
-		log.Printf("[ANTHROPIC_PASSTHROUGH] route: provider=%s realModel=%s baseURL=%s apiKey=%s",
-			route.Provider, route.RealModel, route.BaseURL, maskKey(route.APIKey))
-	} else {
-		log.Printf("[ANTHROPIC_PASSTHROUGH] NO route resolved for model=%s, falling back to global upstream", peekedModel)
 	}
-	log.Printf("[ANTHROPIC_PASSTHROUGH] target=%s apiKeyPresent=%v", targetURL, apiKey != "")
 	proxyReq, err := http.NewRequest(r.Method, targetURL, bytes.NewReader(body))
 	if err != nil {
 		finishCapture(capID, http.StatusInternalServerError, time.Since(startTime), nil, err.Error(), "")
@@ -82,21 +76,16 @@ func handleAnthropicPassthrough(w http.ResponseWriter, r *http.Request) {
 	// key, keep the original headers unchanged (the user may have set a real key
 	// directly in the agent's environment).
 	proxyReq.Header = r.Header.Clone()
-	oldXApiKey := proxyReq.Header.Get("X-Api-Key")
-	oldAuth := proxyReq.Header.Get("Authorization")
 	if apiKey != "" {
 		proxyReq.Header.Del("X-Api-Key")
 		proxyReq.Header.Del("Authorization")
 		proxyReq.Header.Set("X-Api-Key", apiKey)
 		proxyReq.Header.Set("Authorization", "Bearer "+apiKey)
 	}
-	log.Printf("[ANTHROPIC_PASSTHROUGH] headers: old-x-api-key=%q old-auth=%q apiKey=%s → new-x-api-key=%q new-auth=%q",
-		oldXApiKey, oldAuth, maskKey(apiKey), proxyReq.Header.Get("X-Api-Key"), proxyReq.Header.Get("Authorization"))
 
 	// 8. Send request to upstream
 	resp, err := http.DefaultClient.Do(proxyReq)
 	if err != nil {
-		log.Printf("[ANTHROPIC_PASSTHROUGH] ERROR upstream: %v", err)
 		finishCapture(capID, http.StatusBadGateway, time.Since(startTime), nil, err.Error(), "")
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -150,20 +139,4 @@ func handleAnthropicPassthrough(w http.ResponseWriter, r *http.Request) {
 		// Log LLM request/response to shared log
 		u.LogShared("LLM", "agent=claude model=%s in_tok=%d out_tok=%d cache_hit=%d cache_create=%d injected=%s lat=%.1fs", effectiveModelName, inputT+cacheHit, outputT, cacheHit, cacheCreate, injectedFlag(r), time.Since(startTime).Seconds())
 	}
-
-	if resp.StatusCode >= 400 {
-		log.Printf("[ANTHROPIC_PASSTHROUGH] upstream returned %d", resp.StatusCode)
-	} else {
-	}
-}
-
-// maskKey returns a masked version of an API key for safe logging.
-func maskKey(key string) string {
-	if key == "" {
-		return "(empty)"
-	}
-	if len(key) <= 10 {
-		return key[:2] + "***"
-	}
-	return key[:6] + "..." + key[len(key)-4:]
 }

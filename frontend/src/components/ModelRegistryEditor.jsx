@@ -199,12 +199,11 @@ export default function ModelRegistryEditor({ providers = [], models = [], keys 
 
     const routeTags = routes.map((rt, j) => {
       const hasKey = !!keys[rt.provider];
-      const isHit = hasKey && rt.provider === (hitProvider ? hitProvider.provider : "");
       return (
         <Tag key={j}
           color={hasKey ? "green" : "default"}
           style={{ fontSize: 10, margin: 1, opacity: hasKey ? 1 : 0.5 }}>
-          {rt.provider}{isHit ? " ?" : ""}
+          {rt.provider}
         </Tag>
       );
     });
