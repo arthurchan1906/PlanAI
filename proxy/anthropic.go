@@ -439,15 +439,15 @@ func handleAnthropicMessages(w http.ResponseWriter, r *http.Request) {
 	apiKey := extractAPIKey(r)
 
 	if req.Stream {
-		handleAnthropicStream(w, &req, model, apiKey)
+		handleAnthropicStream(w, &req, model, apiKey, r)
 	} else {
-		handleAnthropicNonStream(w, &req, model, apiKey)
+		handleAnthropicNonStream(w, &req, model, apiKey, r)
 	}
 }
 
-func handleAnthropicNonStream(w http.ResponseWriter, req *AnthropicRequest, model, apiKey string) {
+func handleAnthropicNonStream(w http.ResponseWriter, req *AnthropicRequest, model, apiKey string, r *http.Request) {
 	chatReq := anthropicToChat(req)
-	respBody, err := forwardToUpstream("chat/completions", chatReq, apiKey, "", "claude")
+	respBody, err := forwardToUpstream("chat/completions", chatReq, apiKey, "", "claude", r)
 	if err != nil {
 		log.Printf("[ANTHROPIC] ERROR upstream: %v", err)
 		http.Error(w, err.Error(), http.StatusBadGateway)
@@ -466,11 +466,11 @@ func handleAnthropicNonStream(w http.ResponseWriter, req *AnthropicRequest, mode
 	log.Printf("[ANTHROPIC] ← complete  model=%s", model)
 }
 
-func handleAnthropicStream(w http.ResponseWriter, req *AnthropicRequest, model, apiKey string) {
+func handleAnthropicStream(w http.ResponseWriter, req *AnthropicRequest, model, apiKey string, r *http.Request) {
 	chatReq := anthropicToChat(req)
 	chatReq.Stream = true
 
-	respBody, err := forwardToUpstreamStream("chat/completions", chatReq, apiKey, "", "claude")
+	respBody, err := forwardToUpstreamStream("chat/completions", chatReq, apiKey, "", "claude", r)
 	if err != nil {
 		log.Printf("[ANTHROPIC] ERROR upstream stream: %v", err)
 		http.Error(w, err.Error(), http.StatusBadGateway)

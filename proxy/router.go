@@ -82,13 +82,12 @@ func (r *ModelRouter) Resolve(virtualModel string, protocol string) *Route {
 		return nil
 	}
 	reg := r.getRegistry()
+	store := pmdb.GetCredentialStore()
 
 	vm := reg.FindModel(virtualModel)
 	if vm == nil {
 		return nil
 	}
-
-	store := pmdb.GetCredentialStore()
 
 	// Try each route in priority order: pick the first one whose provider
 	// has an API key in the credential store.

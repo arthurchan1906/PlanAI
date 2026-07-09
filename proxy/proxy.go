@@ -814,9 +814,10 @@ func handleCodexUnified(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
 	r.Body.Close()
 
-	// Peek at stream flag
+	// Peek at stream flag and model
 	var peek struct {
-		Stream bool `json:"stream"`
+		Stream bool   `json:"stream"`
+		Model  string `json:"model"`
 	}
 	json.Unmarshal(body, &peek)
 
@@ -882,7 +883,7 @@ func handleUnifiedNonStream(w http.ResponseWriter, r *http.Request, adapter Prot
 	capID := startCapture(agent, r.Method, r.URL.Path, model, rawBody, copyHeaders(r), req)
 	startTime := time.Now()
 
-	respBody, err := forwardToUpstream("chat/completions", openaiReq, apiKey, req.VirtualModel, agent)
+	respBody, err := forwardToUpstream("chat/completions", openaiReq, apiKey, req.VirtualModel, agent, r)
 	if err != nil {
 		log.Printf("[UNIFIED] ERROR upstream: %v", err)
 		finishCapture(capID, http.StatusBadGateway, time.Since(startTime), nil, err.Error(), "")
@@ -950,13 +951,14 @@ func handleUnifiedStream(w http.ResponseWriter, r *http.Request, adapter Protoco
 		model = cm
 	}
 
+
 	openaiReq := unifiedToOpenAI(req)
 
 	capID := startCapture(agent, r.Method, r.URL.Path, model, rawBody, copyHeaders(r), req)
 	startTime := time.Now()
 	cap := newStreamCapture()
 
-	respBody, err := forwardToUpstreamStream("chat/completions", openaiReq, apiKey, req.VirtualModel, agent)
+	respBody, err := forwardToUpstreamStream("chat/completions", openaiReq, apiKey, req.VirtualModel, agent, r)
 	if err != nil {
 		log.Printf("[UNIFIED] ERROR upstream stream: %v", err)
 		finishCapture(capID, http.StatusBadGateway, time.Since(startTime), nil, err.Error(), "")
@@ -1086,7 +1088,7 @@ func handleOpenAIChatPassthrough(w http.ResponseWriter, r *http.Request) {
 
 	if !stream {
 		// ── Non-streaming ──
-		respBytes, err := forwardToUpstream("chat/completions", reqBody, apiKey, "", agent)
+		respBytes, err := forwardToUpstream("chat/completions", reqBody, apiKey, "", agent, r)
 		if err != nil {
 			log.Printf("[OPENAICHAT] ERROR upstream: %v", err)
 			finishCapture(capID, http.StatusBadGateway, time.Since(startTime), nil, "", "")
@@ -1120,7 +1122,7 @@ func handleOpenAIChatPassthrough(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ── Streaming (SSE) ──
-	respBody, err := forwardToUpstreamStream("chat/completions", reqBody, apiKey, "", agent)
+	respBody, err := forwardToUpstreamStream("chat/completions", reqBody, apiKey, "", agent, r)
 	if err != nil {
 		log.Printf("[OPENAICHAT] ERROR upstream stream: %v", err)
 		finishCapture(capID, http.StatusBadGateway, time.Since(startTime), nil, "", "")
