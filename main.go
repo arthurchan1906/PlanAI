@@ -431,7 +431,9 @@ func serveCommand() int {
 	fmt.Printf("✓ Web 启动 :%d → http://127.0.0.1:%d\n", webPort, webPort)
 	fmt.Printf("✓ 项目 %s 已注册\n", projectName)
 	// Start background session review pipeline (B1→L2→L3 auto-run)
-	session.RunAuto(application.AI, 30*time.Minute)
+	if application.AI != nil {
+		session.RunAuto(application.AI, 30*time.Minute)
+	}
 
 	if err := srv.Listen(); err != nil {
 		fmt.Fprintf(os.Stderr, "web error: %v\n", err)
