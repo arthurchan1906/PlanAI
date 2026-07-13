@@ -281,6 +281,12 @@ func main() {
 	case "link":
 		dispatchLink(subcmd, args)
 	case "vision":
+		// Treat "--image" etc. as CLI flags, not entity subcommands
+		if strings.HasPrefix(subcmd, "--") {
+			rawArgs = os.Args[2:]
+			args = cli.ParseArgs(rawArgs)
+			subcmd = ""
+		}
 		dispatchVision(subcmd, args)
 	case "daily":
 		dispatchDaily(subcmd, args)

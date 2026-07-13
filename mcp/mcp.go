@@ -12,6 +12,7 @@ import (
 	"aipmc/analyze"
 	"aipmc/discussion"
 	"aipmc/store"
+	"aipmc/vision"
 	"aipmc/u"
 )
 
@@ -372,6 +373,32 @@ func (s *mcpServer) registerTools() {
 		},
 	}, s.handleSearchDiscussions)
 
+	s.addTool(MCPTool{
+		Name:        "aipmc_vision",
+		Description: "分析 UI 截图并描述实际效果。\\n用于开发前端时检查修改是否生效。\\n使用时机：\\n- 修改了前端代码后，截图检查 UI 是否按预期渲染\\n- 查看错误截图，提取其中的错误信息\\n- 分析架构图、设计稿等图片内容\\n\\n建议 prompt 包含：\\n- 你修改了什么（让视觉模型知道上下文）\\n- 你期望看到什么（对比基准）\\n- 重点关注什么（引导视觉模型注意力）\\n\\n视觉模型只描述它实际看到的，不给出代码修改建议。",
+		InputSchema: MCPInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"image_path": map[string]string{
+					"type":        "string",
+					"description": "本地图片文件的绝对路径",
+				},
+				"prompt": map[string]string{
+					"type":        "string",
+					"description": "告诉视觉模型要看什么、关注什么、期望什么",
+				},
+				"iteration": map[string]interface{}{
+					"type":        "integer",
+					"description": "当前是第几轮视觉检查，帮助主模型判断何时收手（可选，默认 1）",
+				},
+				"model": map[string]interface{}{
+					"type":        "string",
+					"description": "指定视觉模型 ID（可选，不指定时自动选择 tags 含 vision 的模型）",
+				},
+			},
+			Required: []string{"image_path", "prompt"},
+		},
+	}, s.handleVision)
 }
 
 func (s *mcpServer) addTool(tool MCPTool, handler mcpToolHandler) {
@@ -1666,4 +1693,36 @@ func groupBySession(messages []map[string]any) []sessionGroup {
 		result = []sessionGroup{}
 	}
 	return result
+}
+
+// handleVision processes the aipmc_vision MCP tool call.
+func (s *mcpServer) handleVision(args map[string]interface{}) mcpToolResult {
+	imagePath := getStr(args, "image_path", "")
+	prompt := getStr(args, "prompt", "")
+	iteration := getInt(args, "iteration", 1)
+
+	if imagePath == "" || prompt == "" {
+		return mcpToolResult{
+			Content: []mcpContent{{Type: "text", Text: "缺少必填参数 image_path 或 prompt"}},
+			IsError: true,
+		}
+	}
+
+	result := vision.RunVision(imagePath, prompt, iteration, getStr(args, "model", ""))
+
+	if !result.OK {
+		return mcpToolResult{
+			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("视觉分析失败 (%s): %s", result.Error, result.Message)}},
+			IsError: true,
+		}
+	}
+
+	info := result.Text
+	if result.Resize != "" {
+		info = fmt.Sprintf("[%s (%s)] %s", result.Model, result.Resize, result.Text)
+	}
+
+	return mcpToolResult{
+		Content: []mcpContent{{Type: "text", Text: info}},
+	}
 }

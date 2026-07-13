@@ -10,6 +10,7 @@ import (
 	"aipmc/mcp"
 	pmdb "aipmc/db"
 	"aipmc/store"
+	"aipmc/vision"
 	"aipmc/analyze"
 	"aipmc/session"
 	"aipmc/u"
@@ -358,6 +359,8 @@ func dispatchVision(subcmd string, args *cli.Args) {
 			}
 		v, _ := store.UpdateVision(args.Get("id"), payload)
 		cli.PrintJSON(map[string]any{"vision": v})
+		case "":
+		runVisionCLI(args)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown vision subcommand: %s\n", subcmd)
 		os.Exit(1)
@@ -782,6 +785,27 @@ func dispatchModels(subcmd string, args *cli.Args) {
 		fmt.Fprintf(os.Stderr, "  aipmc models provider rm --name <name>\n")
 		fmt.Fprintf(os.Stderr, "  aipmc models add --id <name> --provider <name> [--anthropic <model>] [--openai <model>] [--tags t1,t2] [--priority N]\n")
 		fmt.Fprintf(os.Stderr, "  aipmc models rm --id <name>\n")
+		os.Exit(1)
+	}
+}
+
+// runVisionCLI handles the "aipmc vision --image <PATH> --prompt <TEXT>" command.
+// It sends a screenshot to a vision-capable model for analysis.
+func runVisionCLI(args *cli.Args) {
+	imagePath := args.Get("image")
+	prompt := args.Get("prompt")
+	modelID := args.Str("model", "")
+	iteration := args.Int("iteration", 1)
+
+	if imagePath == "" || prompt == "" {
+		fmt.Fprintln(os.Stderr, "Usage: aipmc vision --image <PATH> --prompt <TEXT> [--iteration N] [--model MODEL_ID]")
+		os.Exit(1)
+	}
+
+	result := vision.RunVision(imagePath, prompt, iteration, modelID)
+	cli.PrintJSON(result)
+
+	if !result.OK {
 		os.Exit(1)
 	}
 }
