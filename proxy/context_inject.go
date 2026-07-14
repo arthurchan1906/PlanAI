@@ -117,6 +117,7 @@ func buildContextBlock(goals []string) string {
 	for _, g := range goals {
 		buf.WriteString("- " + g + "\n")
 	}
+	buf.WriteString("\n[能力] 你有 aipmc_vision 视觉工具，修改 UI 代码后可截图自查效果（公式：[代码]+[期望]+[问题]）。\n")
 	return buf.String()
 }
 
