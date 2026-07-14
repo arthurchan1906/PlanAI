@@ -375,25 +375,25 @@ func (s *mcpServer) registerTools() {
 
 	s.addTool(MCPTool{
 		Name:        "aipmc_vision",
-		Description: "分析 UI 截图并描述实际效果。\\n用于开发前端时检查修改是否生效。\\n使用时机：\\n- 修改了前端代码后，截图检查 UI 是否按预期渲染\\n- 查看错误截图，提取其中的错误信息\\n- 分析架构图、设计稿等图片内容\\n\\n建议 prompt 包含：\\n- 你修改了什么（让视觉模型知道上下文）\\n- 你期望看到什么（对比基准）\\n- 重点关注什么（引导视觉模型注意力）\\n\\n视觉模型只描述它实际看到的，不给出代码修改建议。",
+		Description: "分析 UI 截图并描述实际效果，实现「改代码→截图→看图验证→再改」的自主闭环。\\n\\n使用流程：\\n1. 修改前端/客户端代码后，用 bash 截图（screencapture / adb / xcrun 等）\\n2. 调用此工具，prompt 中附带关键代码片段 + 期望效果 + 重点关注\\n3. 视觉模型返回纯描述性分析（只描述实际看到的，不提供代码修改建议）\\n4. 你自己对比代码预期和实际效果，判断是否继续修改\\n\\nPrompt 公式（经验证效果显著）：\\n- [代码] 贴关键代码片段（5-20行）\\n- [期望] 你预期这段代码会渲染成什么效果\\n- [问题] 具体问视觉模型观察什么（颜色/位置/对齐/分界等）\\n\\n迭代控制：每轮传 --iteration N，看到轮次数字自然意识到该收手了。截图可先用 sips -Z 1024 压缩加速。\\n\\n视觉模型只是「眼睛」，你（主模型）才是「大脑」——代码决策全部由你负责。",
 		InputSchema: MCPInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
 				"image_path": map[string]string{
 					"type":        "string",
-					"description": "本地图片文件的绝对路径",
+					"description": "本地图片文件的绝对路径（建议先用 sips -Z 1024 压缩以加速）",
 				},
 				"prompt": map[string]string{
 					"type":        "string",
-					"description": "告诉视觉模型要看什么、关注什么、期望什么",
+					"description": "按公式组织：[代码]关键代码片段 + [期望]预期效果 + [问题]具体观察点。视觉模型只描述实际看到的。",
 				},
 				"iteration": map[string]interface{}{
 					"type":        "integer",
-					"description": "当前是第几轮视觉检查，帮助主模型判断何时收手（可选，默认 1）",
+					"description": "当前是第几轮视觉检查。视觉模型会被告知轮次，帮助主模型判断何时收手（可选，默认 1，建议不超过5轮）",
 				},
 				"model": map[string]interface{}{
 					"type":        "string",
-					"description": "指定视觉模型 ID（可选，不指定时自动选择 tags 含 vision 的模型）",
+					"description": "指定视觉模型 ID（可选，不指定时自动选择优先级最高的 vision 模型）",
 				},
 			},
 			Required: []string{"image_path", "prompt"},
