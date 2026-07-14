@@ -140,12 +140,20 @@ func FirstNonEmpty(candidates ...string) string {
 	return ""
 }
 
-// SafePrefix returns the first n bytes of s.
+// SafePrefix returns the first n bytes of s with "..." appended when truncated.
 func SafePrefix(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+// Prefix returns the first n bytes of s without any suffix. Safe for short strings.
+func Prefix(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
 }
 
 // SplitAndTrim splits s by sep and trims whitespace from each part, skipping empty parts.

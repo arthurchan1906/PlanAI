@@ -138,11 +138,11 @@ func Run(opts RunOpts) (RunResult, error) {
 		}
 		if goalPreview != "" {
 			u.LogShared("PIPELINE", "session=%s src=%s intent=%s score=%d files=%d entities=%d L2=%s goal=%s",
-				s.SessionID[:8], s.Source, review.Intent, review.QualityScoreValue(),
+				u.Prefix(s.SessionID, 8), s.Source, review.Intent, review.QualityScoreValue(),
 				len(review.Layer0FilePaths()), len(review.Layer0EntityIDs()), l2status, goalPreview)
 		} else {
 			u.LogShared("PIPELINE", "session=%s src=%s intent=%s score=%d files=%d entities=%d L2=%s",
-				s.SessionID[:8], s.Source, review.Intent, review.QualityScoreValue(),
+				u.Prefix(s.SessionID, 8), s.Source, review.Intent, review.QualityScoreValue(),
 				len(review.Layer0FilePaths()), len(review.Layer0EntityIDs()), l2status)
 		}
 

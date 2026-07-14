@@ -119,7 +119,7 @@ func Reconcile(since string) (ReconcileResult, error) {
 					Confidence: "hard",
 					Reason:     fmt.Sprintf("2+ file intersection: %s", strings.Join(safeSlice(hardMatches, 3), ", ")),
 				})
-				u.LogShared("PIPELINE", "L3 link commit=%s session=%s confidence=hard files=%d", cid[:8], ss.SessionID[:8], len(hardMatches))
+				u.LogShared("PIPELINE", "L3 link commit=%s session=%s confidence=hard files=%d", u.Prefix(cid, 8), u.Prefix(ss.SessionID, 8), len(hardMatches))
 				// Also link commit → task if task exists
 				if ctaskID != "" {
 					out.AutoLinked = append(out.AutoLinked, LinkAction{
@@ -137,7 +137,7 @@ func Reconcile(since string) (ReconcileResult, error) {
 					out.Suggestions = append(out.Suggestions, Suggestion{
 						Action:   "create_task",
 						Title:    taskTitle,
-						Context:  fmt.Sprintf("session %s modified files matching commit %s", ss.SessionID[:8], cid[:8]),
+						Context:  fmt.Sprintf("session %s modified files matching commit %s", u.Prefix(ss.SessionID, 8), u.Prefix(cid, 8)),
 						SourceID: cid,
 					})
 				}
@@ -156,7 +156,7 @@ func Reconcile(since string) (ReconcileResult, error) {
 					Reason:     reason,
 					EventID:    eventID,
 				})
-				u.LogShared("PIPELINE", "L3 tentative commit=%s session=%s confidence=%.2f", cid[:8], ss.SessionID[:8], float64(len(hardMatches)*2+len(softMatches))/4.0)
+				u.LogShared("PIPELINE", "L3 tentative commit=%s session=%s confidence=%.2f", u.Prefix(cid, 8), u.Prefix(ss.SessionID, 8), float64(len(hardMatches)*2+len(softMatches))/4.0)
 			}
 		}
 
