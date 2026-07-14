@@ -1711,8 +1711,19 @@ func (s *mcpServer) handleVision(args map[string]interface{}) mcpToolResult {
 	result := vision.RunVision(imagePath, prompt, iteration, getStr(args, "model", ""))
 
 	if !result.OK {
+		msg := fmt.Sprintf("视觉分析失败 (%s): %s", result.Error, result.Message)
+		switch result.Error {
+		case "no_vision_model":
+			msg = "没有可用的视觉模型。请先在 Settings → LLM 网关 中配置 tags 包含 \"vision\" 的模型（如 qwen3.5-4b-vision），并确保 llama-server 已启动。"
+		case "timeout":
+			msg = "视觉模型响应超时。可能原因：1) llama-server 未启动 2) 模型加载中（首次较慢）3) 图片太大。建议重试或换更快的模型。"
+		case "unavailable":
+			msg = "视觉模型服务不可用（llama-server 可能未启动或已崩溃）。请检查本地 llama-server 是否正常运行。"
+		case "network":
+			msg = "无法连接视觉模型服务。请确认 llama-server 已启动且端口 8080 可访问。"
+		}
 		return mcpToolResult{
-			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("视觉分析失败 (%s): %s", result.Error, result.Message)}},
+			Content: []mcpContent{{Type: "text", Text: msg}},
 			IsError: true,
 		}
 	}

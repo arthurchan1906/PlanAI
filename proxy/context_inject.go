@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	pmdb "aipmc/db"
 	"aipmc/session"
 	"aipmc/store"
 	"aipmc/u"
@@ -117,8 +118,23 @@ func buildContextBlock(goals []string) string {
 	for _, g := range goals {
 		buf.WriteString("- " + g + "\n")
 	}
-	buf.WriteString("\n[能力] 你有 aipmc_vision 视觉工具，修改 UI 代码后可截图自查效果（公式：[代码]+[期望]+[问题]）。\n")
+	if hasVisionModels() {
+		buf.WriteString("\n[能力] 你有 aipmc_vision 视觉工具，修改 UI 代码后可截图自查效果（公式：[代码]+[期望]+[问题]）。\n")
+	}
 	return buf.String()
+}
+
+// hasVisionModels checks models.json for any vision-tagged model.
+func hasVisionModels() bool {
+	reg := pmdb.LoadModelRegistry()
+	for _, vm := range reg.Models {
+		for _, t := range vm.Tags {
+			if t == "vision" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func injectIntoPrompt(body []byte, block string, agent string) []byte {
