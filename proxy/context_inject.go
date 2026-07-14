@@ -119,7 +119,7 @@ func buildContextBlock(goals []string) string {
 		buf.WriteString("- " + g + "\n")
 	}
 	if hasVisionModels() {
-		buf.WriteString("\n[能力] 你有 aipmc_vision 视觉工具，修改 UI 代码后可截图自查效果（公式：[代码]+[期望]+[问题]）。\n")
+		buf.WriteString("\n[工具] aipmc_vision 可用于 UI 自查：\n(1) 改完代码后 screencapture / adb / xcrun 截图\n(2) 调用 aipmc_vision，prompt 包含关键代码片段 + 期望效果 + 检查重点\n(3) 视觉模型只描述实际效果，你对比代码预期后决定是否继续迭代\n")
 	}
 	return buf.String()
 }
