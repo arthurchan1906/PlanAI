@@ -10,19 +10,21 @@ import (
 
 // ReadOpts mirrors aipm_read_discussions MCP parameters.
 type ReadOpts struct {
-	Source string
-	LastN  int
-	Since  string
-	Full   bool
+	Source      string
+	LastN       int
+	Since       string
+	Full        bool
+	ProjectPath string
 }
 
 // Read fetches discussion_log rows with v1 read_discussions semantics.
 func Read(opts ReadOpts) ([]map[string]any, error) {
 	return store.ReadDiscussions(store.ReadDiscussionsOpts{
-		Source: opts.Source,
-		LastN:  opts.LastN,
-		Since:  opts.Since,
-		Full:   opts.Full,
+		Source:      opts.Source,
+		LastN:       opts.LastN,
+		Since:       opts.Since,
+		Full:        opts.Full,
+		ProjectPath: opts.ProjectPath,
 	})
 }
 

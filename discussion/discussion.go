@@ -5,13 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
-	"time"
 
 	"aipmc/ai"
 	pmdb "aipmc/db"
-	"aipmc/search"
 	"aipmc/u"
 )
 
@@ -96,7 +93,7 @@ func Embed(client *ai.Client, batchSize int) (int, error) {
 	return count, nil
 }
 
-// Search queries discussion_log with optional FTS, source/type filters, and pagination.
+// Search queries discussion_log with source/type filters, pagination, and optional keyword LIKE match.
 func Search(client *ai.Client, query, source, typeFilter, projectPath string, page, pageSize int) ([]map[string]any, int, error) {
 	db, err := openProjectDB(projectPath)
 	if err != nil {
@@ -112,43 +109,6 @@ func Search(client *ai.Client, query, source, typeFilter, projectPath string, pa
 	}
 	var total int
 	var out []map[string]any
-
-	if query != "" {
-		hits := search.FTS5WithDB(db, query, 100)
-		if hits != nil {
-			var discIDs []string
-			for _, h := range hits {
-				if h.Type == "discussion" {
-					discIDs = append(discIDs, h.ID)
-				}
-			}
-			if len(discIDs) > 0 {
-				if client != nil && client.Enabled() {
-					if reranked := rerank(client, query, discIDs, db); reranked != nil {
-						discIDs = reranked
-					}
-				}
-				total = len(discIDs)
-				offset := (page - 1) * pageSize
-				end := offset + pageSize
-				if end > len(discIDs) {
-					end = len(discIDs)
-				}
-				for _, id := range discIDs[offset:end] {
-					out = append(out, getByID(db, id))
-				}
-				sort.Slice(out, func(i, j int) bool {
-					a, _ := time.Parse("2006-01-02T15:04:05", u.Str(out[i]["created_at"]))
-					b, _ := time.Parse("2006-01-02T15:04:05", u.Str(out[j]["created_at"]))
-					return a.After(b)
-				})
-				if out == nil {
-					out = []map[string]any{}
-				}
-				return out, total, nil
-			}
-		}
-	}
 
 	where := "WHERE 1=1"
 	var args []any
@@ -231,61 +191,3 @@ func openProjectDB(projectPath string) (*sql.DB, error) {
 	return db, nil
 }
 
-func rerank(client *ai.Client, query string, ids []string, db *sql.DB) []string {
-	if client == nil || !client.Enabled() {
-		return nil
-	}
-	vdb, err := pmdb.OpenVectors()
-	if err != nil {
-		return nil
-	}
-	defer vdb.Close()
-
-	var texts []string
-	var validIDs []string
-	for _, id := range ids {
-		var embJSON string
-		var content string
-		if vdb.QueryRow("SELECT embedding_json FROM vectors WHERE id = ?", id).Scan(&embJSON) == nil && embJSON != "" {
-			db.QueryRow("SELECT content FROM discussion_log WHERE id = ?", id).Scan(&content)
-			if content != "" {
-				texts = append(texts, content)
-				validIDs = append(validIDs, id)
-			}
-		}
-	}
-	if len(texts) == 0 {
-		return nil
-	}
-
-	allTexts := append([]string{query}, texts...)
-	embs, err := client.Embed(allTexts)
-	if err != nil || len(embs) < 2 {
-		return nil
-	}
-
-	type scoreEntry struct {
-		id    string
-		score float64
-	}
-	var entries []scoreEntry
-	queryEmb := embs[0]
-	for i, emb := range embs[1:] {
-		entries = append(entries, scoreEntry{validIDs[i], ai.CosineSimilarity(queryEmb, emb)})
-	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].score > entries[j].score })
-	result := make([]string, len(entries))
-	for i, s := range entries {
-		result[i] = s.id
-	}
-	return result
-}
-
-func getByID(db *sql.DB, id string) map[string]any {
-	var rid, sid, role, src, content, metadata, createdAt string
-	row := db.QueryRow("SELECT id, session_id, role, source, content, metadata, created_at FROM discussion_log WHERE id = ?", id)
-	if err := row.Scan(&rid, &sid, &role, &src, &content, &metadata, &createdAt); err != nil {
-		return map[string]any{"id": id, "content": "(deleted)"}
-	}
-	return map[string]any{"id": rid, "session_id": sid, "role": role, "source": src, "content": content, "metadata": metadata, "created_at": createdAt}
-}

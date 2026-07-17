@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -157,11 +158,11 @@ func RecentUserPrompts(sessionID, source string, limit int) ([]string, error) {
 }
 
 // ListRecentDiscussions returns the most recent N discussion entries, optionally filtered.
-func ListRecentDiscussions(source, typeFilter string, lastN int) ([]map[string]any, error) {
+func ListRecentDiscussions(source, typeFilter, projectPath string, lastN int) ([]map[string]any, error) {
 	if lastN <= 0 {
 		lastN = 10
 	}
-	db, err := pmdb.Open()
+	db, err := openOrCurrentDB(projectPath)
 	if err != nil {
 		return nil, err
 	}
@@ -241,10 +242,11 @@ func GetSessionMessages(sessionID string) ([]map[string]any, error) {
 
 // ReadDiscussionsOpts controls aipm_read_discussions queries.
 type ReadDiscussionsOpts struct {
-	Source string
-	LastN  int
-	Since  string
-	Full   bool
+	Source      string
+	LastN       int
+	Since       string
+	Full        bool
+	ProjectPath string
 }
 
 // ReadDiscussions returns substantive discussion rows (user + non-tool assistant).
@@ -270,7 +272,7 @@ func ReadDiscussions(opts ReadDiscussionsOpts) ([]map[string]any, error) {
 		where + " ORDER BY created_at DESC, rowid DESC LIMIT ?"
 	args = append(args, limit)
 
-	db, err := pmdb.Open()
+	db, err := openOrCurrentDB(opts.ProjectPath)
 	if err != nil {
 		return nil, err
 	}
@@ -813,4 +815,16 @@ func UpdateDiscussionSessionID(id, sessionID string) error {
 	defer db.Close()
 	_, err = db.Exec("UPDATE discussion_log SET session_id=? WHERE id=? AND (session_id='' OR session_id='unknown')", sessionID, id)
 	return err
+}
+
+// openOrCurrentDB opens the specified project's pmai.db, or the current project's if projectPath is empty.
+func openOrCurrentDB(projectPath string) (*sql.DB, error) {
+	if projectPath == "" {
+		return pmdb.Open()
+	}
+	dbPath := filepath.Join(projectPath, ".pmai", "data", "pmai.db")
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("project not found at %s", projectPath)
+	}
+	return sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL")
 }

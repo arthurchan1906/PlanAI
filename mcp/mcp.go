@@ -124,7 +124,7 @@ func (s *mcpServer) registerTools() {
 
 	s.addTool(MCPTool{
 		Name:        "aipm_search_context",
-		Description: "搜索 PM 实体（task/plan/decision/bug/idea）及其关联上下文（父子关系、相关 commit、PM 决策）。搜「有没有类似的 task/plan」用这个。与 aipm_smart_search 的区别：search_context 搜实体+关系，smart_search 是全文关键词搜索。",
+		Description: "搜索 PM 实体（task/plan/decision/bug/idea）及其关联上下文（父子关系、相关 commit、PM 决策）。搜「有没有类似的 task/plan」用这个。与 aipm_smart_search 的区别：search_context 基于关键词精确匹配 FTS5 索引，smart_search 通过 AI 语义理解做模糊关联（需 AI 端点可用）。",
 		InputSchema: MCPInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
@@ -330,7 +330,7 @@ func (s *mcpServer) registerTools() {
 	// Smart search — AI-enhanced when available
 	s.addTool(MCPTool{
 		Name:        "aipm_smart_search",
-		Description: "全文关键词搜索讨论和实体内容，AI 语义重排序（当 AI 可用时）。搜「哪里提到了 observer/某关键词」用这个。与 aipm_search_context 的区别：smart_search 搜内容全文，search_context 搜实体及其关系。",
+		Description: "AI 语义搜索 PM 实体（task/plan/commit/bug/decision/idea）。基于 FTS5 关键词匹配 + AI 语义重排序（AI 不可用时降级为普通 FTS5 搜索）。搜自然语言描述（如「处理密友同步的那个 task」「上周修的安全 bug」）用这个。与 aipm_search_context 的区别：smart_search 适合语义模糊的自然语言查询，search_context 适合精确关键词匹配。如需搜索讨论/对话内容，用 aipm_search_discussions。",
 		InputSchema: MCPInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
@@ -351,7 +351,8 @@ func (s *mcpServer) registerTools() {
 				"source": map[string]string{"type": "string", "description": "想看哪个 Agent: claude-code / cursor / gemini-cli / opencode / codex-cli。例：看 Cursor 说了什么 → source=\"cursor\"。不传则看所有人。"},
 				"last_n": map[string]string{"type": "integer", "description": "最近 N 条。快速浏览用 10，深入阅读用 50（与 since 可组合）"},
 				"since":  map[string]string{"type": "string", "description": "可选: ISO 时间下限 (例 2026-06-15T21:48:00)"},
-				"full":   map[string]string{"type": "boolean", "description": "true=全文（互读讨论必设），false=预览约 200 字（默认）"},
+				"full":         map[string]string{"type": "boolean", "description": "true=全文（互读讨论必设），false=预览约 200 字（默认）"},
+				"project_path": map[string]string{"type": "string", "description": "可选: 目标项目路径，不传则读当前项目。例: /Users/dazsec/projects/EncryptDrive"},
 			},
 		},
 	}, s.handleReadDiscussions)
@@ -907,6 +908,7 @@ func (s *mcpServer) handleReadDiscussions(args map[string]interface{}) mcpToolRe
 	source := getStr(args, "source", "")
 	since := getStr(args, "since", "")
 	lastN := getInt(args, "last_n", 0)
+	projectPath := getStr(args, "project_path", "")
 	full := false
 	if v, ok := args["full"].(bool); ok {
 		full = v
@@ -915,10 +917,11 @@ func (s *mcpServer) handleReadDiscussions(args map[string]interface{}) mcpToolRe
 	}
 
 	rows, err := store.ReadDiscussions(store.ReadDiscussionsOpts{
-		Source: source,
-		LastN:  lastN,
-		Since:  since,
-		Full:   full,
+		Source:      source,
+		LastN:       lastN,
+		Since:       since,
+		Full:        full,
+		ProjectPath: projectPath,
 	})
 	if err != nil {
 		return mcpToolResult{
@@ -976,7 +979,7 @@ func (s *mcpServer) handleSearchDiscussions(args map[string]interface{}) mcpTool
 	if lastN > 0 {
 		// Recent-N mode: fetch most recent N records
 		var err error
-		results, err = store.ListRecentDiscussions(source, typeFilter, lastN)
+		results, err = store.ListRecentDiscussions(source, typeFilter, projectPath, lastN)
 		if err != nil {
 			return mcpToolResult{
 				Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("获取最近讨论失败: %v", err)}},
