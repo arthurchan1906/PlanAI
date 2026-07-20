@@ -947,7 +947,11 @@ func (s *mcpServer) handleReadDiscussions(args map[string]interface{}) mcpToolRe
 	text := header.String() + discussion.FormatResults(rows, full)
 	reflection := ""
 	if len(rows) == 0 {
-		reflection = "未找到讨论记录。确认 source 拼写或扩大 since 时间窗。看某 Agent 的讨论 → source=\"cursor\" + full=true。"
+		if cursor != "" {
+			reflection = "cursor 之后无新讨论。如需扩大范围，不传 cursor 重新调用。"
+		} else {
+			reflection = "未找到讨论记录。确认 source 拼写或扩大 since 时间窗。"
+		}
 	} else if !full {
 		reflection = "内容为预览（约 200 字）。互读讨论请设 full=true。看某 Agent → source=\"cursor\" + full=true。"
 	} else if source == "" {
