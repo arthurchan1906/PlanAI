@@ -19,17 +19,23 @@ func initSharedLogger() {
 	if logLogger != nil {
 		return
 	}
-	// Try standard pmai runtime dir; fall back to .pmai
+	// Try project's .pmai directory first
 	dir := ".pmai"
 	if pmaiDir := pmaiRuntimeDir(); pmaiDir != "" {
 		dir = pmaiDir
 	}
 	logsDir := filepath.Join(dir, "logs")
-	os.MkdirAll(logsDir, 0755)
+	if err := os.MkdirAll(logsDir, 0755); err != nil {
+		// Fallback to stderr if we can't create the log directory
+		logLogger = log.New(os.Stderr, "[aipmc] ", 0)
+		return
+	}
 
 	path := filepath.Join(logsDir, "aipmc.log")
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
+		// Fallback to stderr if we can't open the log file
+		logLogger = log.New(os.Stderr, "[aipmc] ", 0)
 		return
 	}
 	logFile = f

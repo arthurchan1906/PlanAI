@@ -492,16 +492,20 @@ func (r ReviewResult) EntityRefsJSON() string {
 }
 
 
-// countFileEdits counts how many times each file was edited (📝) in a session.
-// Edit messages have content like "📝 /path/to/file.swift".
+// countFileEdits counts how many times each file was edited (📝/🆕) in a session.
+// Edit messages have content like "📝 /path/to/file.swift" or "🆕 /path/to/file.swift".
 func countFileEdits(messages []map[string]any) map[string]int {
 	counts := map[string]int{}
 	for _, m := range messages {
 		content := u.Str(m["content"])
-		if !strings.HasPrefix(content, "📝") {
+		var rest string
+		if strings.HasPrefix(content, "📝") {
+			rest = strings.TrimSpace(content[len("📝"):])
+		} else if strings.HasPrefix(content, "🆕") {
+			rest = strings.TrimSpace(content[len("🆕"):])
+		} else {
 			continue
 		}
-		rest := strings.TrimSpace(content[len("📝"):])
 		if idx := strings.IndexByte(rest, ' '); idx > 0 {
 			rest = rest[:idx]
 		}

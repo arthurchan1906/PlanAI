@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	pmdb "aipmc/db"
+
 	"aipmc/session"
 	"aipmc/store"
 	"aipmc/u"
@@ -166,7 +168,38 @@ func buildContextBlock(goals, warnings []string) string {
 	if suppressed > 0 {
 		u.LogShared("INJECT", "suppressed=%d reason=char_limit cap=%d", suppressed, maxInjectChars)
 	}
+
+	// Vision tool tip: inject only when vision models are configured and room permits.
+	if tip := visionToolTip(written, maxInjectChars); tip != "" {
+		buf.WriteString(tip)
+	}
+
 	return buf.String()
+}
+
+// visionToolTip returns a usage hint for aipmc_vision if room permits.
+func visionToolTip(written, maxChars int) string {
+	if !hasVisionModels() {
+		return ""
+	}
+	tip := "\n[工具] aipmc_vision 可截图自查 UI：\nscreencapture/adb/xcrun 截图后用 aipmc_vision 传入代码片段+期望效果\n"
+	if written+len(tip) > maxChars-50 {
+		return ""
+	}
+	return tip
+}
+
+// hasVisionModels checks models.json for any vision-tagged model.
+func hasVisionModels() bool {
+	reg := pmdb.LoadModelRegistry()
+	for _, vm := range reg.Models {
+		for _, t := range vm.Tags {
+			if strings.EqualFold(t, "vision") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // detectUserFrustration checks recent discussion_log for user frustration signals.
