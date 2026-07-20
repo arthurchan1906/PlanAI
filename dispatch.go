@@ -397,7 +397,7 @@ func dispatchReview(subcmd string, args *cli.Args) {
 		if application.AI != nil && application.AI.Enabled() {
 			summarizer = application.AI
 		}
-		result, err := session.Run(session.RunOpts{Since: since, Limit: limit, SamplePath: sample, Summarizer: summarizer})
+		result, err := session.Run(session.RunOpts{Since: since, Limit: limit, SamplePath: sample, ProjectPath: "", Summarizer: summarizer})
 		if err != nil {
 			cli.Fail(err)
 		}
@@ -414,7 +414,7 @@ func dispatchReconcile(subcmd string, args *cli.Args) {
 	if args.Bool("full") {
 		since = ""
 	}
-	result, err := session.Reconcile(since)
+	result, err := session.Reconcile(since, "")
 	if err != nil {
 		cli.Fail(err)
 	}

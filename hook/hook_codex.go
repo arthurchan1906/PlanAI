@@ -127,6 +127,10 @@ func ProcessCodexHook() {
 			content = buildCodexToolContent(normalizedName, raw.ToolInput, raw.ToolResp)
 		}
 		meta := buildFullMeta("post_tool", data)
+			// Inject file_path for L3 reconcile (classifyFiles)
+			if fpMeta := extractFileOpMeta(normalizedName, raw.ToolInput); fpMeta != "" {
+				meta = mergeMeta(meta, fpMeta)
+			}
 
 		if content != "" {
 			if _, err := store.LogDiscussion(raw.SessionID, "assistant", "codex-cli", content, meta); err != nil {
@@ -141,6 +145,8 @@ func ProcessCodexHook() {
 	case "Stop":
 		// Try all plausible response fields.
 		respText := firstNonEmpty(raw.Response, raw.Output, raw.Text, raw.LastAssistantMessage, raw.AssistantMsg, raw.Reply)
+		// Strip <thought>...</thought> block — Codex may send thinking as the response field
+		respText = stripThoughtBlock(respText)
 		if respText != "" {
 			meta := buildFullMeta("stop", data)
 			if _, err := store.LogDiscussion(raw.SessionID, "assistant", "codex-cli", respText, meta); err != nil {
@@ -161,6 +167,24 @@ func ProcessCodexHook() {
 		logf("unhandled event=%s, ignored", raw.Event)
 	}
 }
+// stripThoughtBlock removes <thought>...</thought> from text.
+// Codex may send thinking content as the response in Stop hooks.
+func stripThoughtBlock(s string) string {
+	for {
+		start := strings.Index(s, "<thought>")
+		if start < 0 {
+			return s
+		}
+		end := strings.Index(s[start:], "</thought>")
+		if end < 0 {
+			s = s[:start]
+			break
+		}
+		s = s[:start] + s[start+end+len("</thought>"):]
+	}
+	return strings.TrimSpace(s)
+}
+
 
 // firstNonEmpty returns the first non-empty string from the candidates.
 func firstNonEmpty(candidates ...string) string {
@@ -221,6 +245,75 @@ func shellQuote(s string) string {
 	return s
 }
 
+// extractFileOpMeta extracts file operation metadata from a Codex tool call.
+// Returns JSON like {"type":"edit","file_path":"/path/to/file"} for classifyFiles.
+func extractFileOpMeta(toolName string, toolInput json.RawMessage) string {
+	ti := parseToolInput(toolInput)
+	fp := ti["file_path"]
+	if fp == "" {
+		fp = ti["path"]
+	}
+	if fp == "" {
+		fp = ti["filePath"]
+	}
+	if fp == "" {
+		return ""
+	}
+
+	opType := ""
+	switch {
+	case toolName == "apply_patch":
+		opType = "edit"
+	case toolName == "Write" || strings.HasSuffix(toolName, "_write") || strings.HasSuffix(toolName, "_write_file"):
+		opType = "write"
+	case toolName == "Read" || strings.HasSuffix(toolName, "_read") || strings.HasSuffix(toolName, "_read_file"):
+		opType = "read"
+	}
+
+	// Also detect Bash-based file ops
+	if opType == "" {
+		if cmd := ti["command"]; cmd != "" {
+			fop := parseBashFileOp(cmd)
+			if fop != nil {
+				fp = fop.File
+				switch fop.Op {
+				case "create", "new":
+					opType = "new_file"
+				case "modify", "append":
+					opType = "edit"
+				case "read":
+					opType = "read"
+				}
+			}
+		}
+	}
+
+	if opType != "" && fp != "" {
+		m := map[string]string{"type": opType, "file_path": fp}
+		b, _ := json.Marshal(m)
+		return string(b)
+	}
+	return ""
+}
+// mergeMeta merges file_op metadata into the full hook metadata JSON.
+func mergeMeta(baseJSON, fileOpJSON string) string {
+	var base map[string]any
+	if json.Unmarshal([]byte(baseJSON), &base) != nil {
+		return baseJSON
+	}
+	var fileOp map[string]any
+	if json.Unmarshal([]byte(fileOpJSON), &fileOp) != nil {
+		return baseJSON
+	}
+	for k, v := range fileOp {
+		base[k] = v
+	}
+	b, _ := json.Marshal(base)
+	return string(b)
+}
+
+
+// buildCodexToolContent builds
 // buildCodexToolContent builds a human-readable description for a Codex tool call.
 // Codex uses different tool names than Gemini CLI:
 //   - Bash (not run_shell_command)

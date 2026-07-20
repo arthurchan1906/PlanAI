@@ -36,7 +36,8 @@ func GenerateL2Summary(messages []map[string]any, review ReviewResult, summarize
 
 	extracted := extractSessionText(messages)
 	if len(extracted) < 100 {
-		return "" // too short to summarize
+		u.LogShared("PIPELINE", "L2 skip session=%s reason=text_too_short len=%d", review.SessionID, len(extracted))
+		return ""
 	}
 
 	instruction, text := buildL2Prompt(extracted, review)
@@ -47,8 +48,13 @@ func GenerateL2Summary(messages []map[string]any, review ReviewResult, summarize
 	} else {
 		raw, err = summarizer.Summarize(text, instruction)
 	}
-	if err != nil || raw == "" {
-		return "" // model unavailable, degrade gracefully
+	if err != nil {
+		u.LogShared("PIPELINE", "L2 summarize error: %v", err)
+		return ""
+	}
+	if raw == "" {
+		u.LogShared("PIPELINE", "L2 summarize returned empty response")
+		return ""
 	}
 
 	return parseL2Response(raw)
@@ -277,6 +283,8 @@ func buildL2Prompt(extracted string, review ReviewResult) (instruction, text str
 // Falls back gracefully on malformed output.
 func parseL2Response(raw string) string {
 	cleaned := strings.TrimSpace(raw)
+	// Strip <think>...</think> wrapper — multimodal models with thinking=1 wrap JSON in think tags
+	cleaned = stripThinkTags(cleaned)
 	cleaned = strings.TrimPrefix(cleaned, "```json")
 	cleaned = strings.TrimPrefix(cleaned, "```")
 	cleaned = strings.TrimSuffix(cleaned, "```")
@@ -325,6 +333,25 @@ func parseL2Response(raw string) string {
 
 	b, _ := json.Marshal(parsed)
 	return string(b)
+}
+
+// stripThinkTags removes <think>...</think> wrapper from model output.
+// Multimodal models with thinking=1 (e.g. Qwen3.5-VL) wrap responses in think tags.
+func stripThinkTags(s string) string {
+	for {
+		start := strings.Index(s, "<think>")
+		if start < 0 {
+			break
+		}
+		end := strings.Index(s[start:], "</think>")
+		if end < 0 {
+			// Unclosed <think> tag — strip from start to end
+			s = s[:start]
+			break
+		}
+		s = s[:start] + s[start+end+len("</think>"):]
+	}
+	return strings.TrimSpace(s)
 }
 
 // toStringSlice converts a parsed JSON array to []string.

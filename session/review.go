@@ -2,6 +2,7 @@ package session
 
 import (
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -356,9 +357,23 @@ func buildFindings(sessionID, intent string, baseline, completed bool, c mcpComp
 	if completed && baseline && len(findings) == 0 {
 		positives = append(positives, taggedItem{Tag: "workflow_completed", Evidence: sessionID})
 	}
-	if c.HasReadDiscussions && hasSubstantiveAssistant(messages) {
+		if c.HasReadDiscussions && hasSubstantiveAssistant(messages) {
 		positives = append(positives, taggedItem{Tag: "cross_agent_read", Evidence: sessionID})
 	}
+
+	// Blind edit loop detection: same file edited >=5 times without commit
+	if !c.HasRecordCommit {
+		editCounts := countFileEdits(messages)
+		for file, count := range editCounts {
+			if count >= 5 {
+				findings = append(findings, taggedItem{
+					Tag:      "blind_edit_loop",
+					Evidence: fmt.Sprintf("%s=%d_edits_no_commit", file, count),
+				})
+			}
+		}
+	}
+
 	if findings == nil {
 		findings = []taggedItem{}
 	}
@@ -474,4 +489,31 @@ func (r ReviewResult) EntityRefsJSON() string {
 	}
 	b, _ := json.Marshal(refs)
 	return string(b)
+}
+
+
+// countFileEdits counts how many times each file was edited (📝) in a session.
+// Edit messages have content like "📝 /path/to/file.swift".
+func countFileEdits(messages []map[string]any) map[string]int {
+	counts := map[string]int{}
+	for _, m := range messages {
+		content := u.Str(m["content"])
+		if !strings.HasPrefix(content, "📝") {
+			continue
+		}
+		rest := strings.TrimSpace(content[len("📝"):])
+		if idx := strings.IndexByte(rest, ' '); idx > 0 {
+			rest = rest[:idx]
+		}
+		if idx := strings.IndexByte(rest, '\n'); idx > 0 {
+			rest = rest[:idx]
+		}
+		if rest != "" {
+			counts[rest]++
+		}
+	}
+	if len(counts) == 0 {
+		return nil
+	}
+	return counts
 }

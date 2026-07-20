@@ -13,6 +13,7 @@ type ReadOpts struct {
 	Source      string
 	LastN       int
 	Since       string
+	Cursor      string
 	Full        bool
 	ProjectPath string
 }
@@ -23,9 +24,19 @@ func Read(opts ReadOpts) ([]map[string]any, error) {
 		Source:      opts.Source,
 		LastN:       opts.LastN,
 		Since:       opts.Since,
+		Cursor:      opts.Cursor,
 		Full:        opts.Full,
 		ProjectPath: opts.ProjectPath,
 	})
+}
+
+// CursorFromResults returns the ID of the last row as the next cursor,
+// or empty string if the result set is empty.
+func CursorFromResults(rows []map[string]any) string {
+	if len(rows) == 0 {
+		return ""
+	}
+	return u.Str(rows[len(rows)-1]["id"])
 }
 
 // PreviewRunes is the default preview length for discussion MCP text output.

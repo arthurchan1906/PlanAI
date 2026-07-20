@@ -2,140 +2,204 @@ package proxy
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
-	pmdb "aipmc/db"
 	"aipmc/session"
 	"aipmc/store"
 	"aipmc/u"
 )
 
+const (
+	maxInjectChars = 800        // hard cap to prevent context explosion
+	sessionTTL     = 48 * time.Hour // ignore sessions older than this
+)
+
+type injectState struct {
+	lastAt      time.Time
+	contentHash string
+}
+
 var (
-	injectTracker sync.Map // map[string]time.Time
+	injectTracker sync.Map // map[agent]injectState
 	sessionCache  struct {
-		mu        sync.RWMutex
-		goals     []string
-		updatedAt time.Time
-		ttl       time.Duration
+		mu          sync.RWMutex
+		goals       []string
+		warnings    []string
+		contentHash string
+		updatedAt   time.Time
+		ttl         time.Duration
 	}
 )
 
 func init() {
-	sessionCache.ttl = 60 * time.Second
+	sessionCache.ttl = 5 * time.Minute
 }
 
 // InjectSessionContext prepends recent session goals into the system message
-// or first user message of a proxy request. Uses a time-based tracker to avoid
-// injecting into every request (5-minute cooldown per agent type).
+// of a proxy request. One injection per agent per unique content (content-hash
+// based deduplication). Content is capped at maxInjectChars.
 func InjectSessionContext(body []byte, agent string) []byte {
-	if !shouldInject(agent) {
-		return body
-	}
-
-	goals, ids := getCachedSessionGoals()
+	goals, warnings, blockHash := getCachedContext()
 	if len(goals) == 0 {
 		u.LogShared("INJECT", "skip agent=%s reason=no_summary_data", agent)
 		return body
 	}
 
-	block := buildContextBlock(goals)
+	block := buildContextBlock(goals, warnings)
+
+	// Content-hash based dedup: only inject if content changed since last injection
+	if !shouldInject(agent, blockHash) {
+		return body
+	}
+
 	result := injectIntoPrompt(body, block, agent)
-	u.LogShared("INJECT", "agent=%s goals=%d chars=%d ids=%v", agent, len(goals), len(block), ids)
+	injectTracker.Store(agent, injectState{lastAt: time.Now(), contentHash: blockHash})
+	u.LogShared("INJECT", "agent=%s goals=%d warnings=%d chars=%d hash=%s", agent, len(goals), len(warnings), len(block), blockHash[:8])
 	return result
 }
 
-func shouldInject(key string) bool {
-	last, ok := injectTracker.Load(key)
-	if !ok || time.Since(last.(time.Time)) > 5*time.Minute {
-		injectTracker.Store(key, time.Now())
+func shouldInject(agent, contentHash string) bool {
+	v, ok := injectTracker.Load(agent)
+	if !ok {
 		return true
 	}
-	remaining := 5*time.Minute - time.Since(last.(time.Time))
-	u.LogShared("INJECT", "skip agent=%s reason=cooldown remaining=%s", key, remaining.Truncate(time.Second))
-	return false
+	st := v.(injectState)
+	if st.contentHash == contentHash {
+		u.LogShared("INJECT", "skip agent=%s reason=same_content hash=%s", agent, contentHash[:8])
+		return false
+	}
+	return true
 }
 
-func getCachedSessionGoals() (goals, ids []string) {
+func getCachedContext() (goals, warnings []string, hash string) {
 	sessionCache.mu.RLock()
 	if time.Since(sessionCache.updatedAt) < sessionCache.ttl && len(sessionCache.goals) > 0 {
 		defer sessionCache.mu.RUnlock()
-		// Need to rebuild ids from cached goals since we only cache goals strings
-		for _, g := range sessionCache.goals {
-			if id := extractIDFromGoal(g); id != "" {
-				ids = append(ids, id)
-			}
-		}
-		return sessionCache.goals, ids
+		return sessionCache.goals, sessionCache.warnings, sessionCache.contentHash
 	}
 	sessionCache.mu.RUnlock()
 
 	sessionCache.mu.Lock()
 	defer sessionCache.mu.Unlock()
 
-	rows, err := store.ListSessionSummariesWithSummary("", 3)
+	cutoff := time.Now().Add(-sessionTTL).Format("2006-01-02T15:04:05")
+	rows, err := store.ListSessionSummariesWithSummary(cutoff, 3)
 	if err != nil || len(rows) == 0 {
-		return nil, nil
+		sessionCache.goals = nil
+		sessionCache.contentHash = ""
+		return nil, nil, ""
 	}
 	goals = make([]string, 0, len(rows))
-	ids = make([]string, 0, len(rows))
 	for _, r := range rows {
 		var l2 session.SessionL2Summary
 		if json.Unmarshal([]byte(r.Summary), &l2) == nil && l2.Goal != "" {
-			sid := shortID(r.SessionID)
+			sid := u.Prefix(r.SessionID, 8)
 			goals = append(goals, fmt.Sprintf("[%s] %s", sid, l2.Goal))
-			ids = append(ids, sid)
+		}
+		// Extract blind_edit_loop findings from review_json
+		if r.ReviewJSON != "" {
+			var review map[string]any
+			if json.Unmarshal([]byte(r.ReviewJSON), &review) == nil {
+				findings, _ := review["findings"].([]any)
+				for _, fi := range findings {
+					f, _ := fi.(map[string]any)
+					tag, _ := f["tag"].(string)
+					if tag == "blind_edit_loop" {
+						ev, _ := f["evidence"].(string)
+						if ev != "" {
+							warnings = append(warnings, fmt.Sprintf("[%s] \u26a0\ufe0f %s", u.Prefix(r.SessionID, 8), ev))
+						}
+					}
+				}
+			}
 		}
 	}
+
+	// Merge user negative feedback from recent discussion_log
+	if fb := detectUserFrustration(); len(fb) > 0 {
+		warnings = append(warnings, fb...)
+	}
+
 	sessionCache.goals = goals
+	sessionCache.warnings = warnings
+	sessionCache.contentHash = hashString(fmt.Sprintf("%v%v", goals, warnings))
 	sessionCache.updatedAt = time.Now()
-	return goals, ids
+	return goals, warnings, sessionCache.contentHash
 }
 
-func extractIDFromGoal(goal string) string {
-	if len(goal) > 10 && goal[0] == '[' {
-		end := strings.IndexByte(goal, ']')
-		if end > 0 {
-			return goal[1:end]
+func buildContextBlock(goals, warnings []string) string {
+	var buf bytes.Buffer
+	buf.WriteString("\n[AIPM Context]\n")
+	written := 0
+	suppressed := 0
+
+	// Warnings first (high priority)
+	for _, w := range warnings {
+		line := w + "\n"
+		if written+len(line) > maxInjectChars-50 {
+			suppressed++
+			continue
+		}
+		buf.WriteString(line)
+		written += len(line)
+	}
+
+	if len(goals) > 0 {
+		buf.WriteString("最近的 session:\n")
+		for _, g := range goals {
+			line := "- " + g + "\n"
+			if written+len(line) > maxInjectChars-50 {
+				suppressed++
+				continue
+			}
+			buf.WriteString(line)
+			written += len(line)
 		}
 	}
-	return ""
-}
 
-func shortID(id string) string {
-	if len(id) > 8 {
-		return id[:8]
-	}
-	return id
-}
-
-func buildContextBlock(goals []string) string {
-	var buf bytes.Buffer
-	buf.WriteString("\n[AIPM Context]\n最近 3 个 session:\n")
-	for _, g := range goals {
-		buf.WriteString("- " + g + "\n")
-	}
-	if hasVisionModels() {
-		buf.WriteString("\n[工具] aipmc_vision 可用于 UI 自查：\n(1) 改完代码后 screencapture / adb / xcrun 截图\n(2) 调用 aipmc_vision，prompt 包含关键代码片段 + 期望效果 + 检查重点\n(3) 视觉模型只描述实际效果，你对比代码预期后决定是否继续迭代\n")
+	if suppressed > 0 {
+		u.LogShared("INJECT", "suppressed=%d reason=char_limit cap=%d", suppressed, maxInjectChars)
 	}
 	return buf.String()
 }
 
-// hasVisionModels checks models.json for any vision-tagged model.
-func hasVisionModels() bool {
-	reg := pmdb.LoadModelRegistry()
-	for _, vm := range reg.Models {
-		for _, t := range vm.Tags {
-			if t == "vision" {
-				return true
+// detectUserFrustration checks recent discussion_log for user frustration signals.
+// Returns warnings if explicit negative feedback is found.
+func detectUserFrustration() []string {
+	negativeKW := []string{
+		"没有变化", "还是不行", "没有效果", "还是不对", "完全没用",
+		"你的方式很垃圾", "你在干什么",
+	}
+	messages, err := store.RecentUserMessages(5)
+	if err != nil || len(messages) == 0 {
+		return nil
+	}
+	var warnings []string
+	for _, m := range messages {
+		content := strings.ToLower(u.Str(m["content"]))
+		for _, kw := range negativeKW {
+			if strings.Contains(content, kw) {
+				preview := u.TruncateStr(u.Str(m["content"]), 80)
+				warnings = append(warnings, fmt.Sprintf("\u26a0\ufe0f \u7528\u6237\u53cd\u9988: %s", preview))
+				break
 			}
 		}
 	}
-	return false
+	return warnings
 }
+
+func hashString(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])
+}
+
+// ── Protocol-specific injectors (unchanged) ──────────────────────────
 
 func injectIntoPrompt(body []byte, block string, agent string) []byte {
 	switch agent {
@@ -149,7 +213,6 @@ func injectIntoPrompt(body []byte, block string, agent string) []byte {
 		return injectOpenAI(body, block)
 	}
 }
-
 func injectAnthropic(body []byte, block string) []byte {
 	var raw map[string]any
 	if json.Unmarshal(body, &raw) != nil {

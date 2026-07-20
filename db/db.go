@@ -234,6 +234,9 @@ func migrate(d *sql.DB) error {
 	if !ColumnExists(d, "discussion_log", "metadata") {
 		d.Exec("ALTER TABLE discussion_log ADD COLUMN metadata TEXT DEFAULT ''")
 	}
+	if !ColumnExists(d, "discussion_log", "thread_id") {
+		d.Exec("ALTER TABLE discussion_log ADD COLUMN thread_id TEXT DEFAULT ''")
+	}
 	if !tableOrVTableExists(d, "discussion_log") {
 		d.Exec(`CREATE TABLE IF NOT EXISTS discussion_log (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, role TEXT NOT NULL, source TEXT NOT NULL DEFAULT '', content TEXT NOT NULL, created_at TEXT NOT NULL)`)
 	}

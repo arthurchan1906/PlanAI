@@ -158,7 +158,7 @@ func RecentUserPrompts(sessionID, source string, limit int) ([]string, error) {
 }
 
 // ListRecentDiscussions returns the most recent N discussion entries, optionally filtered.
-func ListRecentDiscussions(source, typeFilter, projectPath string, lastN int) ([]map[string]any, error) {
+func ListRecentDiscussions(source, typeFilter, projectPath string, lastN int, cursor string) ([]map[string]any, error) {
 	if lastN <= 0 {
 		lastN = 10
 	}
@@ -183,6 +183,10 @@ func ListRecentDiscussions(source, typeFilter, projectPath string, lastN int) ([
 		case "tool":
 			where += " AND role = 'tool'"
 		}
+	}
+	if cursor != "" {
+		where += " AND id > ?"
+		args = append(args, cursor)
 	}
 
 	q := "SELECT id, session_id, role, source, content, metadata, created_at FROM discussion_log " + where + " ORDER BY created_at DESC, rowid DESC LIMIT ?"
@@ -245,6 +249,7 @@ type ReadDiscussionsOpts struct {
 	Source      string
 	LastN       int
 	Since       string
+	Cursor      string
 	Full        bool
 	ProjectPath string
 }
@@ -264,7 +269,14 @@ func ReadDiscussions(opts ReadDiscussionsOpts) ([]map[string]any, error) {
 
 	limit := opts.LastN
 	if limit <= 0 {
-		limit = 500
+		limit = 15
+	}
+
+	// Cursor-based incremental read: only fetch rows after the cursor chronologically.
+	// id format "disc-YYYYMMDD-HHMMSS-xxxxxx" is lexicographically time-ordered.
+	if opts.Cursor != "" {
+		where += " AND id > ?"
+		args = append(args, opts.Cursor)
 	}
 
 	// Fetch newest-first, then trim to last_n and reverse to chronological.
@@ -827,4 +839,34 @@ func openOrCurrentDB(projectPath string) (*sql.DB, error) {
 		return nil, fmt.Errorf("project not found at %s", projectPath)
 	}
 	return sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL")
+}
+
+// RecentUserMessages returns the most recent N user messages from discussion_log.
+func RecentUserMessages(limit int) ([]map[string]any, error) {
+	db, err := pmdb.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	rows, err := db.Query(
+		`SELECT id, session_id, role, source, content, metadata, created_at
+		FROM discussion_log WHERE role = 'user'
+		ORDER BY created_at DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []map[string]any
+	for rows.Next() {
+		var id, sid, role, src, content, metadata, createdAt string
+		rows.Scan(&id, &sid, &role, &src, &content, &metadata, &createdAt)
+		out = append(out, map[string]any{
+			"id": id, "session_id": sid, "role": role,
+			"source": src, "content": content,
+			"metadata": metadata, "created_at": createdAt,
+		})
+	}
+	return out, nil
 }

@@ -344,13 +344,14 @@ func (s *mcpServer) registerTools() {
 	// Discussion log tools
 	s.addTool(MCPTool{
 		Name:        "aipm_read_discussions",
-		Description: "读取其他 Agent（Claude Code/Cursor/Gemini/OpenCode 等）的对话历史。想看某个 Agent 说了什么 → source 指定来源；不传 source 则返回所有人。full=true 返回全文。禁止 sqlite3 直查数据库。",
+		Description: "读取其他 Agent（Claude Code/Cursor/Gemini/OpenCode 等）的对话历史。想看某个 Agent 说了什么 → source 指定来源；不传 source 则返回所有人。full=true 返回全文。未指定 last_n 时默认 15 条。传 cursor 可增量读取避免重复（上次读到 disc-xxx, 从那里继续）。禁止 sqlite3 直查数据库。",
 		InputSchema: MCPInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
 				"source": map[string]string{"type": "string", "description": "想看哪个 Agent: claude-code / cursor / gemini-cli / opencode / codex-cli。例：看 Cursor 说了什么 → source=\"cursor\"。不传则看所有人。"},
-				"last_n": map[string]string{"type": "integer", "description": "最近 N 条。快速浏览用 10，深入阅读用 50（与 since 可组合）"},
+				"last_n": map[string]string{"type": "integer", "description": "最近 N 条。默认 15。快速浏览用 5，深入阅读用 30（与 since / cursor 可组合）"},
 				"since":  map[string]string{"type": "string", "description": "可选: ISO 时间下限 (例 2026-06-15T21:48:00)"},
+				"cursor": map[string]string{"type": "string", "description": "可选: 从上次返回的 cursor 之后继续读取，避免重复（传上次返回结果中 related_context.cursor 的值）"},
 				"full":         map[string]string{"type": "boolean", "description": "true=全文（互读讨论必设），false=预览约 200 字（默认）"},
 				"project_path": map[string]string{"type": "string", "description": "可选: 目标项目路径，不传则读当前项目。例: /Users/dazsec/projects/EncryptDrive"},
 			},
@@ -359,7 +360,7 @@ func (s *mcpServer) registerTools() {
 
 	s.addTool(MCPTool{
 		Name:        "aipm_search_discussions",
-		Description: "按关键词搜索讨论内容（搜「谁说了关于 X 的话」）。与 aipm_read_discussions 的区别：search 按内容关键词搜，read 按 Agent 直接读。mode=full_session 展开整段 session 全文；读某 Agent 全部发言优先 read_discussions(source=..., full=true)。",
+		Description: "按关键词搜索讨论内容（搜「谁说了关于 X 的话」）。与 aipm_read_discussions 的区别：search 按内容关键词搜，read 按 Agent 直接读。mode=full_session 展开整段 session 全文；读某 Agent 全部发言优先 read_discussions(source=..., full=true)。last_n 模式支持 cursor 增量读取。",
 		InputSchema: MCPInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
@@ -367,6 +368,7 @@ func (s *mcpServer) registerTools() {
 				"source":       map[string]string{"type": "string", "description": "可选: 按 agent 来源过滤 (claude-code / gemini-cli / codex-cli / codex / opencode / cursor)"},
 				"type":         map[string]string{"type": "string", "description": "可选: 按消息类型过滤 (user / assistant / tool)"},
 				"last_n":       map[string]string{"type": "integer", "description": "可选: 返回最近 N 条记录（与 query 二选一，优先使用 last_n）"},
+				"cursor":       map[string]string{"type": "string", "description": "可选: 从上次返回的 cursor 之后继续读取（仅 last_n 模式生效）"},
 				"mode":         map[string]string{"type": "string", "description": "可选: 'matches' (默认，匹配消息预览约200字)；'full_session' (展开 session 全部消息且全文不截断)"},
 				"limit":        map[string]string{"type": "integer", "description": "结果数量，默认 10。full_session 模式下为 session 数量上限（≤5）"},
 				"project_path": map[string]string{"type": "string", "description": "可选: 目标项目路径，不传则搜索当前项目"},
@@ -462,9 +464,9 @@ func (s *mcpServer) handleSearch(args map[string]interface{}) mcpToolResult {
 	// Check for duplicates in results
 	reflection := ""
 	if cnt, ok := result["count"].(int); ok && cnt == 0 {
-		reflection = "未找到匹配结果。可尝试：1) 用 aipm_search_discussions 搜索讨论内容；2) 用 aipm_get_briefing 了解项目概况；3) 用不同关键词重试。"
+		reflection = "[工具提示] search_context 无结果。如需搜索讨论内容使用 aipm_search_discussions，了解项目概况使用 aipm_get_briefing。"
 	} else if cnt > 5 {
-		reflection = fmt.Sprintf("找到 %d 个相关结果。建议缩小搜索范围或使用 aipm_get_briefing 了解当前项目概况。", cnt)
+		reflection = fmt.Sprintf("[工具提示] 找到 %d 个相关结果，可缩小搜索范围。", cnt)
 	}
 
 	text := fmt.Sprintf("搜索 '%s' 找到 %v 个结果", query, result["count"])
@@ -892,9 +894,9 @@ func (s *mcpServer) handleSmartSearch(args map[string]interface{}) mcpToolResult
 
 	reflection := ""
 	if len(results) == 0 {
-		reflection = "未找到匹配结果。可以创建新的 task/plan，但请先确认是否属于已有 plan 的范围。"
+		reflection = "[工具提示] smart_search 无结果。如需搜索讨论内容使用 aipm_search_discussions。"
 	} else if aiEnhanced {
-		reflection = "结果已通过 AI 语义重排序，排名靠前的结果更相关。"
+		reflection = "[工具提示] 结果已通过 AI 语义重排序。"
 	}
 
 	return mcpToolResult{
@@ -908,6 +910,7 @@ func (s *mcpServer) handleReadDiscussions(args map[string]interface{}) mcpToolRe
 	source := getStr(args, "source", "")
 	since := getStr(args, "since", "")
 	lastN := getInt(args, "last_n", 0)
+	cursor := getStr(args, "cursor", "")
 	projectPath := getStr(args, "project_path", "")
 	full := false
 	if v, ok := args["full"].(bool); ok {
@@ -920,6 +923,7 @@ func (s *mcpServer) handleReadDiscussions(args map[string]interface{}) mcpToolRe
 		Source:      source,
 		LastN:       lastN,
 		Since:       since,
+		Cursor:      cursor,
 		Full:        full,
 		ProjectPath: projectPath,
 	})
@@ -952,7 +956,7 @@ func (s *mcpServer) handleReadDiscussions(args map[string]interface{}) mcpToolRe
 
 	return mcpToolResult{
 		Content:        []mcpContent{{Type: "text", Text: text}},
-		RelatedContext: map[string]interface{}{"results": rows, "count": len(rows), "full": full},
+		RelatedContext: map[string]interface{}{"results": rows, "count": len(rows), "full": full, "cursor": discussion.CursorFromResults(rows)},
 		Reflection:     reflection,
 	}
 }
@@ -965,6 +969,7 @@ func (s *mcpServer) handleSearchDiscussions(args map[string]interface{}) mcpTool
 	mode := getStr(args, "mode", "matches")
 	limit := getInt(args, "limit", 10)
 	lastN := getInt(args, "last_n", 0)
+	cursor := getStr(args, "cursor", "")
 
 	if lastN <= 0 && query == "" {
 		return mcpToolResult{
@@ -979,7 +984,7 @@ func (s *mcpServer) handleSearchDiscussions(args map[string]interface{}) mcpTool
 	if lastN > 0 {
 		// Recent-N mode: fetch most recent N records
 		var err error
-		results, err = store.ListRecentDiscussions(source, typeFilter, projectPath, lastN)
+		results, err = store.ListRecentDiscussions(source, typeFilter, projectPath, lastN, cursor)
 		if err != nil {
 			return mcpToolResult{
 				Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("获取最近讨论失败: %v", err)}},

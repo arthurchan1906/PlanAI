@@ -436,9 +436,15 @@ func serveCommand() int {
 	// Step 7: Start web server (blocking)
 	fmt.Printf("✓ Web 启动 :%d → http://127.0.0.1:%d\n", webPort, webPort)
 	fmt.Printf("✓ 项目 %s 已注册\n", projectName)
-	// Start background session review pipeline (B1→L2→L3 auto-run)
+	// Start background session review pipeline (B1→L2→L3 auto-run) across all registered projects
 	if application.AI != nil {
-		session.RunAuto(application.AI, 30*time.Minute)
+		var otherProjects []string
+		for p := range pmdb.LoadProjects() {
+			if p != projectPath {
+				otherProjects = append(otherProjects, p)
+			}
+		}
+		session.RunAuto(application.AI, 30*time.Minute, otherProjects)
 	}
 
 	if err := srv.Listen(); err != nil {

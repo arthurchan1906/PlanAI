@@ -15,10 +15,11 @@ import (
 
 // RunOpts controls batch session review.
 type RunOpts struct {
-	Since      string
-	Limit      int
-	SamplePath string
-	Summarizer ai.Summarizer // optional AI summarizer for L2 summary generation
+	Since       string
+	Limit       int
+	SamplePath  string
+	ProjectPath string           // project root; if set, chdir before running
+	Summarizer  ai.Summarizer    // optional AI summarizer for L2 summary generation
 }
 
 // RunResult is the CLI/MCP output for a review batch.
@@ -34,6 +35,15 @@ type RunResult struct {
 
 // Run reviews recent agent sessions and writes session_summaries rows.
 func Run(opts RunOpts) (RunResult, error) {
+	// Scope chdir to this function to avoid global CWD side effects
+	if opts.ProjectPath != "" {
+		home, _ := os.Getwd()
+		if err := os.Chdir(opts.ProjectPath); err != nil {
+			return RunResult{}, err
+		}
+		defer os.Chdir(home)
+	}
+
 	if err := store.EnsureSessionSummariesTable(); err != nil {
 		return RunResult{}, err
 	}

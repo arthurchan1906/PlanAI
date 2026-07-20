@@ -3,6 +3,7 @@ package session
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"aipmc/store"
@@ -53,7 +54,15 @@ const reconcileWindow = 30 // minutes around session for commit matching
 
 // Reconcile scans recent sessions and commits, auto-links related entities,
 // and generates tentative events for low-confidence matches.
-func Reconcile(since string) (ReconcileResult, error) {
+// projectPath overrides CWD for multi-project scanning.
+func Reconcile(since, projectPath string) (ReconcileResult, error) {
+	if projectPath != "" {
+		home, _ := os.Getwd()
+		if err := os.Chdir(projectPath); err != nil {
+			return ReconcileResult{}, err
+		}
+		defer os.Chdir(home)
+	}
 	out := ReconcileResult{Since: since}
 
 	summaries, err := store.ListSessionSummariesSince(since, 50)
@@ -69,7 +78,9 @@ func Reconcile(since string) (ReconcileResult, error) {
 			continue
 		}
 
-		touchedFiles, _ := classifyFiles(messages)
+		touchedFiles, readFiles := classifyFiles(messages)
+		u.LogShared("PIPELINE", "L3 session=%s messages=%d touched=%d read=%d",
+			u.Prefix(ss.SessionID, 8), len(messages), len(touchedFiles), len(readFiles))
 		if len(touchedFiles) == 0 {
 			continue
 		}
