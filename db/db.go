@@ -194,6 +194,7 @@ var schemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS meeting_participants (meeting_id TEXT NOT NULL, agent_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', confirmed_at TEXT NOT NULL, PRIMARY KEY (meeting_id, agent_id), FOREIGN KEY(meeting_id) REFERENCES meeting_rooms(id), FOREIGN KEY(agent_id) REFERENCES agent_profiles(id))`,
 	`CREATE TABLE IF NOT EXISTS agent_assignments (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, task_id TEXT, role TEXT NOT NULL, scope TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'assigned', assigned_by TEXT NOT NULL, assigned_at TEXT NOT NULL, claimed_at TEXT, completed_at TEXT, FOREIGN KEY(agent_id) REFERENCES agent_profiles(id), FOREIGN KEY(task_id) REFERENCES tasks(id))`,
 	`CREATE TABLE IF NOT EXISTS audit_log (id TEXT PRIMARY KEY, actor_type TEXT NOT NULL, actor_id TEXT NOT NULL, action TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, summary TEXT NOT NULL, detail_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL)`,
+	`CREATE TABLE IF NOT EXISTS graph_edges (id TEXT PRIMARY KEY, source_type TEXT NOT NULL, source_id TEXT NOT NULL, edge_type TEXT NOT NULL, target_type TEXT NOT NULL, target_id TEXT NOT NULL, weight REAL NOT NULL DEFAULT 1.0, evidence_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL)`,
 }
 
 func migrate(d *sql.DB) error {

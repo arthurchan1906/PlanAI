@@ -2335,3 +2335,77 @@ func UpdateAgentProfile(id string, payload map[string]any) (map[string]any, erro
 	pmdb.SyncFTS5Entity(db, "agent", id, u.Str(a["name"]), u.Str(a["name"])+" "+u.Str(a["role"]))
 	return a, nil
 }
+
+// ============================================================
+// Graph Edges
+// ============================================================
+
+// Allowed edge types for graph_edges (pipeline-auto-derived relationships).
+var allowedEdgeTypes = map[string]bool{
+	"file_touch":   true,
+	"file_read":    true,
+	"mentions":     true,
+	"derived_from": true,
+	"same_session": true,
+	"implements":   true,
+}
+
+func CreateGraphEdge(sourceType, sourceID, edgeType, targetType, targetID string, weight float64, evidence map[string]any) error {
+	if !allowedEdgeTypes[edgeType] {
+		return fmt.Errorf("edge_type '%s' is not allowed", edgeType)
+	}
+	db, err := pmdb.Open()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	id := u.Slug("gedge")
+	now := u.NowISO()
+	evJSON := u.JsonStr(evidence)
+	_, err = db.Exec("INSERT INTO graph_edges (id, source_type, source_id, edge_type, target_type, target_id, weight, evidence_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		id, sourceType, sourceID, edgeType, targetType, targetID, weight, evJSON, now)
+	return err
+}
+
+func ListGraphEdges(sourceID, targetID, edgeType string) ([]map[string]any, error) {
+	db, err := pmdb.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	q := "SELECT id, source_type, source_id, edge_type, target_type, target_id, weight, evidence_json, created_at FROM graph_edges WHERE 1=1"
+	var args []any
+	if sourceID != "" {
+		q += " AND source_id = ?"
+		args = append(args, sourceID)
+	}
+	if targetID != "" {
+		q += " AND target_id = ?"
+		args = append(args, targetID)
+	}
+	if edgeType != "" {
+		q += " AND edge_type = ?"
+		args = append(args, edgeType)
+	}
+	q += " ORDER BY weight DESC LIMIT 200"
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var edges []map[string]any
+	for rows.Next() {
+		var id, st, sid, et, tt, tid, evJSON, ca string
+		var w float64
+		rows.Scan(&id, &st, &sid, &et, &tt, &tid, &w, &evJSON, &ca)
+		edges = append(edges, map[string]any{
+			"id": id, "source_type": st, "source_id": sid, "edge_type": et,
+			"target_type": tt, "target_id": tid, "weight": w,
+			"evidence_json": evJSON, "created_at": ca,
+		})
+	}
+	if edges == nil {
+		edges = []map[string]any{}
+	}
+	return edges, nil
+}

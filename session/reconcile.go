@@ -180,9 +180,11 @@ func Reconcile(since, projectPath string) (ReconcileResult, error) {
 			}
 		}
 
-		// Cross-session: check for sessions touching same files
-		// (deferred to cross-session aggregation in knowledge.go)
+		// Build graph edges for this session (Stream C: file_touch + same_session)
+		buildGraphEdges(ss.SessionID, touchedFiles, readFiles, commits)
 	}
+
+	crossSessionEdges(projectPath, since)
 
 	if out.AutoLinked == nil {
 		out.AutoLinked = []LinkAction{}

@@ -2,10 +2,13 @@ package session
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
+	"aipmc/db"
 	"aipmc/u"
 )
 
@@ -52,13 +55,11 @@ func classifyFiles(messages []map[string]any) (touchedFiles, readFiles []string)
 
 			switch md.Type {
 			case "bash":
-				// Extract file paths from bash commands (edit/write operations)
 				paths := extractPathsFromCommand(md.Command)
 				for _, p := range paths {
 					touched[p] = true
 				}
 			case "read":
-				// Claude Read tool — file_path may be in command field
 				if md.Command != "" {
 					paths := extractPathsFromCommand(md.Command)
 					for _, p := range paths {
@@ -74,18 +75,38 @@ func classifyFiles(messages []map[string]any) (touchedFiles, readFiles []string)
 	return
 }
 
-// knownProjectRoots is used to filter extracted paths to only known project directories.
-var knownProjectRoots = []string{
-	"/Users/dazsec/workspace/aipmc",
-	"/Users/dazsec/projects/EncryptDrive",
-	"/Users/dazsec/projects/mac-dz",
+// knownProjectRoots is lazily loaded from the project registry on first use.
+var (
+	knownProjectRoots     []string
+	knownProjectRootsOnce sync.Once
+)
+
+func getKnownProjectRoots() []string {
+	knownProjectRootsOnce.Do(func() {
+		projects := db.LoadCleanProjects()
+		for _, p := range projects {
+			if _, err := os.Stat(p.Path + "/.pmai"); err == nil {
+				knownProjectRoots = append(knownProjectRoots, p.Path)
+			}
+		}
+		if cwd, err := os.Getwd(); err == nil && cwd != "" {
+			found := false
+			for _, r := range knownProjectRoots {
+				if r == cwd {
+					found = true
+					break
+				}
+			}
+			if !found {
+				knownProjectRoots = append(knownProjectRoots, cwd)
+			}
+		}
+	})
+	return knownProjectRoots
 }
 
-// fileExtPattern matches common source code file extensions.
 var fileExtRE = regexp.MustCompile(`\.(go|py|js|ts|jsx|tsx|swift|m|h|c|cpp|java|kt|rs|rb|sh|yaml|yml|json|sql|md|css|html|vue|svelte|toml|xml|plist|entitlements|pbxproj|xcscheme)$`)
 
-// extractPathsFromCommand extracts file system paths from a bash command string.
-// It looks for absolute paths under known project roots or relative paths with code extensions.
 func extractPathsFromCommand(cmd string) []string {
 	if cmd == "" {
 		return nil
@@ -94,18 +115,14 @@ func extractPathsFromCommand(cmd string) []string {
 	var paths []string
 	seen := map[string]bool{}
 
-	// Split command by whitespace and common shell operators
 	tokens := splitShellTokens(cmd)
 	for _, t := range tokens {
-		// Skip short tokens and flags
 		if len(t) < 3 || t[0] == '-' {
 			continue
 		}
 
-		// Absolute paths under known project roots
-		for _, root := range knownProjectRoots {
+		for _, root := range getKnownProjectRoots() {
 			if strings.HasPrefix(t, root+"/") {
-				// Match file with extension, not just directories
 				if fileExtRE.MatchString(t) {
 					if !seen[t] {
 						seen[t] = true
@@ -115,10 +132,7 @@ func extractPathsFromCommand(cmd string) []string {
 			}
 		}
 
-		// Relative paths that look like source files (contain / and end with extension)
 		if strings.Contains(t, "/") && fileExtRE.MatchString(t) && !strings.HasPrefix(t, "/") {
-			// Relative paths are project-relative; we store them as-is
-			// They will match commit files similarly stored as relative paths
 			if !seen[t] {
 				seen[t] = true
 				paths = append(paths, t)
@@ -126,15 +140,13 @@ func extractPathsFromCommand(cmd string) []string {
 		}
 	}
 
-	// Also try to find paths in quoted strings and backtick expressions
-	for _, root := range knownProjectRoots {
+	for _, root := range getKnownProjectRoots() {
 		base := filepath.Base(root)
-		// Patterns like ~/workspace/aipmc/some/file.go
 		re := regexp.MustCompile(regexp.QuoteMeta("~"+root[strings.Index(root, base)-1:]) + `/[^\s"'\` + "`" + `;|&><]+`)
 		matches := re.FindAllString(cmd, -1)
+		homeDir, _ := os.UserHomeDir()
 		for _, m := range matches {
-			// Expand ~ to home
-			expanded := strings.Replace(m, "~", "/Users/dazsec", 1)
+			expanded := strings.Replace(m, "~", homeDir, 1)
 			if fileExtRE.MatchString(expanded) && !seen[expanded] {
 				seen[expanded] = true
 				paths = append(paths, expanded)
@@ -145,7 +157,6 @@ func extractPathsFromCommand(cmd string) []string {
 	return paths
 }
 
-// splitShellTokens splits a shell command into tokens, handling quotes.
 func splitShellTokens(cmd string) []string {
 	var tokens []string
 	var current strings.Builder
