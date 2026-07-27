@@ -1775,6 +1775,8 @@ func (s *mcpServer) handleVision(args map[string]interface{}) mcpToolResult {
 	result := vision.RunVision(imagePath, prompt, iteration, getStr(args, "model", ""))
 
 	if !result.OK {
+
+		u.LogShared("MCP", "tool=aipmc_vision status=ERR err=%s image=%s iter=%d", result.Error, imagePath, iteration)
 		msg := fmt.Sprintf("视觉分析失败 (%s): %s", result.Error, result.Message)
 		switch result.Error {
 		case "no_vision_model":

@@ -77,6 +77,8 @@ func runOnce(projectPath string, summarizer ai.Summarizer) {
 	if err != nil {
 		u.LogShared("PIPELINE", "reconcile error: %v", err)
 	} else {
+		u.LogShared("RECONCILE", "project=%s sessions=%d auto_linked=%d tentative=%d",
+			projectPath, recResult.SessionsReviewed, len(recResult.AutoLinked), len(recResult.TentativeLinks))
 		u.LogShared("PIPELINE", "reconcile done auto_linked=%d tentative=%d",
 			len(recResult.AutoLinked), len(recResult.TentativeLinks))
 	}
