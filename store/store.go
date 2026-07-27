@@ -366,6 +366,47 @@ func CreateCommit(projectPath string, title, summary, evidenceSummary, reviewNot
 	return c, nil
 }
 
+// StoreGitCommit creates or updates a commit entry from git data.
+// Unlike CreateCommit, it does not require a task_id — suitable for
+// git-log-synced commits that haven't been task-associated yet.
+func StoreGitCommit(projectPath, title, commitHash, date string, files []string) (map[string]any, error) {
+	db, err := pmdb.OpenProject(projectPath)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	// Check if commit_hash already exists
+	var existingID string
+	db.QueryRow("SELECT id FROM commits WHERE commit_hash = ? LIMIT 1", commitHash).Scan(&existingID)
+
+	filesJSON := "[]"
+	if len(files) > 0 {
+		filesJSON = u.JsonStr(files)
+	}
+
+	if existingID != "" {
+		// Update existing — backfill files if empty
+		var existingFiles string
+		db.QueryRow("SELECT files_json FROM commits WHERE id = ?", existingID).Scan(&existingFiles)
+		if existingFiles == "" || existingFiles == "[]" || existingFiles == "null" {
+			db.Exec("UPDATE commits SET files_json = ?, commit_hash = ?, updated_at = ? WHERE id = ?",
+				filesJSON, commitHash, u.NowISO(), existingID)
+		}
+		return GetCommit(existingID)
+	}
+
+	// Insert new
+	id := u.Slug("commit")
+	now := u.NowISO()
+	_, err = db.Exec("INSERT INTO commits (id, title, summary, evidence_summary, review_notes, branch, commit_hash, task_id, decision_id, status, test_status, review_status, files_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		id, title, "", "", "", "", commitHash, "", "", "committed", "not_run", "pending", filesJSON, date, now)
+	if err != nil {
+		return nil, err
+	}
+	return GetCommit(id)
+}
+
 func UpdateCommit(id string, payload map[string]any) (map[string]any, error) {
 	db, err := pmdb.Open()
 	if err != nil {

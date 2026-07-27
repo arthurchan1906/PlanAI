@@ -65,6 +65,10 @@ func Reconcile(since, projectPath string) (ReconcileResult, error) {
 	}
 	out := ReconcileResult{Since: since}
 
+	// Sync commits from git — backfill missing files and create missing entries
+	// Full backfill on first run per session (files_json=[] indicates missing data)
+	syncCommitsFromGit(projectPath, true)
+
 	summaries, err := store.ListSessionSummariesSince(since, 50)
 	if err != nil {
 		return out, err
