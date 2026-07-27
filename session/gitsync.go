@@ -145,7 +145,9 @@ func parseGitLog(output string) []gitCommit {
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
-			if current != nil {
+			// Only finalize when we already have files — empty lines
+			// between header and first file are separators, not delimiters.
+			if current != nil && len(current.files) > 0 {
 				commits = append(commits, *current)
 				current = nil
 			}
