@@ -40,15 +40,31 @@ func syncCommitsFromGit(projectPath string, fullBackfill bool) (created, updated
 
 	// Get all existing commits from DB to find matches
 	existing, _ := store.ListCommits("", "", "", "", 0)
-	hashIndex := map[string]map[string]any{}
+	// Build prefix-based hash index — DB hashes may be short (7-8 chars)
+	// while git log produces full 40-char hashes
+	dbHashes := make([]struct{ hash, id string }, 0)
 	for _, c := range existing {
 		if h := u.Str(c["commit_hash"]); h != "" {
-			hashIndex[h] = c
+			dbHashes = append(dbHashes, struct{ hash, id string }{h, u.Str(c["id"])})
 		}
 	}
 
+	// Match git hash against DB hash prefix
+	matchByHash := func(gitHash string) map[string]any {
+		for _, h := range dbHashes {
+			if strings.HasPrefix(gitHash, h.hash) {
+				for _, c := range existing {
+					if u.Str(c["id"]) == h.id {
+						return c
+					}
+				}
+			}
+		}
+		return nil
+	}
+
 	for _, gc := range parsed {
-		existingCommit, hasHash := hashIndex[gc.hash]
+		existingCommit := matchByHash(gc.hash); hasHash := existingCommit != nil
 
 		if hasHash {
 			// Existing commit — check if files need backfill
@@ -90,7 +106,7 @@ func syncCommitsFromGit(projectPath string, fullBackfill bool) (created, updated
 		}
 
 		for _, gc := range parsed {
-			if _, hasHash := hashIndex[gc.hash]; hasHash {
+			if matchByHash(gc.hash) != nil {
 				continue // already handled above
 			}
 			if candidates, ok := titleIndex[gc.title]; ok {

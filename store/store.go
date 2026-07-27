@@ -378,7 +378,7 @@ func StoreGitCommit(projectPath, title, commitHash, date string, files []string)
 
 	// Check if commit_hash already exists
 	var existingID string
-	db.QueryRow("SELECT id FROM commits WHERE commit_hash = ? LIMIT 1", commitHash).Scan(&existingID)
+	db.QueryRow("SELECT id FROM commits WHERE ? LIKE commit_hash || '%' LIMIT 1", commitHash).Scan(&existingID)
 
 	filesJSON := "[]"
 	if len(files) > 0 {
