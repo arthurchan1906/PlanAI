@@ -71,11 +71,11 @@ func GetTaskSimple(id string) (map[string]any, error) {
 	return task, nil
 }
 
-func CreateTask(title, priority, status, phase, planID string, acceptance []string) (map[string]any, error) {
+func CreateTask(projectPath string, title, priority, status, phase, planID string, acceptance []string) (map[string]any, error) {
 	if planID == "" {
 		return nil, fmt.Errorf("task requires --plan-id. Find a plan: aipmc plan list")
 	}
-	db, err := pmdb.Open()
+	db, err := pmdb.OpenProject(projectPath)
 	if err != nil {
 		return nil, err
 	}
@@ -114,8 +114,8 @@ func CreateTask(title, priority, status, phase, planID string, acceptance []stri
 	return GetTaskSimple(id)
 }
 
-func UpdateTask(id, status, note string, allowWithoutCommit, appendNote bool) (map[string]any, error) {
-	db, err := pmdb.Open()
+func UpdateTask(projectPath string, id, status, note string, allowWithoutCommit, appendNote bool) (map[string]any, error) {
+	db, err := pmdb.OpenProject(projectPath)
 	if err != nil {
 		return nil, err
 	}
@@ -168,8 +168,8 @@ func UpdateTask(id, status, note string, allowWithoutCommit, appendNote bool) (m
 	return GetTaskSimple(id)
 }
 
-func AppendTaskNote(taskID, content string) (map[string]any, error) {
-	db, err := pmdb.Open()
+func AppendTaskNote(projectPath string, taskID, content string) (map[string]any, error) {
+	db, err := pmdb.OpenProject(projectPath)
 	if err != nil {
 		return nil, err
 	}
@@ -328,11 +328,11 @@ func GetCommit(id string) (map[string]any, error) {
 	return c, nil
 }
 
-func CreateCommit(title, summary, evidenceSummary, reviewNotes, branch, commitHash, taskID, decisionID, status, testStatus, reviewStatus string, files []string) (map[string]any, error) {
+func CreateCommit(projectPath string, title, summary, evidenceSummary, reviewNotes, branch, commitHash, taskID, decisionID, status, testStatus, reviewStatus string, files []string) (map[string]any, error) {
 	if taskID == "" {
 		return nil, fmt.Errorf("commit requires --task-id (or --task-ids for multi-task). Find a task: aipmc task list --status in_progress")
 	}
-	db, err := pmdb.Open()
+	db, err := pmdb.OpenProject(projectPath)
 	if err != nil {
 		return nil, err
 	}
@@ -558,8 +558,8 @@ func GetBug(id string) (map[string]any, error) {
 	return b, nil
 }
 
-func CreateBug(title, description, severity, status, commitID, errMsg, files, rootCause, fix, tags string) (map[string]any, error) {
-	db, err := pmdb.Open()
+func CreateBug(projectPath string, title, description, severity, status, commitID, errMsg, files, rootCause, fix, tags string) (map[string]any, error) {
+	db, err := pmdb.OpenProject(projectPath)
 	if err != nil {
 		return nil, err
 	}
@@ -644,8 +644,8 @@ func GetDecision(id string) (map[string]any, error) {
 	return d, nil
 }
 
-func CreateDecision(title, background, decision, status string) (map[string]any, error) {
-	db, err := pmdb.Open()
+func CreateDecision(projectPath string, title, background, decision, status string) (map[string]any, error) {
+	db, err := pmdb.OpenProject(projectPath)
 	if err != nil {
 		return nil, err
 	}
@@ -788,11 +788,11 @@ func ConvertIdeaToTask(ideaID, planID string) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	task, err := CreateTask(idea["title"].(string), "P1", "todo", "general", planID, nil)
+	task, err := CreateTask("", idea["title"].(string), "P1", "todo", "general", planID, nil)
 	if err != nil {
 		return nil, err
 	}
-	CreateLink("idea", ideaID, "converted_to", "task", task["id"].(string), "Converted from idea thread")
+	CreateLink("", "idea", ideaID, "converted_to", "task", task["id"].(string), "Converted from idea thread")
 	UpdateIdea(ideaID, map[string]any{"status": "under_review", "recommended_next_action": "converted_to_task"})
 	return map[string]any{"type": "task", "id": task["id"], "title": task["title"]}, nil
 }
@@ -806,11 +806,11 @@ func ConvertIdeaToDecision(ideaID string) (map[string]any, error) {
 	if cs, _ := idea["current_summary"].(string); cs != "" {
 		bg = cs
 	}
-	dec, err := CreateDecision(idea["title"].(string), bg, idea["title"].(string), "proposed")
+	dec, err := CreateDecision("", idea["title"].(string), bg, idea["title"].(string), "proposed")
 	if err != nil {
 		return nil, err
 	}
-	CreateLink("idea", ideaID, "converted_to", "decision", dec["id"].(string), "Converted from idea thread")
+	CreateLink("", "idea", ideaID, "converted_to", "decision", dec["id"].(string), "Converted from idea thread")
 	UpdateIdea(ideaID, map[string]any{"status": "accepted", "recommended_next_action": "converted_to_decision"})
 	return map[string]any{"type": "decision", "id": dec["id"], "title": dec["title"]}, nil
 }
@@ -1037,8 +1037,22 @@ func ListLinks(sourceID, targetID, relation string) ([]map[string]any, error) {
 	return links, nil
 }
 
-func CreateLink(sourceType, sourceID, relation, targetType, targetID, note string) (map[string]any, error) {
-	db, err := pmdb.Open()
+func CreateLink(projectPath string, sourceType, sourceID, relation, targetType, targetID, note string) (map[string]any, error) {
+	db, err := pmdb.OpenProject(projectPath)
+
+	// Whitelist: only these 5 relations are allowed
+	allowed := map[string]bool{
+		"relates_to":   true,
+		"implements":   true,
+		"fixes":        true,
+		"blocked_by":   true,
+		"depends_on":   true,
+		"converted_to": true,
+	}
+	if !allowed[relation] {
+		return nil, fmt.Errorf("relation '%s' is not allowed. Valid options: relates_to, implements, fixes, blocked_by, depends_on", relation)
+	}
+
 	if err != nil {
 		return nil, err
 	}

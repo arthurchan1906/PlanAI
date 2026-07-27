@@ -139,16 +139,19 @@ func (s *mcpServer) registerTools() {
 
 	s.addTool(MCPTool{
 		Name:        "aipm_record_commit",
-		Description: "记录一个代码 commit。自动检测 commit 文件是否在 task 的 plan scope 内，返回关联性分析和反思提示。",
+		Description: "记录一个代码 commit。自动检测 commit 文件是否在 task 的 plan scope 内，返回关联性分析和反思提示。通过 review_status=approved + test_status=passed 可以让关联的 task 标记为 done。",
 		InputSchema: MCPInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
-				"task_id":  map[string]string{"type": "string", "description": "关联的 Task ID"},
-				"title":    map[string]string{"type": "string", "description": "Commit 标题"},
-				"summary":  map[string]string{"type": "string", "description": "变更摘要"},
-				"files":    map[string]string{"type": "string", "description": "变更文件列表，逗号分隔"},
-				"branch":   map[string]string{"type": "string", "description": "分支名"},
-				"status":   map[string]string{"type": "string", "description": "commit/draft"},
+				"task_id":       map[string]string{"type": "string", "description": "关联的 Task ID"},
+				"title":         map[string]string{"type": "string", "description": "Commit 标题"},
+				"summary":       map[string]string{"type": "string", "description": "变更摘要"},
+				"files":         map[string]string{"type": "string", "description": "变更文件列表，逗号分隔"},
+				"branch":        map[string]string{"type": "string", "description": "分支名"},
+				"status":        map[string]string{"type": "string", "description": "commit/draft"},
+				"project_path":  map[string]string{"type": "string", "description": "可选: 目标项目路径。例: /Users/dazsec/projects/EncryptDrive"},
+				"review_status": map[string]string{"type": "string", "description": "可选: pending/approved/rejected，默认 pending。设为 approved 后 task 可标记 done"},
+				"test_status":   map[string]string{"type": "string", "description": "可选: not_run/passed/failed，默认 not_run。设为 passed 后 task 可标记 done"},
 			},
 			Required: []string{"task_id", "title"},
 		},
@@ -164,7 +167,8 @@ func (s *mcpServer) registerTools() {
 				"plan_id":  map[string]string{"type": "string", "description": "所属 Plan ID"},
 				"priority": map[string]string{"type": "string", "description": "P0/P1/P2"},
 				"status":   map[string]string{"type": "string", "description": "todo/in_progress"},
-				"phase":    map[string]string{"type": "string", "description": "所属 phase"},
+				"phase":        map[string]string{"type": "string", "description": "所属 phase"},
+				"project_path": map[string]string{"type": "string", "description": "可选: 目标项目路径。例: /Users/dazsec/projects/EncryptDrive"},
 			},
 			Required: []string{"title", "plan_id"},
 		},
@@ -204,9 +208,10 @@ func (s *mcpServer) registerTools() {
 		InputSchema: MCPInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
-				"task_id": map[string]string{"type": "string", "description": "Task ID"},
-				"status":  map[string]string{"type": "string", "description": "todo/in_progress/blocked/done"},
-				"note":    map[string]string{"type": "string", "description": "状态变更说明"},
+				"task_id":       map[string]string{"type": "string", "description": "Task ID"},
+				"status":        map[string]string{"type": "string", "description": "todo/in_progress/blocked/done"},
+				"note":          map[string]string{"type": "string", "description": "状态变更说明"},
+				"project_path":  map[string]string{"type": "string", "description": "可选: 目标项目路径。例: /Users/dazsec/projects/EncryptDrive"},
 			},
 			Required: []string{"task_id", "status"},
 		},
@@ -245,7 +250,8 @@ func (s *mcpServer) registerTools() {
 				"relation":    map[string]string{"type": "string", "description": "关系 (fixes/relates_to/blocked_by/implements/depends_on)"},
 				"target_type": map[string]string{"type": "string", "description": "目标实体类型"},
 				"target_id":   map[string]string{"type": "string", "description": "目标实体 ID"},
-				"note":        map[string]string{"type": "string", "description": "关联说明（可选）"},
+				"note":         map[string]string{"type": "string", "description": "关联说明（可选）"},
+				"project_path": map[string]string{"type": "string", "description": "可选: 目标项目路径。例: /Users/dazsec/projects/EncryptDrive"},
 			},
 			Required: []string{"source_type", "source_id", "relation", "target_type", "target_id"},
 		},
@@ -524,6 +530,9 @@ func (s *mcpServer) handleRecordCommit(args map[string]interface{}) mcpToolResul
 	branch := getStr(args, "branch", "main")
 	status := getStr(args, "status", "committed")
 	filesStr := getStr(args, "files", "")
+	projectPath := getStr(args, "project_path", "")
+	testStatus := getStr(args, "test_status", "not_run")
+	reviewStatus := getStr(args, "review_status", "pending")
 
 	var files []string
 	if filesStr != "" {
@@ -534,7 +543,7 @@ func (s *mcpServer) handleRecordCommit(args map[string]interface{}) mcpToolResul
 		}
 	}
 
-	commit, err := store.CreateCommit(title, summary, "", "", branch, "", taskID, "", status, "not_run", "pending", files)
+	commit, err := store.CreateCommit(projectPath, title, summary, "", "", branch, "", taskID, "", status, testStatus, reviewStatus, files)
 	if err != nil {
 		return mcpToolResult{
 			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("创建 commit 失败: %v", err)}},
@@ -583,6 +592,7 @@ func (s *mcpServer) handleCreateTask(args map[string]interface{}) mcpToolResult 
 	priority := getStr(args, "priority", "P1")
 	status := getStr(args, "status", "todo")
 	phase := getStr(args, "phase", "general")
+	projectPath := getStr(args, "project_path", "")
 
 	// Duplicate check before creating
 	report := analyze.RunFullAnalysis()
@@ -624,7 +634,7 @@ func (s *mcpServer) handleCreateTask(args map[string]interface{}) mcpToolResult 
 		}
 	}
 
-	task, err := store.CreateTask(title, priority, status, phase, planID, nil)
+	task, err := store.CreateTask(projectPath, title, priority, status, phase, planID, nil)
 	if err != nil {
 		return mcpToolResult{
 			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("创建 task 失败: %v", err)}},
@@ -658,6 +668,7 @@ func (s *mcpServer) handleCreateTask(args map[string]interface{}) mcpToolResult 
 func (s *mcpServer) handleRecordBug(args map[string]interface{}) mcpToolResult {
 	title := getStr(args, "title", "")
 	errMsg := getStr(args, "error", "")
+	projectPath := getStr(args, "project_path", "")
 	rootCause := getStr(args, "root_cause", "")
 	fix := getStr(args, "fix", "")
 	files := getStr(args, "files", "")
@@ -672,7 +683,7 @@ func (s *mcpServer) handleRecordBug(args map[string]interface{}) mcpToolResult {
 		}
 	}
 
-	bug, err := store.CreateBug(title, errMsg, severity, "open", commitID, errMsg, files, rootCause, fix, tags)
+	bug, err := store.CreateBug(projectPath, title, errMsg, severity, "open", commitID, errMsg, files, rootCause, fix, tags)
 	if err != nil {
 		return mcpToolResult{
 			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("创建 bug 失败: %v", err)}},
@@ -696,6 +707,7 @@ func (s *mcpServer) handleRecordBug(args map[string]interface{}) mcpToolResult {
 
 func (s *mcpServer) handleAppendTaskNote(args map[string]interface{}) mcpToolResult {
 	taskID := getStr(args, "task_id", "")
+	projectPath := getStr(args, "project_path", "")
 	content := getStr(args, "content", "")
 	if taskID == "" || content == "" {
 		return mcpToolResult{
@@ -703,7 +715,7 @@ func (s *mcpServer) handleAppendTaskNote(args map[string]interface{}) mcpToolRes
 			IsError: true,
 		}
 	}
-	result, err := store.AppendTaskNote(taskID, content)
+	result, err := store.AppendTaskNote(projectPath, taskID, content)
 	if err != nil {
 		return mcpToolResult{
 			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("追加备注失败: %v", err)}},
@@ -721,10 +733,20 @@ func (s *mcpServer) handleAppendTaskNote(args map[string]interface{}) mcpToolRes
 func (s *mcpServer) handleLinkEntities(args map[string]interface{}) mcpToolResult {
 	sourceType := getStr(args, "source_type", "")
 	sourceID := getStr(args, "source_id", "")
+	projectPath := getStr(args, "project_path", "")
 	relation := getStr(args, "relation", "")
 	targetType := getStr(args, "target_type", "")
 	targetID := getStr(args, "target_id", "")
 	note := getStr(args, "note", "")
+
+	// Whitelist: validate relation before touching the store
+	allowedRels := map[string]bool{"relates_to": true, "implements": true, "fixes": true, "blocked_by": true, "depends_on": true, "converted_to": true}
+	if relation != "" && !allowedRels[relation] {
+		return mcpToolResult{
+			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("relation '%s' is not allowed. Valid options: relates_to, implements, fixes, blocked_by, depends_on, converted_to", relation)}},
+			IsError: true,
+		}
+	}
 
 	if sourceType == "" || sourceID == "" || relation == "" || targetType == "" || targetID == "" {
 		return mcpToolResult{
@@ -733,7 +755,7 @@ func (s *mcpServer) handleLinkEntities(args map[string]interface{}) mcpToolResul
 		}
 	}
 
-	link, err := store.CreateLink(sourceType, sourceID, relation, targetType, targetID, note)
+	link, err := store.CreateLink(projectPath, sourceType, sourceID, relation, targetType, targetID, note)
 	if err != nil {
 		return mcpToolResult{
 			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("创建关联失败: %v", err)}},
@@ -752,6 +774,7 @@ func (s *mcpServer) handleLinkEntities(args map[string]interface{}) mcpToolResul
 func (s *mcpServer) handleRecordDecision(args map[string]interface{}) mcpToolResult {
 	title := getStr(args, "title", "")
 	background := getStr(args, "background", "")
+	projectPath := getStr(args, "project_path", "")
 	decision := getStr(args, "decision", "")
 	status := getStr(args, "status", "proposed")
 
@@ -762,7 +785,7 @@ func (s *mcpServer) handleRecordDecision(args map[string]interface{}) mcpToolRes
 		}
 	}
 
-	dec, err := store.CreateDecision(title, background, decision, status)
+	dec, err := store.CreateDecision(projectPath, title, background, decision, status)
 	if err != nil {
 		return mcpToolResult{
 			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("创建决策失败: %v", err)}},
@@ -785,6 +808,7 @@ func (s *mcpServer) handleUpdateTaskStatus(args map[string]interface{}) mcpToolR
 	taskID := getStr(args, "task_id", "")
 	status := getStr(args, "status", "")
 	note := getStr(args, "note", "")
+	projectPath := getStr(args, "project_path", "")
 
 	if taskID == "" || status == "" {
 		return mcpToolResult{
@@ -793,7 +817,7 @@ func (s *mcpServer) handleUpdateTaskStatus(args map[string]interface{}) mcpToolR
 		}
 	}
 
-	_, err := store.UpdateTask(taskID, status, note, false, false)
+	_, err := store.UpdateTask(projectPath, taskID, status, note, false, false)
 	if err != nil {
 		return mcpToolResult{
 			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("更新失败: %v", err)}},

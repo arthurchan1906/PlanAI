@@ -66,6 +66,27 @@ func RuntimeDir() (string, error) {
 	return filepath.Join(cwd, ".pmai"), nil
 }
 
+// OpenProject opens the database for a specific project path,
+// falling back to cwd-based resolution when projectPath is empty.
+func OpenProject(projectPath string) (*sql.DB, error) {
+	if projectPath != "" {
+		dbPath := filepath.Join(projectPath, ".pmai", "data", "pmai.db")
+		if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+			return nil, fmt.Errorf("PMAI database not found: %s — run aipmc init first", dbPath)
+		}
+		d, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL")
+		if err != nil {
+			return nil, err
+		}
+		if err := d.Ping(); err != nil {
+			d.Close()
+			return nil, err
+		}
+		return d, nil
+	}
+	return Open()
+}
+
 // ── Open / Bootstrap ──────────────────────────────────────────────────
 
 // Open opens the main SQLite database.

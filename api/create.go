@@ -15,14 +15,14 @@ func (s *Server) handleCreateRoutes(w http.ResponseWriter, method, path string, 
 	}
 	switch path {
 	case "tasks":
-		task, err := store.CreateTask(u.Str(body["title"]), pstr(body, "priority", "P1"), pstr(body, "status", "todo"), pstr(body, "phase", "general"), u.Str(body["plan_id"]), nil)
+		task, err := store.CreateTask("", u.Str(body["title"]), pstr(body, "priority", "P1"), pstr(body, "status", "todo"), pstr(body, "phase", "general"), u.Str(body["plan_id"]), nil)
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return true
 		}
 		web.SendJSON(w, task)
 	case "commits":
-		c, err := store.CreateCommit(u.Str(body["title"]), pstr(body, "summary", ""), pstr(body, "evidence_summary", ""), pstr(body, "review_notes", ""), pstr(body, "branch", ""), pstr(body, "commit_hash", ""), u.Str(body["task_id"]), pstr(body, "decision_id", ""), pstr(body, "status", "draft"), pstr(body, "test_status", "not_run"), pstr(body, "review_status", "pending"), nil)
+		c, err := store.CreateCommit("", u.Str(body["title"]), pstr(body, "summary", ""), pstr(body, "evidence_summary", ""), pstr(body, "review_notes", ""), pstr(body, "branch", ""), pstr(body, "commit_hash", ""), u.Str(body["task_id"]), pstr(body, "decision_id", ""), pstr(body, "status", "draft"), pstr(body, "test_status", "not_run"), pstr(body, "review_status", "pending"), nil)
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return true
@@ -36,14 +36,14 @@ func (s *Server) handleCreateRoutes(w http.ResponseWriter, method, path string, 
 		}
 		web.SendJSON(w, plan)
 	case "bugs":
-		bug, err := store.CreateBug(u.Str(body["title"]), pstr(body, "description", ""), pstr(body, "severity", "minor"), pstr(body, "status", "open"), pstr(body, "commit_id", ""), pstr(body, "error", ""), pstr(body, "files", ""), pstr(body, "root_cause", ""), pstr(body, "fix", ""), pstr(body, "tags", ""))
+		bug, err := store.CreateBug("", u.Str(body["title"]), pstr(body, "description", ""), pstr(body, "severity", "minor"), pstr(body, "status", "open"), pstr(body, "commit_id", ""), pstr(body, "error", ""), pstr(body, "files", ""), pstr(body, "root_cause", ""), pstr(body, "fix", ""), pstr(body, "tags", ""))
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return true
 		}
 		web.SendJSON(w, bug)
 	case "decisions":
-		d, err := store.CreateDecision(u.Str(body["title"]), u.Str(body["background"]), u.Str(body["decision"]), pstr(body, "status", "proposed"))
+		d, err := store.CreateDecision("", u.Str(body["title"]), u.Str(body["background"]), u.Str(body["decision"]), pstr(body, "status", "proposed"))
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return true
@@ -85,7 +85,7 @@ func (s *Server) handleCreateRoutes(w http.ResponseWriter, method, path string, 
 		}
 		web.SendJSON(w, t)
 	case "links":
-		link, err := store.CreateLink(u.Str(body["source_type"]), u.Str(body["source_id"]), u.Str(body["relation"]), u.Str(body["target_type"]), u.Str(body["target_id"]), pstr(body, "note", ""))
+		link, err := store.CreateLink("", u.Str(body["source_type"]), u.Str(body["source_id"]), u.Str(body["relation"]), u.Str(body["target_type"]), u.Str(body["target_id"]), pstr(body, "note", ""))
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return true
@@ -132,7 +132,7 @@ func (s *Server) handleNestedPostSubRoutes(w http.ResponseWriter, path string, b
 	switch {
 	case strings.HasPrefix(path, "tasks/") && strings.HasSuffix(path, "/notes"):
 		id := extractID(path, "tasks/", "/notes")
-		result, err := store.AppendTaskNote(id, u.Str(body["content"]))
+		result, err := store.AppendTaskNote("", id, u.Str(body["content"]))
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return true

@@ -25,19 +25,19 @@ func dispatchTask(subcmd string, args *cli.Args) {
 		t, _ := store.GetTask(args.Get("id"))
 		cli.PrintJSON(t)
 	case "add":
-		t, err := store.CreateTask(args.Get("title"), args.Str("priority", "P1"), args.Str("status", "todo"), args.Str("phase", "general"), args.Get("plan_id"), nil)
+		t, err := store.CreateTask("", args.Get("title"), args.Str("priority", "P1"), args.Str("status", "todo"), args.Str("phase", "general"), args.Get("plan_id"), nil)
 		if err != nil {
 			cli.Fail(err)
 			}
 		cli.PrintJSON(map[string]any{"task": t})
 	case "update":
-		t, err := store.UpdateTask(args.Get("id"), args.Str("status", ""), args.Str("note", ""), args.Bool("allow_without_commit"), args.Bool("append_note"))
+		t, err := store.UpdateTask("", args.Get("id"), args.Str("status", ""), args.Str("note", ""), args.Bool("allow_without_commit"), args.Bool("append_note"))
 		if err != nil {
 			cli.Fail(err)
 			}
 		cli.PrintJSON(map[string]any{"task": t})
 	case "note":
-		r, _ := store.AppendTaskNote(args.Get("id"), args.Get("content"))
+		r, _ := store.AppendTaskNote("", args.Get("id"), args.Get("content"))
 		cli.PrintJSON(r)
 	case "notes":
 		n, _ := store.ListTaskNotes(args.Get("id"), args.Int("limit", 20))
@@ -99,7 +99,7 @@ func dispatchCommit(subcmd string, args *cli.Args) {
 			}
 		var commits []map[string]any
 		for _, tid := range taskIDs {
-			c, err := store.CreateCommit(args.Get("title"), args.Str("summary", ""), args.Str("evidence_summary", ""), args.Str("review_notes", ""), args.Str("branch", ""), args.Str("commit_hash", ""), tid, args.Str("decision_id", ""), args.Str("status", "draft"), args.Str("test_status", "not_run"), args.Str("review_status", "pending"), nil)
+			c, err := store.CreateCommit("", args.Get("title"), args.Str("summary", ""), args.Str("evidence_summary", ""), args.Str("review_notes", ""), args.Str("branch", ""), args.Str("commit_hash", ""), tid, args.Str("decision_id", ""), args.Str("status", "draft"), args.Str("test_status", "not_run"), args.Str("review_status", "pending"), nil)
 			if err != nil {
 				cli.Fail(err)
 			}
@@ -169,7 +169,7 @@ func dispatchBug(subcmd string, args *cli.Args) {
 		b, _ := store.GetBug(args.Get("id"))
 		cli.PrintJSON(b)
 	case "add":
-		b, err := store.CreateBug(args.Get("title"), args.Str("description", ""), args.Str("severity", "minor"), args.Str("status", "open"), args.Str("commit_id", ""), args.Str("error", ""), args.Str("files", ""), args.Str("root_cause", ""), args.Str("fix", ""), args.Str("tags", ""))
+		b, err := store.CreateBug("", args.Get("title"), args.Str("description", ""), args.Str("severity", "minor"), args.Str("status", "open"), args.Str("commit_id", ""), args.Str("error", ""), args.Str("files", ""), args.Str("root_cause", ""), args.Str("fix", ""), args.Str("tags", ""))
 		if err != nil {
 			cli.Fail(err)
 			}
@@ -201,7 +201,7 @@ func dispatchDecision(subcmd string, args *cli.Args) {
 		d, _ := store.GetDecision(args.Get("id"))
 		cli.PrintJSON(d)
 	case "add":
-		d, err := store.CreateDecision(args.Get("title"), args.Get("background"), args.Get("decision"), args.Str("status", "proposed"))
+		d, err := store.CreateDecision("", args.Get("title"), args.Get("background"), args.Get("decision"), args.Str("status", "proposed"))
 		if err != nil {
 			cli.Fail(err)
 			}
@@ -325,7 +325,7 @@ func dispatchLink(subcmd string, args *cli.Args) {
 		l, _ := store.ListLinks(args.Str("source_id", ""), args.Str("target_id", ""), args.Str("relation", ""))
 		cli.PrintJSON(map[string]any{"links": l})
 	case "add":
-		l, _ := store.CreateLink(args.Get("source_type"), args.Get("source_id"), args.Get("relation"), args.Get("target_type"), args.Get("target_id"), args.Str("note", ""))
+		l, _ := store.CreateLink("", args.Get("source_type"), args.Get("source_id"), args.Get("relation"), args.Get("target_type"), args.Get("target_id"), args.Str("note", ""))
 		cli.PrintJSON(l)
 	case "delete":
 		store.DeleteLink(args.Get("id"))

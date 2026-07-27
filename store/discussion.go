@@ -545,7 +545,7 @@ func AutoLinkDiscussions(sessions []AgentSessionSummary) (int, error) {
 		if err != nil || exists {
 			continue
 		}
-		if _, err := CreateLink(discussionLinkSourceType, ref.SessionID, discussionLinkRelation, ref.TargetType, ref.TargetID, "auto-linked from discussion"); err != nil {
+		if _, err := CreateLink("", discussionLinkSourceType, ref.SessionID, discussionLinkRelation, ref.TargetType, ref.TargetID, "auto-linked from discussion"); err != nil {
 			continue
 		}
 		created++

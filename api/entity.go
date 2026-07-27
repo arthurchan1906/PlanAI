@@ -96,7 +96,7 @@ func handleGetEntity(w http.ResponseWriter, entity, id string) {
 func handlePatchEntity(w http.ResponseWriter, entity, id string, body map[string]any) {
 	switch entity {
 	case "tasks":
-		task, err := store.UpdateTask(id, pstr(body, "status", ""), pstr(body, "note", ""), false, false)
+		task, err := store.UpdateTask("", id, pstr(body, "status", ""), pstr(body, "note", ""), false, false)
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return

@@ -174,7 +174,7 @@ func Reconcile(since, projectPath string) (ReconcileResult, error) {
 		// Execute auto-links for this session's batch
 		for _, link := range out.AutoLinked {
 			if link.SessionID == ss.SessionID {
-				store.CreateLink(link.SourceType, link.SourceID, "relates_to",
+				store.CreateLink("", link.SourceType, link.SourceID, "relates_to",
 					link.TargetType, link.TargetID,
 					fmt.Sprintf("reconcile: %s", link.Reason))
 			}
