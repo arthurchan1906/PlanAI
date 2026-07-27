@@ -594,6 +594,36 @@ func (s *mcpServer) handleCreateTask(args map[string]interface{}) mcpToolResult 
 		}
 	}
 
+	// Validate plan_id exists before creating
+	if planID == "" {
+		return mcpToolResult{
+			Content: []mcpContent{{Type: "text", Text: "❌ plan_id 为必填项。Task 必须关联到一个 Plan。\n\n请用 aipm_search_context 搜索已有 plan，或先创建 plan。"}},
+			IsError: true,
+		}
+	}
+	plan, err := store.GetPlan(planID)
+	if err != nil || plan == nil || plan["id"] == nil {
+		// Check if it's a task ID (common agent mistake: passing task ID as plan_id)
+		task, _ := store.GetTaskSimple(planID)
+		if task != nil && task["id"] != nil {
+			return mcpToolResult{
+				Content: []mcpContent{{Type: "text", Text: fmt.Sprintf(
+					"❌ '%s' 是一个 task ID，不是 plan ID。Task 必须属于 Plan。\n\n"+
+						"正确做法：\n"+
+						"1. 用 aipm_search_context 搜索已有的 plan\n"+
+						"2. 或先创建一个 plan 再创建 task", planID)}},
+				IsError: true,
+			}
+		}
+		return mcpToolResult{
+			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf(
+				"❌ plan '%s' 不存在。\n\n"+
+					"Task 必须关联到一个已存在的 plan。请用 aipm_search_context 搜索已有 plan，"+
+					"或先创建 plan 再创建 task。", planID)}},
+			IsError: true,
+		}
+	}
+
 	task, err := store.CreateTask(title, priority, status, phase, planID, nil)
 	if err != nil {
 		return mcpToolResult{
@@ -602,8 +632,6 @@ func (s *mcpServer) handleCreateTask(args map[string]interface{}) mcpToolResult 
 		}
 	}
 
-	// Get the plan to check status
-	plan, _ := store.GetPlan(planID)
 	related := map[string]interface{}{
 		"task":           task,
 		"plan_title":     u.Str(plan["title"]),

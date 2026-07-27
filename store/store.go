@@ -86,10 +86,10 @@ func CreateTask(title, priority, status, phase, planID string, acceptance []stri
 	if len(acceptance) > 0 {
 		accJSON = u.JsonStr(acceptance)
 	}
-	// Backfill roadmap_id from the plan
+	// Validate plan exists and backfill roadmap_id
 	var roadmapID string
 	if err := db.QueryRow("SELECT roadmap_id FROM plans WHERE id = ?", planID).Scan(&roadmapID); err != nil {
-		roadmapID = ""
+		return nil, fmt.Errorf("plan '%s' not found: task requires a valid plan_id", planID)
 	}
 	_, err = db.Exec("INSERT INTO tasks (id, title, status, priority, phase, plan_id, acceptance_json, related_docs_json, related_decisions_json, last_note, updated_at, roadmap_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, title, status, priority, phase, planID, accJSON, "[]", "[]", "", u.Today(), roadmapID, now)
 	if err != nil {
