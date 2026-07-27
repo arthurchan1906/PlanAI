@@ -33,11 +33,12 @@ func classifyFiles(messages []map[string]any) (touchedFiles, readFiles []string)
 				FilePath string `json:"file_path"`
 			}
 			if err := json.Unmarshal([]byte(meta), &md); err == nil && md.FilePath != "" {
+				fp := normalizePath(md.FilePath)
 				switch md.Type {
 				case "new_file", "edit", "write":
-					touched[md.FilePath] = true
+					touched[fp] = true
 				case "read":
-					read[md.FilePath] = true
+					read[fp] = true
 				}
 			}
 		}
@@ -57,13 +58,13 @@ func classifyFiles(messages []map[string]any) (touchedFiles, readFiles []string)
 			case "bash":
 				paths := extractPathsFromCommand(md.Command)
 				for _, p := range paths {
-					touched[p] = true
+					touched[normalizePath(p)] = true
 				}
 			case "read":
 				if md.Command != "" {
 					paths := extractPathsFromCommand(md.Command)
 					for _, p := range paths {
-						read[p] = true
+						read[normalizePath(p)] = true
 					}
 				}
 			}
@@ -106,6 +107,18 @@ func getKnownProjectRoots() []string {
 }
 
 var fileExtRE = regexp.MustCompile(`\.(go|py|js|ts|jsx|tsx|swift|m|h|c|cpp|java|kt|rs|rb|sh|yaml|yml|json|sql|md|css|html|vue|svelte|toml|xml|plist|entitlements|pbxproj|xcscheme)$`)
+
+// normalizePath strips known project root prefixes to produce
+// project-relative paths that match git log --name-only output.
+func normalizePath(path string) string {
+	for _, root := range getKnownProjectRoots() {
+		prefix := root + "/"
+		if strings.HasPrefix(path, prefix) {
+			return strings.TrimPrefix(path, prefix)
+		}
+	}
+	return path
+}
 
 func extractPathsFromCommand(cmd string) []string {
 	if cmd == "" {

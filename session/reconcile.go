@@ -99,7 +99,7 @@ func Reconcile(since, projectPath string) (ReconcileResult, error) {
 		}
 
 		// Find commits in time window
-		commits, err := store.ListCommits("", "", "", ss.CreatedAt, 200)
+		commits, err := store.ListCommits("", "", "", "", 200)
 		if err != nil {
 			continue
 		}
