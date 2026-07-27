@@ -1765,7 +1765,7 @@ func MapKeyToColumn(k string) string {
 		"phase": "phase", "goal": "goal", "roadmap_id": "roadmap_id", "plan_id": "plan_id",
 		"vision_id": "vision_id", "task_id": "task_id", "decision_id": "decision_id",
 		"commit_id": "commit_id", "description": "description", "severity": "severity",
-		"error": "error", "files": "files", "root_cause": "root_cause", "fix": "fix", "tags": "tags",
+		"error": "error", "files": "files_json", "root_cause": "root_cause", "fix": "fix", "tags": "tags",
 		"branch": "branch", "commit_hash": "commit_hash", "test_status": "test_status", "review_status": "review_status",
 		"evidence_summary": "evidence_summary", "review_notes": "review_notes",
 		"kind": "kind", "source": "source", "impact": "impact",
