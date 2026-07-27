@@ -158,7 +158,10 @@ func Reconcile(since, projectPath string) (ReconcileResult, error) {
 				}
 
 			case len(hardMatches) == 1 || len(softMatches) >= 1:
-				// Medium confidence: generate tentative event
+				// softMatches >= 2 with hard>=1 anchor: medium confidence tentative
+				if len(softMatches) < 2 || len(hardMatches) < 1 {
+					continue
+				}
 				reason := fmt.Sprintf("%d hard + %d soft file matches", len(hardMatches), len(softMatches))
 				eventID := createTentativeEvent("commit", cid, ss.SessionID, reason)
 				out.TentativeLinks = append(out.TentativeLinks, TentativeLink{
@@ -184,9 +187,12 @@ func Reconcile(since, projectPath string) (ReconcileResult, error) {
 			}
 		}
 
-		// Build graph edges for this session (Stream C: file_touch + same_session)
+		// Build graph edges for this session (file_touch only)
 		buildGraphEdges(ss.SessionID, touchedFiles, readFiles, commits)
 	}
+
+	// Phase 2: same_session edges derived from confirmed session↔commit links
+	buildSameSessionEdges(out.AutoLinked)
 
 	crossSessionEdges(projectPath, since)
 

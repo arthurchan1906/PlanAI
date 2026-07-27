@@ -1100,7 +1100,7 @@ func CreateLink(projectPath string, sourceType, sourceID, relation, targetType, 
 	defer db.Close()
 	id := u.Slug("link")
 	now := u.NowISO()
-	db.Exec("INSERT INTO links (id, source_type, source_id, relation, target_type, target_id, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", id, sourceType, sourceID, relation, targetType, targetID, note, now)
+	db.Exec("INSERT OR IGNORE INTO links (id, source_type, source_id, relation, target_type, target_id, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", id, sourceType, sourceID, relation, targetType, targetID, note, now)
 	return map[string]any{"id": id, "source_type": sourceType, "source_id": sourceID, "relation": relation, "target_type": targetType, "target_id": targetID}, nil
 }
 
@@ -2403,7 +2403,7 @@ func CreateGraphEdge(sourceType, sourceID, edgeType, targetType, targetID string
 	id := u.Slug("gedge")
 	now := u.NowISO()
 	evJSON := u.JsonStr(evidence)
-	_, err = db.Exec("INSERT INTO graph_edges (id, source_type, source_id, edge_type, target_type, target_id, weight, evidence_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+	_, err = db.Exec("INSERT OR IGNORE INTO graph_edges (id, source_type, source_id, edge_type, target_type, target_id, weight, evidence_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		id, sourceType, sourceID, edgeType, targetType, targetID, weight, evJSON, now)
 	return err
 }

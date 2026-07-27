@@ -12,14 +12,14 @@ const maxEdgeAgeDays = 7
 
 // buildGraphEdges creates graph_edges for a single session's commits.
 //   - file_touch: session → commit with file intersection
-//   - same_session: commit → commit within the same session (deterministic)
+//   - file_read: session → commit with read-file intersection
+// same_session edges are built separately via buildSameSessionEdges
+// after reconcile has confirmed session↔commit links.
 func buildGraphEdges(sessionID string, touchedFiles, readFiles []string, commits []map[string]any) {
 	if len(touchedFiles) == 0 {
 		return
 	}
 
-	// Collect commit IDs in this session for same_session edges
-	var commitIDs []string
 	commitFiles := map[string][]string{}
 	commitTimes := map[string]string{}
 
@@ -29,34 +29,32 @@ func buildGraphEdges(sessionID string, touchedFiles, readFiles []string, commits
 		if err := json.Unmarshal([]byte(u.Str(c["files_json"])), &cfiles); err != nil || len(cfiles) == 0 {
 			continue
 		}
-		commitIDs = append(commitIDs, cid)
 		commitFiles[cid] = cfiles
 		commitTimes[cid] = u.Str(c["created_at"])
 	}
 
-	if len(commitIDs) == 0 {
+	if len(commitFiles) == 0 {
 		return
 	}
 
 	now := time.Now()
 	cutoff := now.AddDate(0, 0, -maxEdgeAgeDays).Format("2006-01-02")
 
-	for _, cid := range commitIDs {
-		cfiles := commitFiles[cid]
+	for cid, cfiles := range commitFiles {
 		ctime := commitTimes[cid]
-
-		// Skip commits older than 7 days
 		if ctime < cutoff {
 			continue
 		}
 
 		// file_touch: session → commit (Jaccard similarity)
 		inter := intersectFiles(touchedFiles, cfiles)
-		if len(inter) > 0 {
+		if len(inter) >= 2 {
 			union := unionFiles(touchedFiles, cfiles)
 			weight := float64(len(inter)) / float64(len(union))
-			store.CreateGraphEdge("session", sessionID, "file_touch", "commit", cid, weight,
-				map[string]any{"intersect": safeSlice(inter, 5), "session_files": len(touchedFiles), "commit_files": len(cfiles)})
+			if weight >= 0.1 {
+				store.CreateGraphEdge("session", sessionID, "file_touch", "commit", cid, weight,
+					map[string]any{"intersect": safeSlice(inter, 5), "session_files": len(touchedFiles), "commit_files": len(cfiles)})
+			}
 		}
 
 		// file_read: session read files that match commit files
@@ -67,23 +65,36 @@ func buildGraphEdges(sessionID string, touchedFiles, readFiles []string, commits
 				map[string]any{"read_files": safeSlice(readInter, 3)})
 		}
 	}
+}
 
-	// same_session: commit → commit (deterministic, weight=1.0)
-	for i := 0; i < len(commitIDs); i++ {
-		for j := i + 1; j < len(commitIDs); j++ {
-			cidA, cidB := commitIDs[i], commitIDs[j]
-			if commitTimes[cidA] < cutoff || commitTimes[cidB] < cutoff {
-				continue
+// buildSameSessionEdges creates same_session edges between commits that
+// reconcile has linked to the same session. Only commits with confirmed
+// session membership get connected — no time-window heuristics.
+func buildSameSessionEdges(links []LinkAction) {
+	// Group commit IDs by session
+	sessionCommits := map[string][]string{}
+	for _, link := range links {
+		if link.SourceType == "commit" && link.TargetType == "session" {
+			sessionCommits[link.TargetID] = append(sessionCommits[link.TargetID], link.SourceID)
+		}
+	}
+
+	for sessionID, commits := range sessionCommits {
+		if len(commits) < 2 {
+			continue
+		}
+		// Create edges between all pairs of commits in the same session
+		for i := 0; i < len(commits); i++ {
+			for j := i + 1; j < len(commits); j++ {
+				store.CreateGraphEdge("commit", commits[i], "same_session", "commit", commits[j], 1.0,
+					map[string]any{"session_id": sessionID})
 			}
-			store.CreateGraphEdge("commit", cidA, "same_session", "commit", cidB, 1.0,
-				map[string]any{"session_id": sessionID})
 		}
 	}
 }
 
 // crossSessionEdges creates derived_from edges between sessions that share
-// the same commit via file_touch edges. Only runs when projectPath is set
-// (deferred until full graph is built).
+// the same commit via file_touch edges.
 func crossSessionEdges(projectPath, since string) {
 	// Deferred: requires graph_edges to already have file_touch edges
 	// for multiple sessions, then finds sessions touching same commits.
@@ -105,4 +116,3 @@ func unionFiles(a, b []string) []string {
 	}
 	return out
 }
-
