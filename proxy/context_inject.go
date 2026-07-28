@@ -163,7 +163,25 @@ func buildActionItems() []string {
 			items = append(items, fmt.Sprintf("\u26a0\ufe0f %s", summary))
 		}
 	}
+	if len(items) > 0 {
+		u.LogShared("INJECT", "emerge_events total=%d types=%v items=%d cap=%d", 
+			len(events), eventTypeBreakdown(events), len(items), sessionCache.maxActions)
+	}
 	return items
+}
+
+// eventTypeBreakdown returns a compact type→count string for logging.
+func eventTypeBreakdown(events []map[string]any) string {
+	counts := map[string]int{}
+	for _, ev := range events {
+		typ, _ := ev["type"].(string)
+		counts[typ]++
+	}
+	parts := make([]string, 0, len(counts))
+	for t, c := range counts {
+		parts = append(parts, fmt.Sprintf("%s=%d", t, c))
+	}
+	return strings.Join(parts, " ")
 }
 
 func buildContextBlock(goals, warnings, actionItems []string) string {

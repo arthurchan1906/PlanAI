@@ -135,6 +135,9 @@ func UpdateTask(projectPath string, id, status, note string, allowWithoutCommit,
 	if status == "done" && oldStatus != "done" && !allowWithoutCommit {
 		var count int
 		db.QueryRow("SELECT COUNT(*) FROM commits WHERE task_id = ? AND status IN ('committed','merged') AND review_status IN ('approved','auto') AND test_status IN ('passed','auto')", id).Scan(&count)
+		if count > 0 {
+			u.LogShared("DONE-GATE", "pass task=%s commits=%d", id[:min(len(id), 12)], count)
+		}
 		if count == 0 {
 			return nil, fmt.Errorf("task cannot be marked done without at least one verified approved commit")
 		}
@@ -2205,6 +2208,9 @@ func HasUnconsumedEvent(typ, entityID string) bool {
 	if err := db.QueryRow("SELECT COUNT(*) FROM events WHERE type=? AND entity_id=? AND consumed_by_agent=0",
 		typ, entityID).Scan(&count); err != nil {
 		return false
+	}
+	if count > 0 {
+		u.LogShared("EVENT", "dedup skip type=%s entity=%s", typ, entityID[:min(len(entityID), 12)])
 	}
 	return count > 0
 }
