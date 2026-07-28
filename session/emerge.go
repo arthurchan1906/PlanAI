@@ -45,12 +45,17 @@ func commitOrphans() {
 		}
 		cid := u.Str(c["id"])
 		ctitle := u.Str(c["title"])
-		// Check for existing task links
-		links, _ := store.ListLinks(cid, "", "")
+		// Check for existing task links (both directions)
 		hasTask := false
-		for _, l := range links {
-			if u.Str(l["target_type"]) == "task" {
-				hasTask = true
+		for _, dir := range [][3]string{{cid, "", ""}, {"", cid, ""}} {
+			links, _ := store.ListLinks(dir[0], dir[1], dir[2])
+			for _, l := range links {
+				if u.Str(l["target_type"]) == "task" || u.Str(l["source_type"]) == "task" {
+					hasTask = true
+					break
+				}
+			}
+			if hasTask {
 				break
 			}
 		}
