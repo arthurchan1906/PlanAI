@@ -135,3 +135,33 @@ func TraceContextJSON(fromType, fromID, direction string, minWeight float64, lim
 	}
 	return string(b), nil
 }
+
+// ListSessionsWithEdges returns distinct session IDs that have graph edges.
+func ListSessionsWithEdges(limit int) ([]string, error) {
+	db, err := pmdb.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	rows, err := db.Query(
+		`SELECT DISTINCT source_id FROM graph_edges WHERE source_type='session'
+		 UNION
+		 SELECT DISTINCT target_id FROM graph_edges WHERE target_type='session'
+		 ORDER BY 1 LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		rows.Scan(&id)
+		ids = append(ids, id)
+	}
+	if ids == nil {
+		ids = []string{}
+	}
+	return ids, nil
+}

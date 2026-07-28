@@ -72,32 +72,28 @@ func getFloat(m map[string]interface{}, key string, def float64) float64 {
 }
 
 func buildBriefingGraph() string {
-	summaries, err := store.ListSessionSummariesSince("", 5)
-	if err != nil || len(summaries) == 0 {
+	// Query graph_edges directly — session_summaries uses different session IDs
+	sessions, err := store.ListSessionsWithEdges(3)
+	if err != nil || len(sessions) == 0 {
 		return ""
 	}
 	var sb strings.Builder
 	sb.WriteString("\n## Graph\n\n")
-	shown := 0
-	for _, ss := range summaries {
-		if shown >= 3 {
-			break
-		}
-		tr, err := store.TraceContext("session", ss.SessionID, "out", 0.3, 20)
+	for _, sid := range sessions {
+		tr, err := store.TraceContext("session", sid, "out", 0.3, 20)
 		if err != nil || tr.Summary.TotalEdges == 0 {
 			continue
 		}
-		sid := ss.SessionID
-		if len(sid) > 8 {
-			sid = sid[:8]
+		prefix := sid
+		if len(prefix) > 8 {
+			prefix = prefix[:8]
 		}
 		sb.WriteString(fmt.Sprintf("- session %s: %d edges (ft=%d, ss=%d)\n",
-			sid, tr.Summary.TotalEdges,
+			prefix, tr.Summary.TotalEdges,
 			tr.Summary.ByEdgeType["file_touch"],
 			tr.Summary.ByEdgeType["same_session"]))
-		shown++
 	}
-	if shown == 0 {
+	if sb.Len() == len("\n## Graph\n\n") {
 		return ""
 	}
 	return sb.String()
