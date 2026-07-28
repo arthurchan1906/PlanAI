@@ -408,6 +408,21 @@ func (s *mcpServer) registerTools() {
 			Required: []string{"image_path", "prompt"},
 		},
 	}, s.handleVision)
+
+	s.addTool(MCPTool{
+		Name:        "aipm_trace_context",
+		Description: "查询 graph_edges 图数据库，以指定实体为起点遍历关联关系。支持 out/in/both 三种方向。返回边列表含 edge_type 和 weight，Agent 可据此区分强弱信号（高 weight=强相关，低 weight=弱相关）。适用于「这个 task 关联了哪些 commit？」「这个 commit 之后还有谁改了同一文件？」等溯源场景。",
+		InputSchema: MCPInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"from_type":  map[string]string{"type": "string", "description": "起点实体类型: session / commit / task / plan / decision / bug / idea"},
+				"from_id":    map[string]string{"type": "string", "description": "起点实体 ID"},
+				"direction":  map[string]string{"type": "string", "description": "遍历方向: out / in / both（默认 both）"},
+				"min_weight": map[string]string{"type": "number", "description": "最小权重过滤，默认 0。0.3 只拿强信号边"},
+			},
+			Required: []string{"from_type", "from_id"},
+		},
+	}, s.handleTraceContext)
 }
 
 func (s *mcpServer) addTool(tool MCPTool, handler mcpToolHandler) {
@@ -1652,6 +1667,22 @@ func getInt(m map[string]interface{}, key string, def int) int {
 	return def
 }
 
+func getFloat(m map[string]interface{}, key string, def float64) float64 {
+	if v, ok := m[key]; ok {
+		switch n := v.(type) {
+		case float64:
+			return n
+		case json.Number:
+			if f, err := n.Float64(); err == nil {
+				return f
+			}
+		case int:
+			return float64(n)
+		}
+	}
+	return def
+}
+
 func splitStr(s, sep string) []string {
 	if s == "" {
 		return nil
@@ -1801,5 +1832,38 @@ func (s *mcpServer) handleVision(args map[string]interface{}) mcpToolResult {
 
 	return mcpToolResult{
 		Content: []mcpContent{{Type: "text", Text: info}},
+	}
+}
+
+// handleTraceContext handles the aipm_trace_context MCP tool.
+func (s *mcpServer) handleTraceContext(args map[string]interface{}) mcpToolResult {
+	fromType := getStr(args, "from_type", "")
+	fromID := getStr(args, "from_id", "")
+	direction := getStr(args, "direction", "both")
+	minWeight := getFloat(args, "min_weight", 0)
+
+	allowed := map[string]bool{"session": true, "commit": true, "task": true, "plan": true, "decision": true, "bug": true, "idea": true}
+	if fromType == "" || fromID == "" || !allowed[fromType] {
+		return mcpToolResult{
+			Content: []mcpContent{{Type: "text", Text: "缺少必填参数 from_type / from_id，或 from_type 不在允许列表中 (session/commit/task/plan/decision/bug/idea)"}},
+			IsError: true,
+		}
+	}
+	if direction != "in" && direction != "out" && direction != "both" {
+		direction = "both"
+	}
+
+	jsonStr, err := store.TraceContextJSON(fromType, fromID, direction, minWeight, 200)
+	if err != nil {
+		u.LogShared("MCP", "tool=aipm_trace_context status=ERR err=%v", err)
+		return mcpToolResult{
+			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("图查询失败: %v", err)}},
+			IsError: true,
+		}
+	}
+
+	u.LogShared("MCP", "tool=aipm_trace_context status=OK from=%s/%s dir=%s", fromType, u.Prefix(fromID, 12), direction)
+	return mcpToolResult{
+		Content: []mcpContent{{Type: "text", Text: jsonStr}},
 	}
 }
