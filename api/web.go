@@ -4,12 +4,34 @@ import (
 	"net/http"
 	"strings"
 
+	"aipmc/store"
+	"aipmc/u"
 	"aipmc/web"
 	"aipmc/webdata"
 )
 
 func (s *Server) handleWebRoutes(w http.ResponseWriter, method, path string) bool {
-	if method != "GET" || !strings.HasPrefix(path, "web/") {
+	if !strings.HasPrefix(path, "web/") {
+		return false
+	}
+
+	// POST routes for mutations
+	if method == "POST" {
+		switch path {
+		case "web/events/consume":
+			if err := store.MarkEventsConsumed(); err != nil {
+				web.SendJSON(w, map[string]any{"ok": false, "error": err.Error()})
+				return true
+			}
+			// Return remaining unconsumed count
+			events, _ := store.GetUnconsumedEvents()
+			web.SendJSON(w, map[string]any{"ok": true, "remaining": len(events)})
+			return true
+		}
+		return false
+	}
+
+	if method != "GET" {
 		return false
 	}
 	switch path {
@@ -37,6 +59,22 @@ func (s *Server) handleWebRoutes(w http.ResponseWriter, method, path string) boo
 		web.SendJSON(w, webdata.DailyPayload())
 	case "web/activity":
 		web.SendJSON(w, webdata.ActivityPayload())
+	case "web/events":
+		events, _ := store.GetUnconsumedEvents()
+		if events == nil {
+			events = []map[string]any{}
+		}
+		// Filter to tentative_link only for activity view
+		var tentative []map[string]any
+		for _, e := range events {
+			if u.Str(e["type"]) == "tentative_link" {
+				tentative = append(tentative, e)
+			}
+		}
+		if tentative == nil {
+			tentative = []map[string]any{}
+		}
+		web.SendJSON(w, map[string]any{"events": tentative})
 	case "web/bootstrap":
 		s.handleBootstrap(w)
 	default:

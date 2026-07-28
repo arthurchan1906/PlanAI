@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Card, Tag, Typography, Empty, Spin, Alert, Space, Button } from "antd";
+import { Card, Tag, Typography, Empty, Spin, Alert, Space, Button, Modal, Popover, List } from "antd";
 import {
   ClockCircleOutlined, BugOutlined, BranchesOutlined,
   FileTextOutlined, AlertOutlined, NodeIndexOutlined,
@@ -271,6 +271,28 @@ export default function ActivityView() {
     );
   }
 
+  const fetchTentativeDetails = async () => {
+    setTentativeLoading(true);
+    try {
+      const data = await api("/pmai/web/events");
+      setTentativeDetails(data.events || []);
+    } catch {
+      setTentativeDetails([]);
+    }
+    setTentativeLoading(false);
+  };
+
+  const consumeTentativeAll = async () => {
+    try {
+      const data = await api("/pmai/web/events/consume", { method: "POST" });
+      if (data.ok) {
+        setTentativeDetails([]);
+        // Refresh the page to update the alert count
+        window.location.reload();
+      }
+    } catch {}
+  };
+
   return (
     <div style={{ padding: "16px 24px", maxWidth: 960, margin: "0 auto" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -294,7 +316,42 @@ export default function ActivityView() {
                 <span>🔥 热点文件: {alerts.file_hotspots.map((h) => h.file).join(", ")}</span>
               )}
               {alerts.tentative_links > 0 && (
-                <span>🔗 {alerts.tentative_links} 个待确认关联</span>
+                <Popover
+                  content={
+                    <div style={{ maxWidth: 420, maxHeight: 300, overflow: "auto" }}>
+                      {tentativeLoading ? (
+                        <Spin size="small" />
+                      ) : tentativeDetails ? (
+                        tentativeDetails.length === 0 ? (
+                          <Text type="secondary">暂无需确认的关联</Text>
+                        ) : (
+                          <List
+                            size="small"
+                            dataSource={tentativeDetails.slice(0, 10)}
+                            renderItem={(e) => (
+                              <List.Item style={{ padding: "4px 0", fontSize: 12 }}>
+                                <Text type="secondary">{e.summary}</Text>
+                              </List.Item>
+                            )}
+                          />
+                        )
+                      ) : (
+                        <Text type="secondary">点击查看后加载</Text>
+                      )}
+                      {tentativeDetails && tentativeDetails.length > 0 && (
+                        <Button size="small" type="link" danger style={{ marginTop: 8, padding: 0 }}
+                          onClick={consumeTentativeAll}>
+                          忽略全部 ({tentativeDetails.length})
+                        </Button>
+                      )}
+                    </div>
+                  }
+                  title="待确认关联"
+                  trigger="click"
+                  onOpenChange={(open) => { if (open) fetchTentativeDetails(); }}
+                >
+                  <Button type="link" size="small" style={{ padding: 0 }}>🔗 {alerts.tentative_links} 个待确认关联</Button>
+                </Popover>
               )}
             </Space>
           }
