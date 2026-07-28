@@ -134,7 +134,7 @@ func UpdateTask(projectPath string, id, status, note string, allowWithoutCommit,
 	}
 	if status == "done" && oldStatus != "done" && !allowWithoutCommit {
 		var count int
-		db.QueryRow("SELECT COUNT(*) FROM commits WHERE task_id = ? AND status IN ('committed','merged') AND review_status='approved' AND test_status='passed'", id).Scan(&count)
+		db.QueryRow("SELECT COUNT(*) FROM commits WHERE task_id = ? AND status IN ('committed','merged') AND review_status IN ('approved','auto') AND test_status IN ('passed','auto')", id).Scan(&count)
 		if count == 0 {
 			return nil, fmt.Errorf("task cannot be marked done without at least one verified approved commit")
 		}
