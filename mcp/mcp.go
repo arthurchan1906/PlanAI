@@ -1424,6 +1424,41 @@ func (s *mcpServer) handleToolsList(msg *jsonrpcMessage) {
 	})
 }
 
+// recordMCPError writes an mcp_error event when an MCP tool call fails.
+// This feeds into the INJECT pipeline so the next LLM request gets a
+// corrective hint about the failed operation.
+func recordMCPError(toolName string, args map[string]interface{}, result mcpToolResult) {
+	// Extract the target entity ID for dedup
+	entityID := ""
+	for _, k := range []string{"task_id", "commit_id", "plan_id", "bug_id", "decision_id"} {
+		if v, ok := args[k].(string); ok && v != "" {
+			entityID = v
+			break
+		}
+	}
+	if entityID == "" {
+		entityID = toolName // fallback: dedup by tool name
+	}
+
+	// Dedup: skip if same entity already has an unconsumed mcp_error
+	if store.HasUnconsumedEvent("mcp_error", entityID) {
+		return
+	}
+
+	// Extract error text
+	errText := ""
+	for _, c := range result.Content {
+		if c.Type == "text" {
+			errText += c.Text
+		}
+	}
+
+	summary := fmt.Sprintf("工具 %s 失败: %s", toolName, u.TruncateStr(errText, 120))
+	store.CreateEvent("mcp_error", toolName, entityID, summary)
+	u.LogShared("MCP-ERR", "tool=%s entity=%s error=%s", 
+		toolName, entityID[:min(len(entityID), 16)], u.TruncateStr(errText, 60))
+}
+
 func (s *mcpServer) handleToolsCall(msg *jsonrpcMessage) {
 	var call struct {
 		Name      string                 `json:"name"`
@@ -1450,6 +1485,8 @@ func (s *mcpServer) handleToolsCall(msg *jsonrpcMessage) {
 	status := "OK"
 	if result.IsError {
 		status = "ERR"
+		// P3: record MCP error as event for next INJECT correction hint
+		recordMCPError(call.Name, call.Arguments, result)
 	}
 	u.LogShared("MCP", "tool=%s status=%s | %s", call.Name, status, mcpLogSummary(call.Name, call.Arguments))
 
