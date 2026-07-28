@@ -3,6 +3,7 @@ package session
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -12,8 +13,19 @@ import (
 
 const maxEmergPerRule = 5
 
-// emergeOnce runs all emergence detection rules.
-func emergeOnce() {
+// emergeOnce runs all emergence detection rules for the given project.
+// It temporarily switches CWD to projectPath so that CWD-based store
+// functions (CreateEvent, ListEvents, etc.) write to the correct database.
+func emergeOnce(projectPath string) {
+	if projectPath != "" {
+		home, _ := os.Getwd()
+		if err := os.Chdir(projectPath); err != nil {
+			u.LogShared("EMERGE", "chdir fail %s: %v", projectPath, err)
+			return
+		}
+		defer os.Chdir(home)
+	}
+
 	commitOrphans()
 	staleFileTasks()
 	hotspotUntracked()

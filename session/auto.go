@@ -84,6 +84,6 @@ func runOnce(projectPath string, summarizer ai.Summarizer) {
 	}
 
 	// Phase 2: emergence detection (zero-LLM, rules-driven)
-	emergeOnce()
+	emergeOnce(projectPath)
 	u.LogShared("EMERGE", "project=%s detection complete", projectPath)
 }
