@@ -1001,7 +1001,6 @@ func (s *mcpServer) handleReadDiscussions(args map[string]interface{}) mcpToolRe
 	header.WriteString("\n\n")
 
 	text := header.String() + discussion.FormatResults(rows, full)
-	text += buildReadGraphAnnotation(rows)
 	reflection := ""
 	if len(rows) == 0 {
 		if cursor != "" {

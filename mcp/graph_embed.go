@@ -99,38 +99,3 @@ func buildBriefingGraph() string {
 	return sb.String()
 }
 
-func buildReadGraphAnnotation(rows []map[string]any) string {
-	if len(rows) == 0 {
-		return ""
-	}
-	sessionIDs := map[string]bool{}
-	for _, r := range rows {
-		if sid, ok := r["session_id"].(string); ok && sid != "" {
-			sessionIDs[sid] = true
-		}
-	}
-	if len(sessionIDs) == 0 {
-		return ""
-	}
-	var sb strings.Builder
-	for sid := range sessionIDs {
-		tr, err := store.TraceContext("session", sid, "out", 0.1, 30)
-		if err != nil || tr.Summary.TotalEdges == 0 {
-			continue
-		}
-		prefix := sid
-		if len(prefix) > 8 {
-			prefix = prefix[:8]
-		}
-		topWt := 0.0
-		if len(tr.Edges) > 0 {
-			topWt = tr.Edges[0].Weight
-		}
-		sb.WriteString(fmt.Sprintf("\n[graph: session %s -> %d edges (ft=%d, ss=%d, top_wt=%.2f)]\n",
-			prefix, tr.Summary.TotalEdges,
-			tr.Summary.ByEdgeType["file_touch"],
-			tr.Summary.ByEdgeType["same_session"],
-			topWt))
-	}
-	return sb.String()
-}
