@@ -400,7 +400,7 @@ func StoreGitCommit(projectPath, title, commitHash, date string, files []string)
 	id := u.Slug("commit")
 	now := u.NowISO()
 	_, err = db.Exec("INSERT INTO commits (id, title, summary, evidence_summary, review_notes, branch, commit_hash, task_id, decision_id, status, test_status, review_status, files_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		id, title, "", "", "", "", commitHash, "", "", "committed", "not_run", "pending", filesJSON, date, now)
+		id, title, "", "", "", "", commitHash, "", "", "committed", "auto", "auto", filesJSON, date, now)
 	if err != nil {
 		return nil, err
 	}
@@ -2192,6 +2192,21 @@ func CreateEvent(typ, entityType, entityID, summary string) (map[string]any, err
 		return nil, err
 	}
 	return map[string]any{"id": id, "type": typ, "entity_type": entityType, "entity_id": entityID, "summary": summary, "created_at": now, "consumed_by_agent": false}, nil
+}
+
+// HasUnconsumedEvent checks if an unconsumed event of the given type+entity already exists.
+func HasUnconsumedEvent(typ, entityID string) bool {
+	db, err := pmdb.Open()
+	if err != nil {
+		return false
+	}
+	defer db.Close()
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM events WHERE type=? AND entity_id=? AND consumed_by_agent=0",
+		typ, entityID).Scan(&count); err != nil {
+		return false
+	}
+	return count > 0
 }
 
 func ListEvents(consumedOnly string) ([]map[string]any, error) {

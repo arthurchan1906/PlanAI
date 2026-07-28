@@ -217,6 +217,10 @@ func createTentativeEvent(sourceType, sourceID, sessionID, reason string) string
 	}
 	summary := fmt.Sprintf("reconcile: session %s may relate to %s %s (reason: %s, confidence: low)",
 		prefix, sourceType, sourceID, reason)
+	// Dedup: skip if this entity already has an unconsumed tentative_link
+	if store.HasUnconsumedEvent("tentative_link", sourceID) {
+		return ""
+	}
 	evt, err := store.CreateEvent("tentative_link", sourceType, sourceID, summary)
 	if err != nil {
 		return ""
