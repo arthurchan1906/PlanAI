@@ -1141,7 +1141,7 @@ func DaysSince(dateStr string) int {
 }
 
 // BuildBriefing generates a structured Markdown briefing for the Agent.
-func BuildBriefing(aiClient *ai.Client) string {
+func BuildBriefing(aiClient *ai.Client, graphSection string) string {
 	report := RunFullAnalysis()
 	tasks, _ := store.ListTasks("in_progress", "")
 	events, _ := store.GetUnconsumedEvents()
@@ -1394,6 +1394,11 @@ func BuildBriefing(aiClient *ai.Client) string {
 		}
 	}
 
+
+	// Graph section — injected before AI summary so it survives truncation
+	if graphSection != "" {
+		b.WriteString(graphSection)
+	}
 	// AI executive summary when available
 	if aiClient != nil && aiClient.Enabled() {
 		summary, err := aiClient.Summarize(b.String(),

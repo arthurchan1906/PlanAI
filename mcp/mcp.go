@@ -419,10 +419,7 @@ func (s *mcpServer) addTool(tool MCPTool, handler mcpToolHandler) {
 // ---- Tool Handlers ----
 
 func (s *mcpServer) handleBriefing(args map[string]interface{}) mcpToolResult {
-	briefing := analyze.BuildBriefing(s.ai)
-	if gs := buildBriefingGraph(); gs != "" {
-		briefing += gs
-	}
+	briefing := analyze.BuildBriefing(s.ai, buildBriefingGraph())
 	report := analyze.RunFullAnalysis()
 
 	related := map[string]interface{}{
@@ -434,9 +431,6 @@ func (s *mcpServer) handleBriefing(args map[string]interface{}) mcpToolResult {
 	reflection := ""
 	if len(report.Orphans) > 0 {
 		reflection = fmt.Sprintf("⚠️ 检测到 %d 个孤儿任务（3 天内无 commit 且无讨论）。检查这些任务是否需要 commit 或更新状态。", len(report.Orphans))
-	}
-	if len(report.Duplicates) > 0 {
-		reflection += fmt.Sprintf("⚠️ 检测到 %d 个重复 Plan。避免重复创建。", len(report.Duplicates))
 	}
 
 	return mcpToolResult{

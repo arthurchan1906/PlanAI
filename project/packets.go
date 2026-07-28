@@ -119,7 +119,7 @@ func AgentStartPacket(client *ai.Client) map[string]any {
 			"active_threads":    threads[:minInt(3, len(threads))],
 		},
 		"thread_suggestions": analyze.AnalyzeThreadSuggestions(),
-		"briefing":           analyze.BuildBriefing(client),
+		"briefing":           analyze.BuildBriefing(client, ""),
 		"pm_alerts":          pmAlerts(events),
 		"recommended_flow": []map[string]any{
 			{"when": "Before coding or creating anything new", "command": "aipmc start"},
