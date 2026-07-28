@@ -82,4 +82,8 @@ func runOnce(projectPath string, summarizer ai.Summarizer) {
 		u.LogShared("PIPELINE", "reconcile done auto_linked=%d tentative=%d",
 			len(recResult.AutoLinked), len(recResult.TentativeLinks))
 	}
+
+	// Phase 2: emergence detection (zero-LLM, rules-driven)
+	emergeOnce()
+	u.LogShared("EMERGE", "project=%s detection complete", projectPath)
 }
