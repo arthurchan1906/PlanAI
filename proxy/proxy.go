@@ -901,6 +901,14 @@ func handleUnifiedNonStream(w http.ResponseWriter, r *http.Request, adapter Prot
 
 	// Normalize (model compat) then convert to native protocol
 	NormalizeResponse(&openaiResp)
+
+	// ── Yield detection (observation only) ──────────────────────────
+	if len(openaiResp.Choices) > 0 && openaiResp.Choices[0].Message != nil {
+		if text := extractMessageText(openaiResp.Choices[0].Message); text != "" {
+			detectYieldSignal(text, agent)
+		}
+	}
+
 	nativeResp := adapter.ConvertResponse(&openaiResp, model)
 	responseJSON, _ := json.Marshal(nativeResp)
 	writeJSON(w, http.StatusOK, nativeResp)
@@ -930,6 +938,56 @@ func handleUnifiedNonStream(w http.ResponseWriter, r *http.Request, adapter Prot
 //
 //	Adapter.ParseRequest → unifiedToOpenAI → forwardToUpstreamStream →
 //	parseUpstreamSSE → StreamNormalizer.Process → Emitter.Emit → Emitter.Done
+
+// detectYieldSignal inspects the final assistant response for yield/finish
+// keywords and logs a [YIELD] observation. Observation-only; no injection yet.
+func detectYieldSignal(text, agent string) {
+	if text == "" {
+		return
+	}
+	lower := strings.ToLower(text)
+	signals := []string{}
+	kw := map[string][]string{
+		"done":   {"done", "完成", "修复完毕", "修复完成", "已修复", "已解决", "已部署", "已提交", "已实现", "ready", "fixed", "resolved"},
+		"review": {"审核", "review", "audit", "检查"},
+		"plan":   {"plan", "方案", "建议", "实施", "下一步"},
+		"sum":    {"总结", "汇总", "summary", "recap"},
+	}
+	for sig, words := range kw {
+		for _, w := range words {
+			if strings.Contains(lower, w) {
+				signals = append(signals, sig)
+				break
+			}
+		}
+	}
+	if len(signals) > 0 {
+		u.LogShared("YIELD", "agent=%s signals=%v text_preview=%s",
+			agent, signals, u.TruncateStr(strings.ReplaceAll(text, "\n", " "), 80))
+	}
+}
+
+// extractMessageText extracts plain text from an OpenAI message Content field.
+func extractMessageText(msg *OpenAIMessage) string {
+	switch v := msg.Content.(type) {
+	case string:
+		return v
+	case []any:
+		var parts []string
+		for _, item := range v {
+			if m, ok := item.(map[string]any); ok {
+				if t, ok := m["text"]; ok {
+					if s, ok := t.(string); ok {
+						parts = append(parts, s)
+					}
+				}
+			}
+		}
+		return strings.Join(parts, " ")
+	}
+	return ""
+}
+
 func handleUnifiedStream(w http.ResponseWriter, r *http.Request, adapter ProtocolAdapter) {
 	rawBody, _ := io.ReadAll(r.Body)
 	r.Body.Close()
@@ -1018,6 +1076,11 @@ func handleUnifiedStream(w http.ResponseWriter, r *http.Request, adapter Protoco
 	}
 
 	finishCapture(capID, status, time.Since(startTime), nil, cap.responseText(), cap.eventsJSON())
+
+	// ── Yield detection for streaming responses ──────────────────
+	if streamText := cap.responseText(); streamText != "" {
+		detectYieldSignal(streamText, agent)
+	}
 
 	// Record token usage on both ring buffer and capture entry
 	if streamPromptTokens > 0 || streamCompletionTokens > 0 {
