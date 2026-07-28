@@ -73,6 +73,7 @@ func getFloat(m map[string]interface{}, key string, def float64) float64 {
 
 func buildBriefingGraph() string {
 	// Query graph_edges directly — session_summaries uses different session IDs
+	u.LogShared("MCP", "graph_embed building graph section...")
 	sessions, err := store.ListSessionsWithEdges(3)
 	if err != nil || len(sessions) == 0 {
 		return ""
