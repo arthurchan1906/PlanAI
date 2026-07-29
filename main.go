@@ -164,6 +164,9 @@ func main() {
 	case "hook-cursor":
 		hook.ProcessCursorHook()
 		return
+	case "hook-post-commit":
+		hook.ProcessPostCommitHook()
+		return
 	case "mcp":
 		if err := application.RunMCP(); err != nil {
 			fmt.Fprintf(os.Stderr, "MCP server error: %v\n", err)

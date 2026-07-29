@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -55,14 +57,17 @@ func init() {
 // InjectSessionContext prepends recent session goals into the system message
 // of a proxy request. One injection per agent per unique content (content-hash
 // based deduplication). Content is capped at maxInjectChars.
+// If the request body contains file paths (from code context), file→task
+// associations are added to help the agent understand which PM entities
+// are related to the files it's working on.
 func InjectSessionContext(body []byte, agent string) []byte {
-	goals, warnings, actionItems, blockHash := getCachedContext()
-	if len(goals) == 0 {
+	goals, warnings, actionItems, fileAssoc, blockHash := getCachedContext(body)
+	if len(goals) == 0 && len(fileAssoc) == 0 {
 		u.LogShared("INJECT", "skip agent=%s reason=no_summary_data", agent)
 		return body
 	}
 
-	block := buildContextBlock(goals, warnings, actionItems)
+	block := buildContextBlock(goals, warnings, actionItems, fileAssoc)
 
 	// Content-hash based dedup: only inject if content changed since last injection
 	if !shouldInject(agent, blockHash) {
@@ -88,11 +93,11 @@ func shouldInject(agent, contentHash string) bool {
 	return true
 }
 
-func getCachedContext() (goals, warnings, actionItems []string, hash string) {
+func getCachedContext(body []byte) (goals, warnings, actionItems, fileAssoc []string, hash string) {
 	sessionCache.mu.RLock()
 	if time.Since(sessionCache.updatedAt) < sessionCache.ttl && len(sessionCache.goals) > 0 {
 		defer sessionCache.mu.RUnlock()
-		return sessionCache.goals, sessionCache.warnings, sessionCache.actionItems, sessionCache.contentHash
+		return sessionCache.goals, sessionCache.warnings, sessionCache.actionItems, nil, sessionCache.contentHash
 	}
 	sessionCache.mu.RUnlock()
 
@@ -104,7 +109,7 @@ func getCachedContext() (goals, warnings, actionItems []string, hash string) {
 	if err != nil || len(rows) == 0 {
 		sessionCache.goals = nil
 		sessionCache.contentHash = ""
-		return nil, nil, nil, ""
+		return nil, nil, nil, nil, ""
 	}
 	goals = make([]string, 0, len(rows))
 	for _, r := range rows {
@@ -140,16 +145,20 @@ func getCachedContext() (goals, warnings, actionItems []string, hash string) {
 	// ── Pipeline emerge events → actionable nudge ──────────────────────
 	actionItems = buildActionItems()
 
+	// ── File awareness: extract paths from request body → PM context ──
+	fileAssoc = resolveFileContext(body)
+
 	sessionCache.goals = goals
 	sessionCache.warnings = warnings
 	sessionCache.actionItems = actionItems
-	sessionCache.contentHash = hashString(fmt.Sprintf("%v%v%v", goals, warnings, actionItems))
+	sessionCache.contentHash = hashString(fmt.Sprintf("%v%v%v%v", goals, warnings, actionItems, fileAssoc))
 	sessionCache.updatedAt = time.Now()
-	return goals, warnings, actionItems, sessionCache.contentHash
+	return goals, warnings, actionItems, fileAssoc, sessionCache.contentHash
 }
 
 // buildActionItems reads unconsumed pipeline emerge events and formats them
-// as actionable ⚠️ items for INJECT.
+// as actionable items for INJECT. Each event type is mapped to the specific
+// MCP tool(s) the agent can use to address it.
 func buildActionItems() []string {
 	events, err := store.GetUnconsumedEvents()
 	if err != nil || len(events) == 0 {
@@ -162,15 +171,37 @@ func buildActionItems() []string {
 			continue
 		}
 		summary, _ := ev["summary"].(string)
-		if summary != "" {
-			items = append(items, fmt.Sprintf("\u26a0\ufe0f %s", summary))
+		if summary == "" {
+			continue
 		}
+		entityID, _ := ev["entity_id"].(string)
+		line := fmt.Sprintf("\u26a0\ufe0f %s", summary)
+		// Bind each event type to the MCP tool that can fix it
+		if hint := actionToolHint(typ, entityID); hint != "" {
+			line += "\n  \u2192 " + hint
+		}
+		items = append(items, line)
 	}
 	if len(items) > 0 {
-		u.LogShared("INJECT", "emerge_events total=%d types=%v items=%d cap=%d", 
+		u.LogShared("INJECT", "emerge_events total=%d types=%v items=%d cap=%d",
 			len(events), eventTypeBreakdown(events), len(items), sessionCache.maxActions)
 	}
 	return items
+}
+
+// actionToolHint returns the MCP tool call suggestion for an event type.
+func actionToolHint(eventType, entityID string) string {
+	switch {
+	case strings.HasSuffix(eventType, "_orphan"):
+		return fmt.Sprintf("\u4fee\u590d: aipm_record_commit(task_id=\"?\", title=\"...\")  |  \u8be6\u60c5: aipm_get_commit(\"%s\")", entityID)
+	case strings.HasSuffix(eventType, "_stale_file"):
+		return fmt.Sprintf("\u68c0\u67e5: aipm_get_task(\"%s\") \u2014 \u786e\u8ba4 task \u662f\u5426\u771f\u6b63\u5b8c\u6210", entityID)
+	case strings.Contains(eventType, "untracked"):
+		return fmt.Sprintf("\u521b\u5efa: aipm_create_task(title=\"\u8ffd\u8e2a %s\", plan_id=\"...\")", u.TruncateStr(entityID, 40))
+	case eventType == "mcp_error":
+		return "\u4e0a\u6b21 MCP \u8c03\u7528\u5931\u8d25\uff0c\u68c0\u67e5\u53c2\u6570\u540e\u91cd\u8bd5\u3002\u8be6\u60c5\u89c1\u4e0a\u65b9\u7684 \u26a0\ufe0f \u9519\u8bef\u63cf\u8ff0"
+	}
+	return ""
 }
 
 // eventTypeBreakdown returns a compact type→count string for logging.
@@ -187,13 +218,28 @@ func eventTypeBreakdown(events []map[string]any) string {
 	return strings.Join(parts, " ")
 }
 
-func buildContextBlock(goals, warnings, actionItems []string) string {
+func buildContextBlock(goals, warnings, actionItems, fileAssoc []string) string {
 	var buf bytes.Buffer
 	buf.WriteString("\n[AIPM Context]")
 	written := 0
 	suppressed := 0
 
-	// Warnings first (high priority)
+	// ── File associations (highest priority: what the agent is working on NOW) ──
+	if len(fileAssoc) > 0 {
+		buf.WriteString("\n[文件关联]")
+		for _, fa := range fileAssoc {
+			line := "\n" + fa
+			if written+len(line) > maxInjectChars-50 {
+				suppressed++
+				continue
+			}
+			buf.WriteString(line)
+			written += len(line)
+		}
+		buf.WriteString("\n")
+	}
+
+	// Warnings next (high priority)
 	for _, w := range warnings {
 		line := w + "\n"
 		if written+len(line) > maxInjectChars-50 {
@@ -268,6 +314,188 @@ func hasVisionModels() bool {
 		}
 	}
 	return false
+}
+
+// ── File awareness: extract file paths from agent request body ──────────
+
+// resolveFileContext extracts file paths from the LLM request body and
+// returns PM entity associations for files the agent is working on.
+// This gives the agent immediate context: "mcp/mcp.go → task-xxx (P0, in_progress)".
+func resolveFileContext(body []byte) []string {
+	paths := extractFilePaths(body)
+	if len(paths) == 0 {
+		return nil
+	}
+
+	// Query file→task associations through graph_edges + commits
+	edges, err := store.ListGraphEdges("", "", "file_touch")
+	if err != nil {
+		return nil
+	}
+
+	// Build file→task index from graph edges
+	fileTasks := map[string]map[string]string{} // file → {taskID: taskTitle}
+	for _, e := range edges {
+		evidenceJSON, _ := e["evidence_json"].(string)
+		if evidenceJSON == "" {
+			continue
+		}
+		var ev map[string]any
+		if json.Unmarshal([]byte(evidenceJSON), &ev) != nil {
+			continue
+		}
+		intersect, _ := ev["intersect"].([]any)
+		for _, f := range intersect {
+			fp := u.Str(f)
+			if fileTasks[fp] == nil {
+				fileTasks[fp] = map[string]string{}
+			}
+			// Resolve commit→task via graph edges
+			commitID, _ := e["target_id"].(string)
+			if commitID != "" {
+				c, err := store.GetCommit(commitID)
+				if err == nil {
+					tid := u.Str(c["task_id"])
+					ttl := u.Str(c["title"])
+					if tid != "" && ttl != "" {
+						// Get task status
+						task, _ := store.GetTask(tid)
+						status := ""
+						priority := ""
+						if task != nil {
+							status, _ = task["status"].(string)
+							priority, _ = task["priority"].(string)
+						}
+						tag := tid
+						if status != "" {
+							tag += fmt.Sprintf(" (%s", status)
+							if priority != "" {
+								tag += fmt.Sprintf(", %s", priority)
+							}
+							tag += ")"
+						}
+						fileTasks[fp][tid] = tag
+					}
+				}
+			}
+		}
+	}
+
+	// Match extracted paths against file→task index
+	var assoc []string
+	seen := map[string]bool{}
+	for _, p := range paths {
+		tasks, ok := fileTasks[p]
+		if !ok {
+			continue
+		}
+		for tid, tag := range tasks {
+			key := p + tid
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			assoc = append(assoc, fmt.Sprintf("%s → %s %s", p, tag, u.TruncateStr(tid, 20)))
+		}
+	}
+	if len(assoc) > 0 {
+		u.LogShared("INJECT", "file_assoc files=%d matches=%d", len(paths), len(assoc))
+	}
+	return assoc
+}
+
+// File extensions considered code files for path extraction.
+var codeExts = regexp.MustCompile(`\.(go|js|ts|jsx|tsx|py|rs|java|rb|c|cpp|h|hpp|swift|kt|scala|css|html|vue|svelte|sql|sh|yaml|yml|toml|json|md)$`)
+
+// extractFilePaths extracts file paths from the LLM request body.
+// Handles both Anthropic Messages format (messages[].content) and Codex format (instructions).
+func extractFilePaths(body []byte) []string {
+	var raw map[string]any
+	if json.Unmarshal(body, &raw) == nil {
+		var textParts []string
+
+		// Anthropic format: messages array with content blocks
+		if messages, ok := raw["messages"].([]any); ok {
+			for _, m := range messages {
+				msg, _ := m.(map[string]any)
+				if msg == nil {
+					continue
+				}
+				content := msg["content"]
+				switch c := content.(type) {
+				case string:
+					textParts = append(textParts, c)
+				case []any:
+					for _, block := range c {
+						if b, ok := block.(map[string]any); ok {
+							if t, ok := b["text"].(string); ok {
+								textParts = append(textParts, t)
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// Codex format: instructions field
+		if instr, ok := raw["instructions"].(string); ok && instr != "" {
+			textParts = append(textParts, instr)
+		}
+
+		// Gemini format: systemInstruction.parts[].text
+		if si, ok := raw["systemInstruction"].(map[string]any); ok {
+			if parts, ok := si["parts"].([]any); ok {
+				for _, p := range parts {
+					if pm, ok := p.(map[string]any); ok {
+						if t, ok := pm["text"].(string); ok {
+							textParts = append(textParts, t)
+						}
+					}
+				}
+			}
+		}
+
+		return extractPaths(strings.Join(textParts, "\n"))
+	}
+	return nil
+}
+
+// extractPaths finds file-like paths in text. Matches both absolute paths
+// and relative paths that end with known code extensions.
+func extractPaths(text string) []string {
+	cwd, _ := os.Getwd()
+	cwdPrefix := cwd + "/"
+
+	var paths []string
+	seen := map[string]bool{}
+
+	// Find absolute paths in or near CWD (appear in Claude Code context)
+	absRe := regexp.MustCompile(`(?:^|\s|["'<(])/(?:[\w.-]+/)+[\w.-]+\.\w+(?:$|\s|["'>)])`)
+	for _, m := range absRe.FindAllString(text, -1) {
+		p := strings.TrimSpace(m)
+		p = strings.Trim(p, `"'<>()`)
+		if strings.HasPrefix(p, cwdPrefix) {
+			rel := strings.TrimPrefix(p, cwdPrefix)
+			if codeExts.MatchString(rel) && !seen[rel] {
+				seen[rel] = true
+				paths = append(paths, rel)
+			}
+		}
+	}
+
+	// Find relative paths with code extensions (appear in tool calls, discussions)
+	relRe := regexp.MustCompile(`(?:^|\s)((?:[\w.-]+/)*[\w.-]+\.(?:go|js|ts|jsx|tsx|py|rs|java|rb|c|cpp|h|swift|kt|css|html|vue|svelte|sql|sh|yaml|yml|toml|json|md))(?:\s|$|["'>)])`)
+	for _, m := range relRe.FindAllStringSubmatch(text, -1) {
+		if len(m) > 1 {
+			p := strings.TrimSpace(m[1])
+			if !seen[p] && codeExts.MatchString(p) {
+				seen[p] = true
+				paths = append(paths, p)
+			}
+		}
+	}
+
+	return paths
 }
 
 // detectUserFrustration checks recent discussion_log for user frustration signals.

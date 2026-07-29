@@ -1170,7 +1170,7 @@ func (s *mcpServer) handleRecordCommit(args map[string]interface{}) mcpToolResul
 		"drift_warnings": driftWarnings,
 	}
 
-	reflection := fmt.Sprintf("Commit '%s' 已记录。", title)
+	reflection := fmt.Sprintf("Commit '%s' 已记录。下一步：用 aipm_update_task_status(task_id=\"%s\", status=\"done\") 标记 task 完成，或用 aipm_update_commit 更新 review/test 状态。", title, taskID)
 	if len(driftWarnings) > 0 {
 		reflection += " " + driftWarnings[0]
 		reflection += " 建议: 确认这些文件是否应属于当前 task，如是请更新 plan scope。"
@@ -1250,7 +1250,7 @@ func (s *mcpServer) handleCreateTask(args map[string]interface{}) mcpToolResult 
 		"plan_status":    u.Str(plan["status"]),
 	}
 
-	reflection := fmt.Sprintf("Task '%s' 已创建 (plan: %s)。", title, u.Str(plan["title"]))
+	reflection := fmt.Sprintf("Task '%s' 已创建 (plan: %s)。下一步：设置 status=in_progress 开始工作，编码完成后用 aipm_record_commit(task_id=\"%s\") 记录 commit。", title, u.Str(plan["title"]), task["id"])
 	if hasDuplicate {
 		reflection += " ⚠️ 可能已存在类似 task，请用 aipm_search_context 确认。"
 	}
@@ -1293,7 +1293,7 @@ func (s *mcpServer) handleRecordBug(args map[string]interface{}) mcpToolResult {
 		}
 	}
 
-	reflection := fmt.Sprintf("Bug '%s' 已记录 (severity: %s)。", title, severity)
+	reflection := fmt.Sprintf("Bug '%s' 已记录 (severity: %s)。下一步：修复后用 aipm_update_bug(bug_id=\"%s\", status=\"resolved\", fix=\"...\") 更新状态，或用 aipm_link_entities 关联修复 commit。", title, severity, bug["id"])
 	if commitID != "" {
 		reflection += fmt.Sprintf(" 已关联 commit %s。", commitID)
 	}
@@ -1429,7 +1429,10 @@ func (s *mcpServer) handleUpdateTaskStatus(args map[string]interface{}) mcpToolR
 
 	reflection := fmt.Sprintf("Task 状态已更新为 '%s'。", status)
 	if status == "done" {
-		reflection += " 请确认已记录所有相关 commit。"
+		reflection += " 下一步：用 aipm_analyze 检查 scope drift，或用 aipm_catch_up 查看项目最新状态。"
+	}
+	if status == "in_progress" {
+		reflection += fmt.Sprintf(" 下一步：编码完成后用 aipm_record_commit(task_id=\"%s\") 记录 commit。", taskID)
 	}
 	if status == "blocked" {
 		reflection += " 请在 note 中说明阻塞原因和需要的决策。"
