@@ -56,6 +56,10 @@ func main() {
 		}
 		writeSkillFile()
 		fmt.Printf("Initialized .pmai at %s\n", filepath.Dir(filepath.Dir(path)))
+		// Auto-install post-commit hook (non-fatal if not in git repo)
+		if err := hook.InstallPostCommitHook(); err != nil {
+			fmt.Fprintf(os.Stderr, "note: post-commit hook skipped (%v)\n", err)
+		}
 		return
 	case "help":
 		cli.PrintHelp()
@@ -166,6 +170,28 @@ func main() {
 		return
 	case "hook-post-commit":
 		hook.ProcessPostCommitHook()
+		return
+	case "hook":
+		if len(os.Args) < 3 {
+			fmt.Println("usage: aipmc hook <install|uninstall>")
+			os.Exit(1)
+		}
+		switch os.Args[2] {
+		case "install":
+			if err := hook.InstallPostCommitHook(); err != nil {
+				fmt.Fprintf(os.Stderr, "install failed: %v\n", err)
+				os.Exit(1)
+			}
+		case "uninstall":
+			if err := hook.UninstallPostCommitHook(); err != nil {
+				fmt.Fprintf(os.Stderr, "uninstall failed: %v\n", err)
+				os.Exit(1)
+			}
+		default:
+			fmt.Printf("unknown hook subcommand: %s\n", os.Args[2])
+			fmt.Println("usage: aipmc hook <install|uninstall>")
+			os.Exit(1)
+		}
 		return
 	case "mcp":
 		if err := application.RunMCP(); err != nil {
