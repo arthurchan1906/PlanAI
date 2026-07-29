@@ -117,22 +117,21 @@ func Run(opts RunOpts) (RunResult, error) {
 			}
 		}
 
-		// L2 semantic summary (gracefully degrades if AI not configured)
+		// L2 semantic summary — skip LLM if session already summarized
 		summary := ""
 		l2status := "skip_no_ai"
 		if opts.Summarizer != nil {
-			summary = GenerateL2Summary(messages, review, opts.Summarizer)
-			if summary != "" {
-				l2status = "ok"
-			} else {
-				l2status = "skip_empty"
-			}
-		}
-		// Preserve existing summary if current run produced nothing
-		if summary == "" {
+			// Check cache first: don't waste LLM calls on already-summarized sessions
 			if old, _ := store.GetSessionSummary(s.SessionID); old != nil && old.Summary != "" {
 				summary = old.Summary
 				l2status = "cached"
+			} else {
+				summary = GenerateL2Summary(messages, review, opts.Summarizer)
+				if summary != "" {
+					l2status = "ok"
+				} else {
+					l2status = "skip_empty"
+				}
 			}
 		}
 		// Per-session observability log
