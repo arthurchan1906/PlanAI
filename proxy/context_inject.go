@@ -61,22 +61,31 @@ func init() {
 // associations are added to help the agent understand which PM entities
 // are related to the files it's working on.
 func InjectSessionContext(body []byte, agent string) []byte {
-	goals, warnings, actionItems, fileAssoc, blockHash := getCachedContext(body)
+	goals, warnings, actionItems, blockHash := getCachedContext()
+
+	// File awareness is computed per-request — must NOT be inside the
+	// 5-minute session cache, or it returns nil on every cache hit.
+	fileAssoc := resolveFileContext(body)
+
 	if len(goals) == 0 && len(fileAssoc) == 0 {
 		u.LogShared("INJECT", "skip agent=%s reason=no_summary_data", agent)
 		return body
 	}
 
+	// Include fileAssoc in the content hash so file-context changes
+	// trigger re-injection even when session data is unchanged.
+	fullHash := hashString(fmt.Sprintf("%s%v", blockHash, fileAssoc))
+
 	block := buildContextBlock(goals, warnings, actionItems, fileAssoc)
 
 	// Content-hash based dedup: only inject if content changed since last injection
-	if !shouldInject(agent, blockHash) {
+	if !shouldInject(agent, fullHash) {
 		return body
 	}
 
 	result := injectIntoPrompt(body, block, agent)
-	injectTracker.Store(agent, injectState{lastAt: time.Now(), contentHash: blockHash})
-	u.LogShared("INJECT", "agent=%s goals=%d warnings=%d actions=%d chars=%d hash=%s", agent, len(goals), len(warnings), len(actionItems), len(block), blockHash[:8])
+	injectTracker.Store(agent, injectState{lastAt: time.Now(), contentHash: fullHash})
+	u.LogShared("INJECT", "agent=%s goals=%d warnings=%d actions=%d file=%d chars=%d", agent, len(goals), len(warnings), len(actionItems), len(fileAssoc), len(block))
 	return result
 }
 
@@ -93,11 +102,11 @@ func shouldInject(agent, contentHash string) bool {
 	return true
 }
 
-func getCachedContext(body []byte) (goals, warnings, actionItems, fileAssoc []string, hash string) {
+func getCachedContext() (goals, warnings, actionItems []string, hash string) {
 	sessionCache.mu.RLock()
 	if time.Since(sessionCache.updatedAt) < sessionCache.ttl && len(sessionCache.goals) > 0 {
 		defer sessionCache.mu.RUnlock()
-		return sessionCache.goals, sessionCache.warnings, sessionCache.actionItems, nil, sessionCache.contentHash
+		return sessionCache.goals, sessionCache.warnings, sessionCache.actionItems, sessionCache.contentHash
 	}
 	sessionCache.mu.RUnlock()
 
@@ -109,7 +118,7 @@ func getCachedContext(body []byte) (goals, warnings, actionItems, fileAssoc []st
 	if err != nil || len(rows) == 0 {
 		sessionCache.goals = nil
 		sessionCache.contentHash = ""
-		return nil, nil, nil, nil, ""
+		return nil, nil, nil, ""
 	}
 	goals = make([]string, 0, len(rows))
 	for _, r := range rows {
@@ -145,15 +154,12 @@ func getCachedContext(body []byte) (goals, warnings, actionItems, fileAssoc []st
 	// ── Pipeline emerge events → actionable nudge ──────────────────────
 	actionItems = buildActionItems()
 
-	// ── File awareness: extract paths from request body → PM context ──
-	fileAssoc = resolveFileContext(body)
-
 	sessionCache.goals = goals
 	sessionCache.warnings = warnings
 	sessionCache.actionItems = actionItems
-	sessionCache.contentHash = hashString(fmt.Sprintf("%v%v%v%v", goals, warnings, actionItems, fileAssoc))
+	sessionCache.contentHash = hashString(fmt.Sprintf("%v%v%v", goals, warnings, actionItems))
 	sessionCache.updatedAt = time.Now()
-	return goals, warnings, actionItems, fileAssoc, sessionCache.contentHash
+	return goals, warnings, actionItems, sessionCache.contentHash
 }
 
 // buildActionItems reads unconsumed pipeline emerge events and formats them
@@ -199,7 +205,7 @@ func actionToolHint(eventType, entityID string) string {
 	case strings.Contains(eventType, "untracked"):
 		return fmt.Sprintf("\u521b\u5efa: aipm_create_task(title=\"\u8ffd\u8e2a %s\", plan_id=\"...\")", u.TruncateStr(entityID, 40))
 	case eventType == "mcp_error":
-		return "\u4e0a\u6b21 MCP \u8c03\u7528\u5931\u8d25\uff0c\u68c0\u67e5\u53c2\u6570\u540e\u91cd\u8bd5\u3002\u8be6\u60c5\u89c1\u4e0a\u65b9\u7684 \u26a0\ufe0f \u9519\u8bef\u63cf\u8ff0"
+		return fmt.Sprintf("\u5de5\u5177 %s \u4e0a\u6b21\u8c03\u7528\u5931\u8d25\uff0c\u68c0\u67e5\u53c2\u6570\u540e\u91cd\u8bd5\u3002\u5982\u6301\u7eed\u5931\u8d25\uff0c\u7528 aipm_search_context \u67e5\u627e\u6b63\u786e\u7684\u53c2\u6570\u503c", entityID)
 	}
 	return ""
 }
@@ -224,12 +230,14 @@ func buildContextBlock(goals, warnings, actionItems, fileAssoc []string) string 
 	written := 0
 	suppressed := 0
 
-	// ── File associations (highest priority: what the agent is working on NOW) ──
+	// ── File associations (highest priority, minimum 200 char reservation) ──
+	const fileAssocReservation = 200
 	if len(fileAssoc) > 0 {
 		buf.WriteString("\n[文件关联]")
 		for _, fa := range fileAssoc {
 			line := "\n" + fa
-			if written+len(line) > maxInjectChars-50 {
+			// File associations bypass the general budget up to fileAssocReservation chars
+			if written > fileAssocReservation && written+len(line) > maxInjectChars-50 {
 				suppressed++
 				continue
 			}
