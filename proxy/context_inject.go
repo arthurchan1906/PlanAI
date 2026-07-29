@@ -338,6 +338,11 @@ func resolveFileContext(body []byte) []string {
 	// Query file→task associations through graph_edges + commits
 	edges, err := store.ListGraphEdges("", "", "file_touch")
 	if err != nil {
+		u.LogShared("INJECT", "file_assoc edges_err=%v", err)
+		return nil
+	}
+	if len(edges) == 0 {
+		u.LogShared("INJECT", "file_assoc paths=%d edges=0 reason=no_graph_data", len(paths))
 		return nil
 	}
 
@@ -465,6 +470,8 @@ func extractFilePaths(body []byte) []string {
 
 		return extractPaths(strings.Join(textParts, "\n"))
 	}
+
+	u.LogShared("INJECT", "file_assoc body_parse=err")
 	return nil
 }
 

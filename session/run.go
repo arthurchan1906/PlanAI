@@ -89,6 +89,7 @@ func Run(opts RunOpts) (RunResult, error) {
 	}
 
 	out := RunResult{Since: since, UnmergedOrphans: unmerged}
+	var l2Cached, l2New int
 	for _, s := range sessions {
 		rows, err := store.GetSessionMessages(s.SessionID)
 		if err != nil {
@@ -125,10 +126,12 @@ func Run(opts RunOpts) (RunResult, error) {
 			if old, _ := store.GetSessionSummary(s.SessionID); old != nil && old.Summary != "" {
 				summary = old.Summary
 				l2status = "cached"
+				l2Cached++
 			} else {
 				summary = GenerateL2Summary(messages, review, opts.Summarizer)
 				if summary != "" {
 					l2status = "ok"
+					l2New++
 				} else {
 					l2status = "skip_empty"
 				}
@@ -177,6 +180,10 @@ func Run(opts RunOpts) (RunResult, error) {
 		if review.WorkflowCompleted {
 			out.Completed++
 		}
+	}
+
+	if l2Cached > 0 || l2New > 0 {
+		u.LogShared("PIPELINE", "L2 summary cached=%d new=%d total=%d", l2Cached, l2New, l2Cached+l2New)
 	}
 
 	if opts.SamplePath != "" {
