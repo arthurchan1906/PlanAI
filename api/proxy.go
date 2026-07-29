@@ -80,6 +80,19 @@ func (s *Server) handleProxyRestart(w http.ResponseWriter, body map[string]any) 
 		return
 	}
 
+	// Write Codex proxy profile so `codex -p proxy` works immediately
+	cfg := pmdb.LoadConfig()
+	rt, _ := pmdb.ResolveAgentConfig("codex", gcfg, cfg)
+	codexModel := rt.Model
+	if codexModel == "" {
+		codexModel = "gpt-5.1"
+	}
+	effort := rt.ReasoningEffort
+	if effort == "" {
+		effort = "medium"
+	}
+	codexWriteProxyProfile(fmt.Sprintf("http://127.0.0.1:%d", gcfg.ProxyPort), codexModel, effort)
+
 	proxyAddr := fmt.Sprintf("127.0.0.1:%d", gcfg.ProxyPort)
 	for i := 0; i < 30; i++ {
 		time.Sleep(200 * time.Millisecond)

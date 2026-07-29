@@ -271,22 +271,97 @@ export default function SettingsView() {
     </div>
   );
   // ── Section: AIPM 自身 AI ─────────────────────────────────────
+  // Build model options from LLM Gateway, ensuring current values are always selectable
+  const gatewayModelOpts = (models || []).map(m => {
+    const firstProvider = (m.routes && m.routes[0]) ? m.routes[0].provider : "";
+    const label = m.display_name ? `${m.display_name} (${m.id})` : m.id;
+    const sub = firstProvider ? ` — ${firstProvider}` : "";
+    return { value: m.id, label: label + sub, provider: firstProvider };
+  });
+  function modelOptsWithCurrent(currentVal) {
+    if (currentVal && !gatewayModelOpts.some(o => o.value === currentVal)) {
+      return [{ value: currentVal, label: `${currentVal} (当前)` }, ...gatewayModelOpts];
+    }
+    return gatewayModelOpts;
+  }
+  // Auto-fill endpoint from a selected model's first provider URL, then auto-save
+  function applyModelChange(modelId, endpointField) {
+    if (!modelId) return;
+    const model = (models || []).find(m => m.id === modelId);
+    if (model && model.routes && model.routes.length > 0) {
+      const providerName = model.routes[0].provider;
+      const provider = (providers || []).find(p => p.name === providerName);
+      if (provider && provider.openai_url) {
+        aiForm.setFieldsValue({ [endpointField]: provider.openai_url });
+      }
+    }
+    // 动态更新：选完模型立刻保存生效，无需手动点 Save
+    const values = aiForm.getFieldsValue();
+    api("/pmai/config", { method: "POST", body: JSON.stringify(values) })
+      .then(d => {
+        if (d.ok) {
+          message.success(`AI 模型已切换为 ${modelId}`);
+          setAiStatus(d.ai_enabled ? "enabled" : "disabled");
+          setAgentKey(k => k + 1);
+          setTimeout(checkProxy, 500);
+        }
+      })
+      .catch(e => message.error(e.message));
+  }
   const aiSection = (
     <div>
       <Divider style={{ margin: "8px 0 16px" }} />
       <Title level={5} style={{ marginBottom: 4 }}><SettingOutlined /> AIPM AI 配置</Title>
       <Text type="secondary" style={{ fontSize: 12, display: "block", marginBottom: 12 }}>
-        AIPM 本身使用的 AI（项目管理、讨论分析、embedding 等），与中转代理无关。
+        AIPM 本身使用的 AI（项目管理、讨论分析、embedding 等）。模型和 Endpoint 均从 LLM Gateway 自动获取。
+        {models.length === 0 && (
+          <Tag color="warning" style={{ marginLeft: 8, fontSize: 11 }}>LLM Gateway 未配置模型，请先在上方添加</Tag>
+        )}
       </Text>
       <Card size="small">
         <Form form={aiForm} layout="vertical" onFinish={v => save("AI", v)}>
+          {/* Endpoint 由选中模型自动推断，隐藏字段仅用于提交 */}
+          <Form.Item name="ai_endpoint" hidden><Input /></Form.Item>
+          <Form.Item name="ai_embedding_endpoint" hidden><Input /></Form.Item>
           <Row gutter={16}>
-            <Col span={12}><Form.Item name="ai_endpoint" label="Chat API Endpoint"><Input placeholder="https://api.openai.com/v1" /></Form.Item></Col>
-            <Col span={12}><Form.Item name="ai_embedding_endpoint" label="Embedding Endpoint"><Input placeholder="uses chat endpoint if empty" /></Form.Item></Col>
-          </Row>
-          <Row gutter={16}>
-            <Col span={12}><Form.Item name="ai_chat_model" label="Chat Model"><Input placeholder="gpt-4o-mini" /></Form.Item></Col>
-            <Col span={12}><Form.Item name="ai_model" label="Embedding Model"><Input placeholder="text-embedding-3-small" /></Form.Item></Col>
+            <Col span={12}>
+              <Form.Item name="ai_chat_model" label="Chat Model" tooltip="从 LLM Gateway 选择，Endpoint 自动从对应 Provider 获取">
+                <Select
+                  placeholder="选择或搜索 Gateway 模型…"
+                  showSearch
+                  allowClear
+                  options={modelOptsWithCurrent(aiForm.getFieldValue("ai_chat_model"))}
+                  filterOption={(input, option) =>
+                    (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                  }
+                  notFoundContent={
+                    <span style={{ fontSize: 12, color: '#999', padding: '4px 8px', display: 'block' }}>
+                      LLM Gateway 中无匹配模型，请先在上方添加
+                    </span>
+                  }
+                  onChange={val => { if (val) applyModelChange(val, "ai_endpoint"); }}
+                />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="ai_model" label="Embedding Model" tooltip="从 LLM Gateway 选择，Endpoint 自动从对应 Provider 获取">
+                <Select
+                  placeholder="选择或搜索 Gateway 模型…"
+                  showSearch
+                  allowClear
+                  options={modelOptsWithCurrent(aiForm.getFieldValue("ai_model"))}
+                  filterOption={(input, option) =>
+                    (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                  }
+                  notFoundContent={
+                    <span style={{ fontSize: 12, color: '#999', padding: '4px 8px', display: 'block' }}>
+                      LLM Gateway 中无匹配模型，请先在上方添加
+                    </span>
+                  }
+                  onChange={val => { if (val) applyModelChange(val, "ai_embedding_endpoint"); }}
+                />
+              </Form.Item>
+            </Col>
           </Row>
           <Space>
             <Button type="primary" htmlType="submit" loading={loading} size="small">Save</Button>
