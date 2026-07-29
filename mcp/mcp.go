@@ -295,6 +295,118 @@ func (s *mcpServer) registerTools() {
 		},
 	}, s.handleCreateTask)
 
+	// P1: Entity write tools — create plan/roadmap, update existing entities
+	s.addTool(MCPTool{
+		Name: "aipm_create_plan",
+		Description: "创建一个新 Plan。Plan 是 task 的容器——每个 task 必须属于一个 plan。创建 plan 前必须先有 roadmap（plan 需要 roadmap_id）。\n\n必填参数：title（plan 名称）、roadmap_id（所属 roadmap）。roadmap_id 可通过 aipm_search_context 搜索获取。\n\n可选参数：goal（plan 目标，建议填写）、priority（P0/P1/P2，默认 P1）、status（draft/active，默认 draft，确定后改为 active）、vision_id（所属 vision）。\n\n典型流程：(1) aipm_search_context 搜 roadmap → (2) aipm_create_plan → (3) aipm_create_task 在 plan 下创建 task。",
+		InputSchema: MCPInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"title":      map[string]string{"type": "string", "description": "Plan 标题"},
+				"roadmap_id": map[string]string{"type": "string", "description": "所属 Roadmap ID。必填。用 aipm_search_context 搜索 roadmap 获取"},
+				"goal":       map[string]string{"type": "string", "description": "Plan 目标/描述（建议填写）"},
+				"priority":   map[string]string{"type": "string", "description": "优先级: P0/P1/P2，默认 P1"},
+				"status":     map[string]string{"type": "string", "description": "状态: draft/active，默认 draft"},
+				"vision_id":  map[string]string{"type": "string", "description": "所属 Vision ID（可选）"},
+			},
+			Required: []string{"title", "roadmap_id"},
+		},
+	}, s.handleCreatePlan)
+
+	s.addTool(MCPTool{
+		Name: "aipm_create_roadmap",
+		Description: "创建一个新 Roadmap。Roadmap 是 plan 的容器——plan 需要关联到 roadmap。Roadmap 代表一个时间线/里程碑/大版本。\n\n必填参数：title（roadmap 名称）。\n\n可选参数：target_date（目标日期，格式 YYYY-MM-DD）、status（planned/active/done，默认 planned）、priority（P0/P1/P2，默认 P1）、vision_id（所属 vision）。\n\n典型流程：(1) aipm_create_roadmap → (2) aipm_create_plan(roadmap_id=...) → (3) aipm_create_task(plan_id=...)。",
+		InputSchema: MCPInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"title":       map[string]string{"type": "string", "description": "Roadmap 标题"},
+				"target_date": map[string]string{"type": "string", "description": "目标日期，格式 YYYY-MM-DD（可选）"},
+				"status":      map[string]string{"type": "string", "description": "状态: planned/active/done，默认 planned"},
+				"priority":    map[string]string{"type": "string", "description": "优先级: P0/P1/P2，默认 P1"},
+				"vision_id":   map[string]string{"type": "string", "description": "所属 Vision ID（可选）"},
+			},
+			Required: []string{"title"},
+		},
+	}, s.handleCreateRoadmap)
+
+	// Update tools — modify existing entities
+	s.addTool(MCPTool{
+		Name: "aipm_update_task",
+		Description: "更新 Task 的字段（标题、优先级、phase、状态等）。与 aipm_update_task_status 的区别：update_task_status 只改 status 且带 done-gate 检查；update_task 可以同时修改多个字段，不触发 done-gate。\n\n适用场景：(1) 修正 task 标题 (2) 调整优先级 (3) 更换所属 phase (4) 同时修改多个属性。\n\n参数：task_id（必填）。以下至少填一个：title、priority（P0/P1/P2）、status、phase、note（会更新 task 的 last_note）。注意改 status 不会触发 done-gate，如需 done 验证请用 aipm_update_task_status。",
+		InputSchema: MCPInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"task_id":  map[string]string{"type": "string", "description": "Task ID。必填"},
+				"title":    map[string]string{"type": "string", "description": "新标题（可选）"},
+				"priority": map[string]string{"type": "string", "description": "新优先级: P0/P1/P2（可选）"},
+				"status":   map[string]string{"type": "string", "description": "新状态。注意：此方式不触发 done-gate 检查（可选）"},
+				"phase":    map[string]string{"type": "string", "description": "新 phase（可选）"},
+				"note":     map[string]string{"type": "string", "description": "变更说明，会更新 last_note（可选）"},
+			},
+			Required: []string{"task_id"},
+		},
+	}, s.handleUpdateTask)
+
+	s.addTool(MCPTool{
+		Name: "aipm_update_commit",
+		Description: "更新 Commit 的元数据——review 状态、test 状态、commit 状态、摘要等。\n\n常用场景：(1) 代码 review 通过后，将 review_status 改为 approved (2) 测试通过后，将 test_status 改为 passed (3) commit 合并后，将 status 改为 merged。\n\n注意：review_status=approved 且 test_status=passed（或 auto）的 commit 才能让关联 task 通过 done-gate。\n\n参数：commit_id（必填）。以下可选填一个或多个：status（committed/draft/merged）、review_status（pending/approved/rejected）、test_status（not_run/passed/failed）、summary。",
+		InputSchema: MCPInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"commit_id":     map[string]string{"type": "string", "description": "Commit ID。必填"},
+				"status":        map[string]string{"type": "string", "description": "Commit 状态: committed/draft/merged（可选）"},
+				"review_status": map[string]string{"type": "string", "description": "Review 状态: pending/approved/rejected（可选）"},
+				"test_status":   map[string]string{"type": "string", "description": "Test 状态: not_run/passed/failed（可选）"},
+				"summary":       map[string]string{"type": "string", "description": "变更摘要（可选）"},
+			},
+			Required: []string{"commit_id"},
+		},
+	}, s.handleUpdateCommit)
+
+	s.addTool(MCPTool{
+		Name: "aipm_update_bug",
+		Description: "更新 Bug 的字段——状态、严重级别、修复方案等。\n\n常用场景：(1) 开始修 bug 时，将 status 改为 in_progress (2) 修复完成时，将 status 改为 resolved 并填写 fix (3) 调整严重级别。\n\n参数：bug_id（必填）。以下可选填一个或多个：status（open/in_progress/resolved/closed）、severity（critical/major/minor）、fix（修复方案描述）。",
+		InputSchema: MCPInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"bug_id":   map[string]string{"type": "string", "description": "Bug ID。必填"},
+				"status":   map[string]string{"type": "string", "description": "新状态: open/in_progress/resolved/closed（可选）"},
+				"severity": map[string]string{"type": "string", "description": "新严重级别: critical/major/minor（可选）"},
+				"fix":      map[string]string{"type": "string", "description": "修复方案（可选）"},
+			},
+			Required: []string{"bug_id"},
+		},
+	}, s.handleUpdateBug)
+
+	s.addTool(MCPTool{
+		Name: "aipm_update_decision",
+		Description: "更新 Decision 的状态。当决策从「提议」变为「已接受」或「已废弃」时调用。\n\n状态流转：proposed（提议中）→ accepted（已接受）→ deprecated（已废弃）。\n\n参数：decision_id（必填）、status（必填，proposed/accepted/deprecated）。",
+		InputSchema: MCPInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"decision_id": map[string]string{"type": "string", "description": "Decision ID。必填"},
+				"status":      map[string]string{"type": "string", "description": "新状态: proposed/accepted/deprecated。必填"},
+			},
+			Required: []string{"decision_id", "status"},
+		},
+	}, s.handleUpdateDecision)
+
+	s.addTool(MCPTool{
+		Name: "aipm_update_plan",
+		Description: "更新 Plan 的字段——状态、标题、目标、优先级等。\n\n常用场景：(1) plan 进入实施阶段，status 从 draft→active (2) plan 完成，status→done (3) 废弃 plan，status→deprecated (4) 修正标题或目标。\n\n参数：plan_id（必填）。以下可选填一个或多个：status（draft/active/done/deprecated）、title、goal、priority（P0/P1/P2）。\n\n注意：将 status 设为 deprecated 等同于废弃该 plan——不会删除数据，但标记为不再活跃。",
+		InputSchema: MCPInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"plan_id":  map[string]string{"type": "string", "description": "Plan ID。必填"},
+				"status":   map[string]string{"type": "string", "description": "新状态: draft/active/done/deprecated（可选）"},
+				"title":    map[string]string{"type": "string", "description": "新标题（可选）"},
+				"goal":     map[string]string{"type": "string", "description": "新目标描述（可选）"},
+				"priority": map[string]string{"type": "string", "description": "新优先级: P0/P1/P2（可选）"},
+			},
+			Required: []string{"plan_id"},
+		},
+	}, s.handleUpdatePlan)
+
 	s.addTool(MCPTool{
 		Name:        "aipm_analyze",
 		Description: "运行项目分析，检测 scope 漂移、孤儿任务、重复 plan、进度风险、阻塞超时、决策影响。",
@@ -836,6 +948,181 @@ func formatTaskDetail(task map[string]any) string {
 		text += fmt.Sprintf("\n备注: %s", lastNote)
 	}
 	return text
+}
+
+// ---- P1: Entity Write Handlers ----
+
+func (s *mcpServer) handleCreatePlan(args map[string]interface{}) mcpToolResult {
+	title := getStr(args, "title", "")
+	roadmapID := getStr(args, "roadmap_id", "")
+	if title == "" || roadmapID == "" {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "title 和 roadmap_id 为必填项。roadmap_id 可通过 aipm_search_context 搜索获取。"}}, IsError: true}
+	}
+	goal := getStr(args, "goal", "")
+	priority := getStr(args, "priority", "P1")
+	status := getStr(args, "status", "draft")
+	visionID := getStr(args, "vision_id", "")
+	plan, err := store.CreatePlan(title, goal, roadmapID, visionID, priority, status, nil, nil, nil, nil)
+	if err != nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("创建 plan 失败: %v", err)}}, IsError: true}
+	}
+	return mcpToolResult{
+		Content:        []mcpContent{{Type: "text", Text: fmt.Sprintf("✅ Plan 已创建: [%s] %s", plan["id"], title)}},
+		RelatedContext: plan,
+		Reflection:     fmt.Sprintf("Plan '%s' 已创建（roadmap=%s, status=%s）。下一步：用 aipm_create_task 在此 plan 下创建 task，plan_id=%s", title, roadmapID, status, plan["id"]),
+	}
+}
+
+func (s *mcpServer) handleCreateRoadmap(args map[string]interface{}) mcpToolResult {
+	title := getStr(args, "title", "")
+	if title == "" {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "title 为必填项"}}, IsError: true}
+	}
+	targetDate := getStr(args, "target_date", "")
+	visionID := getStr(args, "vision_id", "")
+	status := getStr(args, "status", "planned")
+	priority := getStr(args, "priority", "P1")
+	roadmap, err := store.CreateRoadmap(title, targetDate, visionID, status, priority)
+	if err != nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("创建 roadmap 失败: %v", err)}}, IsError: true}
+	}
+	return mcpToolResult{
+		Content:        []mcpContent{{Type: "text", Text: fmt.Sprintf("✅ Roadmap 已创建: [%s] %s", roadmap["id"], title)}},
+		RelatedContext: roadmap,
+		Reflection:     fmt.Sprintf("Roadmap '%s' 已创建。下一步：用 aipm_create_plan 在此 roadmap 下创建 plan，roadmap_id=%s", title, roadmap["id"]),
+	}
+}
+
+func (s *mcpServer) handleUpdateTask(args map[string]interface{}) mcpToolResult {
+	id := getStr(args, "task_id", "")
+	if id == "" {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "task_id 为必填项"}}, IsError: true}
+	}
+	stat := getStr(args, "status", "")
+	note := getStr(args, "note", "")
+	appendNote := note != ""
+	result, err := store.UpdateTask("", id, stat, note, true, appendNote)
+	if err != nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("更新 task 失败: %v", err)}}, IsError: true}
+	}
+	reflection := fmt.Sprintf("Task %s 已更新。", id)
+	if stat != "" {
+		reflection += fmt.Sprintf(" 状态: %s", stat)
+	}
+	if note != "" {
+		reflection += fmt.Sprintf(" 备注已追加。")
+	}
+	return mcpToolResult{
+		Content:        []mcpContent{{Type: "text", Text: fmt.Sprintf("✅ Task 已更新: %s", id)}},
+		RelatedContext: result,
+		Reflection:     reflection,
+	}
+}
+
+func (s *mcpServer) handleUpdateCommit(args map[string]interface{}) mcpToolResult {
+	id := getStr(args, "commit_id", "")
+	if id == "" {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "commit_id 为必填项"}}, IsError: true}
+	}
+	payload := map[string]any{}
+	if v := getStr(args, "status", ""); v != "" {
+		payload["status"] = v
+	}
+	if v := getStr(args, "review_status", ""); v != "" {
+		payload["review_status"] = v
+	}
+	if v := getStr(args, "test_status", ""); v != "" {
+		payload["test_status"] = v
+	}
+	if v := getStr(args, "summary", ""); v != "" {
+		payload["summary"] = v
+	}
+	if len(payload) == 0 {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "至少需要提供一个要更新的字段（status/review_status/test_status/summary）"}}, IsError: true}
+	}
+	commit, err := store.UpdateCommit(id, payload)
+	if err != nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("更新 commit 失败: %v", err)}}, IsError: true}
+	}
+	return mcpToolResult{
+		Content:        []mcpContent{{Type: "text", Text: fmt.Sprintf("✅ Commit 已更新: %s", id)}},
+		RelatedContext: commit,
+	}
+}
+
+func (s *mcpServer) handleUpdateBug(args map[string]interface{}) mcpToolResult {
+	id := getStr(args, "bug_id", "")
+	if id == "" {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "bug_id 为必填项"}}, IsError: true}
+	}
+	payload := map[string]any{}
+	if v := getStr(args, "status", ""); v != "" {
+		payload["status"] = v
+	}
+	if v := getStr(args, "severity", ""); v != "" {
+		payload["severity"] = v
+	}
+	if v := getStr(args, "fix", ""); v != "" {
+		payload["fix"] = v
+	}
+	if len(payload) == 0 {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "至少需要提供一个要更新的字段（status/severity/fix）"}}, IsError: true}
+	}
+	bug, err := store.UpdateBug(id, payload)
+	if err != nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("更新 bug 失败: %v", err)}}, IsError: true}
+	}
+	return mcpToolResult{
+		Content:        []mcpContent{{Type: "text", Text: fmt.Sprintf("✅ Bug 已更新: %s", id)}},
+		RelatedContext: bug,
+	}
+}
+
+func (s *mcpServer) handleUpdateDecision(args map[string]interface{}) mcpToolResult {
+	id := getStr(args, "decision_id", "")
+	status := getStr(args, "status", "")
+	if id == "" || status == "" {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "decision_id 和 status 为必填项"}}, IsError: true}
+	}
+	decision, err := store.UpdateDecisionStatus(id, status)
+	if err != nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("更新 decision 失败: %v", err)}}, IsError: true}
+	}
+	return mcpToolResult{
+		Content:        []mcpContent{{Type: "text", Text: fmt.Sprintf("✅ Decision 状态已更新: %s → %s", id, status)}},
+		RelatedContext: decision,
+	}
+}
+
+func (s *mcpServer) handleUpdatePlan(args map[string]interface{}) mcpToolResult {
+	id := getStr(args, "plan_id", "")
+	if id == "" {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "plan_id 为必填项"}}, IsError: true}
+	}
+	payload := map[string]any{}
+	if v := getStr(args, "status", ""); v != "" {
+		payload["status"] = v
+	}
+	if v := getStr(args, "title", ""); v != "" {
+		payload["title"] = v
+	}
+	if v := getStr(args, "goal", ""); v != "" {
+		payload["goal"] = v
+	}
+	if v := getStr(args, "priority", ""); v != "" {
+		payload["priority"] = v
+	}
+	if len(payload) == 0 {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "至少需要提供一个要更新的字段（status/title/goal/priority）"}}, IsError: true}
+	}
+	plan, err := store.UpdatePlan(id, payload)
+	if err != nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("更新 plan 失败: %v", err)}}, IsError: true}
+	}
+	return mcpToolResult{
+		Content:        []mcpContent{{Type: "text", Text: fmt.Sprintf("✅ Plan 已更新: %s", id)}},
+		RelatedContext: plan,
+	}
 }
 
 func (s *mcpServer) handleRecordCommit(args map[string]interface{}) mcpToolResult {
