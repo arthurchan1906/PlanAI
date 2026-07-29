@@ -254,6 +254,8 @@ export default function ActivityView() {
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState({});
   const [graphSession, setGraphSession] = useState(null);
+  const [tentativeLoading, setTentativeLoading] = useState(false);
+  const [tentativeDetails, setTentativeDetails] = useState(null);
 
   useEffect(() => {
     api("/pmai/web/activity")
