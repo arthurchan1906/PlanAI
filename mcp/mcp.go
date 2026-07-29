@@ -137,6 +137,126 @@ func (s *mcpServer) registerTools() {
 		},
 	}, s.handleSearch)
 
+		// Entity query tools — precise Get/List for PM entities
+		s.addTool(MCPTool{
+			Name:        "aipm_get_task",
+			Description: "按 ID 查询单个 Task 的完整信息，包含关联的 commits、状态、优先级、phase、备注等。用于查看某个 task 的详细状态。",
+			InputSchema: MCPInputSchema{
+				Type: "object",
+				Properties: map[string]interface{}{
+					"task_id": map[string]string{"type": "string", "description": "Task ID"},
+				},
+				Required: []string{"task_id"},
+			},
+		}, s.handleGetTask)
+
+		s.addTool(MCPTool{
+			Name:        "aipm_list_tasks",
+			Description: "列出 Task 列表，支持按 status（todo/in_progress/blocked/done）和 plan_id 过滤。用于查看某个 plan 下的所有 task 或某状态的全部 task。",
+			InputSchema: MCPInputSchema{
+				Type: "object",
+				Properties: map[string]interface{}{
+					"status":  map[string]string{"type": "string", "description": "可选: 按状态过滤 (todo/in_progress/blocked/done)"},
+					"plan_id": map[string]string{"type": "string", "description": "可选: 按 Plan ID 过滤"},
+				},
+			},
+		}, s.handleListTasks)
+
+		s.addTool(MCPTool{
+			Name:        "aipm_get_commit",
+			Description: "按 ID 查询单个 Commit 的完整信息，包含关联的 task/decision、review 状态、test 状态、变更文件列表。",
+			InputSchema: MCPInputSchema{
+				Type: "object",
+				Properties: map[string]interface{}{
+					"commit_id": map[string]string{"type": "string", "description": "Commit ID"},
+				},
+				Required: []string{"commit_id"},
+			},
+		}, s.handleGetCommit)
+
+		s.addTool(MCPTool{
+			Name:        "aipm_list_commits",
+			Description: "列出 Commit 列表，支持按 task_id、status（committed/draft/merged）、limit 过滤。用于查看某个 task 的所有 commit 或最近的 commit 记录。",
+			InputSchema: MCPInputSchema{
+				Type: "object",
+				Properties: map[string]interface{}{
+					"task_id": map[string]string{"type": "string", "description": "可选: 按关联的 Task ID 过滤"},
+					"status":  map[string]string{"type": "string", "description": "可选: 按 commit 状态过滤 (committed/draft/merged)"},
+					"limit":   map[string]string{"type": "integer", "description": "可选: 返回数量上限，默认 20"},
+				},
+			},
+		}, s.handleListCommits)
+
+		s.addTool(MCPTool{
+			Name:        "aipm_get_plan",
+			Description: "按 ID 查询单个 Plan 的完整信息，包含 goal、scope、risks、assumptions、关联的 task IDs、roadmap 归属等。",
+			InputSchema: MCPInputSchema{
+				Type: "object",
+				Properties: map[string]interface{}{
+					"plan_id": map[string]string{"type": "string", "description": "Plan ID"},
+				},
+				Required: []string{"plan_id"},
+			},
+		}, s.handleGetPlan)
+
+		s.addTool(MCPTool{
+			Name:        "aipm_list_plans",
+			Description: "列出 Plan 列表，支持按 roadmap_id、status（draft/active/done/deprecated）过滤。用于查看某个 roadmap 下的所有 plan 或全部活跃 plan。",
+			InputSchema: MCPInputSchema{
+				Type: "object",
+				Properties: map[string]interface{}{
+					"roadmap_id": map[string]string{"type": "string", "description": "可选: 按 Roadmap ID 过滤"},
+					"status":     map[string]string{"type": "string", "description": "可选: 按状态过滤 (draft/active/done/deprecated)"},
+				},
+			},
+		}, s.handleListPlans)
+
+		s.addTool(MCPTool{
+			Name:        "aipm_get_bug",
+			Description: "按 ID 查询单个 Bug 的完整信息，包含错误信息、根因分析、修复方案、严重级别、标签、关联 commit 等。",
+			InputSchema: MCPInputSchema{
+				Type: "object",
+				Properties: map[string]interface{}{
+					"bug_id": map[string]string{"type": "string", "description": "Bug ID"},
+				},
+				Required: []string{"bug_id"},
+			},
+		}, s.handleGetBug)
+
+		s.addTool(MCPTool{
+			Name:        "aipm_list_bugs",
+			Description: "列出 Bug 列表，支持按 status（open/in_progress/resolved/closed）、severity（critical/major/minor）过滤。",
+			InputSchema: MCPInputSchema{
+				Type: "object",
+				Properties: map[string]interface{}{
+					"status":   map[string]string{"type": "string", "description": "可选: 按状态过滤 (open/in_progress/resolved/closed)"},
+					"severity": map[string]string{"type": "string", "description": "可选: 按严重级别过滤 (critical/major/minor)"},
+					"limit":     map[string]string{"type": "integer", "description": "可选: 返回数量上限，默认 20"},
+				},
+			},
+		}, s.handleListBugs)
+
+		s.addTool(MCPTool{
+			Name:        "aipm_get_decision",
+			Description: "按 ID 查询单个 Decision（架构/技术决策）的完整信息，包含背景、决策内容、状态（proposed/accepted/deprecated）、影响分析等。",
+			InputSchema: MCPInputSchema{
+				Type: "object",
+				Properties: map[string]interface{}{
+					"decision_id": map[string]string{"type": "string", "description": "Decision ID"},
+				},
+				Required: []string{"decision_id"},
+			},
+		}, s.handleGetDecision)
+
+		s.addTool(MCPTool{
+			Name:        "aipm_list_decisions",
+			Description: "列出所有 Decision（架构/技术决策），按日期降序排列。用于查阅项目中已做的技术决策及其当前状态。",
+			InputSchema: MCPInputSchema{
+				Type:       "object",
+				Properties: map[string]interface{}{},
+			},
+		}, s.handleListDecisions)
+
 	s.addTool(MCPTool{
 		Name:        "aipm_record_commit",
 		Description: "记录一个代码 commit。自动检测 commit 文件是否在 task 的 plan scope 内，返回关联性分析和反思提示。通过 review_status=approved + test_status=passed 可以让关联的 task 标记为 done。",
@@ -519,6 +639,202 @@ func (s *mcpServer) handleSearch(args map[string]interface{}) mcpToolResult {
 		RelatedContext: context,
 		Reflection:     reflection,
 	}
+}
+
+// ---- Entity Query Handlers ----
+
+func (s *mcpServer) handleGetTask(args map[string]interface{}) mcpToolResult {
+	id := getStr(args, "task_id", "")
+	if id == "" {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "task_id 为必填项"}}, IsError: true}
+	}
+	task, err := store.GetTask(id)
+	if err != nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("查询 task 失败: %v", err)}}, IsError: true}
+	}
+	text := formatTaskDetail(task)
+	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: text}}, RelatedContext: task}
+}
+
+func (s *mcpServer) handleListTasks(args map[string]interface{}) mcpToolResult {
+	status := getStr(args, "status", "")
+	planID := getStr(args, "plan_id", "")
+	tasks, err := store.ListTasks(status, planID)
+	if err != nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("查询 tasks 失败: %v", err)}}, IsError: true}
+	}
+	if len(tasks) == 0 {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "未找到匹配的 task。"}}}
+	}
+	text := fmt.Sprintf("找到 %d 个 task:\n", len(tasks))
+	for _, t := range tasks {
+		text += fmt.Sprintf("- [%s] %s (status=%s priority=%s phase=%s)\n", t.ID, t.Title, t.Status, t.Priority, t.Phase)
+	}
+	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: text}}, RelatedContext: map[string]any{"count": len(tasks), "tasks": tasks}}
+}
+
+func (s *mcpServer) handleGetCommit(args map[string]interface{}) mcpToolResult {
+	id := getStr(args, "commit_id", "")
+	if id == "" {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "commit_id 为必填项"}}, IsError: true}
+	}
+	commit, err := store.GetCommit(id)
+	if err != nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("查询 commit 失败: %v", err)}}, IsError: true}
+	}
+	text := fmt.Sprintf("Commit: %s\n标题: %s\n状态: %s | review: %s | test: %s\nTask: %s\n文件: %s",
+		commit["id"], commit["title"], commit["status"], commit["review_status"], commit["test_status"],
+		commit["task_id"], commit["files_json"])
+	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: text}}, RelatedContext: commit}
+}
+
+func (s *mcpServer) handleListCommits(args map[string]interface{}) mcpToolResult {
+	taskID := getStr(args, "task_id", "")
+	status := getStr(args, "status", "")
+	limit := getInt(args, "limit", 20)
+	if limit <= 0 {
+		limit = 20
+	}
+	commits, err := store.ListCommits(status, taskID, "", "", limit)
+	if err != nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("查询 commits 失败: %v", err)}}, IsError: true}
+	}
+	if len(commits) == 0 {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "未找到匹配的 commit。"}}}
+	}
+	text := fmt.Sprintf("找到 %d 个 commit:\n", len(commits))
+	for _, c := range commits {
+		text += fmt.Sprintf("- [%s] %s (status=%s review=%s)\n", c["id"], c["title"], c["status"], c["review_status"])
+	}
+	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: text}}, RelatedContext: map[string]any{"count": len(commits), "commits": commits}}
+}
+
+func (s *mcpServer) handleGetPlan(args map[string]interface{}) mcpToolResult {
+	id := getStr(args, "plan_id", "")
+	if id == "" {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "plan_id 为必填项"}}, IsError: true}
+	}
+	plan, err := store.GetPlan(id)
+	if err != nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("查询 plan 失败: %v", err)}}, IsError: true}
+	}
+	text := fmt.Sprintf("Plan: %s\n目标: %s\n状态: %s | 优先级: %s\nRoadmap: %s | Vision: %s",
+		plan["title"], plan["goal"], plan["status"], plan["priority"], plan["roadmap_id"], plan["vision_id"])
+	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: text}}, RelatedContext: plan}
+}
+
+func (s *mcpServer) handleListPlans(args map[string]interface{}) mcpToolResult {
+	roadmapID := getStr(args, "roadmap_id", "")
+	status := getStr(args, "status", "")
+	plans, err := store.ListPlans(roadmapID, status)
+	if err != nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("查询 plans 失败: %v", err)}}, IsError: true}
+	}
+	if len(plans) == 0 {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "未找到匹配的 plan。"}}}
+	}
+	text := fmt.Sprintf("找到 %d 个 plan:\n", len(plans))
+	for _, p := range plans {
+		text += fmt.Sprintf("- [%s] %s (status=%s priority=%s)\n", p["id"], p["title"], p["status"], p["priority"])
+	}
+	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: text}}, RelatedContext: map[string]any{"count": len(plans), "plans": plans}}
+}
+
+func (s *mcpServer) handleGetBug(args map[string]interface{}) mcpToolResult {
+	id := getStr(args, "bug_id", "")
+	if id == "" {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "bug_id 为必填项"}}, IsError: true}
+	}
+	bug, err := store.GetBug(id)
+	if err != nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("查询 bug 失败: %v", err)}}, IsError: true}
+	}
+	text := fmt.Sprintf("Bug: %s\n严重级别: %s | 状态: %s\n错误: %s\n根因: %s\n修复: %s",
+		bug["title"], bug["severity"], bug["status"], bug["error"], bug["root_cause"], bug["fix"])
+	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: text}}, RelatedContext: bug}
+}
+
+func (s *mcpServer) handleListBugs(args map[string]interface{}) mcpToolResult {
+	status := getStr(args, "status", "")
+	severity := getStr(args, "severity", "")
+	limit := getInt(args, "limit", 20)
+	if limit <= 0 {
+		limit = 20
+	}
+	bugs, err := store.ListBugs(status, severity, "", limit)
+	if err != nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("查询 bugs 失败: %v", err)}}, IsError: true}
+	}
+	if len(bugs) == 0 {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "未找到匹配的 bug。"}}}
+	}
+	text := fmt.Sprintf("找到 %d 个 bug:\n", len(bugs))
+	for _, b := range bugs {
+		text += fmt.Sprintf("- [%s] %s (severity=%s status=%s)\n", b["id"], b["title"], b["severity"], b["status"])
+	}
+	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: text}}, RelatedContext: map[string]any{"count": len(bugs), "bugs": bugs}}
+}
+
+func (s *mcpServer) handleGetDecision(args map[string]interface{}) mcpToolResult {
+	id := getStr(args, "decision_id", "")
+	if id == "" {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "decision_id 为必填项"}}, IsError: true}
+	}
+	decision, err := store.GetDecision(id)
+	if err != nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("查询 decision 失败: %v", err)}}, IsError: true}
+	}
+	text := fmt.Sprintf("Decision: %s\n状态: %s | 日期: %s\n背景: %s\n决策: %s",
+		decision["title"], decision["status"], decision["date"], decision["background"], decision["decision_text"])
+	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: text}}, RelatedContext: decision}
+}
+
+func (s *mcpServer) handleListDecisions(args map[string]interface{}) mcpToolResult {
+	decisions, err := store.ListDecisions()
+	if err != nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("查询 decisions 失败: %v", err)}}, IsError: true}
+	}
+	if len(decisions) == 0 {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "未找到任何 decision。"}}}
+	}
+	text := fmt.Sprintf("找到 %d 个 decision:\n", len(decisions))
+	for _, d := range decisions {
+		text += fmt.Sprintf("- [%s] %s (status=%s date=%s)\n", d["id"], d["title"], d["status"], d["date"])
+	}
+	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: text}}, RelatedContext: map[string]any{"count": len(decisions), "decisions": decisions}}
+}
+
+// formatTaskDetail formats a task map for display, extracting key fields.
+func formatTaskDetail(task map[string]any) string {
+	title := ""
+	if v, ok := task["title"].(string); ok {
+		title = v
+	}
+	status := ""
+	if v, ok := task["status"].(string); ok {
+		status = v
+	}
+	priority := ""
+	if v, ok := task["priority"].(string); ok {
+		priority = v
+	}
+	phase := ""
+	if v, ok := task["phase"].(string); ok {
+		phase = v
+	}
+	planID := ""
+	if v, ok := task["plan_id"].(string); ok {
+		planID = v
+	}
+	lastNote := ""
+	if v, ok := task["last_note"].(string); ok {
+		lastNote = v
+	}
+	text := fmt.Sprintf("Task: %s\n状态: %s | 优先级: %s | Phase: %s\nPlan: %s", title, status, priority, phase, planID)
+	if lastNote != "" {
+		text += fmt.Sprintf("\n备注: %s", lastNote)
+	}
+	return text
 }
 
 func (s *mcpServer) handleRecordCommit(args map[string]interface{}) mcpToolResult {
