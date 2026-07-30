@@ -178,14 +178,25 @@ func ActivityPayload() map[string]any {
 	fileCounts := map[string]int{}
 	var graphEdges [][3]string // [source, target, relation]
 
-	// ── A: MCP call edges — scan discussion_log for aipm_record_commit/create_task/bug ──
-	mcpEdges := buildMCPEdges()
+	// ── Edge sources, by priority: graph_edges (pipeline) > MCP (Agent refs) > time-window (fallback) ──
+	geEdges := buildGraphEdgesSupplement(since)     // pipeline: file_touch, relates_to, link_entities dual-write
+	mcpEdges := buildMCPEdges()                     // Agent MCP tool calls
+	commitEdges := buildCommitWindowEdges(sessions) // time-window heuristic (fallback)
 
-	// ── C: Commit time-window edges — match sessions to commits by FirstSeen/LastSeen ──
-	commitEdges := buildCommitWindowEdges(sessions)
-
-	graphEdges = append(graphEdges, mcpEdges...)
-	graphEdges = append(graphEdges, commitEdges...)
+	seenEdges := map[string]bool{}
+	addEdges := func(edges [][3]string) {
+		for _, e := range edges {
+			key := e[0] + "|" + e[1]
+			if seenEdges[key] {
+				continue
+			}
+			seenEdges[key] = true
+			graphEdges = append(graphEdges, e)
+		}
+	}
+	addEdges(geEdges)
+	addEdges(mcpEdges)
+	addEdges(commitEdges)
 
 	for _, s := range sessions {
 		card := activityCard{
@@ -239,18 +250,21 @@ func ActivityPayload() map[string]any {
 			fileCounts[f]++
 		}
 
-		// Graph edges: session → entity
+		// Graph edges: session → entity (with type prefix for frontend label resolution)
 		for _, eid := range card.Entities {
 			parts := strings.SplitN(eid, "-", 2)
 			entityType := ""
 			if len(parts) > 0 {
 				entityType = parts[0]
 			}
-			graphEdges = append(graphEdges, [3]string{card.SessionID, eid, "refers_to:" + entityType})
+			entityID := entityType + ":" + eid // "task:task-20260615-xxx" — frontend needs prefix for lookupEntityTitle
+			sessionEdges := [][3]string{{card.SessionID, entityID, "refers_to:" + entityType}}
+			addEdges(sessionEdges)
 		}
 		// Graph edges: session → file
 		for _, f := range card.TouchedFiles {
-			graphEdges = append(graphEdges, [3]string{card.SessionID, "file:" + f, "touched"})
+			sessionEdges := [][3]string{{card.SessionID, "file:" + f, "touched"}}
+			addEdges(sessionEdges)
 		}
 
 		cards = append(cards, card)
@@ -406,6 +420,63 @@ func buildCommitWindowEdges(sessions []store.AgentSessionSummary) [][3]string {
 			seen[key] = true
 			edges = append(edges, [3]string{s.SessionID, "commit:" + c.ID, "refers_to:commit"})
 		}
+	}
+	return edges
+}
+
+// buildGraphEdgesSupplement queries graph_edges for pipeline-computed edges.
+// Includes: file_touch (weight >= 0.2), relates_to, fixes, implements, blocked_by, depends_on.
+// Excludes: same_session, file_read.
+// Source-type-normalized: session-sourced edges keep direction; others swap so session is always source.
+func buildGraphEdgesSupplement(since string) [][3]string {
+	db, err := pmdb.Open()
+	if err != nil {
+		return nil
+	}
+	defer db.Close()
+
+	rows, err := db.Query(`SELECT source_type, source_id, edge_type, target_type, target_id, weight
+		FROM graph_edges
+		WHERE edge_type IN ('file_touch','relates_to','fixes','implements','blocked_by','depends_on')
+		AND (edge_type != 'file_touch' OR weight >= 0.2)
+		AND created_at >= ?
+		ORDER BY weight DESC LIMIT 500`, since)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var edges [][3]string
+	seen := map[string]bool{}
+	for rows.Next() {
+		var st, sid, et, tt, tid string
+		var w float64
+		rows.Scan(&st, &sid, &et, &tt, &tid, &w)
+
+		var source, target, relation string
+
+		// Normalize direction: session is always source in the activity graph
+		if st == "session" {
+			source = sid
+			target = tt + ":" + tid
+			relation = et + ":" + tt
+		} else if tt == "session" {
+			source = tid
+			target = st + ":" + sid
+			relation = et + ":" + st
+		} else {
+			// Entity ↔ entity: prefix both
+			source = st + ":" + sid
+			target = tt + ":" + tid
+			relation = et
+		}
+
+		key := source + "|" + target
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		edges = append(edges, [3]string{source, target, relation})
 	}
 	return edges
 }

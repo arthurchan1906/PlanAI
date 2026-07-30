@@ -17,6 +17,7 @@ import (
 	"time"
 
 	apipkg "aipmc/api"
+	"aipmc/ai"
 	"aipmc/app"
 	"aipmc/analyze"
 	"aipmc/chatcli"
@@ -473,7 +474,7 @@ func serveCommand() int {
 				otherProjects = append(otherProjects, p)
 			}
 		}
-		session.RunAuto(application.AI, 30*time.Minute, otherProjects)
+		session.RunAuto(func() ai.Summarizer { return application.AI }, 30*time.Minute, otherProjects)
 	}
 
 	if err := srv.Listen(); err != nil {

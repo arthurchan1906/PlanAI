@@ -2,7 +2,9 @@ package api
 
 import (
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"sync"
 
 	"aipmc/web"
@@ -38,12 +40,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	method := r.Method
 	q := r.URL.Query()
+	rawBody, _ := io.ReadAll(r.Body)
+	r.Body = io.NopCloser(strings.NewReader(string(rawBody))) // rewind for readBody
 	body := readBody(r)
 
 	if s.handleChatRoutes(w, method, path, q, body) {
 		return
 	}
-	if s.handleWebRoutes(w, method, path) {
+	if s.handleWebRoutes(w, method, path, rawBody) {
 		return
 	}
 	if s.handleQueryRoutes(w, method, path, q) {

@@ -1,16 +1,20 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 
+	pmdb "aipmc/db"
 	"aipmc/store"
 	"aipmc/u"
 	"aipmc/web"
 	"aipmc/webdata"
 )
 
-func (s *Server) handleWebRoutes(w http.ResponseWriter, method, path string) bool {
+func (s *Server) handleWebRoutes(w http.ResponseWriter, method, path string, body []byte) bool {
 	if !strings.HasPrefix(path, "web/") {
 		return false
 	}
@@ -18,6 +22,13 @@ func (s *Server) handleWebRoutes(w http.ResponseWriter, method, path string) boo
 	// POST routes for mutations
 	if method == "POST" {
 		switch path {
+		case "web/guidelines":
+			if err := writeGuidelines(body); err != nil {
+				web.SendJSON(w, map[string]any{"ok": false, "error": err.Error()})
+				return true
+			}
+			web.SendJSON(w, map[string]any{"ok": true})
+			return true
 		case "web/events/consume":
 			if err := store.MarkEventsConsumed(); err != nil {
 				web.SendJSON(w, map[string]any{"ok": false, "error": err.Error()})
@@ -57,6 +68,9 @@ func (s *Server) handleWebRoutes(w http.ResponseWriter, method, path string) boo
 		web.SendJSON(w, webdata.CodePayload())
 	case "web/daily":
 		web.SendJSON(w, webdata.DailyPayload())
+	case "web/guidelines":
+		web.SendJSON(w, readGuidelines())
+		return true
 	case "web/activity":
 		web.SendJSON(w, webdata.ActivityPayload())
 	case "web/events":
@@ -81,4 +95,32 @@ func (s *Server) handleWebRoutes(w http.ResponseWriter, method, path string) boo
 		return false
 	}
 	return true
+}
+
+// readGuidelines reads .pmai/guidelines.md and returns {content: "..."}.
+func readGuidelines() map[string]any {
+	dir, err := pmdb.RuntimeDir()
+	if err != nil {
+		return map[string]any{"content": ""}
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "guidelines.md"))
+	if err != nil {
+		return map[string]any{"content": ""}
+	}
+	return map[string]any{"content": string(data)}
+}
+
+// writeGuidelines writes body["content"] to .pmai/guidelines.md.
+func writeGuidelines(body []byte) error {
+	var req struct {
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return err
+	}
+	dir, err := pmdb.RuntimeDir()
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, "guidelines.md"), []byte(req.Content), 0644)
 }

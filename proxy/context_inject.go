@@ -6,7 +6,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -20,7 +22,8 @@ import (
 )
 
 const (
-	maxInjectChars = 800             // hard cap to prevent context explosion
+	maxInjectChars  = 800             // hard cap to prevent context explosion
+	guidelinesBudget = 600            // dedicated char budget for guidelines.md
 	sessionTTL     = 48 * time.Hour  // ignore sessions older than this
 )
 
@@ -47,11 +50,18 @@ var (
 		updatedAt   time.Time
 		ttl         time.Duration
 	}
+	guidelinesCache struct {
+		mu        sync.RWMutex
+		content   string
+		updatedAt time.Time
+		ttl       time.Duration
+	}
 )
 
 func init() {
 	sessionCache.ttl = 5 * time.Minute
 	sessionCache.maxActions = 3 // cap actionable items to avoid flooding
+	guidelinesCache.ttl = 10 * time.Minute
 }
 
 // InjectSessionContext prepends recent session goals into the system message
@@ -62,21 +72,25 @@ func init() {
 // are related to the files it's working on.
 func InjectSessionContext(body []byte, agent string) []byte {
 	goals, warnings, actionItems, blockHash := getCachedContext()
+	guidelines := loadGuidelines()
 
 	// File awareness is computed per-request — must NOT be inside the
 	// 5-minute session cache, or it returns nil on every cache hit.
 	fileAssoc := resolveFileContext(body)
 
-	if len(goals) == 0 && len(fileAssoc) == 0 {
+	if len(goals) == 0 && len(fileAssoc) == 0 && len(guidelines) > 0 {
+		u.LogShared("INJECT", "inject agent=%s source=guidelines_only", agent)
+	}
+	if len(goals) == 0 && len(fileAssoc) == 0 && len(guidelines) == 0 {
 		u.LogShared("INJECT", "skip agent=%s reason=no_summary_data", agent)
 		return body
 	}
 
 	// Include fileAssoc in the content hash so file-context changes
 	// trigger re-injection even when session data is unchanged.
-	fullHash := hashString(fmt.Sprintf("%s%v", blockHash, fileAssoc))
+	fullHash := hashString(fmt.Sprintf("%s%v%s", blockHash, fileAssoc, guidelines))
 
-	block := buildContextBlock(goals, warnings, actionItems, fileAssoc)
+	block := buildContextBlock(goals, warnings, actionItems, fileAssoc, guidelines)
 
 	// Content-hash based dedup: only inject if content changed since last injection
 	if !shouldInject(agent, fullHash) {
@@ -85,7 +99,7 @@ func InjectSessionContext(body []byte, agent string) []byte {
 
 	result := injectIntoPrompt(body, block, agent)
 	injectTracker.Store(agent, injectState{lastAt: time.Now(), contentHash: fullHash})
-	u.LogShared("INJECT", "agent=%s goals=%d warnings=%d actions=%d file=%d chars=%d", agent, len(goals), len(warnings), len(actionItems), len(fileAssoc), len(block))
+	u.LogShared("INJECT", "agent=%s goals=%d warnings=%d actions=%d file=%d guidelines=%d chars=%d", agent, len(goals), len(warnings), len(actionItems), len(fileAssoc), len(guidelines), len(block))
 	return result
 }
 
@@ -224,11 +238,23 @@ func eventTypeBreakdown(events []map[string]any) string {
 	return strings.Join(parts, " ")
 }
 
-func buildContextBlock(goals, warnings, actionItems, fileAssoc []string) string {
+func buildContextBlock(goals, warnings, actionItems, fileAssoc []string, guidelines string) string {
 	var buf bytes.Buffer
 	buf.WriteString("\n[AIPM Context]")
 	written := 0
 	suppressed := 0
+
+	// ── Guidelines (highest priority, dedicated budget) ──
+	if guidelines != "" {
+		buf.WriteString("\n[项目编码规范]\n")
+		if len(guidelines) > guidelinesBudget {
+			buf.WriteString(guidelines[:guidelinesBudget] + "…")
+		} else {
+			buf.WriteString(guidelines)
+		}
+		written += len(guidelines) + 20
+		buf.WriteString("\n")
+	}
 
 	// ── File associations (highest priority, minimum 200 char reservation) ──
 	const fileAssocReservation = 200
@@ -536,6 +562,43 @@ func detectUserFrustration() []string {
 		}
 	}
 	return warnings
+}
+
+// loadGuidelines reads .pmai/guidelines.md and returns its content.
+// Cached for 10 minutes to avoid repeated filesystem reads.
+func loadGuidelines() string {
+	guidelinesCache.mu.RLock()
+	if time.Since(guidelinesCache.updatedAt) < guidelinesCache.ttl {
+		defer guidelinesCache.mu.RUnlock()
+		return guidelinesCache.content
+	}
+	guidelinesCache.mu.RUnlock()
+
+	guidelinesCache.mu.Lock()
+	defer guidelinesCache.mu.Unlock()
+
+	dir, err := pmdb.RuntimeDir()
+	if err != nil {
+		guidelinesCache.content = ""
+		return ""
+	}
+	path := filepath.Join(dir, "guidelines.md")
+	f, err := os.Open(path)
+	if err != nil {
+		guidelinesCache.content = ""
+		return ""
+	}
+	defer f.Close()
+	data, err := io.ReadAll(f)
+	if err != nil {
+		guidelinesCache.content = ""
+		return ""
+	}
+	content := strings.TrimSpace(string(data))
+	guidelinesCache.content = content
+	guidelinesCache.updatedAt = time.Now()
+	u.LogShared("GUIDELINES", "loaded %d chars from guidelines.md", len(content))
+	return content
 }
 
 func hashString(s string) string {

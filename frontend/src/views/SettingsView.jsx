@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Button, Card, Form, Input, Select, Tag, Typography, message, Collapse, Space, Tooltip, Row, Col, Divider, Modal, Dropdown } from "antd";
-import { PauseCircleOutlined, PlayCircleOutlined, CodeOutlined, RobotOutlined, ThunderboltOutlined, ApiOutlined, CloudServerOutlined, SettingOutlined, KeyOutlined, LockOutlined, UnlockOutlined, CopyOutlined } from "@ant-design/icons";
+import { BookOutlined, PauseCircleOutlined, PlayCircleOutlined, CodeOutlined, RobotOutlined, ThunderboltOutlined, ApiOutlined, CloudServerOutlined, SettingOutlined, KeyOutlined, LockOutlined, UnlockOutlined, CopyOutlined } from "@ant-design/icons";
 import { api } from "../utils/api";
 import AgentConfigView from "./AgentConfigView";
 import ModelRegistryEditor from "../components/ModelRegistryEditor";
@@ -23,6 +23,9 @@ export default function SettingsView() {
   const [aiForm] = Form.useForm();
   const [proxyForm] = Form.useForm();
   const [keyForm] = Form.useForm();
+  const [guidelines, setGuidelines] = useState("");
+  const [guidelinesLoading, setGuidelinesLoading] = useState(false);
+  const [guidelinesSaving, setGuidelinesSaving] = useState(false);
   async function load() {
     setLoading(true);
     try {
@@ -64,7 +67,25 @@ export default function SettingsView() {
     try { const d = await api("/pmai/proxy-status"); setProxySt(d?.running ? d : null); }
     catch { setProxySt(null); }
   }, []);
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); loadGuidelinesData(); }, []);
+
+  async function loadGuidelinesData() {
+    setGuidelinesLoading(true);
+    try {
+      const data = await api("/pmai/web/guidelines");
+      setGuidelines(data.content || "");
+    } catch (_) { setGuidelines(""); }
+    setGuidelinesLoading(false);
+  }
+
+  async function saveGuidelines() {
+    setGuidelinesSaving(true);
+    try {
+      await api("/pmai/web/guidelines", { method: "POST", body: JSON.stringify({ content: guidelines }) });
+      message.success("Guidelines saved");
+    } catch (e) { message.error(e.message); }
+    setGuidelinesSaving(false);
+  }
   const proxyRef = useRef(proxyStatus);
   proxyRef.current = proxyStatus;
   useEffect(() => {
@@ -376,6 +397,22 @@ export default function SettingsView() {
     <div>
       {proxySection}
       {aiSection}
+      <Divider style={{ margin: "8px 0 16px" }} />
+      <Card size="small" title={<Space><BookOutlined /> Guidelines (.pmai/guidelines.md)</Space>}
+        extra={<Text type="secondary" style={{fontSize:11}}>注入到 Agent system prompt 的项目编码规范</Text>}>
+        <Input.TextArea
+          value={guidelines}
+          onChange={e => setGuidelines(e.target.value)}
+          rows={8}
+          placeholder={"# Project coding guidelines\n\n* Use consistent naming\n* Add logs at data pipeline boundaries\n* ..."}
+          style={{ fontFamily: "monospace", fontSize: 13 }}
+        />
+        <div style={{ marginTop: 8, display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <Button size="small" onClick={loadGuidelinesData} loading={guidelinesLoading}>Reload</Button>
+          <Button type="primary" size="small" onClick={saveGuidelines} loading={guidelinesSaving}>Save</Button>
+        </div>
+      </Card>
+
       <Modal title={{
         init: "Initialize Encryption",
         unlock: "Master Password",

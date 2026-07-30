@@ -35,8 +35,12 @@ function ActivityGraphView({ graphEdges, sessions, entityLabels, onClose }) {
   const sessionLabel = {};
   if (sessions) {
     for (const s of sessions) {
-      const goal = (s.goal && !s.goal.startsWith("{")) ? s.goal : null;
-      sessionLabel[s.session_id] = s.first_prompt?.slice(0, 40) || s.session_id?.slice(0, 8);
+      // Label priority: goal (L2) > intent (B1) > first_prompt (raw) > session_id (fallback)
+      let label = s.goal;
+      if (!label || label.startsWith("{")) {
+        label = s.intent && s.intent !== "unknown" ? s.intent : null;
+      }
+      sessionLabel[s.session_id] = label || s.first_prompt?.slice(0, 40) || s.session_id?.slice(0, 8);
     }
   }
 
@@ -46,29 +50,55 @@ function ActivityGraphView({ graphEdges, sessions, entityLabels, onClose }) {
   const seenEdges = new Set();
 
   for (const [s, t, rel] of graphEdges) {
-    if (s.startsWith("file:") || t.startsWith("file:")) continue;
+    // File edges: keep but mark for visual distinction (don't skip)
+    const hasFile = s.startsWith("file:") || t.startsWith("file:");
     const key = s + "|" + t;
     if (seenEdges.has(key)) continue;
     seenEdges.add(key);
 
+    // Resolve source node type (session, entity, or file)
+    // TODO: pass source_type explicitly from backend edge data instead of heuristic detection.
+    //       Session IDs are UUID/hex today (no ':'), but this breaks if format changes.
     if (!nodeMap[s]) {
-      nodeMap[s] = { id: s, type: "session", data: { label: sessionLabel[s] || s.slice(0, 8) } };
+      const isSourceSession = !s.includes(":");
+      nodeMap[s] = {
+        id: s,
+        type: s.startsWith("file:") ? "file" : (isSourceSession ? "session" : "entity"),
+        data: { label: sessionLabel[s] || el[s] || s.slice(0, 8) }
+      };
     }
+    // Resolve target node type and label
     if (!nodeMap[t]) {
+      const isTargetFile = t.startsWith("file:");
       const cp = t.indexOf(":");
       const ep = cp >= 0 ? t.substring(cp + 1) : t;
       const dp = ep.indexOf("-");
       const et = dp >= 0 ? ep.substring(0, dp) : "entity";
-      const title = el[t] || ep;
-      nodeMap[t] = { id: t, type: "entity", data: { label: title, etype: et } };
+      // Try entityLabels with prefix, then without, then raw
+      let title = el[t] || el[ep] || ep;
+      if (!el[t] && !t.includes(":")) {
+        const prefixed = et + ":" + t;
+        title = el[prefixed] || title;
+      }
+      nodeMap[t] = {
+        id: t, type: isTargetFile ? "file" : "entity",
+        data: { label: title, etype: et }
+      };
     }
 
-    const isHard = rel.includes("refers_to");
+    // Edge type for visual distinction
+    const isPipeline = rel.startsWith("file_touch:") || rel.startsWith("relates_to:") ||
+      /^(fixes|implements|blocked_by|depends_on)$/.test(rel);
+    const isMCP = rel.startsWith("refers_to:");
+    const edgeType = hasFile ? "file" : isPipeline ? "pipeline" : isMCP ? "mcp" : "fallback";
+    const isHard = isMCP || isPipeline;
+
     edgeList.push({
       source: nodeMap[s],
       target: nodeMap[t],
       hard: isHard,
-      relation: isHard ? "→" : "···",
+      edgeType,
+      relation: rel,
     });
   }
 
@@ -76,17 +106,26 @@ function ActivityGraphView({ graphEdges, sessions, entityLabels, onClose }) {
   const entityDegree = {};
   for (const e of edgeList) {
     entityDegree[e.target.id] = (entityDegree[e.target.id] || 0) + 1;
+    // Count source entities too (for non-session sources like entity→entity edges)
+    if (e.source.type === "entity") {
+      entityDegree[e.source.id] = (entityDegree[e.source.id] || 0) + 1;
+    }
   }
   const sortedEntities = Object.entries(entityDegree)
     .sort((a, b) => b[1] - a[1])
-    .slice(0, 20)
+    .slice(0, 25)
     .map(([id]) => id);
   const keepEntity = new Set(sortedEntities);
 
   // Filter edges to kept entities
-  const filteredEdges = edgeList.filter(e => keepEntity.has(e.target.id));
+  const filteredEdges = edgeList.filter(e =>
+    keepEntity.has(e.target.id) || (e.source.type === "entity" && keepEntity.has(e.source.id))
+  );
   const keepSession = new Set();
-  for (const e of filteredEdges) keepSession.add(e.source.id);
+  for (const e of filteredEdges) {
+    if (e.source.type === "session") keepSession.add(e.source.id);
+    if (e.target.type === "session") keepSession.add(e.target.id);
+  }
   const nodes = Object.values(nodeMap).filter(n =>
     n.type === "session" ? keepSession.has(n.id) : keepEntity.has(n.id)
   );
@@ -156,11 +195,20 @@ function ActivityGraphView({ graphEdges, sessions, entityLabels, onClose }) {
         return `M${sx},${sy} Q${mx},${my} ${tx},${ty}`;
       })
       .attr("fill", "none")
-      .attr("stroke", e => e.hard ? "#2f6fec" : "#bbb")
-      .attr("stroke-width", e => e.hard ? 2 : 1.2)
-      .attr("stroke-dasharray", e => e.hard ? "" : "5,5")
-      .attr("opacity", e => e.hard ? 0.5 : 0.35)
-      .attr("marker-end", e => e.hard ? "url(#arrow-hard)" : "url(#arrow-soft)");
+      .attr("stroke", e => {
+        if (e.edgeType === "pipeline") return "#52c41a";  // green: pipeline computed
+        if (e.edgeType === "mcp") return "#2f6fec";       // blue: Agent MCP refs
+        if (e.edgeType === "file") return "#8c8c8c";      // gray: file touched
+        return "#bbb";                                      // light gray: fallback
+      })
+      .attr("stroke-width", e => e.edgeType === "file" ? 0.8 : e.hard ? 2 : 1.2)
+      .attr("stroke-dasharray", e => {
+        if (e.edgeType === "file") return "4,4";
+        if (e.edgeType === "fallback") return "5,5";
+        return ""; // solid for pipeline + mcp
+      })
+      .attr("opacity", e => e.edgeType === "file" ? 0.25 : e.hard ? 0.5 : 0.35)
+      .attr("marker-end", e => e.edgeType === "fallback" || e.edgeType === "file" ? null : "url(#arrow-hard)");
 
     // ── Entity nodes (rectangles) ──
     const ents = nodes.filter(n => n.type === "entity");
@@ -196,6 +244,21 @@ function ActivityGraphView({ graphEdges, sessions, entityLabels, onClose }) {
       .attr("font-size", 10).attr("fill", "#555").attr("pointer-events", "none")
       .text(n => n.data.label?.length > 18 ? n.data.label.slice(0, 18) + ".." : n.data.label);
 
+    // ── File nodes (small gray dots) ──
+    const files = nodes.filter(n => n.type === "file");
+    g.selectAll("circle.file").data(files).enter().append("circle")
+      .attr("class", "file")
+      .attr("cx", n => n.x + ox).attr("cy", n => n.y + oy)
+      .attr("r", 5).attr("fill", FILE_COLOR).attr("stroke", "#fff").attr("stroke-width", 1)
+      .on("mouseenter", (ev, n) => setTooltip({ x: ev.pageX, y: ev.pageY, text: "file: " + n.data.label }))
+      .on("mouseleave", () => setTooltip(null));
+
+    g.selectAll("text.file").data(files).enter().append("text")
+      .attr("class", "file")
+      .attr("x", n => n.x + ox + 8).attr("y", n => n.y + oy + 4)
+      .attr("font-size", 8).attr("fill", "#999").attr("pointer-events", "none")
+      .text(n => n.data.label?.length > 22 ? n.data.label.slice(0, 22) + ".." : n.data.label);
+
     // ── Drag ──
     const drag = d3.drag()
       .on("start", function() { d3.select(this).raise().attr("stroke-width", 3); })
@@ -221,9 +284,13 @@ function ActivityGraphView({ graphEdges, sessions, entityLabels, onClose }) {
         .attr("cx", n => n.x + ox).attr("cy", n => n.y + oy);
       g.selectAll("text.session")
         .attr("x", n => n.x + ox + 22).attr("y", n => n.y + oy + 4);
+      g.selectAll("circle.file")
+        .attr("cx", n => n.x + ox).attr("cy", n => n.y + oy);
+      g.selectAll("text.file")
+        .attr("x", n => n.x + ox + 8).attr("y", n => n.y + oy + 4);
     }
 
-    g.selectAll("rect.entity, circle.session").call(drag);
+    g.selectAll("rect.entity, circle.session, circle.file").call(drag);
   }, []);
 
   return (
@@ -242,7 +309,9 @@ function ActivityGraphView({ graphEdges, sessions, entityLabels, onClose }) {
         <Space size={14}>
           <span><span style={{display:"inline-block",width:10,height:10,borderRadius:"50%",background:SESSION_COLOR,marginRight:4}} /> Session</span>
           <span><span style={{display:"inline-block",width:10,height:10,borderRadius:3,background:"#2f6fec",marginRight:4}} /> Entity</span>
-          <span style={{color:"#888"}}>→ 关联 / ··· 待确认</span>
+          <span><span style={{display:"inline-block",width:6,height:6,borderRadius:"50%",background:FILE_COLOR,marginRight:4}} /> File</span>
+          <span style={{color:"#52c41a",fontSize:10}}>━ pipeline</span>
+          <span style={{color:"#8c8c8c",fontSize:10}}>┅ file</span>
         </Space>
       </div>
     </div>

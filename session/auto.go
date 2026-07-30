@@ -13,18 +13,19 @@ import (
 // across all registered projects. The home project runs first, then all
 // other registered projects in sequence.
 // The first run happens after 5 seconds, then every interval thereafter.
-// summarizer may be nil (L2 gracefully degrades without AI).
-func RunAuto(summarizer ai.Summarizer, interval time.Duration, projectPaths []string) {
+// getSummarizer is called each tick to fetch the current AI client,
+// so config changes (e.g. model switch via web UI) take effect without restart.
+func RunAuto(getSummarizer func() ai.Summarizer, interval time.Duration, projectPaths []string) {
 	home, _ := os.Getwd()
 	u.LogShared("PIPELINE", "auto-run started interval=%v projects=%d home=%s", interval, len(projectPaths), home)
 
 	go func() {
 		time.Sleep(5 * time.Second)
-		runAllProjects(home, projectPaths, summarizer)
+		runAllProjects(home, projectPaths, getSummarizer())
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for range ticker.C {
-			runAllProjects(home, projectPaths, summarizer)
+			runAllProjects(home, projectPaths, getSummarizer())
 		}
 	}()
 }
