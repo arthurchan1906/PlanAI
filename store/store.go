@@ -7,10 +7,28 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	pmdb "aipmc/db"
 	"aipmc/u"
 )
+
+// retryOnBusy wraps a function with automatic retry on SQLITE_BUSY errors.
+// Uses exponential backoff: 100ms, 200ms, 400ms.
+func retryOnBusy(fn func() error) error {
+	var err error
+	for i := 0; i < 3; i++ {
+		err = fn()
+		if err == nil {
+			return nil
+		}
+		if !strings.Contains(err.Error(), "SQLITE_BUSY") && !strings.Contains(err.Error(), "database is locked") {
+			return err
+		}
+		time.Sleep(time.Duration(1<<uint(i)) * 100 * time.Millisecond)
+	}
+	return fmt.Errorf("still busy after 3 retries: %w", err)
+}
 
 // ============================================================
 // Tasks
@@ -305,6 +323,79 @@ func ListCommitsByTask(taskID string) ([]map[string]any, error) {
 	return ListCommits("", taskID, "", "", 0)
 }
 
+// ListCommitsWithOffset extends ListCommits with offset for pagination.
+func ListCommitsWithOffset(status, taskID, decisionID, since string, limit, offset int) ([]map[string]any, error) {
+	db, err := pmdb.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	q := "SELECT id, title, summary, evidence_summary, review_notes, branch, commit_hash, task_id, decision_id, status, test_status, review_status, files_json, created_at, updated_at FROM commits"
+	var args []any
+	var clauses []string
+	if status != "" {
+		clauses = append(clauses, "status = ?")
+		args = append(args, status)
+	}
+	if taskID != "" {
+		clauses = append(clauses, "task_id = ?")
+		args = append(args, taskID)
+	}
+	if decisionID != "" {
+		clauses = append(clauses, "decision_id = ?")
+		args = append(args, decisionID)
+	}
+	if since != "" {
+		if since == "today" {
+			since = u.Today()
+		}
+		clauses = append(clauses, "created_at >= ?")
+		args = append(args, since)
+	}
+	if len(clauses) > 0 {
+		q += " WHERE " + strings.Join(clauses, " AND ")
+	}
+	q += " ORDER BY created_at DESC, id DESC"
+	if limit > 0 {
+		q += " LIMIT ?"
+		args = append(args, limit)
+	}
+	if offset > 0 {
+		q += " OFFSET ?"
+		args = append(args, offset)
+	}
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return ScanCommitRows(rows)
+}
+
+// ListOrphanCommits returns commits that have no task_id (orphan commits).
+func ListOrphanCommits(limit, offset int) ([]map[string]any, error) {
+	db, err := pmdb.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	if limit <= 0 {
+		limit = 50
+	}
+	q := "SELECT id, title, summary, evidence_summary, review_notes, branch, commit_hash, task_id, decision_id, status, test_status, review_status, files_json, created_at, updated_at FROM commits WHERE task_id IS NULL OR task_id = '' ORDER BY created_at DESC, id DESC LIMIT ?"
+	args := []any{limit}
+	if offset > 0 {
+		q += " OFFSET ?"
+		args = append(args, offset)
+	}
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return ScanCommitRows(rows)
+}
+
 func GetCommit(id string) (map[string]any, error) {
 	db, err := pmdb.Open()
 	if err != nil {
@@ -350,7 +441,10 @@ func CreateCommit(projectPath string, title, summary, evidenceSummary, reviewNot
 	if len(files) > 0 {
 		filesJSON = u.JsonStr(files)
 	}
-	_, err = db.Exec("INSERT INTO commits (id, title, summary, evidence_summary, review_notes, branch, commit_hash, task_id, decision_id, status, test_status, review_status, files_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, title, summary, evidenceSummary, reviewNotes, branch, commitHash, taskID, decisionID, status, testStatus, reviewStatus, filesJSON, now, now)
+	err = retryOnBusy(func() error {
+		_, derr := db.Exec("INSERT INTO commits (id, title, summary, evidence_summary, review_notes, branch, commit_hash, task_id, decision_id, status, test_status, review_status, files_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, title, summary, evidenceSummary, reviewNotes, branch, commitHash, taskID, decisionID, status, testStatus, reviewStatus, filesJSON, now, now)
+		return derr
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -367,6 +461,78 @@ func CreateCommit(projectPath string, title, summary, evidenceSummary, reviewNot
 	pmdb.SyncFTS5Entity(db, "commit", id, title, commitContent)
 	c, _ := GetCommit(id)
 	return c, nil
+}
+
+// BatchCreateCommits creates multiple commits in a single transaction.
+// Each commit calls SyncFTS5Entity for search indexing.
+// Uses "best-effort" strategy: individual failures do not block the batch.
+type BatchCommitItem struct {
+	Title      string   `json:"title"`
+	CommitHash string   `json:"commit_hash"`
+	Files      []string `json:"files"`
+	Summary    string   `json:"summary"`
+}
+
+type BatchRecordResult struct {
+	Total   int               `json:"total"`
+	Success int               `json:"success"`
+	Failed  int               `json:"failed"`
+	Details []BatchRecordItem `json:"details"`
+}
+
+type BatchRecordItem struct {
+	Index   int    `json:"index"`
+	Success bool   `json:"success"`
+	ID      string `json:"id,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
+func BatchCreateCommits(projectPath, taskID, branch, status, testStatus, reviewStatus string, items []BatchCommitItem) (*BatchRecordResult, error) {
+	db, err := pmdb.OpenProject(projectPath)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	// Validate task exists
+	var _x int
+	if err := db.QueryRow("SELECT 1 FROM tasks WHERE id = ?", taskID).Scan(&_x); err != nil {
+		return nil, fmt.Errorf("task not found: %s", taskID)
+	}
+
+	result := &BatchRecordResult{Total: len(items), Details: make([]BatchRecordItem, len(items))}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	now := u.NowISO()
+	for i, item := range items {
+		id := u.Slug("commit")
+		filesJSON := "[]"
+		if len(item.Files) > 0 {
+			filesJSON = u.JsonStr(item.Files)
+		}
+		_, err := tx.Exec("INSERT INTO commits (id, title, summary, evidence_summary, review_notes, branch, commit_hash, task_id, decision_id, status, test_status, review_status, files_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			id, item.Title, item.Summary, "", "", branch, item.CommitHash, taskID, "", status, testStatus, reviewStatus, filesJSON, now, now)
+		if err != nil {
+			result.Failed++
+			result.Details[i] = BatchRecordItem{Index: i, Success: false, Error: err.Error()}
+			continue
+		}
+		// FTS5 indexing
+		commitContent := item.Title + " " + item.Summary + " " + filesJSON
+		pmdb.SyncFTS5Entity(db, "commit", id, item.Title, commitContent)
+		result.Success++
+		result.Details[i] = BatchRecordItem{Index: i, Success: true, ID: id}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit tx: %w", err)
+	}
+	return result, nil
 }
 
 // StoreGitCommit creates or updates a commit entry from git data.
@@ -1083,9 +1249,13 @@ func ListLinks(sourceID, targetID, relation string) ([]map[string]any, error) {
 
 func CreateLink(projectPath string, sourceType, sourceID, relation, targetType, targetID, note string) (map[string]any, error) {
 	db, err := pmdb.OpenProject(projectPath)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
 
-	// Whitelist: only these 5 relations are allowed
-	allowed := map[string]bool{
+	// Whitelist: only these 6 relations are allowed via links table
+	allowedLinks := map[string]bool{
 		"relates_to":   true,
 		"implements":   true,
 		"fixes":        true,
@@ -1093,17 +1263,48 @@ func CreateLink(projectPath string, sourceType, sourceID, relation, targetType, 
 		"depends_on":   true,
 		"converted_to": true,
 	}
-	if !allowed[relation] {
-		return nil, fmt.Errorf("relation '%s' is not allowed. Valid options: relates_to, implements, fixes, blocked_by, depends_on", relation)
+	if !allowedLinks[relation] {
+		return nil, fmt.Errorf("relation '%s' is not allowed. Valid options: relates_to, implements, fixes, blocked_by, depends_on, converted_to", relation)
 	}
 
+	id := u.Slug("link")
+	now := u.NowISO()
+
+	// Wrap transaction in retryOnBusy for concurrent-write resilience
+	err = retryOnBusy(func() error {
+		tx, txErr := db.Begin()
+		if txErr != nil {
+			return fmt.Errorf("begin tx: %w", txErr)
+		}
+		defer tx.Rollback()
+
+		_, txErr = tx.Exec("INSERT OR IGNORE INTO links (id, source_type, source_id, relation, target_type, target_id, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", id, sourceType, sourceID, relation, targetType, targetID, note, now)
+		if txErr != nil {
+			return fmt.Errorf("links write: %w", txErr)
+		}
+
+		// Dual-write to graph_edges for trace_context visibility.
+		if storeAllowedEdgeTypes[relation] {
+			edgeID := u.Slug("gedge")
+			weight := relationWeight(relation)
+			ev := map[string]any{"via": "link_entities", "link_id": id}
+			if note != "" {
+				ev["note"] = note
+			}
+			evJSON := u.JsonStr(ev)
+			_, txErr = tx.Exec("INSERT OR IGNORE INTO graph_edges (id, source_type, source_id, edge_type, target_type, target_id, weight, evidence_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+				edgeID, sourceType, sourceID, relation, targetType, targetID, weight, evJSON, now)
+			if txErr != nil {
+				return fmt.Errorf("graph_edges write: %w", txErr)
+			}
+		}
+
+		return tx.Commit()
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
-	id := u.Slug("link")
-	now := u.NowISO()
-	db.Exec("INSERT OR IGNORE INTO links (id, source_type, source_id, relation, target_type, target_id, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", id, sourceType, sourceID, relation, targetType, targetID, note, now)
+
 	return map[string]any{"id": id, "source_type": sourceType, "source_id": sourceID, "relation": relation, "target_type": targetType, "target_id": targetID}, nil
 }
 
@@ -2402,7 +2603,7 @@ func UpdateAgentProfile(id string, payload map[string]any) (map[string]any, erro
 // Graph Edges
 // ============================================================
 
-// Allowed edge types for graph_edges (pipeline-auto-derived relationships).
+// Allowed edge types for graph_edges (pipeline-auto-derived + agent-declared relationships).
 var allowedEdgeTypes = map[string]bool{
 	"file_touch":   true,
 	"file_read":    true,
@@ -2410,6 +2611,29 @@ var allowedEdgeTypes = map[string]bool{
 	"derived_from": true,
 	"same_session": true,
 	"implements":   true,
+	// Agent-declared relations (mirrored from links table via CreateLink dual-write)
+	"fixes":      true,
+	"blocked_by": true,
+	"depends_on": true,
+	"relates_to": true,
+}
+
+// storeAllowedEdgeTypes mirrors allowedEdgeTypes for use within the store package.
+var storeAllowedEdgeTypes = allowedEdgeTypes
+
+// relationWeight maps a link relation type to a graph edge weight.
+// Higher weight = stronger relationship.
+func relationWeight(relation string) float64 {
+	switch relation {
+	case "implements", "fixes":
+		return 1.0
+	case "blocked_by", "depends_on":
+		return 0.8
+	case "relates_to":
+		return 0.5
+	default:
+		return 0.5
+	}
 }
 
 func CreateGraphEdge(sourceType, sourceID, edgeType, targetType, targetID string, weight float64, evidence map[string]any) error {

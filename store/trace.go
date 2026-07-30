@@ -109,6 +109,12 @@ func TraceContext(fromType, fromID, direction string, minWeight float64, limit i
 		result.Edges = []TraceEdge{}
 	}
 
+	// Append FK virtual edges for primary-key relationships
+	// (commit->task, task->plan, plan->roadmap).
+	// These are not stored in graph_edges but are critical for trace visibility.
+	fkEdges := resolveFKEdges(db, fromType, fromID, direction)
+	result.Edges = append(result.Edges, fkEdges...)
+
 	// Build summary
 	result.Summary.TotalEdges = len(result.Edges)
 	for _, e := range result.Edges {
@@ -121,6 +127,108 @@ func TraceContext(fromType, fromID, direction string, minWeight float64, limit i
 	}
 
 	return result, nil
+}
+
+// resolveFKEdges returns virtual edges for FK relationships not stored in graph_edges.
+// These include: commit->task (commits.task_id), task->plan (tasks.plan_id),
+// and plan->roadmap (plans.roadmap_id).
+//
+// TODO: Add FK edges for bug->commit (bugs.commit_id) and decision FK chains.
+func resolveFKEdges(db *sql.DB, fromType, fromID, direction string) []TraceEdge {
+	var edges []TraceEdge
+
+	if direction == "out" || direction == "both" {
+		switch fromType {
+		case "commit":
+			var taskID string
+			db.QueryRow("SELECT task_id FROM commits WHERE id = ?", fromID).Scan(&taskID)
+			if taskID != "" {
+				edges = append(edges, TraceEdge{
+					SourceType: "commit", SourceID: fromID,
+					EdgeType:   "has_task",
+					TargetType: "task", TargetID: taskID,
+					Weight: 1.0, Direction: "out",
+				})
+			}
+		case "task":
+			var planID string
+			db.QueryRow("SELECT plan_id FROM tasks WHERE id = ?", fromID).Scan(&planID)
+			if planID != "" {
+				edges = append(edges, TraceEdge{
+					SourceType: "task", SourceID: fromID,
+					EdgeType:   "belongs_to",
+					TargetType: "plan", TargetID: planID,
+					Weight: 1.0, Direction: "out",
+				})
+			}
+		case "plan":
+			var roadmapID string
+			db.QueryRow("SELECT roadmap_id FROM plans WHERE id = ?", fromID).Scan(&roadmapID)
+			if roadmapID != "" {
+				edges = append(edges, TraceEdge{
+					SourceType: "plan", SourceID: fromID,
+					EdgeType:   "belongs_to",
+					TargetType: "roadmap", TargetID: roadmapID,
+					Weight: 1.0, Direction: "out",
+				})
+			}
+		}
+	}
+
+	if direction == "in" || direction == "both" {
+		switch fromType {
+		case "task":
+			rows, err := db.Query("SELECT id FROM commits WHERE task_id = ?", fromID)
+			if err == nil {
+				defer rows.Close()
+				for rows.Next() {
+					var cid string
+					rows.Scan(&cid)
+					edges = append(edges, TraceEdge{
+						SourceType: "commit", SourceID: cid,
+						EdgeType:   "has_task",
+						TargetType: "task", TargetID: fromID,
+						Weight: 1.0, Direction: "in",
+					})
+				}
+			}
+		case "plan":
+			rows, err := db.Query("SELECT id FROM tasks WHERE plan_id = ?", fromID)
+			if err == nil {
+				defer rows.Close()
+				for rows.Next() {
+					var tid string
+					rows.Scan(&tid)
+					edges = append(edges, TraceEdge{
+						SourceType: "task", SourceID: tid,
+						EdgeType:   "belongs_to",
+						TargetType: "plan", TargetID: fromID,
+						Weight: 1.0, Direction: "in",
+					})
+				}
+			}
+		case "roadmap":
+			rows, err := db.Query("SELECT id FROM plans WHERE roadmap_id = ?", fromID)
+			if err == nil {
+				defer rows.Close()
+				for rows.Next() {
+					var pid string
+					rows.Scan(&pid)
+					edges = append(edges, TraceEdge{
+						SourceType: "plan", SourceID: pid,
+						EdgeType:   "belongs_to",
+						TargetType: "roadmap", TargetID: fromID,
+						Weight: 1.0, Direction: "in",
+					})
+				}
+			}
+		}
+	}
+
+	if edges == nil {
+		edges = []TraceEdge{}
+	}
+	return edges
 }
 
 // TraceContextJSON wraps TraceContext for MCP output.

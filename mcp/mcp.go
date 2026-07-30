@@ -10,6 +10,7 @@ import (
 
 	"aipmc/ai"
 	"aipmc/analyze"
+	pmdb "aipmc/db"
 	"aipmc/discussion"
 	"aipmc/store"
 	"aipmc/vision"
@@ -183,7 +184,9 @@ func (s *mcpServer) registerTools() {
 				Properties: map[string]interface{}{
 					"task_id": map[string]string{"type": "string", "description": "按关联的 Task ID 过滤。task_id 可从 aipm_search_context 或 aipm_list_tasks 结果中获取"},
 					"status":  map[string]string{"type": "string", "description": "按 commit 状态过滤。可选值: committed / draft / merged"},
-					"limit":   map[string]string{"type": "integer", "description": "返回数量上限，默认 20。最近创建的 commit 优先返回"},
+					"limit":   map[string]string{"type": "integer", "description": "返回数量上限，默认 50。最近创建的 commit 优先返回"},
+					"offset":  map[string]string{"type": "integer", "description": "分页偏移量，配合 limit 实现翻页。默认 0。"},
+					"orphan":  map[string]string{"type": "boolean", "description": "设为 true 时只返回未关联 task 的孤儿 commit（task_id 为空）。"},
 				},
 			},
 		}, s.handleListCommits)
@@ -272,11 +275,30 @@ func (s *mcpServer) registerTools() {
 				"status":        map[string]string{"type": "string", "description": "commit/draft"},
 				"project_path":  map[string]string{"type": "string", "description": "可选: 目标项目路径。例: /Users/dazsec/projects/EncryptDrive"},
 				"review_status": map[string]string{"type": "string", "description": "可选: pending/approved/rejected，默认 pending。设为 approved 后 task 可标记 done"},
+				"commit_hash":   map[string]string{"type": "string", "description": "可选: git SHA 哈希值。提供后可通过 commit_hash 精确去重，避免标题模糊匹配导致重复记录。强烈建议填写。"},
 				"test_status":   map[string]string{"type": "string", "description": "可选: not_run/passed/failed，默认 not_run。设为 passed 后 task 可标记 done"},
 			},
 			Required: []string{"task_id", "title"},
 		},
 	}, s.handleRecordCommit)
+
+	s.addTool(MCPTool{
+		Name:        "aipm_record_commits",
+		Description: "批量记录多个 commit 到同一个 task。一次调用替代多次 record_commit，减少 API 往返。\n\n参数: task_id(必填)、commits(必填, 数组，每项含 title/commit_hash/files/summary)。\n返回: 成功/失败计数和详情。",
+		InputSchema: MCPInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"task_id":       map[string]string{"type": "string", "description": "关联的 Task ID。必填"},
+				"commits":       map[string]string{"type": "array", "description": "Commit 数组。每项: {title, commit_hash(可选), files(可选,逗号分隔), summary(可选)}"},
+				"branch":        map[string]string{"type": "string", "description": "分支名，默认 main"},
+				"status":        map[string]string{"type": "string", "description": "commit/draft，默认 committed"},
+				"project_path":  map[string]string{"type": "string", "description": "可选: 目标项目路径。例: /Users/dazsec/projects/EncryptDrive"},
+				"review_status": map[string]string{"type": "string", "description": "可选: pending/approved/rejected，默认 pending"},
+				"test_status":   map[string]string{"type": "string", "description": "可选: not_run/passed/failed，默认 not_run"},
+			},
+			Required: []string{"task_id", "commits"},
+		},
+	}, s.handleRecordCommits)
 
 	s.addTool(MCPTool{
 		Name:        "aipm_create_task",
@@ -356,6 +378,7 @@ func (s *mcpServer) registerTools() {
 				"commit_id":     map[string]string{"type": "string", "description": "Commit ID。必填"},
 				"status":        map[string]string{"type": "string", "description": "Commit 状态: committed/draft/merged（可选）"},
 				"review_status": map[string]string{"type": "string", "description": "Review 状态: pending/approved/rejected（可选）"},
+				"task_id":       map[string]string{"type": "string", "description": "可选: 将 commit 重新分配到不同的 task。用于修正错误的绑定。"},
 				"test_status":   map[string]string{"type": "string", "description": "Test 状态: not_run/passed/failed（可选）"},
 				"summary":       map[string]string{"type": "string", "description": "变更摘要（可选）"},
 			},
@@ -804,11 +827,24 @@ func (s *mcpServer) handleGetCommit(args map[string]interface{}) mcpToolResult {
 func (s *mcpServer) handleListCommits(args map[string]interface{}) mcpToolResult {
 	taskID := getStr(args, "task_id", "")
 	status := getStr(args, "status", "")
-	limit := getInt(args, "limit", 20)
+	limit := getInt(args, "limit", 50)
+	offset := getInt(args, "offset", 0)
+	orphan := getBool(args, "orphan", false)
 	if limit <= 0 {
-		limit = 20
+		limit = 50
 	}
-	commits, err := store.ListCommits(status, taskID, "", "", limit)
+
+	var commits []map[string]any
+	var err error
+
+	if orphan {
+		commits, err = store.ListOrphanCommits(limit, offset)
+	} else if offset > 0 {
+		commits, err = store.ListCommitsWithOffset(status, taskID, "", "", limit, offset)
+	} else {
+		commits, err = store.ListCommits(status, taskID, "", "", limit)
+	}
+
 	if err != nil {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("查询 commits 失败: %v", err)}}, IsError: true}
 	}
@@ -816,6 +852,9 @@ func (s *mcpServer) handleListCommits(args map[string]interface{}) mcpToolResult
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "未找到匹配的 commit。"}}}
 	}
 	text := fmt.Sprintf("找到 %d 个 commit:\n", len(commits))
+	if offset > 0 {
+		text = fmt.Sprintf("找到 %d 个 commit (offset=%d):\n", len(commits), offset)
+	}
 	for _, c := range commits {
 		text += fmt.Sprintf("- [%s] %s (status=%s review=%s)\n", c["id"], c["title"], c["status"], c["review_status"])
 	}
@@ -1025,6 +1064,19 @@ func (s *mcpServer) handleUpdateCommit(args map[string]interface{}) mcpToolResul
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "commit_id 为必填项"}}, IsError: true}
 	}
 	payload := map[string]any{}
+	if v := getStr(args, "task_id", ""); v != "" {
+		// Validate task exists before reassigning
+		db, err := pmdb.Open()
+		if err == nil {
+			var _x int
+			if db.QueryRow("SELECT 1 FROM tasks WHERE id = ?", v).Scan(&_x) != nil {
+				db.Close()
+				return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("task 不存在: %s", v)}}, IsError: true}
+			}
+			db.Close()
+		}
+		payload["task_id"] = v
+	}
 	if v := getStr(args, "status", ""); v != "" {
 		payload["status"] = v
 	}
@@ -1133,6 +1185,7 @@ func (s *mcpServer) handleRecordCommit(args map[string]interface{}) mcpToolResul
 	status := getStr(args, "status", "committed")
 	filesStr := getStr(args, "files", "")
 	projectPath := getStr(args, "project_path", "")
+	commitHash := getStr(args, "commit_hash", "")
 	testStatus := getStr(args, "test_status", "not_run")
 	reviewStatus := getStr(args, "review_status", "pending")
 
@@ -1145,7 +1198,23 @@ func (s *mcpServer) handleRecordCommit(args map[string]interface{}) mcpToolResul
 		}
 	}
 
-	commit, err := store.CreateCommit(projectPath, title, summary, "", "", branch, "", taskID, "", status, testStatus, reviewStatus, files)
+	// Dedup: if commit_hash provided, check for existing record first
+	if commitHash != "" {
+		db, err := pmdb.OpenProject(projectPath)
+		if err == nil {
+			var existingID string
+			db.QueryRow("SELECT id FROM commits WHERE commit_hash = ? LIMIT 1", commitHash).Scan(&existingID)
+			db.Close()
+			if existingID != "" {
+				return mcpToolResult{
+					Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Commit 已存在 (commit_hash 去重): %s [%s]", existingID, title)}},
+					RelatedContext: map[string]interface{}{"dedup": true, "existing_id": existingID},
+				}
+			}
+		}
+	}
+
+	commit, err := store.CreateCommit(projectPath, title, summary, "", "", branch, commitHash, taskID, "", status, testStatus, reviewStatus, files)
 	if err != nil {
 		return mcpToolResult{
 			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("创建 commit 失败: %v", err)}},
@@ -1185,6 +1254,100 @@ func (s *mcpServer) handleRecordCommit(args map[string]interface{}) mcpToolResul
 		},
 		RelatedContext: related,
 		Reflection:     reflection,
+	}
+}
+
+
+func (s *mcpServer) handleRecordCommits(args map[string]interface{}) mcpToolResult {
+	taskID := getStr(args, "task_id", "")
+	if taskID == "" {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "task_id 为必填项"}}, IsError: true}
+	}
+	branch := getStr(args, "branch", "main")
+	status := getStr(args, "status", "committed")
+	projectPath := getStr(args, "project_path", "")
+	testStatus := getStr(args, "test_status", "not_run")
+	reviewStatus := getStr(args, "review_status", "pending")
+
+	// Parse commits array from raw JSON args
+	commitsRaw, ok := args["commits"]
+	if !ok {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "commits 为必填项"}}, IsError: true}
+	}
+
+	var items []store.BatchCommitItem
+
+	switch v := commitsRaw.(type) {
+	case []interface{}:
+		for _, ci := range v {
+			c, ok := ci.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			item := store.BatchCommitItem{
+				Title:      getStr(c, "title", ""),
+				CommitHash: getStr(c, "commit_hash", ""),
+				Summary:    getStr(c, "summary", ""),
+			}
+			if fs := getStr(c, "files", ""); fs != "" {
+				for _, f := range strings.Split(fs, ",") {
+					f = strings.TrimSpace(f)
+					if f != "" {
+						item.Files = append(item.Files, f)
+					}
+				}
+			}
+			if item.Title != "" {
+				items = append(items, item)
+			}
+		}
+	case string:
+		var parsed []map[string]interface{}
+		if err := json.Unmarshal([]byte(v), &parsed); err == nil {
+			for _, c := range parsed {
+				it := store.BatchCommitItem{
+					Title:      getStr(c, "title", ""),
+					CommitHash: getStr(c, "commit_hash", ""),
+					Summary:    getStr(c, "summary", ""),
+				}
+				if fs := getStr(c, "files", ""); fs != "" {
+					for _, f := range strings.Split(fs, ",") {
+						f = strings.TrimSpace(f)
+						if f != "" {
+							it.Files = append(it.Files, f)
+						}
+					}
+				}
+				if it.Title != "" {
+					items = append(items, it)
+				}
+			}
+		}
+	}
+
+	if len(items) == 0 {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "commits 数组为空或格式错误"}}, IsError: true}
+	}
+
+	result, err := store.BatchCreateCommits(projectPath, taskID, branch, status, testStatus, reviewStatus, items)
+	if err != nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("批量创建 commit 失败: %v", err)}}, IsError: true}
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("\u2705 批量记录完成: %d/%d 成功", result.Success, result.Total))
+	if result.Failed > 0 {
+		sb.WriteString(fmt.Sprintf(", %d 失败", result.Failed))
+		for _, d := range result.Details {
+			if !d.Success {
+				sb.WriteString(fmt.Sprintf("\n  [#%d] %s", d.Index, d.Error))
+			}
+		}
+	}
+
+	return mcpToolResult{
+		Content:        []mcpContent{{Type: "text", Text: sb.String()}},
+		RelatedContext: result,
 	}
 }
 
@@ -2265,6 +2428,18 @@ func getStr(m map[string]interface{}, key, def string) string {
 
 // getInt reads an integer parameter from MCP tool args.
 // Clients may send numbers as float64 (JSON), int/int64 (native bridges), or string.
+func getBool(m map[string]interface{}, key string, def bool) bool {
+	if v, ok := m[key]; ok {
+		switch vv := v.(type) {
+		case bool:
+			return vv
+		case string:
+			return vv == "true" || vv == "1"
+		}
+	}
+	return def
+}
+
 func getInt(m map[string]interface{}, key string, def int) int {
 	v, ok := m[key]
 	if !ok {

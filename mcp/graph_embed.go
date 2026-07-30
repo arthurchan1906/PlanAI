@@ -12,7 +12,7 @@ import (
 func registerTraceContext(s *mcpServer) {
 	s.addTool(MCPTool{
 		Name:        "aipm_trace_context",
-		Description: "查询 graph_edges 图数据库关联关系。支持 out/in/both 方向 + min_weight 过滤 + limit 分页。session from_id 为完整 UUID (如 7d2cdfea-...)。适用场景：追溯 task↔commit↔session 关联链。",
+		Description: "查询实体间的关联关系。数据来源: graph_edges 表(系统自动计算的文件/会话关联) + FK 主关联(commit→task→plan→roadmap)。支持 out/in/both 方向 + min_weight 过滤 + limit 分页。适用场景: 追溯 task↔commit↔session 关联链、验证 link_entities 创建的关联是否生效。",
 		InputSchema: MCPInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
