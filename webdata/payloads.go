@@ -253,12 +253,17 @@ func ActivityPayload() map[string]any {
 
 		// Graph edges: session → entity (with type prefix for frontend label resolution)
 		for _, eid := range card.Entities {
-			parts := strings.SplitN(eid, "-", 2)
-			entityType := ""
-			if len(parts) > 0 {
+			// Normalize eid: strip "type:" prefix if present
+			cleanEid := eid
+			if ci := strings.IndexByte(eid, ':'); ci > 0 {
+				cleanEid = eid[ci+1:]
+			}
+			parts := strings.SplitN(cleanEid, "-", 2)
+			entityType := "entity"
+			if len(parts) > 0 && parts[0] != "" {
 				entityType = parts[0]
 			}
-			entityID := entityType + ":" + eid // "task:task-20260615-xxx" — frontend needs prefix for lookupEntityTitle
+			entityID := entityType + ":" + cleanEid
 			sessionEdges := [][3]string{{card.SessionID, entityID, "refers_to:" + entityType}}
 			addEdges(sessionEdges)
 		}
@@ -388,6 +393,10 @@ func buildMCPEdges() [][3]string {
 			entityType := "entity"
 			if idx := strings.IndexByte(eid, '-'); idx > 0 {
 				entityType = eid[:idx]
+			}
+			// Normalize: "task:task" → "task" (entity IDs sometimes carry subtype prefix)
+			if ci := strings.IndexByte(entityType, ':'); ci > 0 {
+				entityType = entityType[:ci]
 			}
 			edges = append(edges, [3]string{sid, entityType + ":" + eid, "refers_to:" + entityType})
 		}
