@@ -117,8 +117,23 @@ func Search(client *ai.Client, query, source, typeFilter, projectPath string, pa
 		args = append(args, source)
 	}
 	if query != "" {
-		where += " AND content LIKE ?"
-		args = append(args, "%"+query+"%")
+		terms := splitSearchTerms(query)
+		if len(terms) <= 1 {
+			where += " AND content LIKE ?"
+			args = append(args, "%"+query+"%")
+		} else {
+			var clauses []string
+			for _, t := range terms {
+				if t == "" {
+					continue
+				}
+				clauses = append(clauses, "content LIKE ?")
+				args = append(args, "%"+t+"%")
+			}
+			if len(clauses) > 0 {
+				where += " AND (" + strings.Join(clauses, " OR ") + ")"
+			}
+		}
 	}
 	if typeFilter != "" {
 		where += " AND (" + typeFilterSQL(typeFilter) + ")"
@@ -140,6 +155,12 @@ func Search(client *ai.Client, query, source, typeFilter, projectPath string, pa
 		out = []map[string]any{}
 	}
 	return out, total, nil
+}
+
+// splitSearchTerms splits a query into individual search terms.
+// Uses whitespace as delimiter; supports both CJK and ASCII text.
+func splitSearchTerms(query string) []string {
+	return strings.Fields(query)
 }
 
 func typeFilterSQL(typeFilter string) string {

@@ -61,7 +61,7 @@ func (s *Server) handleChatGetSession(w http.ResponseWriter, sid string) {
 }
 
 func (s *Server) handleChatSend(w http.ResponseWriter, body map[string]any) {
-	if s.deps.App.AI == nil || !s.deps.App.AI.Enabled() {
+	if s.deps.App.AI() == nil || !s.deps.App.AI().Enabled() {
 		web.SendError(w, 503, "AI 未配置。请设置 AI_ENDPOINT 环境变量。")
 		return
 	}
@@ -71,7 +71,7 @@ func (s *Server) handleChatSend(w http.ResponseWriter, body map[string]any) {
 		web.SendError(w, 400, "缺少 message 参数")
 		return
 	}
-	svc := agent.NewChatService(s.deps.App.AI, agent.ProjectWorkDir(), "aipmc-web")
+	svc := agent.NewChatService(s.deps.App.AI(), agent.ProjectWorkDir(), "aipmc-web")
 	result, err := svc.Send(sid, msg)
 	if err != nil {
 		web.SendError(w, 500, fmt.Sprintf("Agent 错误: %v", err))
@@ -86,7 +86,7 @@ func (s *Server) handleChatSend(w http.ResponseWriter, body map[string]any) {
 }
 
 func (s *Server) handleChatSendStream(w http.ResponseWriter, body map[string]any) {
-	if s.deps.App.AI == nil || !s.deps.App.AI.Enabled() {
+	if s.deps.App.AI() == nil || !s.deps.App.AI().Enabled() {
 		web.SendError(w, 503, "AI 未配置。请设置 AI_ENDPOINT 环境变量。")
 		return
 	}
@@ -115,7 +115,7 @@ func (s *Server) handleChatSendStream(w http.ResponseWriter, body map[string]any
 		flusher.Flush()
 	}
 
-	svc := agent.NewChatService(s.deps.App.AI, agent.ProjectWorkDir(), "aipmc-web")
+	svc := agent.NewChatService(s.deps.App.AI(), agent.ProjectWorkDir(), "aipmc-web")
 	result, err := svc.SendStream(sid, msg, writeSSE)
 	if err != nil {
 		writeSSE("error", map[string]any{"message": err.Error()})

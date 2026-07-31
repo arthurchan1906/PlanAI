@@ -117,18 +117,25 @@ function ActivityGraphView({ graphEdges, sessions, entityLabels, onClose }) {
     .map(([id]) => id);
   const keepEntity = new Set(sortedEntities);
 
-  // Filter edges to kept entities
-  const filteredEdges = edgeList.filter(e =>
-    keepEntity.has(e.target.id) || (e.source.type === "entity" && keepEntity.has(e.source.id))
-  );
+  // Filter edges to kept entities — both entity ends must be kept
+  const filteredEdges = edgeList.filter(e => {
+    if (e.source.type === "entity" && !keepEntity.has(e.source.id)) return false;
+    if (e.target.type === "entity" && !keepEntity.has(e.target.id)) return false;
+    return true;
+  });
   const keepSession = new Set();
+  const keepFile = new Set();
   for (const e of filteredEdges) {
     if (e.source.type === "session") keepSession.add(e.source.id);
     if (e.target.type === "session") keepSession.add(e.target.id);
+    if (e.source.type === "file") keepFile.add(e.source.id);
+    if (e.target.type === "file") keepFile.add(e.target.id);
   }
-  const nodes = Object.values(nodeMap).filter(n =>
-    n.type === "session" ? keepSession.has(n.id) : keepEntity.has(n.id)
-  );
+  const nodes = Object.values(nodeMap).filter(n => {
+    if (n.type === "session") return keepSession.has(n.id);
+    if (n.type === "file") return keepFile.has(n.id);
+    return keepEntity.has(n.id); // entity
+  });
 
   console.log("Graph: nodes", nodes.length, "edges", filteredEdges.length,
     "(filtered from", edgeList.length, "edges,", Object.keys(nodeMap).length, "nodes)");

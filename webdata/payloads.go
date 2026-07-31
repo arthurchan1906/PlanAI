@@ -1,6 +1,7 @@
 package webdata
 
 import (
+	"database/sql"
 	"encoding/json"
 	"regexp"
 	"sort"
@@ -478,7 +479,127 @@ func buildGraphEdgesSupplement(since string) [][3]string {
 		seen[key] = true
 		edges = append(edges, [3]string{source, target, relation})
 	}
+	// Resolve FK chains: commit→task→plan→roadmap (not stored in graph_edges)
+	// These are critical for showing structured hierarchy in the activity graph.
+	edges, seen = resolveFKChains(db, edges, seen)
 	return edges
+}
+
+func resolveFKChains(db *sql.DB, edges [][3]string, seen map[string]bool) ([][3]string, map[string]bool) {
+	// Collect entity IDs from edges
+	commitIDs := map[string]bool{}
+	taskIDs := map[string]bool{}
+	planIDs := map[string]bool{}
+
+	for _, e := range edges {
+		src := e[0]
+		tgt := e[1]
+		for _, id := range []string{src, tgt} {
+			parts := strings.SplitN(id, ":", 2)
+			if len(parts) < 2 {
+				continue
+			}
+			switch parts[0] {
+			case "commit":
+				commitIDs[parts[1]] = true
+			case "task":
+				taskIDs[parts[1]] = true
+			case "plan":
+				planIDs[parts[1]] = true
+			}
+		}
+	}
+
+	// Inject commit→task edges
+	if len(commitIDs) > 0 {
+		cids := make([]any, 0, len(commitIDs))
+		for id := range commitIDs {
+			cids = append(cids, id)
+		}
+		q := "SELECT id, task_id FROM commits WHERE id IN (?" + strings.Repeat(",?", len(cids)-1) + ")"
+		rows, err := db.Query(q, cids...)
+		if err == nil {
+			for rows.Next() {
+				var cid, tid string
+				rows.Scan(&cid, &tid)
+				if tid == "" {
+					continue
+				}
+				key := "commit:" + cid + "|task:" + tid + "|has_task"
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				edges = append(edges, [3]string{"commit:" + cid, "task:" + tid, "has_task"})
+				taskIDs[tid] = true // expand further
+			}
+			if rows.Err() != nil {
+				// continue with partial results
+			}
+			rows.Close()
+		}
+	}
+
+	// Inject task→plan edges
+	if len(taskIDs) > 0 {
+		tids := make([]any, 0, len(taskIDs))
+		for id := range taskIDs {
+			tids = append(tids, id)
+		}
+		q := "SELECT id, plan_id FROM tasks WHERE id IN (?" + strings.Repeat(",?", len(tids)-1) + ")"
+		rows, err := db.Query(q, tids...)
+		if err == nil {
+			for rows.Next() {
+				var tid, pid string
+				rows.Scan(&tid, &pid)
+				if pid == "" {
+					continue
+				}
+				key := "task:" + tid + "|plan:" + pid + "|belongs_to"
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				edges = append(edges, [3]string{"task:" + tid, "plan:" + pid, "belongs_to"})
+				planIDs[pid] = true // expand further
+			}
+			if rows.Err() != nil {
+				// continue with partial results
+			}
+			rows.Close()
+		}
+	}
+
+	// Inject plan→roadmap edges
+	if len(planIDs) > 0 {
+		pids := make([]any, 0, len(planIDs))
+		for id := range planIDs {
+			pids = append(pids, id)
+		}
+		q := "SELECT id, roadmap_id FROM plans WHERE id IN (?" + strings.Repeat(",?", len(pids)-1) + ")"
+		rows, err := db.Query(q, pids...)
+		if err == nil {
+			for rows.Next() {
+				var pid, rid string
+				rows.Scan(&pid, &rid)
+				if rid == "" {
+					continue
+				}
+				key := "plan:" + pid + "|roadmap:" + rid + "|belongs_to"
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				edges = append(edges, [3]string{"plan:" + pid, "roadmap:" + rid, "belongs_to"})
+			}
+			if rows.Err() != nil {
+				// continue with partial results
+			}
+			rows.Close()
+		}
+	}
+
+	return edges, seen
 }
 
 func parseEntityRefs(raw string) []string {

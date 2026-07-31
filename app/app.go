@@ -2,6 +2,7 @@ package app
 
 import (
 	"os"
+	"sync"
 
 	"aipmc/ai"
 	"aipmc/discussion"
@@ -13,12 +14,20 @@ import (
 
 // App holds runtime services shared by CLI, web API, and MCP.
 type App struct {
-	AI *ai.Client
+	mu sync.RWMutex
+	ai *ai.Client
 }
 
 // New creates an application instance.
 func New() *App {
 	return &App{}
+}
+
+// AI returns the current AI client in a thread-safe manner.
+func (a *App) AI() *ai.Client {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.ai
 }
 
 // ReloadAI reads config/env and (re)initializes the AI client.
@@ -37,7 +46,9 @@ func (a *App) ReloadAI() {
 		chatModel = os.Getenv("AI_CHAT_MODEL")
 	}
 	if endpoint == "" {
-		a.AI = nil
+		a.mu.Lock()
+		a.ai = nil
+		a.mu.Unlock()
 		return
 	}
 	apiKey := os.Getenv("AI_API_KEY")
@@ -45,12 +56,14 @@ func (a *App) ReloadAI() {
 	if embEndpoint == "" {
 		embEndpoint = os.Getenv("AI_EMBEDDING_ENDPOINT")
 	}
-	a.AI = ai.NewClient(endpoint, embEndpoint, model, chatModel, apiKey)
+	a.mu.Lock()
+	a.ai = ai.NewClient(endpoint, embEndpoint, model, chatModel, apiKey)
+	a.mu.Unlock()
 }
 
 // RunMCP starts the MCP stdio server with project services wired in.
 func (a *App) RunMCP() error {
-	return mcp.NewServer(a.AI,
+	return mcp.NewServer(a.AI(),
 		search.ProjectContext,
 		func(q string, l int) interface{} {
 			hits := search.FTS5(q, l)
@@ -64,13 +77,13 @@ func (a *App) RunMCP() error {
 		},
 		func(q string, l int, hits interface{}) interface{} {
 			if raw, ok := hits.([]map[string]interface{}); ok {
-				reranked := search.RerankWithAI(a.AI, q, l, search.HitsFromMaps(raw))
+				reranked := search.RerankWithAI(a.AI(), q, l, search.HitsFromMaps(raw))
 				return search.HitsToMaps(reranked)
 			}
 			return nil
 		},
 		func(query, source, typeFilter, projectPath string, page, pageSize int) ([]map[string]any, int, error) {
-			return discussion.Search(a.AI, query, source, typeFilter, projectPath, page, pageSize)
+			return discussion.Search(a.AI(), query, source, typeFilter, projectPath, page, pageSize)
 		},
 	).Run()
 }
@@ -80,15 +93,15 @@ func (a *App) SearchProjectContext(query string, limit int) map[string]any {
 }
 
 func (a *App) SearchDiscussions(query, source, typeFilter, projectPath string, page, pageSize int) ([]map[string]any, int, error) {
-	return discussion.Search(a.AI, query, source, typeFilter, projectPath, page, pageSize)
+	return discussion.Search(a.AI(), query, source, typeFilter, projectPath, page, pageSize)
 }
 
 func (a *App) EmbedDiscussions(batchSize int) (int, error) {
-	return discussion.Embed(a.AI, batchSize)
+	return discussion.Embed(a.AI(), batchSize)
 }
 
 func (a *App) StatusSnapshot() map[string]any       { return project.StatusSnapshot() }
 func (a *App) ContextPack() map[string]any          { return project.ContextPack() }
 func (a *App) NextActionPacket() map[string]any     { return project.NextActionPacket() }
-func (a *App) AgentStartPacket() map[string]any     { return project.AgentStartPacket(a.AI) }
+func (a *App) AgentStartPacket() map[string]any     { return project.AgentStartPacket(a.AI()) }
 func (a *App) InboxSummary() map[string]any         { return project.InboxSummary() }

@@ -283,7 +283,7 @@ func main() {
 		}
 		dispatchReview(reviewSub, cli.ParseArgs(reviewRaw))
 	case "briefing":
-		fmt.Println(analyze.BuildBriefing(application.AI, ""))
+		fmt.Println(analyze.BuildBriefing(application.AI(), ""))
 	case "inbox":
 		cli.PrintJSON(application.InboxSummary())
 	case "doctor":
@@ -467,14 +467,14 @@ func serveCommand() int {
 	fmt.Printf("✓ Web 启动 :%d → http://127.0.0.1:%d\n", webPort, webPort)
 	fmt.Printf("✓ 项目 %s 已注册\n", projectName)
 	// Start background session review pipeline (B1→L2→L3 auto-run) across all registered projects
-	if application.AI != nil {
+	if application.AI() != nil {
 		var otherProjects []string
 		for p := range pmdb.LoadProjects() {
 			if p != projectPath {
 				otherProjects = append(otherProjects, p)
 			}
 		}
-		session.RunAuto(func() ai.Summarizer { return application.AI }, 30*time.Minute, otherProjects)
+		session.RunAuto(func() ai.Summarizer { return application.AI() }, 30*time.Minute, otherProjects)
 	}
 
 	if err := srv.Listen(); err != nil {

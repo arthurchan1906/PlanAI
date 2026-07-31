@@ -394,8 +394,8 @@ func dispatchReview(subcmd string, args *cli.Args) {
 			sample = ".pmai/cache/sessions_sample.json"
 		}
 		var summarizer ai.Summarizer
-		if application.AI != nil && application.AI.Enabled() {
-			summarizer = application.AI
+		if application.AI() != nil && application.AI().Enabled() {
+			summarizer = application.AI()
 		}
 		result, err := session.Run(session.RunOpts{Since: since, Limit: limit, SamplePath: sample, ProjectPath: "", Summarizer: summarizer})
 		if err != nil {

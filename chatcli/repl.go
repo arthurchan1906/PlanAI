@@ -13,7 +13,7 @@ import (
 
 // Run starts the interactive coding agent REPL.
 func Run(application *app.App) {
-	if application.AI == nil || !application.AI.Enabled() {
+	if application.AI() == nil || !application.AI().Enabled() {
 		fmt.Fprintln(os.Stderr, "AI 未配置。请设置以下环境变量:")
 		fmt.Fprintln(os.Stderr, "  AI_ENDPOINT   — LLM API 地址")
 		fmt.Fprintln(os.Stderr, "  AI_MODEL      — 模型名称（或 AI_CHAT_MODEL）")
@@ -22,7 +22,7 @@ func Run(application *app.App) {
 	}
 
 	workDir := agent.ProjectWorkDir()
-	svc := agent.NewChatService(application.AI, workDir, "aipmc-chat")
+	svc := agent.NewChatService(application.AI(), workDir, "aipmc-chat")
 	sessionDir := agent.SessionDir(workDir)
 
 	newSession := false

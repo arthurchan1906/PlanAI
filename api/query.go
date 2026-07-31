@@ -171,7 +171,7 @@ func (s *Server) handleMutateRoutes(w http.ResponseWriter, method, path string, 
 }
 
 func (s *Server) handleAITest(w http.ResponseWriter) {
-	client := s.deps.App.AI
+	client := s.deps.App.AI()
 	if client == nil || !client.Enabled() {
 		web.SendJSON(w, map[string]any{"ok": false, "error": "AI 未配置"})
 		return
