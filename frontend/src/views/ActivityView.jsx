@@ -102,13 +102,17 @@ function ActivityGraphView({ graphEdges, sessions, entityLabels, onClose }) {
     });
   }
 
-  // ── Limit entity nodes: keep top 20 by edge count ──
+  // ── Limit entity nodes: keep top 25 by weighted edge count ──
+  // Higher-value entity types get boosted so they appear even with fewer raw edges
+  const TYPE_WEIGHTS = { commit: 1, task: 3, plan: 5, bug: 6, decision: 5 };
   const entityDegree = {};
   for (const e of edgeList) {
-    entityDegree[e.target.id] = (entityDegree[e.target.id] || 0) + 1;
+    const wt = TYPE_WEIGHTS[e.target.data?.etype] || 1;
+    entityDegree[e.target.id] = (entityDegree[e.target.id] || 0) + wt;
     // Count source entities too (for non-session sources like entity→entity edges)
     if (e.source.type === "entity") {
-      entityDegree[e.source.id] = (entityDegree[e.source.id] || 0) + 1;
+      const ws = TYPE_WEIGHTS[e.source.data?.etype] || 1;
+      entityDegree[e.source.id] = (entityDegree[e.source.id] || 0) + ws;
     }
   }
   const sortedEntities = Object.entries(entityDegree)
@@ -117,24 +121,31 @@ function ActivityGraphView({ graphEdges, sessions, entityLabels, onClose }) {
     .map(([id]) => id);
   const keepEntity = new Set(sortedEntities);
 
-  // Filter edges to kept entities — both entity ends must be kept
+  // ── Expand keepEntity: include entities connected by entity→entity edges ──
+  // Filter edges: keep entity→entity edges where at least one end is top-25
   const filteredEdges = edgeList.filter(e => {
+    if (e.source.type === "entity" && e.target.type === "entity") {
+      return keepEntity.has(e.source.id) || keepEntity.has(e.target.id);
+    }
     if (e.source.type === "entity" && !keepEntity.has(e.source.id)) return false;
     if (e.target.type === "entity" && !keepEntity.has(e.target.id)) return false;
     return true;
   });
   const keepSession = new Set();
   const keepFile = new Set();
+  const keepEntityExpanded = new Set(keepEntity);
   for (const e of filteredEdges) {
     if (e.source.type === "session") keepSession.add(e.source.id);
     if (e.target.type === "session") keepSession.add(e.target.id);
     if (e.source.type === "file") keepFile.add(e.source.id);
     if (e.target.type === "file") keepFile.add(e.target.id);
+    if (e.source.type === "entity") keepEntityExpanded.add(e.source.id);
+    if (e.target.type === "entity") keepEntityExpanded.add(e.target.id);
   }
   const nodes = Object.values(nodeMap).filter(n => {
     if (n.type === "session") return keepSession.has(n.id);
     if (n.type === "file") return keepFile.has(n.id);
-    return keepEntity.has(n.id); // entity
+    return keepEntityExpanded.has(n.id); // entity (original top-25 + FK-connected)
   });
 
   console.log("Graph: nodes", nodes.length, "edges", filteredEdges.length,

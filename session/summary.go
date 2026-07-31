@@ -301,6 +301,10 @@ func parseL2Response(raw string) string {
 	goal, _ := parsed["goal"].(string)
 	rootCauses := toStringSlice(parsed["root_causes"])
 
+	// Unnest goal: some models wrap the goal in JSON or markdown code fences
+	goal = unnestGoal(goal)
+	parsed["goal"] = goal
+
 	// Quality gate: goal must be substantive and root_causes non-empty
 	if utf8.RuneCountInString(goal) < minGoalRunes || len(rootCauses) == 0 {
 		fallback := SessionL2Summary{Goal: u.TruncateStr(raw, 200)}
@@ -333,6 +337,36 @@ func parseL2Response(raw string) string {
 
 	b, _ := json.Marshal(parsed)
 	return string(b)
+}
+
+// unnestGoal extracts the real goal from nested JSON or markdown-wrapped output.
+// Some models wrap the goal field as {..., "goal": "```json\n{...}\n```"}, etc.
+func unnestGoal(goal string) string {
+	if goal == "" {
+		return goal
+	}
+	// Step 1: strip markdown code fences from the goal value
+	cleaned := strings.TrimSpace(goal)
+	cleaned = strings.TrimPrefix(cleaned, "```json")
+	cleaned = strings.TrimPrefix(cleaned, "```")
+	cleaned = strings.TrimSuffix(cleaned, "```")
+	cleaned = strings.TrimSpace(cleaned)
+
+	// Step 2: try to parse as JSON, extract inner goal field
+	if strings.HasPrefix(cleaned, "{") {
+		var inner map[string]any
+		if json.Unmarshal([]byte(cleaned), &inner) == nil {
+			if ig, ok := inner["goal"].(string); ok && ig != "" {
+				return strings.TrimSpace(ig)
+			}
+		}
+	}
+
+	// Step 3: return cleaned version (at least removed code fences)
+	if cleaned != goal {
+		return cleaned
+	}
+	return goal
 }
 
 // stripThinkTags removes <think>...</think> wrapper from model output.

@@ -389,7 +389,7 @@ func buildMCPEdges() [][3]string {
 			if idx := strings.IndexByte(eid, '-'); idx > 0 {
 				entityType = eid[:idx]
 			}
-			edges = append(edges, [3]string{sid, entityType + ":" + eid, "refers_to:mcp:" + entityType})
+			edges = append(edges, [3]string{sid, entityType + ":" + eid, "refers_to:" + entityType})
 		}
 	}
 	return edges
@@ -469,7 +469,7 @@ func buildGraphEdgesSupplement(since string) [][3]string {
 			// Entity ↔ entity: prefix both
 			source = st + ":" + sid
 			target = tt + ":" + tid
-			relation = et
+			relation = et + ":" + tt
 		}
 
 		key := source + "|" + target
