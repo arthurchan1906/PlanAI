@@ -82,7 +82,22 @@ func FTS5WithDB(db *sql.DB, query string, limit int) []Hit {
 	if len(terms) == 0 {
 		return []Hit{}
 	}
-	ftsQuery := strings.Join(terms, " ") + "*"
+
+	// Build FTS5 query with OR semantics for multi-term searches.
+	// Single term: "term*" (prefix match).
+	// Multiple terms: "term1* OR term2* OR ..." so any term can match,
+	// avoiding the implicit AND between bare terms that treats the query
+	// as an indivisible whole.
+	var ftsQuery string
+	if len(terms) == 1 {
+		ftsQuery = `"` + terms[0] + `"*`
+	} else {
+		var parts []string
+		for _, t := range terms {
+			parts = append(parts, `"`+t+`"*`)
+		}
+		ftsQuery = strings.Join(parts, " OR ")
+	}
 	rows, err := db.Query(`
 		SELECT entity_type, entity_id, title, rank
 		FROM fts5_index

@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 
 	pmdb "aipmc/db"
 	"aipmc/u"
@@ -230,10 +231,46 @@ func SearchSessionSummaries(query string, limit int) ([]SessionSummary, error) {
 	}
 	defer db.Close()
 
+	// Split multi-word queries into OR terms so each word can match independently.
+	// Same fix as discussion.Search — avoids "search context" being treated as a
+	// single LIKE pattern that matches only the literal substring.
+	var querySQL string
+	var queryArgs []interface{}
+	terms := strings.Fields(query)
+	if len(terms) <= 1 {
+		querySQL = "summary LIKE ?"
+		// Use the trimmed single term to avoid whitespace-padded LIKE patterns
+		// like '% deploy %' that miss boundary matches at start/end of text.
+		term := ""
+		if len(terms) == 1 {
+			term = terms[0]
+		} else {
+			term = strings.TrimSpace(query)
+		}
+		queryArgs = append(queryArgs, "%"+term+"%")
+	} else {
+		var clauses []string
+		for _, t := range terms {
+			if t == "" {
+				continue
+			}
+			clauses = append(clauses, "summary LIKE ?")
+			queryArgs = append(queryArgs, "%"+t+"%")
+		}
+		if len(clauses) > 0 {
+			querySQL = "(" + strings.Join(clauses, " OR ") + ")"
+		} else {
+			// Defensive: all terms filtered out — fall back to trimmed single-term LIKE.
+			querySQL = "summary LIKE ?"
+			queryArgs = append(queryArgs, "%"+strings.TrimSpace(query)+"%")
+		}
+	}
+	queryArgs = append(queryArgs, limit)
+
 	rows, err := db.Query(
 		`SELECT session_id, source, review_json, summary, intent, entity_refs, quality_score, created_at
-		FROM session_summaries WHERE summary LIKE ? ORDER BY created_at DESC LIMIT ?`,
-		"%"+query+"%", limit,
+		FROM session_summaries WHERE `+querySQL+` ORDER BY created_at DESC LIMIT ?`,
+		queryArgs...,
 	)
 	if err != nil {
 		return nil, err
