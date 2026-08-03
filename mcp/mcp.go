@@ -13,8 +13,8 @@ import (
 	pmdb "aipmc/db"
 	"aipmc/discussion"
 	"aipmc/store"
-	"aipmc/vision"
 	"aipmc/u"
+	"aipmc/vision"
 )
 
 // ============================================================
@@ -23,9 +23,9 @@ import (
 
 // MCPTool defines a tool that the MCP server exposes to the Agent.
 type MCPTool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	InputSchema MCPInputSchema  `json:"inputSchema"`
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	InputSchema MCPInputSchema `json:"inputSchema"`
 }
 
 // MCPInputSchema defines the JSON Schema for tool parameters.
@@ -74,12 +74,12 @@ type mcpClientInfo struct {
 
 // mcpServer holds registered tools and handles the protocol lifecycle.
 type mcpServer struct {
-	tools         map[string]MCPTool
-	handlers      map[string]mcpToolHandler
-	reader        *bufio.Reader
-	writer        io.Writer
-	ai            *ai.Client
-	clientInfo    *mcpClientInfo // captured from initialize — the client's "user agent"
+	tools      map[string]MCPTool
+	handlers   map[string]mcpToolHandler
+	reader     *bufio.Reader
+	writer     io.Writer
+	ai         *ai.Client
+	clientInfo *mcpClientInfo // captured from initialize — the client's "user agent"
 	// Search functions injected from root
 	searchContext     func(string, int) map[string]any
 	searchFTS5        func(string, int) interface{}
@@ -138,128 +138,128 @@ func (s *mcpServer) registerTools() {
 		},
 	}, s.handleSearch)
 
-		// Entity query tools — precise Get/List for PM entities
-		// Usage pattern: search_context 发现实体 → get_xxx 查看详情 → 决策下一步操作
-		s.addTool(MCPTool{
-			Name: "aipm_get_task",
-			Description: "当你从 search_context/smart_search 结果中看到一个 task ID，或从 commit/plan 中获知 task ID 后，调用此工具查看该 task 的完整详情。\n\n返回：task 的标题、状态（todo/in_progress/blocked/done）、优先级（P0/P1/P2）、所属 phase、关联 plan、所有 commit 记录（含 review/test 状态）、最新备注。\n\n与 aipm_list_tasks 的区别：get_task 需要已知 task_id，返回单个 task 的完整信息；list_tasks 按条件过滤返回多个 task 的摘要列表。如果不知道 task_id，先用 aipm_search_context 搜索。",
-			InputSchema: MCPInputSchema{
-				Type: "object",
-				Properties: map[string]interface{}{
-					"task_id": map[string]string{"type": "string", "description": "Task ID。可从 search_context/smart_search 搜索结果、plan 详情、或 commit 的 task_id 字段中获取"},
-				},
-				Required: []string{"task_id"},
+	// Entity query tools — precise Get/List for PM entities
+	// Usage pattern: search_context 发现实体 → get_xxx 查看详情 → 决策下一步操作
+	s.addTool(MCPTool{
+		Name:        "aipm_get_task",
+		Description: "当你从 search_context/smart_search 结果中看到一个 task ID，或从 commit/plan 中获知 task ID 后，调用此工具查看该 task 的完整详情。\n\n返回：task 的标题、状态（todo/in_progress/blocked/done）、优先级（P0/P1/P2）、所属 phase、关联 plan、所有 commit 记录（含 review/test 状态）、最新备注。\n\n与 aipm_list_tasks 的区别：get_task 需要已知 task_id，返回单个 task 的完整信息；list_tasks 按条件过滤返回多个 task 的摘要列表。如果不知道 task_id，先用 aipm_search_context 搜索。",
+		InputSchema: MCPInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"task_id": map[string]string{"type": "string", "description": "Task ID。可从 search_context/smart_search 搜索结果、plan 详情、或 commit 的 task_id 字段中获取"},
 			},
-		}, s.handleGetTask)
+			Required: []string{"task_id"},
+		},
+	}, s.handleGetTask)
 
-		s.addTool(MCPTool{
-			Name: "aipm_list_tasks",
-			Description: "当你需要查看某个 plan 下有哪些 task、或需要找某个状态的所有 task 时调用。常用场景：(1) 创建新 task 前，检查同一个 plan 下是否已有类似 task (2) 查看自己当前有哪些 in_progress 的 task (3) 找 blocked 状态的 task 排查阻塞原因。\n\n返回：匹配条件的 task 摘要列表（ID + 标题 + 状态 + 优先级 + phase）。不返回 commit 详情和备注全文——需要详情时对结果中的 task ID 调用 aipm_get_task。\n\n与 aipm_search_context 的区别：list_tasks 按 status/plan_id 精确过滤，适合浏览型查询；search_context 按关键词模糊匹配，适合「搜有没有类似的 task」。两者互补：先用 search_context 搜关键词，确认 plan_id 后再用 list_tasks 列出该 plan 的全部 task。",
-			InputSchema: MCPInputSchema{
-				Type: "object",
-				Properties: map[string]interface{}{
-					"status":  map[string]string{"type": "string", "description": "过滤 task 状态。可选值: todo / in_progress / blocked / done。不传则返回全部"},
-					"plan_id": map[string]string{"type": "string", "description": "过滤所属 Plan。plan_id 可从 aipm_search_context 结果或 aipm_list_plans 中获取。不传则跨所有 plan"},
-				},
+	s.addTool(MCPTool{
+		Name:        "aipm_list_tasks",
+		Description: "当你需要查看某个 plan 下有哪些 task、或需要找某个状态的所有 task 时调用。常用场景：(1) 创建新 task 前，检查同一个 plan 下是否已有类似 task (2) 查看自己当前有哪些 in_progress 的 task (3) 找 blocked 状态的 task 排查阻塞原因。\n\n返回：匹配条件的 task 摘要列表（ID + 标题 + 状态 + 优先级 + phase）。不返回 commit 详情和备注全文——需要详情时对结果中的 task ID 调用 aipm_get_task。\n\n与 aipm_search_context 的区别：list_tasks 按 status/plan_id 精确过滤，适合浏览型查询；search_context 按关键词模糊匹配，适合「搜有没有类似的 task」。两者互补：先用 search_context 搜关键词，确认 plan_id 后再用 list_tasks 列出该 plan 的全部 task。",
+		InputSchema: MCPInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"status":  map[string]string{"type": "string", "description": "过滤 task 状态。可选值: todo / in_progress / blocked / done。不传则返回全部"},
+				"plan_id": map[string]string{"type": "string", "description": "过滤所属 Plan。plan_id 可从 aipm_search_context 结果或 aipm_list_plans 中获取。不传则跨所有 plan"},
 			},
-		}, s.handleListTasks)
+		},
+	}, s.handleListTasks)
 
-		s.addTool(MCPTool{
-			Name: "aipm_get_commit",
-			Description: "当你从 search_context/task 详情/日常 review 中看到 commit ID 后，调用此工具查看该 commit 的完整记录。\n\n返回：commit 标题、摘要、关联的 task_id 和 decision_id、review 状态（pending/approved/rejected/auto）、test 状态（not_run/passed/failed/auto）、变更文件列表、分支名、创建时间。\n\n与 aipm_list_commits 的区别：get_commit 需要已知 commit_id，返回单个 commit 的完整信息；list_commits 按 task_id/status 过滤返回多个 commit 的摘要列表。",
-			InputSchema: MCPInputSchema{
-				Type: "object",
-				Properties: map[string]interface{}{
-					"commit_id": map[string]string{"type": "string", "description": "Commit ID。可从 search_context 结果、task 详情中的 commits 列表、或 aipm_list_commits 中获取"},
-				},
-				Required: []string{"commit_id"},
+	s.addTool(MCPTool{
+		Name:        "aipm_get_commit",
+		Description: "当你从 search_context/task 详情/日常 review 中看到 commit ID 后，调用此工具查看该 commit 的完整记录。\n\n返回：commit 标题、摘要、关联的 task_id 和 decision_id、review 状态（pending/approved/rejected/auto）、test 状态（not_run/passed/failed/auto）、变更文件列表、分支名、创建时间。\n\n与 aipm_list_commits 的区别：get_commit 需要已知 commit_id，返回单个 commit 的完整信息；list_commits 按 task_id/status 过滤返回多个 commit 的摘要列表。",
+		InputSchema: MCPInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"commit_id": map[string]string{"type": "string", "description": "Commit ID。可从 search_context 结果、task 详情中的 commits 列表、或 aipm_list_commits 中获取"},
 			},
-		}, s.handleGetCommit)
+			Required: []string{"commit_id"},
+		},
+	}, s.handleGetCommit)
 
-		s.addTool(MCPTool{
-			Name: "aipm_list_commits",
-			Description: "当你需要查看某个 task 下的所有 commit、或按状态过滤 commit 时调用。常用场景：(1) 检查一个 task 是否已有足够的 commit 来标记 done (2) 查看最近的提交活动 (3) 排查某个 task 的 commit 历史。\n\n返回：匹配条件的 commit 摘要列表（ID + 标题 + status + review_status）。不返回文件列表全文——需要详情时对结果中的 commit ID 调用 aipm_get_commit。\n\n提示：如果知道 task_id，用 task_id 参数过滤最精确；如果只想看最近的 commit，用 limit 参数控制数量即可。",
-			InputSchema: MCPInputSchema{
-				Type: "object",
-				Properties: map[string]interface{}{
-					"task_id": map[string]string{"type": "string", "description": "按关联的 Task ID 过滤。task_id 可从 aipm_search_context 或 aipm_list_tasks 结果中获取"},
-					"status":  map[string]string{"type": "string", "description": "按 commit 状态过滤。可选值: committed / draft / merged"},
-					"limit":   map[string]string{"type": "integer", "description": "返回数量上限，默认 50。最近创建的 commit 优先返回"},
-					"offset":  map[string]string{"type": "integer", "description": "分页偏移量，配合 limit 实现翻页。默认 0。"},
-					"orphan":  map[string]string{"type": "boolean", "description": "设为 true 时只返回未关联 task 的孤儿 commit（task_id 为空）。"},
-				},
+	s.addTool(MCPTool{
+		Name:        "aipm_list_commits",
+		Description: "当你需要查看某个 task 下的所有 commit、或按状态过滤 commit 时调用。常用场景：(1) 检查一个 task 是否已有足够的 commit 来标记 done (2) 查看最近的提交活动 (3) 排查某个 task 的 commit 历史。\n\n返回：匹配条件的 commit 摘要列表（ID + 标题 + status + review_status）。不返回文件列表全文——需要详情时对结果中的 commit ID 调用 aipm_get_commit。\n\n提示：如果知道 task_id，用 task_id 参数过滤最精确；如果只想看最近的 commit，用 limit 参数控制数量即可。",
+		InputSchema: MCPInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"task_id": map[string]string{"type": "string", "description": "按关联的 Task ID 过滤。task_id 可从 aipm_search_context 或 aipm_list_tasks 结果中获取"},
+				"status":  map[string]string{"type": "string", "description": "按 commit 状态过滤。可选值: committed / draft / merged"},
+				"limit":   map[string]string{"type": "integer", "description": "返回数量上限，默认 50。最近创建的 commit 优先返回"},
+				"offset":  map[string]string{"type": "integer", "description": "分页偏移量，配合 limit 实现翻页。默认 0。"},
+				"orphan":  map[string]string{"type": "boolean", "description": "设为 true 时只返回未关联 task 的孤儿 commit（task_id 为空）。"},
 			},
-		}, s.handleListCommits)
+		},
+	}, s.handleListCommits)
 
-		s.addTool(MCPTool{
-			Name: "aipm_get_plan",
-			Description: "当你从 search_context/task/roadmap 中看到 plan ID 后，调用此工具查看该 plan 的完整规划。\n\n返回：plan 标题、目标（goal）、状态（draft/active/done/deprecated）、优先级、所属 roadmap_id 和 vision_id、scope（范围）、risks（风险）、assumptions（假设）、关联的所有 task IDs。\n\n重要：在创建 task 之前，先用 aipm_get_plan 确认该 plan 的目标和 scope——确保新 task 与 plan 方向一致。创建 task 时必须提供 plan_id，用此工具可验证 plan_id 是否正确。",
-			InputSchema: MCPInputSchema{
-				Type: "object",
-				Properties: map[string]interface{}{
-					"plan_id": map[string]string{"type": "string", "description": "Plan ID。可从 aipm_search_context 搜索结果、task 详情、或 aipm_list_plans 中获取"},
-				},
-				Required: []string{"plan_id"},
+	s.addTool(MCPTool{
+		Name:        "aipm_get_plan",
+		Description: "当你从 search_context/task/roadmap 中看到 plan ID 后，调用此工具查看该 plan 的完整规划。\n\n返回：plan 标题、目标（goal）、状态（draft/active/done/deprecated）、优先级、所属 roadmap_id 和 vision_id、scope（范围）、risks（风险）、assumptions（假设）、关联的所有 task IDs。\n\n重要：在创建 task 之前，先用 aipm_get_plan 确认该 plan 的目标和 scope——确保新 task 与 plan 方向一致。创建 task 时必须提供 plan_id，用此工具可验证 plan_id 是否正确。",
+		InputSchema: MCPInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"plan_id": map[string]string{"type": "string", "description": "Plan ID。可从 aipm_search_context 搜索结果、task 详情、或 aipm_list_plans 中获取"},
 			},
-		}, s.handleGetPlan)
+			Required: []string{"plan_id"},
+		},
+	}, s.handleGetPlan)
 
-		s.addTool(MCPTool{
-			Name: "aipm_list_plans",
-			Description: "当你需要找「应该在哪个 plan 下创建 task」或查看所有活跃 plan 时调用。这是创建 task 前的必经步骤——因为 aipm_create_task 需要 plan_id。\n\n返回：匹配条件的 plan 摘要列表（ID + 标题 + 状态 + 优先级）。\n\n常用模式：(1) 用 status=active 过滤出活跃 plan，从中选择合适的 plan_id (2) 用 roadmap_id 过滤查看某个 roadmap 下的所有 plan (3) 不带参数列出全部 plan。\n\n与 aipm_search_context 的区别：list_plans 按 status/roadmap_id 精确过滤，返回结构化列表；search_context 按关键词模糊匹配 plan 标题和内容。两者互补：不确定关键词时用 list_plans 浏览，知道具体名称时用 search_context 搜索。",
-			InputSchema: MCPInputSchema{
-				Type: "object",
-				Properties: map[string]interface{}{
-					"roadmap_id": map[string]string{"type": "string", "description": "按 Roadmap ID 过滤。roadmap_id 可从 aipm_search_context 中获取"},
-					"status":     map[string]string{"type": "string", "description": "按状态过滤。可选值: draft / active / done / deprecated。推荐用 active 找可用的 plan"},
-				},
+	s.addTool(MCPTool{
+		Name:        "aipm_list_plans",
+		Description: "当你需要找「应该在哪个 plan 下创建 task」或查看所有活跃 plan 时调用。这是创建 task 前的必经步骤——因为 aipm_create_task 需要 plan_id。\n\n返回：匹配条件的 plan 摘要列表（ID + 标题 + 状态 + 优先级）。\n\n常用模式：(1) 用 status=active 过滤出活跃 plan，从中选择合适的 plan_id (2) 用 roadmap_id 过滤查看某个 roadmap 下的所有 plan (3) 不带参数列出全部 plan。\n\n与 aipm_search_context 的区别：list_plans 按 status/roadmap_id 精确过滤，返回结构化列表；search_context 按关键词模糊匹配 plan 标题和内容。两者互补：不确定关键词时用 list_plans 浏览，知道具体名称时用 search_context 搜索。",
+		InputSchema: MCPInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"roadmap_id": map[string]string{"type": "string", "description": "按 Roadmap ID 过滤。roadmap_id 可从 aipm_search_context 中获取"},
+				"status":     map[string]string{"type": "string", "description": "按状态过滤。可选值: draft / active / done / deprecated。推荐用 active 找可用的 plan"},
 			},
-		}, s.handleListPlans)
+		},
+	}, s.handleListPlans)
 
-		s.addTool(MCPTool{
-			Name: "aipm_get_bug",
-			Description: "当你从 search_context 结果或 commit 详情中看到 bug ID 后，调用此工具查看该 bug 的完整记录。\n\n返回：bug 标题、严重级别（critical/major/minor）、状态（open/in_progress/resolved/closed）、完整错误信息、根因分析、修复方案、标签、关联的 commit_id。\n\n与 aipm_list_bugs 的区别：get_bug 需要已知 bug_id，返回单个 bug 的完整信息；list_bugs 按 severity/status 过滤返回多个 bug 的摘要列表。",
-			InputSchema: MCPInputSchema{
-				Type: "object",
-				Properties: map[string]interface{}{
-					"bug_id": map[string]string{"type": "string", "description": "Bug ID。可从 search_context 搜索结果、commit 详情、或 aipm_list_bugs 中获取"},
-				},
-				Required: []string{"bug_id"},
+	s.addTool(MCPTool{
+		Name:        "aipm_get_bug",
+		Description: "当你从 search_context 结果或 commit 详情中看到 bug ID 后，调用此工具查看该 bug 的完整记录。\n\n返回：bug 标题、严重级别（critical/major/minor）、状态（open/in_progress/resolved/closed）、完整错误信息、根因分析、修复方案、标签、关联的 commit_id。\n\n与 aipm_list_bugs 的区别：get_bug 需要已知 bug_id，返回单个 bug 的完整信息；list_bugs 按 severity/status 过滤返回多个 bug 的摘要列表。",
+		InputSchema: MCPInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"bug_id": map[string]string{"type": "string", "description": "Bug ID。可从 search_context 搜索结果、commit 详情、或 aipm_list_bugs 中获取"},
 			},
-		}, s.handleGetBug)
+			Required: []string{"bug_id"},
+		},
+	}, s.handleGetBug)
 
-		s.addTool(MCPTool{
-			Name: "aipm_list_bugs",
-			Description: "当你需要查看有哪些未解决的 bug、或按严重级别排查问题时调用。常用场景：(1) 开始编码前检查是否有相关的 open bug (2) 定期查看 critical 级别的 bug 是否需要优先处理。\n\n返回：匹配条件的 bug 摘要列表（ID + 标题 + severity + status）。不返回错误详情和根因分析——需要时对结果中的 bug ID 调用 aipm_get_bug。",
-			InputSchema: MCPInputSchema{
-				Type: "object",
-				Properties: map[string]interface{}{
-					"status":   map[string]string{"type": "string", "description": "按状态过滤。可选值: open / in_progress / resolved / closed。推荐用 open 查看未解决的 bug"},
-					"severity": map[string]string{"type": "string", "description": "按严重级别过滤。可选值: critical / major / minor"},
-					"limit":    map[string]string{"type": "integer", "description": "返回数量上限，默认 20"},
-				},
+	s.addTool(MCPTool{
+		Name:        "aipm_list_bugs",
+		Description: "当你需要查看有哪些未解决的 bug、或按严重级别排查问题时调用。常用场景：(1) 开始编码前检查是否有相关的 open bug (2) 定期查看 critical 级别的 bug 是否需要优先处理。\n\n返回：匹配条件的 bug 摘要列表（ID + 标题 + severity + status）。不返回错误详情和根因分析——需要时对结果中的 bug ID 调用 aipm_get_bug。",
+		InputSchema: MCPInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"status":   map[string]string{"type": "string", "description": "按状态过滤。可选值: open / in_progress / resolved / closed。推荐用 open 查看未解决的 bug"},
+				"severity": map[string]string{"type": "string", "description": "按严重级别过滤。可选值: critical / major / minor"},
+				"limit":    map[string]string{"type": "integer", "description": "返回数量上限，默认 20"},
 			},
-		}, s.handleListBugs)
+		},
+	}, s.handleListBugs)
 
-		s.addTool(MCPTool{
-			Name: "aipm_get_decision",
-			Description: "当你从 search_context 结果或 task 关联中看到 decision ID 后，调用此工具查看该架构/技术决策的完整内容。\n\n返回：decision 标题、状态（proposed/accepted/deprecated）、日期、背景（background）、决策内容（decision_text）。\n\n在实现新功能或做技术选型时，先用 aipm_search_context 或 aipm_list_decisions 查找相关决策，再用此工具查看详情——避免重复讨论已定的技术方向。",
-			InputSchema: MCPInputSchema{
-				Type: "object",
-				Properties: map[string]interface{}{
-					"decision_id": map[string]string{"type": "string", "description": "Decision ID。可从 search_context 搜索结果、task 的 related_decisions 字段、或 aipm_list_decisions 中获取"},
-				},
-				Required: []string{"decision_id"},
+	s.addTool(MCPTool{
+		Name:        "aipm_get_decision",
+		Description: "当你从 search_context 结果或 task 关联中看到 decision ID 后，调用此工具查看该架构/技术决策的完整内容。\n\n返回：decision 标题、状态（proposed/accepted/deprecated）、日期、背景（background）、决策内容（decision_text）。\n\n在实现新功能或做技术选型时，先用 aipm_search_context 或 aipm_list_decisions 查找相关决策，再用此工具查看详情——避免重复讨论已定的技术方向。",
+		InputSchema: MCPInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"decision_id": map[string]string{"type": "string", "description": "Decision ID。可从 search_context 搜索结果、task 的 related_decisions 字段、或 aipm_list_decisions 中获取"},
 			},
-		}, s.handleGetDecision)
+			Required: []string{"decision_id"},
+		},
+	}, s.handleGetDecision)
 
-		s.addTool(MCPTool{
-			Name: "aipm_list_decisions",
-			Description: "当你需要了解项目中有哪些已做的技术决策、或做新决策前检查是否已有相关决策时调用。通常与 aipm_get_decision 配合使用：先用 list 浏览决策列表，找到感兴趣的决策 ID 后再用 get 查看完整内容。\n\n返回：全部 decision 的摘要列表（ID + 标题 + 状态 + 日期），按日期降序排列。注意：此工具不支持过滤参数，如需按关键词搜索特定决策，请用 aipm_search_context。",
-			InputSchema: MCPInputSchema{
-				Type:       "object",
-				Properties: map[string]interface{}{},
-			},
-		}, s.handleListDecisions)
+	s.addTool(MCPTool{
+		Name:        "aipm_list_decisions",
+		Description: "当你需要了解项目中有哪些已做的技术决策、或做新决策前检查是否已有相关决策时调用。通常与 aipm_get_decision 配合使用：先用 list 浏览决策列表，找到感兴趣的决策 ID 后再用 get 查看完整内容。\n\n返回：全部 decision 的摘要列表（ID + 标题 + 状态 + 日期），按日期降序排列。注意：此工具不支持过滤参数，如需按关键词搜索特定决策，请用 aipm_search_context。",
+		InputSchema: MCPInputSchema{
+			Type:       "object",
+			Properties: map[string]interface{}{},
+		},
+	}, s.handleListDecisions)
 
 	s.addTool(MCPTool{
 		Name:        "aipm_record_commit",
@@ -306,10 +306,10 @@ func (s *mcpServer) registerTools() {
 		InputSchema: MCPInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
-				"title":    map[string]string{"type": "string", "description": "Task 标题"},
-				"plan_id":  map[string]string{"type": "string", "description": "所属 Plan ID"},
-				"priority": map[string]string{"type": "string", "description": "P0/P1/P2"},
-				"status":   map[string]string{"type": "string", "description": "todo/in_progress"},
+				"title":        map[string]string{"type": "string", "description": "Task 标题"},
+				"plan_id":      map[string]string{"type": "string", "description": "所属 Plan ID"},
+				"priority":     map[string]string{"type": "string", "description": "P0/P1/P2"},
+				"status":       map[string]string{"type": "string", "description": "todo/in_progress"},
 				"phase":        map[string]string{"type": "string", "description": "所属 phase"},
 				"project_path": map[string]string{"type": "string", "description": "可选: 目标项目路径。例: /Users/dazsec/projects/EncryptDrive"},
 			},
@@ -319,7 +319,7 @@ func (s *mcpServer) registerTools() {
 
 	// P1: Entity write tools — create plan/roadmap, update existing entities
 	s.addTool(MCPTool{
-		Name: "aipm_create_plan",
+		Name:        "aipm_create_plan",
 		Description: "创建一个新 Plan。Plan 是 task 的容器——每个 task 必须属于一个 plan。创建 plan 前必须先有 roadmap（plan 需要 roadmap_id）。\n\n必填参数：title（plan 名称）、roadmap_id（所属 roadmap）。roadmap_id 可通过 aipm_search_context 搜索获取。\n\n可选参数：goal（plan 目标，建议填写）、priority（P0/P1/P2，默认 P1）、status（draft/active，默认 draft，确定后改为 active）、vision_id（所属 vision）。\n\n典型流程：(1) aipm_search_context 搜 roadmap → (2) aipm_create_plan → (3) aipm_create_task 在 plan 下创建 task。",
 		InputSchema: MCPInputSchema{
 			Type: "object",
@@ -336,7 +336,7 @@ func (s *mcpServer) registerTools() {
 	}, s.handleCreatePlan)
 
 	s.addTool(MCPTool{
-		Name: "aipm_create_roadmap",
+		Name:        "aipm_create_roadmap",
 		Description: "创建一个新 Roadmap。Roadmap 是 plan 的容器——plan 需要关联到 roadmap。Roadmap 代表一个时间线/里程碑/大版本。\n\n必填参数：title（roadmap 名称）。\n\n可选参数：target_date（目标日期，格式 YYYY-MM-DD）、status（planned/active/done，默认 planned）、priority（P0/P1/P2，默认 P1）、vision_id（所属 vision）。\n\n典型流程：(1) aipm_create_roadmap → (2) aipm_create_plan(roadmap_id=...) → (3) aipm_create_task(plan_id=...)。",
 		InputSchema: MCPInputSchema{
 			Type: "object",
@@ -353,7 +353,7 @@ func (s *mcpServer) registerTools() {
 
 	// Update tools — modify existing entities
 	s.addTool(MCPTool{
-		Name: "aipm_update_task",
+		Name:        "aipm_update_task",
 		Description: "更新 Task 的字段（标题、优先级、phase、状态等）。与 aipm_update_task_status 的区别：update_task_status 只改 status 且带 done-gate 检查；update_task 可以同时修改多个字段，不触发 done-gate。\n\n适用场景：(1) 修正 task 标题 (2) 调整优先级 (3) 更换所属 phase (4) 同时修改多个属性。\n\n参数：task_id（必填）。以下至少填一个：title、priority（P0/P1/P2）、status、phase、note（会更新 task 的 last_note）。注意改 status 不会触发 done-gate，如需 done 验证请用 aipm_update_task_status。",
 		InputSchema: MCPInputSchema{
 			Type: "object",
@@ -370,7 +370,7 @@ func (s *mcpServer) registerTools() {
 	}, s.handleUpdateTask)
 
 	s.addTool(MCPTool{
-		Name: "aipm_update_commit",
+		Name:        "aipm_update_commit",
 		Description: "更新 Commit 的元数据——review 状态、test 状态、commit 状态、摘要等。\n\n常用场景：(1) 代码 review 通过后，将 review_status 改为 approved (2) 测试通过后，将 test_status 改为 passed (3) commit 合并后，将 status 改为 merged。\n\n注意：review_status=approved 且 test_status=passed（或 auto）的 commit 才能让关联 task 通过 done-gate。\n\n参数：commit_id（必填）。以下可选填一个或多个：status（committed/draft/merged）、review_status（pending/approved/rejected）、test_status（not_run/passed/failed）、summary。",
 		InputSchema: MCPInputSchema{
 			Type: "object",
@@ -387,7 +387,7 @@ func (s *mcpServer) registerTools() {
 	}, s.handleUpdateCommit)
 
 	s.addTool(MCPTool{
-		Name: "aipm_update_bug",
+		Name:        "aipm_update_bug",
 		Description: "更新 Bug 的字段——状态、严重级别、修复方案等。\n\n常用场景：(1) 开始修 bug 时，将 status 改为 in_progress (2) 修复完成时，将 status 改为 resolved 并填写 fix (3) 调整严重级别。\n\n参数：bug_id（必填）。以下可选填一个或多个：status（open/in_progress/resolved/closed）、severity（critical/major/minor）、fix（修复方案描述）。",
 		InputSchema: MCPInputSchema{
 			Type: "object",
@@ -402,7 +402,7 @@ func (s *mcpServer) registerTools() {
 	}, s.handleUpdateBug)
 
 	s.addTool(MCPTool{
-		Name: "aipm_update_decision",
+		Name:        "aipm_update_decision",
 		Description: "更新 Decision 的状态。当决策从「提议」变为「已接受」或「已废弃」时调用。\n\n状态流转：proposed（提议中）→ accepted（已接受）→ deprecated（已废弃）。\n\n参数：decision_id（必填）、status（必填，proposed/accepted/deprecated）。",
 		InputSchema: MCPInputSchema{
 			Type: "object",
@@ -415,7 +415,7 @@ func (s *mcpServer) registerTools() {
 	}, s.handleUpdateDecision)
 
 	s.addTool(MCPTool{
-		Name: "aipm_update_plan",
+		Name:        "aipm_update_plan",
 		Description: "更新 Plan 的字段——状态、标题、目标、优先级等。\n\n常用场景：(1) plan 进入实施阶段，status 从 draft→active (2) plan 完成，status→done (3) 废弃 plan，status→deprecated (4) 修正标题或目标。\n\n参数：plan_id（必填）。以下可选填一个或多个：status（draft/active/done/deprecated）、title、goal、priority（P0/P1/P2）。\n\n注意：将 status 设为 deprecated 等同于废弃该 plan——不会删除数据，但标记为不再活跃。",
 		InputSchema: MCPInputSchema{
 			Type: "object",
@@ -445,14 +445,14 @@ func (s *mcpServer) registerTools() {
 		InputSchema: MCPInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
-				"title":       map[string]string{"type": "string", "description": "Bug 标题"},
-				"error":       map[string]string{"type": "string", "description": "完整错误信息"},
-				"files":       map[string]string{"type": "string", "description": "相关文件，逗号分隔"},
-				"root_cause":  map[string]string{"type": "string", "description": "根因分析"},
-				"fix":         map[string]string{"type": "string", "description": "修复方案"},
-				"severity":    map[string]string{"type": "string", "description": "critical/major/minor"},
-				"tags":        map[string]string{"type": "string", "description": "标签，逗号分隔"},
-				"commit_id":   map[string]string{"type": "string", "description": "关联的 commit ID（可选）"},
+				"title":      map[string]string{"type": "string", "description": "Bug 标题"},
+				"error":      map[string]string{"type": "string", "description": "完整错误信息"},
+				"files":      map[string]string{"type": "string", "description": "相关文件，逗号分隔"},
+				"root_cause": map[string]string{"type": "string", "description": "根因分析"},
+				"fix":        map[string]string{"type": "string", "description": "修复方案"},
+				"severity":   map[string]string{"type": "string", "description": "critical/major/minor"},
+				"tags":       map[string]string{"type": "string", "description": "标签，逗号分隔"},
+				"commit_id":  map[string]string{"type": "string", "description": "关联的 commit ID（可选）"},
 			},
 			Required: []string{"title", "error", "root_cause", "fix"},
 		},
@@ -464,10 +464,10 @@ func (s *mcpServer) registerTools() {
 		InputSchema: MCPInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
-				"task_id":       map[string]string{"type": "string", "description": "Task ID"},
-				"status":        map[string]string{"type": "string", "description": "todo/in_progress/blocked/done"},
-				"note":          map[string]string{"type": "string", "description": "状态变更说明"},
-				"project_path":  map[string]string{"type": "string", "description": "可选: 目标项目路径。例: /Users/dazsec/projects/EncryptDrive"},
+				"task_id":      map[string]string{"type": "string", "description": "Task ID"},
+				"status":       map[string]string{"type": "string", "description": "todo/in_progress/blocked/done"},
+				"note":         map[string]string{"type": "string", "description": "状态变更说明"},
+				"project_path": map[string]string{"type": "string", "description": "可选: 目标项目路径。例: /Users/dazsec/projects/EncryptDrive"},
 			},
 			Required: []string{"task_id", "status"},
 		},
@@ -501,11 +501,11 @@ func (s *mcpServer) registerTools() {
 		InputSchema: MCPInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
-				"source_type": map[string]string{"type": "string", "description": "源实体类型 (task/commit/bug/decision/idea/plan)"},
-				"source_id":   map[string]string{"type": "string", "description": "源实体 ID"},
-				"relation":    map[string]string{"type": "string", "description": "关系 (fixes/relates_to/blocked_by/implements/depends_on)"},
-				"target_type": map[string]string{"type": "string", "description": "目标实体类型"},
-				"target_id":   map[string]string{"type": "string", "description": "目标实体 ID"},
+				"source_type":  map[string]string{"type": "string", "description": "源实体类型 (task/commit/bug/decision/idea/plan)"},
+				"source_id":    map[string]string{"type": "string", "description": "源实体 ID"},
+				"relation":     map[string]string{"type": "string", "description": "关系 (fixes/relates_to/blocked_by/implements/depends_on)"},
+				"target_type":  map[string]string{"type": "string", "description": "目标实体类型"},
+				"target_id":    map[string]string{"type": "string", "description": "目标实体 ID"},
 				"note":         map[string]string{"type": "string", "description": "关联说明（可选）"},
 				"project_path": map[string]string{"type": "string", "description": "可选: 目标项目路径。例: /Users/dazsec/projects/EncryptDrive"},
 			},
@@ -610,10 +610,10 @@ func (s *mcpServer) registerTools() {
 		InputSchema: MCPInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
-				"source": map[string]string{"type": "string", "description": "想看哪个 Agent: claude-code / cursor / gemini-cli / opencode / codex-cli。例：看 Cursor 说了什么 → source=\"cursor\"。不传则看所有人。"},
-				"last_n": map[string]string{"type": "integer", "description": "最近 N 条。默认 15。快速浏览用 5，深入阅读用 30（与 since / cursor 可组合）"},
-				"since":  map[string]string{"type": "string", "description": "可选: ISO 时间下限 (例 2026-06-15T21:48:00)"},
-				"cursor": map[string]string{"type": "string", "description": "可选: 从上次返回的 cursor 之后继续读取，避免重复（传上次返回结果中 related_context.cursor 的值）"},
+				"source":       map[string]string{"type": "string", "description": "想看哪个 Agent: claude-code / cursor / gemini-cli / opencode / codex-cli。例：看 Cursor 说了什么 → source=\"cursor\"。不传则看所有人。"},
+				"last_n":       map[string]string{"type": "integer", "description": "最近 N 条。默认 15。快速浏览用 5，深入阅读用 30（与 since / cursor 可组合）"},
+				"since":        map[string]string{"type": "string", "description": "可选: ISO 时间下限 (例 2026-06-15T21:48:00)"},
+				"cursor":       map[string]string{"type": "string", "description": "可选: 从上次返回的 cursor 之后继续读取，避免重复（传上次返回结果中 related_context.cursor 的值）"},
 				"full":         map[string]string{"type": "boolean", "description": "true=全文（互读讨论必设），false=预览约 200 字（默认）"},
 				"project_path": map[string]string{"type": "string", "description": "可选: 目标项目路径，不传则读当前项目。例: /Users/dazsec/projects/EncryptDrive"},
 			},
@@ -679,7 +679,7 @@ func (s *mcpServer) handleBriefing(args map[string]interface{}) mcpToolResult {
 	report := analyze.RunFullAnalysis()
 
 	related := map[string]interface{}{
-		"analysis_summary": report.Summary,
+		"analysis_summary":   report.Summary,
 		"active_plans_count": len(report.Progress),
 		"risks":              report.Progress,
 	}
@@ -1207,7 +1207,7 @@ func (s *mcpServer) handleRecordCommit(args map[string]interface{}) mcpToolResul
 			db.Close()
 			if existingID != "" {
 				return mcpToolResult{
-					Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("Commit 已存在 (commit_hash 去重): %s [%s]", existingID, title)}},
+					Content:        []mcpContent{{Type: "text", Text: fmt.Sprintf("Commit 已存在 (commit_hash 去重): %s [%s]", existingID, title)}},
 					RelatedContext: map[string]interface{}{"dedup": true, "existing_id": existingID},
 				}
 			}
@@ -1234,18 +1234,27 @@ func (s *mcpServer) handleRecordCommit(args map[string]interface{}) mcpToolResul
 	// Get related commits for the same task
 	allCommits, _ := store.ListCommitsByTask(taskID)
 	related := map[string]interface{}{
-		"commit":        commit,
-		"task_commits":  len(allCommits),
+		"commit":         commit,
+		"task_commits":   len(allCommits),
 		"drift_warnings": driftWarnings,
 	}
 
-	reflection := fmt.Sprintf("Commit '%s' 已记录。下一步：用 aipm_update_task_status(task_id=\"%s\", status=\"done\") 标记 task 完成，或用 aipm_update_commit 更新 review/test 状态。", title, taskID)
-	if len(driftWarnings) > 0 {
-		reflection += " " + driftWarnings[0]
-		reflection += " 建议: 确认这些文件是否应属于当前 task，如是请更新 plan scope。"
-	}
-	if len(allCommits) == 1 {
-		reflection += " 这是此 task 的第一个 commit。"
+	// Remind agent to link orphan commits to a task.
+	var reflection string
+	if taskID == "" {
+		reflection = fmt.Sprintf("⚠️ Commit '%s' 未关联 task（orphan commit）。"+
+			"请立即: (1) aipm_search_context 搜索是否有匹配的已有 task，"+
+			"(2) 如无则 aipm_create_task 创建新 task，"+
+			"(3) aipm_update_commit(commit_id=\"%s\", task_id=\"<找到的task_id>\") 绑定。", title, commit["id"])
+	} else {
+		reflection = fmt.Sprintf("Commit '%s' 已记录。下一步：用 aipm_update_task_status(task_id=\"%s\", status=\"done\") 标记 task 完成，或用 aipm_update_commit 更新 review/test 状态。", title, taskID)
+		if len(driftWarnings) > 0 {
+			reflection += " " + driftWarnings[0]
+			reflection += " 建议: 确认这些文件是否应属于当前 task，如是请更新 plan scope。"
+		}
+		if len(allCommits) == 1 {
+			reflection += " 这是此 task 的第一个 commit。"
+		}
 	}
 
 	return mcpToolResult{
@@ -1257,12 +1266,8 @@ func (s *mcpServer) handleRecordCommit(args map[string]interface{}) mcpToolResul
 	}
 }
 
-
 func (s *mcpServer) handleRecordCommits(args map[string]interface{}) mcpToolResult {
 	taskID := getStr(args, "task_id", "")
-	if taskID == "" {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "task_id 为必填项"}}, IsError: true}
-	}
 	branch := getStr(args, "branch", "main")
 	status := getStr(args, "status", "committed")
 	projectPath := getStr(args, "project_path", "")
@@ -1345,9 +1350,14 @@ func (s *mcpServer) handleRecordCommits(args map[string]interface{}) mcpToolResu
 		}
 	}
 
+	reflection := ""
+	if taskID == "" {
+		reflection = "⚠️ 这些 commit 未关联 task（orphan）。请: (1) aipm_search_context 搜索已有 task (2) 如无则 aipm_create_task 新建 (3) aipm_update_commit 逐个绑定。"
+	}
 	return mcpToolResult{
 		Content:        []mcpContent{{Type: "text", Text: sb.String()}},
 		RelatedContext: result,
+		Reflection:     reflection,
 	}
 }
 
@@ -1408,9 +1418,9 @@ func (s *mcpServer) handleCreateTask(args map[string]interface{}) mcpToolResult 
 	}
 
 	related := map[string]interface{}{
-		"task":           task,
-		"plan_title":     u.Str(plan["title"]),
-		"plan_status":    u.Str(plan["status"]),
+		"task":        task,
+		"plan_title":  u.Str(plan["title"]),
+		"plan_status": u.Str(plan["status"]),
 	}
 
 	reflection := fmt.Sprintf("Task '%s' 已创建 (plan: %s)。下一步：设置 status=in_progress 开始工作，编码完成后用 aipm_record_commit(task_id=\"%s\") 记录 commit。", title, u.Str(plan["title"]), task["id"])
@@ -1906,7 +1916,7 @@ func (s *mcpServer) handleLogDiscussion(args map[string]interface{}) mcpToolResu
 	}
 
 	return mcpToolResult{
-		Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("✅ 讨论已记录 [%s]", res["id"])}},
+		Content:        []mcpContent{{Type: "text", Text: fmt.Sprintf("✅ 讨论已记录 [%s]", res["id"])}},
 		RelatedContext: res,
 	}
 }
@@ -2225,7 +2235,7 @@ func recordMCPError(toolName string, args map[string]interface{}, result mcpTool
 
 	summary := fmt.Sprintf("工具 %s 失败: %s", toolName, u.TruncateStr(errText, 120))
 	store.CreateEvent("mcp_error", toolName, entityID, summary)
-	u.LogShared("MCP-ERR", "tool=%s entity=%s error=%s", 
+	u.LogShared("MCP-ERR", "tool=%s entity=%s error=%s",
 		toolName, entityID[:min(len(entityID), 16)], u.TruncateStr(errText, 60))
 }
 
@@ -2259,7 +2269,6 @@ func (s *mcpServer) handleToolsCall(msg *jsonrpcMessage) {
 		recordMCPError(call.Name, call.Arguments, result)
 	}
 	u.LogShared("MCP", "tool=%s status=%s | %s", call.Name, status, mcpLogSummary(call.Name, call.Arguments))
-
 
 	s.sendResult(msg.ID, result)
 }
@@ -2413,7 +2422,6 @@ func truncArg(args map[string]interface{}, key string, max int) string {
 	}
 	return s
 }
-
 
 // ---- Helpers ----
 
