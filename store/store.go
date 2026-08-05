@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -107,7 +108,12 @@ func CreateTask(projectPath string, title, priority, status, phase, planID strin
 	// Validate plan exists and backfill roadmap_id
 	var roadmapID string
 	if err := db.QueryRow("SELECT roadmap_id FROM plans WHERE id = ?", planID).Scan(&roadmapID); err != nil {
-		return nil, fmt.Errorf("plan '%s' not found: task requires a valid plan_id", planID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("plan '%s' not found: task requires a valid plan_id", planID)
+		}
+		// Surface real failures (lock etc.) instead of misreporting as
+		// "plan not found" (bug-20260805-134225-085427).
+		return nil, fmt.Errorf("plan '%s' lookup failed: %w", planID, err)
 	}
 	_, err = db.Exec("INSERT INTO tasks (id, title, status, priority, phase, plan_id, acceptance_json, related_docs_json, related_decisions_json, last_note, updated_at, roadmap_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, title, status, priority, phase, planID, accJSON, "[]", "[]", "", u.Today(), roadmapID, now)
 	if err != nil {

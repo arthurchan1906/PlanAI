@@ -17,6 +17,22 @@ import (
 
 // ── Path resolution ───────────────────────────────────────────────────
 
+// SCHEMA_VERSION is the persistent schema version marker stored in
+// SQLite's PRAGMA user_version. Every time the schema or migrations
+// change, bump this — connections with user_version >= this skip the
+// (expensive, write-lock-acquiring) EnsureSchema DDL entirely.
+const SCHEMA_VERSION = 1
+
+// schemaUpToDate reports whether the database at d already has the
+// current schema version, so we can skip the DDL pass on hot paths.
+func schemaUpToDate(d *sql.DB) (bool, error) {
+	var v int
+	if err := d.QueryRow("PRAGMA user_version").Scan(&v); err != nil {
+		return false, err
+	}
+	return v >= SCHEMA_VERSION, nil
+}
+
 // FindPath locates the main database file.
 func FindPath() (string, error) {
 	if dir := os.Getenv("PMAI_HOME"); dir != "" {
@@ -82,6 +98,10 @@ func OpenProject(projectPath string) (*sql.DB, error) {
 			d.Close()
 			return nil, err
 		}
+		if err := ensureSchemaIfNeeded(d); err != nil {
+			d.Close()
+			return nil, err
+		}
 		return d, nil
 	}
 	return Open()
@@ -106,11 +126,31 @@ func Open() (*sql.DB, error) {
 		d.Close()
 		return nil, err
 	}
-	if err := EnsureSchema(d); err != nil {
+	if err := ensureSchemaIfNeeded(d); err != nil {
 		d.Close()
 		return nil, err
 	}
 	return d, nil
+}
+
+// ensureSchemaIfNeeded runs the schema DDL only when the database is not
+// already at the current SCHEMA_VERSION. On the hot path (every Open) this
+// is a single cheap PRAGMA read instead of 50+ DDL statements that each
+// take a SQLite write lock — which is what caused multi-agent write-lock
+// storms (bug-20260805-134225-4f214f).
+func ensureSchemaIfNeeded(d *sql.DB) error {
+	upToDate, err := schemaUpToDate(d)
+	if err != nil {
+		// Can't read schema state (DB possibly locked) — don't gamble on
+		// DDL while the file may be held by another writer. If the file
+		// exists and Ping succeeded, the schema was initialized at some
+		// point; skip and let the actual query surface the lock error.
+		return nil
+	}
+	if upToDate {
+		return nil
+	}
+	return EnsureSchema(d)
 }
 
 // OpenVectors opens the separate embeddings database.
@@ -131,7 +171,15 @@ func OpenVectors() (*sql.DB, error) {
 		d.Close()
 		return nil, err
 	}
-	d.Exec("CREATE TABLE IF NOT EXISTS vectors (id TEXT PRIMARY KEY, embedding_json TEXT NOT NULL)")
+	// vectors is a separate database; skip its DDL on hot paths too.
+	upToDate, _ := schemaUpToDate(d)
+	if !upToDate {
+		if _, err := d.Exec("CREATE TABLE IF NOT EXISTS vectors (id TEXT PRIMARY KEY, embedding_json TEXT NOT NULL)"); err != nil {
+			d.Close()
+			return nil, err
+		}
+		d.Exec(fmt.Sprintf("PRAGMA user_version = %d", SCHEMA_VERSION))
+	}
 	return d, nil
 }
 
@@ -149,6 +197,7 @@ func Bootstrap() (string, error) {
 		return "", err
 	}
 	defer d.Close()
+	// Bootstrap is an explicit init command — always run full DDL.
 	if err := EnsureSchema(d); err != nil {
 		return "", err
 	}
@@ -164,7 +213,15 @@ func EnsureSchema(d *sql.DB) error {
 			return fmt.Errorf("schema: %w\nSQL: %s", err, stmt)
 		}
 	}
-	return migrate(d)
+	if err := migrate(d); err != nil {
+		return err
+	}
+	// Mark the schema as current so subsequent connections skip the DDL
+	// pass entirely (PRAGMA user_version is persistent per database file).
+	if _, err := d.Exec(fmt.Sprintf("PRAGMA user_version = %d", SCHEMA_VERSION)); err != nil {
+		return fmt.Errorf("set schema version: %w", err)
+	}
+	return nil
 }
 
 var schemaStatements = []string{

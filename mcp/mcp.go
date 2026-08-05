@@ -2,7 +2,9 @@ package mcp
 
 import (
 	"bufio"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -1387,7 +1389,16 @@ func (s *mcpServer) handleCreateTask(args map[string]interface{}) mcpToolResult 
 		}
 	}
 	plan, err := store.GetPlan(planID)
-	if err != nil || plan == nil || plan["id"] == nil {
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			// Real failure (e.g. database is locked) — surface it, don't
+			// misreport as "plan does not exist" (bug-20260805-134225-085427).
+			return mcpToolResult{
+				Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("❌ 查询 plan '%s' 失败: %v。请稍后重试。", planID, err)}},
+				IsError: true,
+			}
+		}
+		// sql.ErrNoRows → plan truly doesn't exist.
 		// Check if it's a task ID (common agent mistake: passing task ID as plan_id)
 		task, _ := store.GetTaskSimple(planID)
 		if task != nil && task["id"] != nil {
@@ -1405,6 +1416,12 @@ func (s *mcpServer) handleCreateTask(args map[string]interface{}) mcpToolResult 
 				"❌ plan '%s' 不存在。\n\n"+
 					"Task 必须关联到一个已存在的 plan。请用 aipm_search_context 搜索已有 plan，"+
 					"或先创建 plan 再创建 task。", planID)}},
+			IsError: true,
+		}
+	}
+	if plan == nil || plan["id"] == nil {
+		return mcpToolResult{
+			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("❌ plan '%s' 不存在。\n\n请用 aipm_search_context 搜索已有 plan，或先创建 plan 再创建 task。", planID)}},
 			IsError: true,
 		}
 	}
