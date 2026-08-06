@@ -13,9 +13,10 @@ import (
 
 // Provider defines a real LLM backend that the proxy can route to.
 type Provider struct {
-	Name         string `json:"name"`                    // e.g. "deepseek"
-	OpenAIURL    string `json:"openai_url"`              // OpenAI-compatible base URL
-	AnthropicURL string `json:"anthropic_url,omitempty"` // optional Anthropic-compatible base URL
+	Name         string `json:"name"`
+	OpenAIURL    string `json:"openai_url"`
+	AnthropicURL string `json:"anthropic_url,omitempty"`
+	ResponsesURL string `json:"responses_url,omitempty"` // base URL，透传时拼 /responses
 }
 
 // ModelRoute describes how to reach a virtual model through a specific Provider.
@@ -23,9 +24,10 @@ type Provider struct {
 // Route selection at request time depends on which Provider the current
 // credential profile has an API key for.
 type ModelRoute struct {
-	Provider       string `json:"provider"`                  // → Provider.Name
-	ModelOpenAI    string `json:"model_openai,omitempty"`    // real model name for OpenAI protocol
-	ModelAnthropic string `json:"model_anthropic,omitempty"` // real model name for Anthropic protocol
+	Provider       string `json:"provider"`
+	ModelOpenAI    string `json:"model_openai,omitempty"`
+	ModelAnthropic string `json:"model_anthropic,omitempty"`
+	ModelResponses string `json:"model_responses,omitempty"` // 真实 Responses 模型名
 }
 
 // VirtualModel maps a user-facing model name to one or more provider routes.
@@ -236,6 +238,10 @@ func realModelForRoute(rt *ModelRoute, protocol string) string {
 		if rt.ModelOpenAI != "" {
 			return rt.ModelOpenAI
 		}
+	case "responses":
+		if rt.ModelResponses != "" {
+			return rt.ModelResponses
+		}
 	}
 	return ""
 }
@@ -263,11 +269,21 @@ func (r *ModelRegistry) ModelForAgentProto(virtualModelID, agentType string) str
 	targetProto := "openai"
 	if agentType == "claude" || agentType == "claude-code" {
 		targetProto = "anthropic"
+	} else if agentType == "codex" {
+		targetProto = "responses"
 	}
 	// Walk Routes: prefer the route that has a protocol-specific name.
 	for _, rt := range vm.Routes {
 		if name := realModelForRoute(&rt, targetProto); name != "" {
 			return name
+		}
+	}
+	// 2. codex 若 responses 未配置，回退 openai 名
+	if targetProto == "responses" {
+		for _, rt := range vm.Routes {
+			if rt.ModelOpenAI != "" {
+				return rt.ModelOpenAI
+			}
 		}
 	}
 	// Fallback to legacy fields.
