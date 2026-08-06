@@ -21,6 +21,9 @@ function ProviderModal({ open, provider, onCancel, onSave }) {
         <Form.Item name="anthropic_url" label="Anthropic URL">
           <Input placeholder="https://api.deepseek.com/anthropic" />
         </Form.Item>
+        <Form.Item name="responses_url" label="Responses URL">
+          <Input placeholder="https://api.deepseek.com/" />
+        </Form.Item>
       </Form>
     </Modal>
   );
@@ -42,7 +45,7 @@ function ModelModal({ open, model, providers, onCancel, onSave }) {
           tags: (model.tags || []).join(", "),
           priority: model.priority || 0,
           routes: (model.routes || []).map((rt, i) => ({ ...rt, key: i })),
-        } : { priority: 0, routes: [{ key: 0, provider: "", model_openai: "", model_anthropic: "" }] }}
+        } : { priority: 0, routes: [{ key: 0, provider: "", model_openai: "", model_anthropic: "", model_responses: "" }] }}
         onFinish={(raw) => {
           const tags = raw.tags ? raw.tags.split(",").map(s => s.trim()).filter(Boolean) : [];
           const routes = (raw.routes || [])
@@ -51,6 +54,7 @@ function ModelModal({ open, model, providers, onCancel, onSave }) {
               provider: r.provider,
               model_openai: r.model_openai || "",
               model_anthropic: r.model_anthropic || "",
+              model_responses: r.model_responses || "",
             }));
           if (routes.length === 0) return; // require at least one route
           onSave({
@@ -81,7 +85,7 @@ function ModelModal({ open, model, providers, onCancel, onSave }) {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
                 <Text strong style={{ fontSize: 12 }}>Provider Routes (priority order)</Text>
                 <Button type="dashed" size="small" icon={<PlusOutlined />}
-                  onClick={() => add({ provider: "", model_openai: "", model_anthropic: "" })}>Add route</Button>
+                  onClick={() => add({ provider: "", model_openai: "", model_anthropic: "", model_responses: "" })}>Add route</Button>
               </div>
               {fields.map(({ key, name, ...rest }) => (
                 <div key={key} style={{
@@ -106,6 +110,9 @@ function ModelModal({ open, model, providers, onCancel, onSave }) {
                     </Form.Item>
                     <Form.Item {...rest} name={[name, "model_anthropic"]} style={{ marginBottom: 4, width: 170 }}>
                       <Input placeholder="Anthropic model name" size="small" style={{ fontSize: 12 }} />
+                    </Form.Item>
+                    <Form.Item {...rest} name={[name, "model_responses"]} style={{ marginBottom: 4, width: 170 }}>
+                      <Input placeholder="Responses model name" size="small" style={{ fontSize: 12 }} />
                     </Form.Item>
                   </Space>
                 </div>
@@ -212,6 +219,7 @@ export default function ModelRegistryEditor({ providers = [], models = [], keys 
       const parts = [];
       if (rt.model_openai) parts.push(`O:${rt.model_openai}`);
       if (rt.model_anthropic) parts.push(`A:${rt.model_anthropic}`);
+      if (rt.model_responses) parts.push(`R:${rt.model_responses}`);
       return parts.length > 0 ? (
         <div key={j} style={{ fontSize: 10, color: "#888", lineHeight: "14px" }}>
           {rt.provider}: {parts.join(" ")}
@@ -272,6 +280,7 @@ export default function ModelRegistryEditor({ providers = [], models = [], keys 
               <Space size={4}>
                 <Text strong style={{ fontSize: 12 }}>{p.name}</Text>
                 {p.anthropic_url && <Tag color="blue" style={{ fontSize: 9, margin: 0, padding: "0 3px" }}>A</Tag>}
+                {p.responses_url && <Tag color="purple" style={{ fontSize: 9, margin: 0, padding: "0 3px" }}>R</Tag>}
                 {hasKey
                   ? <Tag color="green" style={{ fontSize: 9, margin: 0, padding: "0 3px", cursor: "pointer" }}
                     onClick={() => setKeyModal({ open: true, provider: p.name })}>key</Tag>
