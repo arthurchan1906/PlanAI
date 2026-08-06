@@ -633,6 +633,7 @@ type OpenCodeProfile struct {
 // GlobalConfig holds proxy configuration stored at ~/.aipmc/config.json.
 type GlobalConfig struct {
 	ProxyPort    int               `json:"proxy_port"`
+	ProxyBindAddr string           `json:"proxy_bind_addr,omitempty"`
 	UpstreamURL  string            `json:"upstream_url"`
 	ProxyModel   string            `json:"proxy_model"`    // deprecated: use per-agent profiles
 	ProxyLogDir  string            `json:"proxy_log_dir"`
@@ -734,6 +735,9 @@ func LoadGlobalConfig() GlobalConfig {
 	}
 	if v := os.Getenv("ANTHROPIC_URL"); v != "" {
 		cfg.AnthropicURL = v
+	}
+	if v := os.Getenv("PROXY_BIND_ADDR"); v != "" {
+		cfg.ProxyBindAddr = v
 	}
 	return cfg
 }

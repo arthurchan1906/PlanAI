@@ -54,6 +54,7 @@ func storeCfg(c *proxyCfg) { cfg.Store(c) }
 // Options configures the proxy server.
 type Options struct {
 	Port         int
+	BindAddr     string
 	UpstreamURL  string
 	Model        string
 	LogDir       string
@@ -112,7 +113,11 @@ func NewHandler(opts Options) http.Handler {
 func Run(opts Options) error {
 	h := NewHandler(opts)
 
-	addr := fmt.Sprintf("127.0.0.1:%d", opts.Port)
+	bindAddr := opts.BindAddr
+	if bindAddr == "" {
+		bindAddr = "0.0.0.0"
+	}
+	addr := fmt.Sprintf("%s:%d", bindAddr, opts.Port)
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("proxy listen %s: %w", addr, err)

@@ -221,6 +221,7 @@ func main() {
 		gcfg := pmdb.LoadGlobalConfig()
 		if err := proxy.Run(proxy.Options{
 			Port:         gcfg.ProxyPort,
+			BindAddr:     gcfg.ProxyBindAddr,
 			UpstreamURL:  gcfg.UpstreamURL,
 			Model:        gcfg.ProxyModel,
 			LogDir:       gcfg.ProxyLogDir,
@@ -456,6 +457,7 @@ func serveCommand() int {
 	}
 	proxyHandler := proxy.NewHandler(proxy.Options{
 		Port:         gcfg.ProxyPort,
+		BindAddr:     gcfg.ProxyBindAddr,
 		UpstreamURL:  gcfg.UpstreamURL,
 		Model:        gcfg.ProxyModel,
 		LogDir:       gcfg.ProxyLogDir,
