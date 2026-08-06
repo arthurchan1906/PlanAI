@@ -580,7 +580,11 @@ func dispatchModels(subcmd string, args *cli.Args) {
 			if p.AnthropicURL != "" {
 				anthro = fmt.Sprintf(" anthropic=%s", p.AnthropicURL)
 			}
-			fmt.Printf("  %-15s openai=%s%s\n", p.Name, p.OpenAIURL, anthro)
+			resp := ""
+			if p.ResponsesURL != "" {
+				resp = fmt.Sprintf(" responses=%s", p.ResponsesURL)
+			}
+			fmt.Printf("  %-15s openai=%s%s%s\n", p.Name, p.OpenAIURL, anthro, resp)
 		}
 		fmt.Println()
 		fmt.Println("Virtual Models:")
@@ -591,6 +595,9 @@ func dispatchModels(subcmd string, args *cli.Args) {
 				proto := ""
 				if rt.ModelAnthropic != "" {
 					proto += fmt.Sprintf(" anthropic=%s", rt.ModelAnthropic)
+				}
+				if rt.ModelResponses != "" {
+					proto += fmt.Sprintf(" responses=%s", rt.ModelResponses)
 				}
 				if rt.ModelOpenAI != "" {
 					proto += fmt.Sprintf(" openai=%s", rt.ModelOpenAI)
@@ -678,13 +685,14 @@ func dispatchModels(subcmd string, args *cli.Args) {
 			name := args.Get("name")
 			openaiURL := args.Get("openai_url")
 			if name == "" || openaiURL == "" {
-				fmt.Fprintln(os.Stderr, "Usage: aipmc models provider add --name <name> --openai_url <url> [--anthropic_url <url>]")
+				fmt.Fprintln(os.Stderr, "Usage: aipmc models provider add --name <name> --openai_url <url> [--anthropic_url <url>] [--responses_url <url>]")
 				os.Exit(1)
 			}
 			reg.AddProvider(pmdb.Provider{
 				Name:         name,
 				OpenAIURL:    openaiURL,
 				AnthropicURL: args.Str("anthropic_url", ""),
+				ResponsesURL: args.Str("responses_url", ""),
 			})
 			if err := pmdb.SaveModelRegistry(reg); err != nil {
 				fmt.Fprintf(os.Stderr, "save failed: %v\n", err)
@@ -733,7 +741,7 @@ func dispatchModels(subcmd string, args *cli.Args) {
 		id := args.Get("id")
 		provider := args.Get("provider")
 		if id == "" || provider == "" {
-			fmt.Fprintln(os.Stderr, "Usage: aipmc models add --id <name> --provider <name> [--anthropic <model>] [--openai <model>] [--tags t1,t2] [--priority N]")
+			fmt.Fprintln(os.Stderr, "Usage: aipmc models add --id <name> --provider <name> [--anthropic <model>] [--openai <model>] [--responses <model>] [--tags t1,t2] [--priority N]")
 			os.Exit(1)
 		}
 		if reg.FindProvider(provider) == nil {
@@ -750,6 +758,7 @@ func dispatchModels(subcmd string, args *cli.Args) {
 			Routes: []pmdb.ModelRoute{{
 				Provider:       provider,
 				ModelAnthropic: args.Str("anthropic", ""),
+				ModelResponses: args.Str("responses", ""),
 				ModelOpenAI:    args.Str("openai", ""),
 			}},
 			Tags:     tags,
@@ -781,9 +790,9 @@ func dispatchModels(subcmd string, args *cli.Args) {
 		fmt.Fprintf(os.Stderr, "Usage:\n")
 		fmt.Fprintf(os.Stderr, "  aipmc models current\n")
 		fmt.Fprintf(os.Stderr, "  aipmc models switch <model-id|--auto> --agent <agent>\n")
-		fmt.Fprintf(os.Stderr, "  aipmc models provider add --name <name> --openai_url <url> [--anthropic_url <url>]\n")
+		fmt.Fprintf(os.Stderr, "  aipmc models provider add --name <name> --openai_url <url> [--anthropic_url <url>] [--responses_url <url>]\n")
 		fmt.Fprintf(os.Stderr, "  aipmc models provider rm --name <name>\n")
-		fmt.Fprintf(os.Stderr, "  aipmc models add --id <name> --provider <name> [--anthropic <model>] [--openai <model>] [--tags t1,t2] [--priority N]\n")
+		fmt.Fprintf(os.Stderr, "  aipmc models add --id <name> --provider <name> [--anthropic <model>] [--openai <model>] [--responses <model>] [--tags t1,t2] [--priority N]\n")
 		fmt.Fprintf(os.Stderr, "  aipmc models rm --id <name>\n")
 		os.Exit(1)
 	}
