@@ -240,6 +240,77 @@ func TestHandlerGateFallsBackToTranslation(t *testing.T) {
 	}
 }
 
+// TestHandlerGateUsesCodexOverrideForPassthrough: the routing gate must honor the
+// codex current-model override BEFORE the body model. Regression test for the bug
+// where switching to a responses-capable model via &aipmc-model was ignored by the
+// gate: body model = "deepseek-v4-pro" (no responses) but override = "deepseek-v4-flash"
+// (responses) → the request MUST go to native passthrough, not translation.
+func TestHandlerGateUsesCodexOverrideForPassthrough(t *testing.T) {
+	// Pin codex override to deepseek-v4-flash (responses-capable).
+	prev := pmdb.LoadCurrentModel("codex")
+	t.Cleanup(func() {
+		pmdb.SaveCurrentModel("codex", prev) //nolint:errcheck
+	})
+	if err := pmdb.SaveCurrentModel("codex", "deepseek-v4-flash"); err != nil {
+		t.Fatalf("pin codex override: %v", err)
+	}
+	prevCfg := loadCfg()
+	defer storeCfg(prevCfg)
+
+	var gotPath string
+	var gotBody []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"id":"resp_x","object":"response","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":2}}`))
+	}))
+	defer upstream.Close()
+
+	storeCfg(&proxyCfg{
+		upstreamURL: "http://127.0.0.1:1/v1", // must not be hit: route should win
+		router: &ModelRouter{registry: &pmdb.ModelRegistry{
+			Version: 1,
+			Providers: []pmdb.Provider{
+				{Name: "deepseek", OpenAIURL: "http://127.0.0.1:1/v1", ResponsesURL: upstream.URL},
+			},
+			Models: []pmdb.VirtualModel{
+				// deepseek-v4-pro: NO model_responses → gate would be false if body model governs.
+				{ID: "deepseek-v4-pro", Routes: []pmdb.ModelRoute{{
+					Provider:    "deepseek",
+					ModelOpenAI: "deepseek-chat",
+				}}},
+				// deepseek-v4-flash: has model_responses → true only when override governs.
+				{ID: "deepseek-v4-flash", Routes: []pmdb.ModelRoute{{
+					Provider:       "deepseek",
+					ModelOpenAI:    "deepseek-chat",
+					ModelResponses: "deepseek-v4-real",
+				}}},
+			},
+		}},
+	})
+
+	// Body model is the NON-responses pro model — but the override is flash, so
+	// the gate must still route to passthrough.
+	body := `{"model":"deepseek-v4-pro","input":[{"type":"message","role":"user","content":"hi"}]}`
+	req := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d want 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+	if gotPath != "/responses" {
+		t.Fatalf("upstream path: got %q want /responses (gate ignored codex override)", gotPath)
+	}
+	if !strings.Contains(string(gotBody), `"deepseek-v4-real"`) {
+		t.Fatalf("model not replaced to ModelResponses via override: %s", gotBody)
+	}
+	if !strings.Contains(string(gotBody), `"input"`) {
+		t.Fatalf("native input body not preserved: %s", gotBody)
+	}
+}
+
 // TestResponsesPassthroughNoFallbackOnUpstreamError: when the configured
 // responses upstream returns 5xx, the handler surfaces that exact status + body
 // to the client and translation (handleCodexUnified → /chat/completions) is NOT

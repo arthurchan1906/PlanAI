@@ -365,6 +365,13 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		}
 		router := loadCfg().router
 		model := peekModel(body)
+		// currentModel override governs passthrough selection: when the user has
+		// selected a model via Web UI / &aipmc-model, honor it over the body's
+		// model so switching to a responses-capable model actually takes effect
+		// even if the codex client still sends the default model in the body.
+		if cm := loadCurrentModel("codex"); cm != "" {
+			model = cm
+		}
 		if model != "" && router.ShouldPassthroughResponses(model) {
 			handleResponsesPassthrough(rw, r)
 		} else {
