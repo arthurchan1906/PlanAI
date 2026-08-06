@@ -70,7 +70,7 @@ func (s *Server) handleAgentLaunch(w http.ResponseWriter, body map[string]any) {
 			"ANTHROPIC_AUTH_TOKEN=local",
 		}
 		if rt.Model != "" {
-			envOverrides = append(envOverrides, "ANTHROPIC_MODEL="+rt.Model)
+			envOverrides = append(envOverrides, "ANTHROPIC_MODEL="+pmdb.LoadModelRegistry().ResolveModelForProtocol(rt.Model, "anthropic"))
 		}
 		if rt.SubAgentModel != "" {
 			envOverrides = append(envOverrides, "CLAUDE_CODE_SUBAGENT_MODEL="+rt.SubAgentModel)
@@ -174,7 +174,7 @@ func (s *Server) handleAgentCmd(w http.ResponseWriter, agentName string) {
 	case "claude", "claude-code":
 		envs = append(envs, "ANTHROPIC_BASE_URL="+proxyURL, "ANTHROPIC_AUTH_TOKEN=local")
 		if rt.Model != "" {
-			envs = append(envs, "ANTHROPIC_MODEL="+rt.Model)
+			envs = append(envs, "ANTHROPIC_MODEL="+pmdb.LoadModelRegistry().ResolveModelForProtocol(rt.Model, "anthropic"))
 		}
 		cmdLine = "claude"
 	case "codex", "openai-codex":

@@ -657,7 +657,7 @@ func runAgent(name string) {
 			"ANTHROPIC_AUTH_TOKEN=local",
 		)
 		if rt.Model != "" {
-			env = append(env, "ANTHROPIC_MODEL="+rt.Model)
+			env = append(env, "ANTHROPIC_MODEL="+pmdb.LoadModelRegistry().ResolveModelForProtocol(rt.Model, "anthropic"))
 		}
 		if rt.SubAgentModel != "" {
 			env = append(env, "CLAUDE_CODE_SUBAGENT_MODEL="+rt.SubAgentModel)
