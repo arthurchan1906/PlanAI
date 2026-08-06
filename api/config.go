@@ -159,6 +159,7 @@ func (s *Server) handlePostConfig(w http.ResponseWriter, body map[string]any) {
 							Name:         u.Str(pm["name"]),
 							OpenAIURL:    u.Str(pm["openai_url"]),
 							AnthropicURL: u.Str(pm["anthropic_url"]),
+							ResponsesURL: u.Str(pm["responses_url"]),
 						})
 					}
 				}
@@ -189,6 +190,7 @@ func (s *Server) handlePostConfig(w http.ResponseWriter, body map[string]any) {
 										Provider:       u.Str(rm["provider"]),
 										ModelOpenAI:    u.Str(rm["model_openai"]),
 										ModelAnthropic: u.Str(rm["model_anthropic"]),
+										ModelResponses: u.Str(rm["model_responses"]),
 									})
 								}
 							}
