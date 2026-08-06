@@ -209,6 +209,29 @@ func (r *ModelRouter) ShouldPassthrough(virtualModel string) bool {
 	return false
 }
 
+// ShouldPassthroughResponses checks whether a virtual model supports the
+// OpenAI Responses API natively (i.e., at least one route has a provider with
+// responses_url and the route has a ModelResponses name). Used by the handler
+// to decide whether to route /v1/responses through native passthrough or
+// through the translation pipeline.
+func (r *ModelRouter) ShouldPassthroughResponses(virtualModel string) bool {
+	if !r.IsActive() {
+		return false
+	}
+	reg := r.getRegistry()
+	vm := reg.FindModel(virtualModel)
+	if vm == nil {
+		return false
+	}
+	for _, rt := range vm.Routes {
+		prov := reg.FindProvider(rt.Provider)
+		if prov != nil && prov.ResponsesURL != "" && rt.ModelResponses != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // joinedProviders returns a comma-separated list of provider names from the model's routes.
 func joinedProviders(vm *pmdb.VirtualModel) string {
 	if len(vm.Routes) == 0 {
