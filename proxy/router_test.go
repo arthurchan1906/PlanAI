@@ -56,3 +56,27 @@ func TestShouldPassthroughResponsesFalseForUnknownModel(t *testing.T) {
 		t.Fatal("expected false: unknown model")
 	}
 }
+
+func TestShouldPassthroughResponsesFalseWhenModelResponsesEmpty(t *testing.T) {
+	// Reverse gate: ResponsesURL is set but the route has no ModelResponses.
+	// Native passthrough requires BOTH responses_url and model_responses.
+	reg := pmdb.ModelRegistry{
+		Version: 1,
+		Providers: []pmdb.Provider{{
+			Name:         "deepseek",
+			OpenAIURL:    "https://api.deepseek.com/v1",
+			ResponsesURL: "https://api.deepseek.com/",
+		}},
+		Models: []pmdb.VirtualModel{{
+			ID: "deepseek-v4-flash",
+			Routes: []pmdb.ModelRoute{{
+				Provider:    "deepseek",
+				ModelOpenAI: "deepseek-chat",
+			}},
+		}},
+	}
+	router := &ModelRouter{registry: &reg}
+	if router.ShouldPassthroughResponses("deepseek-v4-flash") {
+		t.Fatal("expected false: provider has responses_url but route has no model_responses")
+	}
+}

@@ -281,6 +281,17 @@ func (rw *responseWrapper) Write(b []byte) (int, error) {
 	return n, err
 }
 
+// Flush implements http.Flusher by delegating to the embedded writer when it
+// supports flushing. Without it, the passthrough handlers' `w.(http.Flusher)`
+// assertion always fails in production (handler() passes rw everywhere), so
+// the SSE Flush() becomes a dead no-op and streaming events go out in ~4KB
+// net/http buffer bursts instead of one write per event.
+func (rw *responseWrapper) Flush() {
+	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 // effectiveModel returns the model to send upstream.
 // The [1m] suffix is NOT stripped — DeepSeek (and other providers
 // accessed via Anthropic-compatible APIs) use it as part of the model

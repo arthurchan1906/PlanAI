@@ -127,7 +127,7 @@ case path == "/v1/responses" || path == "/responses":
 | 模型未配置 `responses_url` / `model_responses` | 回落现有翻译管道（`handleCodexUnified`），既有行为不变 |
 | 已配置但上游 4xx/5xx | 透出上游错误，不回退（已确认） |
 | 已配置但上游网络失败 | 透出 502，不回退 |
-| 模型不存在 / 路由无法解析 | 回落翻译管道（与 anthropic 分支的 `ShouldPassthrough` 假 → 翻译一致） |
+| 模型不存在 / 路由无法解析 | 进入透传后不回退翻译：无路由时转发到全局 `upstreamURL` 的 `/responses` 端点；路由存在但上游 4xx/5xx/网络失败时直接透出错误（已确认） |
 
 ### 6. 验证
 

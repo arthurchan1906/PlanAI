@@ -161,7 +161,10 @@ func handleResponsesPassthroughStream(w http.ResponseWriter, r *http.Request, bo
 	for {
 		n, err := tee.Read(buf)
 		if n > 0 {
-			w.Write(buf[:n])
+			if _, werr := w.Write(buf[:n]); werr != nil {
+				// Client went away — stop reading the upstream stream.
+				break
+			}
 			if flusher != nil {
 				flusher.Flush()
 			}
