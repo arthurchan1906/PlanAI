@@ -139,6 +139,13 @@ func (r *ModelRouter) buildRoute(reg *pmdb.ModelRegistry, rt *pmdb.ModelRoute, p
 		if prov.AnthropicURL != "" {
 			baseURL = prov.AnthropicURL
 		}
+	} else if protocol == "responses" {
+		if rt.ModelResponses != "" {
+			realModel = rt.ModelResponses
+		}
+		if prov.ResponsesURL != "" {
+			baseURL = prov.ResponsesURL
+		}
 	}
 	if realModel == "" {
 		realModel = rt.ModelOpenAI // fallback

@@ -352,7 +352,13 @@ func handler(w http.ResponseWriter, r *http.Request) {
 			writeJSON(rw, http.StatusOK, map[string]any{"object": "list", "data": []any{}})
 			return
 		}
-		handleCodexUnified(rw, r)
+		router := loadCfg().router
+		model := peekModel(body)
+		if model != "" && router.ShouldPassthroughResponses(model) {
+			handleResponsesPassthrough(rw, r)
+		} else {
+			handleCodexUnified(rw, r)
+		}
 	case path == "/v1/chat/completions":
 		handleOpenAIChatPassthrough(rw, r)
 	case path == "/v1/models" || path == "/models" || strings.HasPrefix(path, "/v1/"):

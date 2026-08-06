@@ -113,3 +113,36 @@ func extractAnthropicStreamUsage(body string) (inputTokens, outputTokens, cacheH
 	}
 	return
 }
+
+// extractResponsesStreamUsage 从上游 Responses API 的 SSE 中解析 token 用量。
+// 上游原生 Responses 的 response.completed 事件 usage 结构为
+// {input_tokens, output_tokens, total_tokens}。
+func extractResponsesStreamUsage(body string) (inputTokens, outputTokens int) {
+	lines := strings.Split(body, "\n")
+	for _, line := range lines {
+		line = strings.TrimRight(line, "\r")
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		var event struct {
+			Type  string `json:"type"`
+			Usage struct {
+				InputTokens  int `json:"input_tokens"`
+				OutputTokens int `json:"output_tokens"`
+			} `json:"usage"`
+		}
+		if json.Unmarshal([]byte(data), &event) != nil {
+			continue
+		}
+		if event.Type == "response.completed" || event.Usage.InputTokens > 0 || event.Usage.OutputTokens > 0 {
+			if event.Usage.InputTokens > 0 {
+				inputTokens = event.Usage.InputTokens
+			}
+			if event.Usage.OutputTokens > 0 {
+				outputTokens = event.Usage.OutputTokens
+			}
+		}
+	}
+	return
+}
