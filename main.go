@@ -275,6 +275,8 @@ func main() {
 		cli.PrintJSON(application.ContextPack())
 	case "analyze":
 		cli.PrintJSON(analyze.RunFullAnalysis())
+	case "metrics":
+		dispatchMetrics(cli.ParseArgs(os.Args[2:]))
 	case "review":
 		reviewSub := subcmd
 		reviewRaw := rawArgs
