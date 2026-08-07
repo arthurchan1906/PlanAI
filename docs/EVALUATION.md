@@ -242,7 +242,7 @@
 |------|------|:--:|------|
 | `CreateBug` 缺 `SyncFTS5Entity`（plan/bug 搜索为 0） | B 组搜索覆盖 | 🔴 | 待修（不急） |
 | `dupEvent` 只查 unconsumed → commit_orphan 重复率 480% | B6 | 🔴 | 待修 |
-| `extractFilePaths` 对 codex/cursor 解析失败 | C2 | 🔴 | 待修 |
+| `extractFilePaths` 缺 OpenAI Responses `input` 解析（codex 静默 0 文件）；`body_parse=err` 被未知路径请求污染（detectAgent default 误标 cursor） | C2 | 🔴 | 已修（8/7 `input` 数组解析 + err 口径收紧，493bbdf；回归测试 3 例 PASS） |
 | char_limit + cap=3 丢弃 47/50 事件 | C3 | 🟡 | 待修 |
 | 新旧进程并存 → 评估失真 | E2 | 🟡 | 重启到最新版 |
 | L2 缓存复用历史脏摘要（8 条嵌套 goal 残留） | B2/B3 | 🟡 | 已修（8/7 写入归一化 + 存量清理归零） |
