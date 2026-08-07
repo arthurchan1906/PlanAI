@@ -2,6 +2,7 @@ package session
 
 import (
 	"os"
+	"strings"
 	"time"
 
 	"aipmc/ai"
@@ -58,11 +59,18 @@ func dedupeProjects(home string, paths []string) []string {
 func runOnce(projectPath string, summarizer ai.Summarizer) {
 	u.LogShared("PIPELINE", "scan start since=24h")
 
-	result, err := Run(RunOpts{
-		Since:       time.Now().Add(-24 * time.Hour).Format("2006-01-02T15:04:05"),
-		Limit:       50,
-		ProjectPath: projectPath,
-		Summarizer:  summarizer,
+	var result RunResult
+	err := retryPipelineBusy(func() error {
+		r, rerr := Run(RunOpts{
+			Since:       time.Now().Add(-24 * time.Hour).Format("2006-01-02T15:04:05"),
+			Limit:       50,
+			ProjectPath: projectPath,
+			Summarizer:  summarizer,
+		})
+		if rerr == nil {
+			result = r
+		}
+		return rerr
 	})
 	if err != nil {
 		u.LogShared("PIPELINE", "review error: %v", err)
@@ -71,12 +79,19 @@ func runOnce(projectPath string, summarizer ai.Summarizer) {
 			result.Reviewed, result.Completed, result.Baseline)
 	}
 
-	recResult, err := Reconcile(
-		time.Now().Add(-6 * time.Hour).Format("2006-01-02T15:04:05"),
-		projectPath,
-	)
-	if err != nil {
-		u.LogShared("PIPELINE", "reconcile error: %v", err)
+	var recResult ReconcileResult
+	recErr := retryPipelineBusy(func() error {
+		r, rerr := Reconcile(
+			time.Now().Add(-6 * time.Hour).Format("2006-01-02T15:04:05"),
+			projectPath,
+		)
+		if rerr == nil {
+			recResult = r
+		}
+		return rerr
+	})
+	if recErr != nil {
+		u.LogShared("PIPELINE", "reconcile error: %v", recErr)
 	} else {
 		u.LogShared("RECONCILE", "project=%s sessions=%d auto_linked=%d tentative=%d",
 			projectPath, recResult.SessionsReviewed, len(recResult.AutoLinked), len(recResult.TentativeLinks))
@@ -87,4 +102,24 @@ func runOnce(projectPath string, summarizer ai.Summarizer) {
 	// Phase 2: emergence detection (zero-LLM, rules-driven)
 	emergeOnce(projectPath)
 	u.LogShared("EMERGE", "project=%s detection complete", projectPath)
+}
+
+// retryPipelineBusy retries Run/Reconcile on SQLITE_BUSY — multi-agent
+// concurrent writes are the dominant pipeline failure (8/7 实测 45/54
+// review+reconcile error 为 database is locked)。Store 层写操作已有
+// retryOnBusy，但 Run/Reconcile 是长流程，内部任意一步 BUSY 都会整段失败。
+// 指数退避：500ms / 1s / 2s，共 3 次。
+func retryPipelineBusy(fn func() error) error {
+	var err error
+	for i := 0; i < 3; i++ {
+		err = fn()
+		if err == nil {
+			return nil
+		}
+		if !strings.Contains(err.Error(), "SQLITE_BUSY") && !strings.Contains(err.Error(), "database is locked") {
+			return err
+		}
+		time.Sleep(time.Duration(1<<uint(i)) * 500 * time.Millisecond)
+	}
+	return err
 }
