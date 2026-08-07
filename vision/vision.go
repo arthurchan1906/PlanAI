@@ -88,8 +88,24 @@ func RunVision(imagePath, prompt string, iteration int, explicitModel string) *V
 	// 3. Build prompt.
 	assembledPrompt := buildVisionPrompt(prompt, result.Iteration)
 
-	// 4. Call vision API (120 s timeout — local VL models need ~20 s for prompt processing).
-	text, httpStatus, callErr := callVisionAPI(vr, assembledPrompt, b64)
+	// 4. Call vision API (180 s timeout — local VL models need ~20 s for prompt processing).
+	// 本地量化 VL 模型（Qwen3.5-4B）间歇性返回空响应（8/7 实测：同批图片 ERR → 重试即 OK），
+	// 空响应自动重试 2 次（间隔 500ms）；网络/HTTP 错误不重试（避免放大上游故障）。
+	var text string
+	var httpStatus int
+	var callErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		text, httpStatus, callErr = callVisionAPI(vr, assembledPrompt, b64)
+		if callErr != nil {
+			break
+		}
+		if strings.TrimSpace(text) != "" {
+			break
+		}
+		if attempt < 2 {
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
 	if callErr != nil {
 		result.OK = false
 		result.HTTPStatus = httpStatus
