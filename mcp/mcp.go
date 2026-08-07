@@ -1241,7 +1241,11 @@ func (s *mcpServer) handleRecordCommit(args map[string]interface{}) mcpToolResul
 		db, err := pmdb.OpenProject(projectPath)
 		if err == nil {
 			var existingID, existingTask string
-			db.QueryRow("SELECT id, COALESCE(task_id,'') FROM commits WHERE commit_hash = ? LIMIT 1", commitHash).Scan(&existingID, &existingTask)
+			// Bidirectional prefix match: the hook stores full 40-char hashes
+			// while agents may pass a short hash — exact match would miss and
+			// create a duplicate row. Empty stored hashes never match.
+			db.QueryRow("SELECT id, COALESCE(task_id,'') FROM commits WHERE commit_hash IS NOT NULL AND commit_hash != '' AND (? LIKE commit_hash || '%' OR commit_hash LIKE ? || '%') LIMIT 1",
+				commitHash, commitHash).Scan(&existingID, &existingTask)
 			db.Close()
 			if existingID != "" {
 				return s.recordCommitDedup(projectPath, existingID, existingTask, taskID, title, files)
