@@ -265,3 +265,19 @@
 2. **优先补齐缺口**：B4 已完成（reconcile 基线已验证）；E1（日志查询指南）是剩余前置项。
 3. **修复不急但需排期**：B6、C2、FTS5 三个 🔴 问题影响数据质量，建议在下一迭代修复并复测对应目标。
 4. **新增功能门槛**：任何功能合入前必须定义其可量化目标（本清单编号），否则视为未完成。
+
+**E6. workflow_score 工作流规范性**（8/7 审计新增）
+- 设计意图：`session_summaries.quality_score` 是启发式规则分（100 起扣：无 workflow baseline -30、未 completed -25、MCP 工具缺失 -10/个、hook 覆盖不完整 -15、SQL 直查 -20），**不是 AI 质量评估**——反映 Agent 是否走标准工作流（MCP 工具 + hook + 任务闭环）
+- 量化指标：有分 session（`quality_score>0`）均值，覆盖率标注分母；按 agent 拆分
+- 数据源：`session_summaries.quality_score`
+- 基线（8/7）：48.9（覆盖 89/91）；按 agent：claude-code 65.3 / codex-cli 43.7 / gemini-cli 38.6 / cursor 25.0 / opencode 22.9
+- 目标值：≥ 60（依据 claude-code 基线 65；低于 60 说明工作流规范性不足——MCP 绕过/hook 缺失/SQL 直查）
+- 备注：8/7 由 quality_score 改名，消除「AI 质量」误导；cursor/opencode 低分主因是 getInt bug 期间 SQL 绕过（已修复），重评估后应回升
+
+**E7. task_completion_rate 任务闭环率**（8/7 审计新增）
+- 设计意图：plan→task→commit→done 闭环完成度；done-gate 保证 done 有 approved/auto + passed/auto + 真实 hash 的 commit 支撑
+- 量化指标：`tasks.status='done' / 活跃任务（done+todo+in_progress+blocked+paused，不含 deleted）`
+- 数据源：`tasks`
+- 基线（8/7）：47/59 = 79.7%
+- 目标值：> 80%（当前差 0.3pp；P0 采集修复（e007ee4/5356486）落地后应自然达标）
+- 备注：deleted 不计入分母（归档语义）

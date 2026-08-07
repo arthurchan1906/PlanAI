@@ -91,7 +91,7 @@ func InjectSessionContext(body []byte, agent string) []byte {
 	// trigger re-injection even when session data is unchanged.
 	fullHash := hashString(fmt.Sprintf("%s%v%s", blockHash, fileAssoc, guidelines))
 
-	block := buildContextBlock(goals, warnings, actionItems, fileAssoc, guidelines)
+	block := buildContextBlock(goals, warnings, actionItems, fileAssoc, guidelines, agent)
 
 	// Content-hash based dedup: only inject if content changed since last injection
 	if !shouldInject(agent, fullHash) {
@@ -352,7 +352,7 @@ func eventTypeBreakdown(events []map[string]any) string {
 	return strings.Join(parts, " ")
 }
 
-func buildContextBlock(goals, warnings, actionItems, fileAssoc []string, guidelines string) string {
+func buildContextBlock(goals, warnings, actionItems, fileAssoc []string, guidelines, agent string) string {
 	var buf bytes.Buffer
 	buf.WriteString("\n[AIPM Context]")
 	written := 0
@@ -426,7 +426,7 @@ func buildContextBlock(goals, warnings, actionItems, fileAssoc []string, guideli
 	}
 
 	if suppressed > 0 {
-		u.LogShared("INJECT", "suppressed=%d reason=char_limit cap=%d", suppressed, maxInjectChars)
+		u.LogShared("INJECT", "suppressed=%d reason=char_limit cap=%d agent=%s", suppressed, maxInjectChars, agent)
 	}
 
 	// Vision tool tip: inject only when vision models are configured and room permits.

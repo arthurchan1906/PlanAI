@@ -53,6 +53,28 @@ func dispatchMetrics(args *cli.Args) {
 			db.QueryRow("SELECT COUNT(*), COALESCE(SUM(CASE WHEN task_id IS NULL OR task_id='' THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN commit_hash IS NOT NULL AND commit_hash != '' THEN 1 ELSE 0 END),0) FROM commits").Scan(&cTotal, &cOrphan, &cHashOk)
 			db.QueryRow("SELECT COUNT(DISTINCT commit_hash) FROM commits WHERE commit_hash IS NOT NULL AND commit_hash != ''").Scan(&cHashUnique)
 		}
+		// D3 workflow_score：启发式规则分（100 起扣，非 AI 质量评估）— 覆盖率标注分母。
+		var wfTotal, wfScored, wfSum int
+		db.QueryRow("SELECT COUNT(*), COALESCE(SUM(CASE WHEN quality_score > 0 THEN 1 ELSE 0 END),0) FROM session_summaries").Scan(&wfTotal, &wfScored)
+		db.QueryRow("SELECT COALESCE(SUM(quality_score),0) FROM session_summaries WHERE quality_score > 0").Scan(&wfSum)
+		// D4 task_completion_rate：done / 活跃任务（不含 deleted）。
+		var taskDone, taskTotal int
+		db.QueryRow("SELECT COALESCE(SUM(CASE WHEN status='done' THEN 1 ELSE 0 END),0), COUNT(*) FROM tasks WHERE status IN ('done','todo','in_progress','blocked','paused')").Scan(&taskDone, &taskTotal)
+		// workflow_score 按 agent（启发式规则分，非 AI 质量评估）
+		wfByAgent := map[string][2]int{}
+		if wfRows, err := db.Query("SELECT COALESCE(source,''), quality_score FROM session_summaries WHERE quality_score > 0"); err == nil {
+			for wfRows.Next() {
+				var src string
+				var sc int
+				if err := wfRows.Scan(&src, &sc); err == nil {
+					v := wfByAgent[src]
+					v[0] += sc
+					v[1]++
+					wfByAgent[src] = v
+				}
+			}
+			wfRows.Close()
+		}
 		db.Close()
 
 		fmt.Println("── [DB 当前项目] ──")
@@ -73,6 +95,35 @@ func dispatchMetrics(args *cli.Args) {
 		printRow("B2  l2_md_block", fmt.Sprint(mdBlock), "=0", mdBlock == 0)
 		printRow("B6  event_dup_rate", pct(dup), "<10%", dup < 0.10)
 		printRow("D2  event_processed_rate", pct(proc), "≥40%", proc >= 0.40)
+		wfAvg := 0.0
+		if wfScored > 0 {
+			wfAvg = float64(wfSum) / float64(wfScored)
+		}
+		taskRate := 0.0
+		if taskTotal > 0 {
+			taskRate = float64(taskDone) / float64(taskTotal)
+		}
+		printRow("E6  workflow_score", fmt.Sprintf("%.1f (覆盖 %d/%d)", wfAvg, wfScored, wfTotal), "≥60", wfAvg >= 60)
+		// 按 agent 拆分：反映工作流规范性差异（MCP 绕过/hook 缺失/SQL 直查扣分），非 AI 质量。
+		if len(wfByAgent) > 0 {
+			agents := make([]string, 0, len(wfByAgent))
+			for a := range wfByAgent {
+				agents = append(agents, a)
+			}
+			sort.Slice(agents, func(i, j int) bool {
+				return float64(wfByAgent[agents[i]][0])/float64(wfByAgent[agents[i]][1]) > float64(wfByAgent[agents[j]][0])/float64(wfByAgent[agents[j]][1])
+			})
+			fmt.Print("E6  workflow_score 按agent:")
+			for _, a := range agents {
+				v := wfByAgent[a]
+				if a == "" {
+					a = "unknown"
+				}
+				fmt.Printf(" %s=%.1f(n=%d)", a, float64(v[0])/float64(v[1]), v[1])
+			}
+			fmt.Println()
+		}
+		printRow("E7  task_completion_rate", pct(taskRate)+" ("+fmt.Sprint(taskDone)+"/"+fmt.Sprint(taskTotal)+")", ">80%", taskRate > 0.80)
 		// commit 三件套：任一标红 = 采集管道异常（任务关联 / 来源可追踪 / 去重正确性）。
 		orphanRate, hashTrace, hashDup := 0.0, 0.0, 0.0
 		if cTotal > 0 {
