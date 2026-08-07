@@ -157,8 +157,7 @@ func UpdateTask(projectPath string, id, status, note string, allowWithoutCommit,
 		db.Exec("INSERT INTO task_notes (id, task_id, content, mode, created_at) VALUES (?, ?, ?, ?, ?)", u.Slug("task-note"), id, fmt.Sprintf("Status changed from %s to %s", oldStatus, status), "system", u.NowISO())
 	}
 	if status == "done" && oldStatus != "done" && !allowWithoutCommit {
-		var count int
-		db.QueryRow("SELECT COUNT(*) FROM commits WHERE task_id = ? AND status IN ('committed','merged') AND review_status IN ('approved','auto') AND test_status IN ('passed','auto')", id).Scan(&count)
+		count := countVerifiedCommits(db, id)
 		if count > 0 {
 			u.LogShared("DONE-GATE", "pass task=%s commits=%d", id[:min(len(id), 12)], count)
 		}
@@ -606,6 +605,17 @@ func findExistingCommitByHash(db *sql.DB, commitHash string) string {
 	var existingID string
 	db.QueryRow("SELECT id FROM commits WHERE commit_hash IS NOT NULL AND commit_hash != '' AND ? LIKE commit_hash || '%' LIMIT 1", commitHash).Scan(&existingID)
 	return existingID
+}
+
+// countVerifiedCommits counts commits satisfying the done-gate: linked to the
+// task, committed/merged, approved, tested, AND carrying a real git hash.
+// Empty-hash commits (e.g. MCP-recorded without commit_hash) must NOT count —
+// they cannot be traced to an actual git object, so letting them pass the gate
+// would mark tasks done on untraceable records (data-integrity hole).
+func countVerifiedCommits(db *sql.DB, taskID string) int {
+	var count int
+	db.QueryRow("SELECT COUNT(*) FROM commits WHERE task_id = ? AND status IN ('committed','merged') AND review_status IN ('approved','auto') AND test_status IN ('passed','auto') AND commit_hash IS NOT NULL AND commit_hash != ''", taskID).Scan(&count)
+	return count
 }
 
 func UpdateCommit(id string, payload map[string]any) (map[string]any, error) {

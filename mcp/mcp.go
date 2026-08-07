@@ -74,6 +74,29 @@ type mcpClientInfo struct {
 	Version string `json:"version"`
 }
 
+// mcpClientName returns the MCP client's declared user agent, normalized to
+// discussion_log source naming (claude-code / codex-cli / cursor / ...).
+// Each agent runs its own stdio MCP process, so clientInfo is stable for the
+// lifetime of the connection (set once at initialize) — no cross-agent residue.
+func mcpClientName(ci *mcpClientInfo) string {
+	if ci == nil || ci.Name == "" {
+		return ""
+	}
+	switch strings.ToLower(ci.Name) {
+	case "claude", "claude-code", "claudecode":
+		return "claude-code"
+	case "codex", "codex-cli":
+		return "codex-cli"
+	case "cursor":
+		return "cursor"
+	case "opencode":
+		return "opencode"
+	case "gemini", "gemini-cli":
+		return "gemini-cli"
+	}
+	return ci.Name
+}
+
 // mcpServer holds registered tools and handles the protocol lifecycle.
 type mcpServer struct {
 	tools      map[string]MCPTool
@@ -2276,7 +2299,7 @@ func (s *mcpServer) handleToolsList(msg *jsonrpcMessage) {
 // recordMCPError writes an mcp_error event when an MCP tool call fails.
 // This feeds into the INJECT pipeline so the next LLM request gets a
 // corrective hint about the failed operation.
-func recordMCPError(toolName string, args map[string]interface{}, result mcpToolResult) {
+func recordMCPError(toolName, src string, args map[string]interface{}, result mcpToolResult) {
 	// Extract the target entity ID for dedup
 	entityID := ""
 	for _, k := range []string{"task_id", "commit_id", "plan_id", "bug_id", "decision_id"} {
@@ -2304,8 +2327,8 @@ func recordMCPError(toolName string, args map[string]interface{}, result mcpTool
 
 	summary := fmt.Sprintf("工具 %s 失败: %s", toolName, u.TruncateStr(errText, 120))
 	store.CreateEvent("mcp_error", toolName, entityID, summary)
-	u.LogShared("MCP-ERR", "tool=%s entity=%s error=%s",
-		toolName, entityID[:min(len(entityID), 16)], u.TruncateStr(errText, 60))
+	u.LogShared("MCP-ERR", "tool=%s src=%s entity=%s error=%s",
+		toolName, src, entityID[:min(len(entityID), 16)], u.TruncateStr(errText, 60))
 }
 
 func (s *mcpServer) handleToolsCall(msg *jsonrpcMessage) {
@@ -2325,6 +2348,11 @@ func (s *mcpServer) handleToolsCall(msg *jsonrpcMessage) {
 	}
 
 	result := handler(call.Arguments)
+	src := mcpClientName(s.clientInfo)
+	name := ""
+	if s.clientInfo != nil {
+		name = s.clientInfo.Name
+	}
 
 	// Log MCP tool usage to discussion_log — MCP tools are invisible to
 	// Claude Code hooks, so we log them here for full traceability.
@@ -2335,9 +2363,9 @@ func (s *mcpServer) handleToolsCall(msg *jsonrpcMessage) {
 	if result.IsError {
 		status = "ERR"
 		// P3: record MCP error as event for next INJECT correction hint
-		recordMCPError(call.Name, call.Arguments, result)
+		recordMCPError(call.Name, src, call.Arguments, result)
 	}
-	u.LogShared("MCP", "tool=%s status=%s | %s", call.Name, status, mcpLogSummary(call.Name, call.Arguments))
+	u.LogShared("MCP", "tool=%s status=%s src=%s name=%s | %s", call.Name, status, src, name, mcpLogSummary(call.Name, call.Arguments))
 
 	s.sendResult(msg.ID, result)
 }

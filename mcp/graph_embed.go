@@ -47,11 +47,11 @@ func (s *mcpServer) handleTraceContext(args map[string]interface{}) mcpToolResul
 
 	jsonStr, err := store.TraceContextJSON(fromType, fromID, direction, minWeight, limit)
 	if err != nil {
-		u.LogShared("MCP", "tool=aipm_trace_context status=ERR err=%v", err)
+		u.LogShared("MCP", "tool=aipm_trace_context status=ERR src=%s err=%v", mcpClientName(s.clientInfo), err)
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("图查询失败: %v", err)}}, IsError: true}
 	}
 
-	u.LogShared("MCP", "tool=aipm_trace_context status=OK from=%s/%s dir=%s", fromType, u.Prefix(fromID, 12), direction)
+	u.LogShared("MCP", "tool=aipm_trace_context status=OK src=%s from=%s/%s dir=%s", mcpClientName(s.clientInfo), fromType, u.Prefix(fromID, 12), direction)
 	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: jsonStr}}}
 }
 
@@ -98,4 +98,3 @@ func buildBriefingGraph() string {
 	}
 	return sb.String()
 }
-

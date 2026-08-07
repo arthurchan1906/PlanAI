@@ -14,7 +14,7 @@ func openTestDB(t *testing.T) *sql.DB {
 		t.Fatalf("open memory db: %v", err)
 	}
 	t.Cleanup(func() { d.Close() })
-	if _, err := d.Exec(`CREATE TABLE commits (id TEXT PRIMARY KEY, commit_hash TEXT)`); err != nil {
+	if _, err := d.Exec(`CREATE TABLE commits (id TEXT PRIMARY KEY, commit_hash TEXT, task_id TEXT, status TEXT, review_status TEXT, test_status TEXT)`); err != nil {
 		t.Fatalf("create table: %v", err)
 	}
 	return d
@@ -51,5 +51,29 @@ func TestFindExistingCommitByHashPrefixMatch(t *testing.T) {
 	}
 	if got := findExistingCommitByHash(d, "9c533e20a525"); got != "" {
 		t.Fatalf("unknown hash must not match, got %q", got)
+	}
+}
+
+// Regression: done-gate must reject commits with empty/NULL commit_hash —
+// they can't be traced to a real git object (StoreGitCommit bug aftermath:
+// MCP-recorded commits without hash previously passed the gate).
+func TestCountVerifiedCommitsRejectsEmptyHash(t *testing.T) {
+	d := openTestDB(t)
+	seed := "INSERT INTO commits (id, task_id, status, review_status, test_status, commit_hash) VALUES (?, ?, 'committed', 'approved', 'passed', ?)"
+	for _, row := range [][3]string{
+		{"commit-empty", "task-x", ""},
+		{"commit-null", "task-x", ""},
+		{"commit-good", "task-x", "9c533e20a5259860069385b066b9a1c24566af12"},
+	} {
+		if _, err := d.Exec(seed, row[0], row[1], row[2]); err != nil {
+			t.Fatalf("seed %s: %v", row[0], err)
+		}
+	}
+
+	if got := countVerifiedCommits(d, "task-x"); got != 1 {
+		t.Fatalf("empty-hash commits must not count, got %d want 1", got)
+	}
+	if got := countVerifiedCommits(d, "task-none"); got != 0 {
+		t.Fatalf("unknown task must have 0 verified commits, got %d", got)
 	}
 }
