@@ -148,6 +148,7 @@
 - 数据源：日志 `suppressed=` / `agent=... chars=`
 - 基线：suppressed 18513 次；**50 个 emerge 事件只注入 3 个（cap=3）** ❌；Claude 平均 chars=1299（超预算，guidelines/file 有独立预算）
 - **2.1 已实现（8/7）**：maxActions=3 硬顶移除，改为预算驱动（maxInjectChars 内按序写入）；事件按可操作性优先级排序（commit_orphan=4 > stale_file/mcp_error=3 > hotspot=2 > 其他=0）；hotspot_untracked/mcp_error 聚合为单行（Claude 审核细化：这两类聚合、orphan/link 不聚合）；单类型上限 5、总条数上限 10；新增单测 TestFormatActionItems*
+- **8/7 复测（proxy 重启后实测）**：`emerge_events total=20 types=commit_orphan=12 hotspot=3 mcp_error=1 tentative_link=1 task_created=2 plan_created=1 items=7 perTypeCap=5 ceil=10`——total 44→20（去重+已处理过滤）、items 42→7（优先级+聚合+cap）；注入 `agent=cursor/codex actions=7 chars=679` < 800 预算 ✅
 - 目标值：suppressed 占比 < 30%（char_limit 抑制主要转向同类型 cap）；注入动作项覆盖 3+ 事件类型；复测：`rg "emerge_events" ~/.aipmc/logs/aipmc.log | tail` 观察 items 数与原 50→3 对比
 
 **C4. guidelines 注入**
