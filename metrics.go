@@ -159,6 +159,10 @@ func dispatchMetrics(args *cli.Args) {
 	haveLatest := false
 	var mcpTotal, mcpErr int
 	mcpByTool := map[string]int{}
+	mcpByAgent := map[string]int{}
+	var pipeL3, pipeReconDone, pipeReconErr, reviewErr int
+	var dgTotal, dgPass, dgReject int
+	dgReason := map[string]int{}
 
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1024*1024), 1024*1024)
@@ -229,6 +233,29 @@ func dispatchMetrics(args *cli.Args) {
 				mcpByTool[tool]++
 				if fields["status"] == "ERR" {
 					mcpErr++
+				}
+				if src := fields["src"]; src != "" && src != "-" {
+					mcpByAgent[src]++
+				}
+			}
+		case strings.Contains(line, "[PIPELINE]"):
+			if strings.Contains(line, "L3 session=") {
+				pipeL3++
+			} else if strings.Contains(line, "reconcile done") {
+				pipeReconDone++
+			} else if strings.Contains(line, "reconcile error") {
+				pipeReconErr++
+			} else if strings.Contains(line, "review error") {
+				reviewErr++
+			}
+		case strings.Contains(line, "[DONE-GATE]"):
+			dgTotal++
+			if strings.Contains(line, " pass ") {
+				dgPass++
+			} else if strings.Contains(line, " reject ") {
+				dgReject++
+				if r := parseField(line, "reason="); r != "" {
+					dgReason[r]++
 				}
 			}
 		case strings.Contains(line, "emerge_events total="):
@@ -310,6 +337,37 @@ func dispatchMetrics(args *cli.Args) {
 		}
 		fmt.Println()
 	}
+	if len(mcpByAgent) > 0 {
+		agents := make([]string, 0, len(mcpByAgent))
+		for a := range mcpByAgent {
+			agents = append(agents, a)
+		}
+		sort.Slice(agents, func(i, j int) bool { return mcpByAgent[agents[i]] > mcpByAgent[agents[j]] })
+		fmt.Print("E5  mcp 按agent:")
+		for _, a := range agents {
+			fmt.Printf(" %s=%d", a, mcpByAgent[a])
+		}
+		fmt.Println()
+	}
+	// E8 pipeline 健康度：L3 session 处理量 = 运行频率参考；reconcile 成功率为健康主指标。
+	reconTotal := pipeReconDone + pipeReconErr
+	reconRate := 0.0
+	if reconTotal > 0 {
+		reconRate = float64(pipeReconDone) / float64(reconTotal)
+	}
+	printRow("E8  pipeline_health", fmt.Sprintf("L3=%d recon=%d err=%d (%.1f%%)", pipeL3, reconTotal, pipeReconErr, reconRate*100), "成功率≥98%", reconRate >= 0.98)
+	printRow("E8  review_error", fmt.Sprint(reviewErr)+" 次", "计数", reviewErr == 0)
+	// E9 done-gate：pass/reject 分布（reject 埋点 8/7 补，历史日志仅 pass）。
+	dgReasons := ""
+	if len(dgReason) > 0 {
+		rs := make([]string, 0, len(dgReason))
+		for r, n := range dgReason {
+			rs = append(rs, fmt.Sprintf("%s=%d", r, n))
+		}
+		sort.Strings(rs)
+		dgReasons = " [" + strings.Join(rs, " ") + "]"
+	}
+	printRow("E9  done_gate", fmt.Sprintf("pass=%d reject=%d%s", dgPass, dgReject, dgReasons), "参考", dgReject == 0)
 	fmt.Println()
 
 	// Self-check: if there were [LLM] lines but nothing parsed, the log format
@@ -367,7 +425,11 @@ func parseKVFields(line string) map[string]string {
 		if eq <= 0 {
 			continue
 		}
-		out[tok[:eq]] = tok[eq+1:]
+		// 首见优先：行内参数回显可能重复同一 key（如 `[MCP] ... src=codex-mcp-client | src=-`），
+		// 来源字段先出现，参数回显在后——后者不应覆盖前者。
+		if _, seen := out[tok[:eq]]; !seen {
+			out[tok[:eq]] = tok[eq+1:]
+		}
 	}
 	return out
 }
@@ -418,4 +480,17 @@ func parseFieldInt(line, field string) int {
 		end = len(rest)
 	}
 	return atoi(rest[:end])
+}
+
+func parseField(line, field string) string {
+	idx := strings.Index(line, field)
+	if idx < 0 {
+		return ""
+	}
+	rest := line[idx+len(field):]
+	end := strings.IndexAny(rest, " \t")
+	if end < 0 {
+		end = len(rest)
+	}
+	return rest[:end]
 }

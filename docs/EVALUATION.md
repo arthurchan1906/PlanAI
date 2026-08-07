@@ -216,6 +216,7 @@
 - 量化指标：调用总量、成功率（`[MCP] status=ERR` 占比）、工具分布、读写比；`src=` 按 agent 拆分（serve 重启后生效，旧行归 unknown）
 - 数据源：`~/.aipmc/logs/aipmc.log` 的 `[MCP]`（结构化 `tool=/status=/src=`，双源方案见 DATA-AUDIT 3.5）
 - 基线（8/7）：~2,927 行，成功率待首跑确认（含历史契约错误 record_commits/record_bug）
+- **8/7 复测修正：成功率 94.6%（160/2973 ERR）——旧值 95.9% 是虚高**。根因：`parseKVFields` 后覆盖前，`aipm_update_task_status` 参数回显 `status=done` 覆盖真实 `status=ERR`（89 行双 status，39 条 ERR 漏计）。已改首见优先（P2 批次）。ERR 分布：aipmc_vision 62 / update_task_status 39 / record_commit 23——vision 错误率需单独排查
 - 目标值：成功率 ≥ 95%（基线确认后可调）；契约错误（工具描述/输入校验）应趋零
 - 备注：responses 路径 cache 字段上游（DeepSeek）不返回，`cache_hit=0` 如实记录——cache_rate 对 codex 不可用，非漏采
 
@@ -281,3 +282,17 @@
 - 基线（8/7）：47/59 = 79.7%
 - 目标值：> 80%（当前差 0.3pp；P0 采集修复（e007ee4/5356486）落地后应自然达标）
 - 备注：deleted 不计入分母（归档语义）
+
+**E8. PIPELINE 健康度**（8/7 P2 批次新增）
+- 设计意图：pipeline 是 PM 系统后台心跳——它挂了事件不再产生、reconcile 不再运行、L2 摘要停更
+- 量化指标：L3 session 处理量（运行频率参考）、reconcile 成功率 `done/(done+error)`、review error 计数
+- 数据源：`[PIPELINE]` 日志（`L3 session=` / `reconcile done|error` / `review error`）
+- 基线（8/7）：L3=2,483；reconcile 575 done / 5 error = 99.1%；review error 48 次（SQL UNIQUE 约束冲突）
+- 目标值：reconcile 成功率 ≥ 98%；review error 计数趋零（约束冲突应在代码层去重而非靠异常兜底）
+
+**E9. done-gate 通过/拒绝分布**（8/7 P2 批次新增）
+- 设计意图：done-gate 是 task 完成的最后防线；此前只记录 pass，拒绝原因全黑
+- 量化指标：`[DONE-GATE] pass/reject` 计数与拒绝原因分布
+- 数据源：`[DONE-GATE]` 日志（reject 埋点 8/7 补：`reject task=... reason=no_verified_commit`）
+- 基线（8/7）：pass=20 / reject=0（历史仅 pass 埋点；reject 埋点上线后才有拒绝数据）
+- 目标值：reject=0（参考）；若 reject>0，原因分布用于定位「任务为何无法闭环」（无 commit/未 approve/空 hash）

@@ -162,6 +162,7 @@ func UpdateTask(projectPath string, id, status, note string, allowWithoutCommit,
 			u.LogShared("DONE-GATE", "pass task=%s commits=%d", id[:min(len(id), 12)], count)
 		}
 		if count == 0 {
+			u.LogShared("DONE-GATE", "reject task=%s reason=no_verified_commit", id[:min(len(id), 12)])
 			return nil, fmt.Errorf("task cannot be marked done without at least one verified approved commit")
 		}
 	}
