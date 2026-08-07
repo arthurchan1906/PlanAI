@@ -593,6 +593,33 @@ func extractFilePaths(body []byte, agent string) []string {
 			textParts = append(textParts, instr)
 		}
 
+		// OpenAI Responses format: input array (codex /v1/responses).
+		// Elements: {"type":"message","content":[{"type":"input_text","text":...}]}
+		// or content as a plain string. Previously unparsed → codex silently
+		// extracted 0 file paths (C2).
+		if input, ok := raw["input"].([]any); ok {
+			for _, item := range input {
+				im, _ := item.(map[string]any)
+				if im == nil {
+					continue
+				}
+				switch c := im["content"].(type) {
+				case string:
+					if c != "" {
+						textParts = append(textParts, c)
+					}
+				case []any:
+					for _, block := range c {
+						if b, ok := block.(map[string]any); ok {
+							if t, ok := b["text"].(string); ok && t != "" {
+								textParts = append(textParts, t)
+							}
+						}
+					}
+				}
+			}
+		}
+
 		// Gemini format: systemInstruction.parts[].text
 		if si, ok := raw["systemInstruction"].(map[string]any); ok {
 			if parts, ok := si["parts"].([]any); ok {
@@ -612,7 +639,11 @@ func extractFilePaths(body []byte, agent string) []string {
 	// Fallback: body is not a plain JSON object (SSE fragments, partial bodies,
 	// or non-standard request formats). Extract paths directly from raw text
 	// so codex/cursor-style payloads still get file awareness.
-	u.LogShared("INJECT", "file_assoc body_parse=err agent=%s", agent)
+	// C2 口径：只有「看起来是 JSON（以 { 开头）但解析失败」才算真失败——
+	// 空 body/纯文本（健康检查、未知路径请求被 detectAgent 误标 cursor）不污染指标。
+	if len(body) > 0 && body[0] == '{' {
+		u.LogShared("INJECT", "file_assoc body_parse=err agent=%s", agent)
+	}
 	return extractPaths(string(body))
 }
 
