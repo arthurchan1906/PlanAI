@@ -289,7 +289,8 @@
 - 量化指标：L3 session 处理量（运行频率参考）、reconcile 成功率 `done/(done+error)`、review error 计数
 - 数据源：`[PIPELINE]` 日志（`L3 session=` / `reconcile done|error` / `review error`）
 - 基线（8/7）：L3=2,483；reconcile 575 done / 5 error = 99.1%；review error 48 次（SQL UNIQUE 约束冲突）
-- 目标值：reconcile 成功率 ≥ 98%；review error 计数趋零（约束冲突应在代码层去重而非靠异常兜底）
+- **8/7 复核：review error 49 次中 45 次是 SQLITE_BUSY（多 agent 并发写），仅 4 次 UNIQUE（昨天历史，CreateLink 已 INSERT OR IGNORE）**。已修：runOnce 层 retryPipelineBusy 指数退避重试 Run/Reconcile（a3a1453，需重启生效）
+- 目标值：reconcile 成功率 ≥ 98%；review error 计数趋零（BUSY 重试后应大幅下降；约束冲突已在代码层去重）
 
 **E9. done-gate 通过/拒绝分布**（8/7 P2 批次新增）
 - 设计意图：done-gate 是 task 完成的最后防线；此前只记录 pass，拒绝原因全黑
