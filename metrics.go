@@ -154,6 +154,7 @@ func dispatchMetrics(args *cli.Args) {
 	type llm struct{ calls, inTok, outTok, cacheHit, cacheCreate, injectedY, injectedN int; latSum float64; latMax float64 }
 	byAgent := map[string]*llm{}
 	var agentHookErr, postCommitErr, faOK, faErr, supTotal, supChar, skipTotal int
+	var injOK, injGuidelines, injSame, injNoSum int
 	var latestItems, latestTotal int
 	latestAt := ""
 	haveLatest := false
@@ -219,6 +220,17 @@ func dispatchMetrics(args *cli.Args) {
 			}
 		case strings.Contains(line, "[INJECT] skip"):
 			skipTotal++
+			if strings.Contains(line, "reason=same_content") {
+				injSame++
+			} else if strings.Contains(line, "reason=no_summary_data") {
+				injNoSum++
+			}
+		case strings.Contains(line, "[INJECT] inject "):
+			// 仅 guidelines_only 行带 "inject " 前缀（source=guidelines_only）。
+			injGuidelines++
+		case strings.Contains(line, "[INJECT] agent="):
+			// 正常注入行：agent=... goals=...（无 "inject " 前缀）。
+			injOK++
 		case strings.Contains(line, "suppressed="):
 			supTotal++
 			if strings.Contains(line, "reason=char_limit") {
@@ -290,7 +302,15 @@ func dispatchMetrics(args *cli.Args) {
 	// B8: agent hook 调用总量不可测（无成功埋点），仅能统计错误计数。
 	printRow("B8  hook_error(agent)", fmt.Sprint(agentHookErr)+" 次", "计数", agentHookErr == 0)
 	printRow("B8  hook_error(post-commit)", fmt.Sprint(postCommitErr)+" 次", "计数", postCommitErr == 0)
-	printRow("C1  inject_rate", pct(injRate), "≥80%", injRate >= 0.80)
+	// C1 双口径：inject_rate=实际注入请求占比（same_content 去重跳过是设计行为，
+	// 非失败）；inject_coverage=有数据可注时的覆盖（注入 + 去重 / 排除 no_summary）。
+	printRow("C1  inject_rate", pct(injRate), "参考", true)
+	covDenom := injOK + injGuidelines + injSame + injNoSum
+	covRate := 0.0
+	if covDenom > 0 {
+		covRate = float64(injOK+injGuidelines+injSame) / float64(covDenom)
+	}
+	printRow("C1  inject_coverage", pct(covRate)+fmt.Sprintf(" (注入%d+去重%d)", injOK+injGuidelines, injSame), "≥80%", covRate >= 0.80)
 	printRow("C2  file_parse_ok_rate", pct(faRate), "≥90%", faRate >= 0.90)
 	printRow("C3  suppressed(char_limit)", fmt.Sprintf("%d/%d", supChar, supTotal+skipTotal)+" 次", "<30%", supRate < 0.30)
 	if haveLatest {

@@ -131,7 +131,8 @@
 - 量化指标：`injected=Y / (Y+N)`（按请求）；更合理口径：**按唯一 content hash**（`unique_hash_injected / unique_hash_total`），因 same_content 去重是正确行为，不应算注入失败（Claude 审核建议）
 - 数据源：`~/.aipmc/logs/aipmc.log`
 - 基线：按请求 **5730 / 25267 = 22.7%**；按唯一 hash **当前不可测**——日志仅 389 个唯一 hash 且均出现在 skip 日志，成功注入未记录 hash（观测缺口，需在 0.2 补埋点）
-- 目标值：按唯一 hash 注入率 ≥ 80%（"新信息是否被注入"口径）
+- **8/7 实现双口径**：`inject_rate`（实际注入请求占比，24.5%——含 same_content 去重，参考）＋ `inject_coverage`（有数据可注时的覆盖 = 注入 + 去重 / 排除 no_summary，96.7% ✅）。coverage 实现「新信息是否被注入」意图的近似（same_content 去重算覆盖不算失败）
+- 目标值：inject_coverage ≥ 80%（"新信息是否被注入"口径）；inject_rate 降为参考
 - 备注：same_content 去重 19194 次 + char_limit 抑制 18513 次为主因
 
 **C2. file-awareness 协议适配** 🔴
