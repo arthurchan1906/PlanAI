@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -20,8 +21,13 @@ import (
 // field yet (documented limitation, v2 adds it).
 func dispatchMetrics(args *cli.Args) {
 	window := args.Str("window", "") // optional: "24h" for log-class metrics only
+	// commit 三件套窗口：默认只看修复后数据（StoreGitCommit 97ce814 起），
+	// 避免历史污染（ED 547 空 hash、aipmc 历史孤儿）淹没告警信号。
+	// --since all 看全表（存量状态）；--since 2026-08-01 自定义窗口。
+	since := args.Str("since", "2026-08-07T14:00:00")
 	fmt.Println("AIPM 评估指标 — 目标值来自 docs/EVALUATION.md")
 	fmt.Println("DB 类指标: 当前项目 point-in-time；日志类指标: ~/.aipmc/logs/aipmc.log 全局（无 project 字段）")
+	fmt.Printf("commit 三件套窗口: since=%s（--since all 看全表）\n", since)
 	if window != "" {
 		fmt.Printf("日志窗口: %s（DB 类指标不支持窗口回算，始终为当前值）\n", window)
 	}
@@ -39,6 +45,14 @@ func dispatchMetrics(args *cli.Args) {
 		db.QueryRow("SELECT COUNT(*), COALESCE(SUM(processed_by_agent),0) FROM events").Scan(&evTotal, &evProcessed)
 		var evUnique int
 		db.QueryRow("SELECT COUNT(DISTINCT type || '|' || entity_type || '|' || entity_id) FROM events").Scan(&evUnique)
+		var cTotal, cOrphan, cHashOk, cHashUnique int
+		if since != "" && since != "all" {
+			db.QueryRow("SELECT COUNT(*), COALESCE(SUM(CASE WHEN task_id IS NULL OR task_id='' THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN commit_hash IS NOT NULL AND commit_hash != '' THEN 1 ELSE 0 END),0) FROM commits WHERE created_at >= ?", since).Scan(&cTotal, &cOrphan, &cHashOk)
+			db.QueryRow("SELECT COUNT(DISTINCT commit_hash) FROM commits WHERE created_at >= ? AND commit_hash IS NOT NULL AND commit_hash != ''", since).Scan(&cHashUnique)
+		} else {
+			db.QueryRow("SELECT COUNT(*), COALESCE(SUM(CASE WHEN task_id IS NULL OR task_id='' THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN commit_hash IS NOT NULL AND commit_hash != '' THEN 1 ELSE 0 END),0) FROM commits").Scan(&cTotal, &cOrphan, &cHashOk)
+			db.QueryRow("SELECT COUNT(DISTINCT commit_hash) FROM commits WHERE commit_hash IS NOT NULL AND commit_hash != ''").Scan(&cHashUnique)
+		}
 		db.Close()
 
 		fmt.Println("── [DB 当前项目] ──")
@@ -59,6 +73,19 @@ func dispatchMetrics(args *cli.Args) {
 		printRow("B2  l2_md_block", fmt.Sprint(mdBlock), "=0", mdBlock == 0)
 		printRow("B6  event_dup_rate", pct(dup), "<10%", dup < 0.10)
 		printRow("D2  event_processed_rate", pct(proc), "≥40%", proc >= 0.40)
+		// commit 三件套：任一标红 = 采集管道异常（任务关联 / 来源可追踪 / 去重正确性）。
+		orphanRate, hashTrace, hashDup := 0.0, 0.0, 0.0
+		if cTotal > 0 {
+			orphanRate = float64(cOrphan) / float64(cTotal)
+			hashTrace = float64(cHashOk) / float64(cTotal)
+		}
+		if cHashOk > 0 {
+			hashDup = 1.0 - float64(cHashUnique)/float64(cHashOk)
+		}
+		fmt.Println("P0  commit 三件套（采集管道完整性）")
+		printRow("     orphan_rate", pct(orphanRate)+" ("+fmt.Sprint(cOrphan)+"/"+fmt.Sprint(cTotal)+")", "<10%", orphanRate < 0.10)
+		printRow("     hash_traceability", pct(hashTrace)+" ("+fmt.Sprint(cHashOk)+"/"+fmt.Sprint(cTotal)+")", ">90%", hashTrace > 0.90)
+		printRow("     hash_uniqueness", pct(hashDup), "=0", hashDup == 0)
 		fmt.Println()
 	} else {
 		fmt.Printf("⚠ 当前项目无 pmai.db（%v）— 跳过 DB 类指标\n\n", err)
@@ -77,7 +104,10 @@ func dispatchMetrics(args *cli.Args) {
 	byAgent := map[string]*llm{}
 	var agentHookErr, postCommitErr, faOK, faErr, supTotal, supChar, skipTotal int
 	var latestItems, latestTotal int
+	latestAt := ""
 	haveLatest := false
+	var mcpTotal, mcpErr int
+	mcpByTool := map[string]int{}
 
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1024*1024), 1024*1024)
@@ -139,10 +169,24 @@ func dispatchMetrics(args *cli.Args) {
 			if strings.Contains(line, "reason=char_limit") {
 				supChar++
 			}
+		case strings.Contains(line, "[MCP-ERR]"):
+			// 错误已由 [MCP] status=ERR 计数（避免双计），此处仅保留分类锚点。
+		case strings.Contains(line, "[MCP]"):
+			fields := parseKVFields(line)
+			if tool := fields["tool"]; tool != "" {
+				mcpTotal++
+				mcpByTool[tool]++
+				if fields["status"] == "ERR" {
+					mcpErr++
+				}
+			}
 		case strings.Contains(line, "emerge_events total="):
 			haveLatest = true
 			latestTotal = parseFieldInt(line, "total=")
 			latestItems = parseFieldInt(line, "items=")
+			if len(line) >= 9 && line[0] == '[' {
+				latestAt = line[1:9]
+			}
 		}
 	}
 
@@ -172,9 +216,48 @@ func dispatchMetrics(args *cli.Args) {
 	printRow("C2  file_parse_ok_rate", pct(faRate), "≥90%", faRate >= 0.90)
 	printRow("C3  suppressed(char_limit)", fmt.Sprintf("%d/%d", supChar, supTotal+skipTotal)+" 次", "<30%", supRate < 0.30)
 	if haveLatest {
-		printRow("C3  action_items(最新emerge)", fmt.Sprintf("%d/%d", latestItems, latestTotal), "≤10", latestItems <= 10)
+		if latestAt != "" {
+			printRow("C3  action_items(最新emerge)", fmt.Sprintf("%d/%d @%s", latestItems, latestTotal, latestAt), "≤10", latestItems <= 10)
+		} else {
+			printRow("C3  action_items(最新emerge)", fmt.Sprintf("%d/%d", latestItems, latestTotal), "≤10", latestItems <= 10)
+		}
 	} else {
 		printRow("C3  action_items(最新emerge)", "无日志", "≤10", false)
+	}
+	// MCP 指标：结构化 [MCP] 日志（tool=/status=），总量不依赖 src=（serve 重启前旧行无 src）。
+	mcpRate := 0.0
+	if mcpTotal > 0 {
+		mcpRate = 1.0 - float64(mcpErr)/float64(mcpTotal)
+	}
+	printRow("E5  mcp_success_rate", pct(mcpRate), "≥95%", mcpRate >= 0.95)
+	printRow("E5  mcp_calls", fmt.Sprint(mcpTotal)+" 次", "参考", true)
+	readN, writeN := 0, 0
+	for tool, n := range mcpByTool {
+		if isWriteTool(tool) {
+			writeN += n
+		} else {
+			readN += n
+		}
+	}
+	printRow("E5  mcp_read/write", fmt.Sprintf("%d/%d", readN, writeN), "参考", true)
+	if len(mcpByTool) > 0 {
+		type toolCount struct {
+			tool string
+			n    int
+		}
+		tools := make([]toolCount, 0, len(mcpByTool))
+		for tool, n := range mcpByTool {
+			tools = append(tools, toolCount{tool, n})
+		}
+		sort.Slice(tools, func(i, j int) bool { return tools[i].n > tools[j].n })
+		fmt.Printf("E5  mcp 工具分布 Top%d:", min(len(tools), 8))
+		for i, tc := range tools {
+			if i >= 8 {
+				break
+			}
+			fmt.Printf(" %s=%d", tc.tool, tc.n)
+		}
+		fmt.Println()
 	}
 	fmt.Println()
 
@@ -207,6 +290,16 @@ func dispatchMetrics(args *cli.Args) {
 	if tCalls > 0 {
 		fmt.Printf("%-8s %7d %12s %12s %8.1fs\n", "totals", tCalls, comma(tIn), comma(tOut), tLat/float64(tCalls))
 	}
+}
+
+// isWriteTool classifies aipm MCP tools into write (state-changing) vs read.
+func isWriteTool(tool string) bool {
+	for _, p := range []string{"record_", "create_", "update_", "link_", "add_to_thread", "mark_", "submit_feedback", "append_"} {
+		if strings.Contains(tool, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // parseKVFields extracts key=value tokens from a log line (after the [TAG]

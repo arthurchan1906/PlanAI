@@ -211,6 +211,14 @@
 - 基线：**当前不可测**——[LLM] 日志无错误字段（25326 条中 status=ERR 为 0 是"未记录"而非"无错误"），需补埋点
 - 目标值：错误率 < 1%（先补日志再定基线）
 
+**E5. MCP 工具可靠性**（8/7 审计新增）
+- 设计意图：aipm 34 个 MCP 工具是 PM 系统唯一入口；工具失败 → Agent 学会绕过（cursor getInt bug → 69 次 SQL 绕过，见 DATA-AUDIT 3.3）
+- 量化指标：调用总量、成功率（`[MCP] status=ERR` 占比）、工具分布、读写比；`src=` 按 agent 拆分（serve 重启后生效，旧行归 unknown）
+- 数据源：`~/.aipmc/logs/aipmc.log` 的 `[MCP]`（结构化 `tool=/status=/src=`，双源方案见 DATA-AUDIT 3.5）
+- 基线（8/7）：~2,927 行，成功率待首跑确认（含历史契约错误 record_commits/record_bug）
+- 目标值：成功率 ≥ 95%（基线确认后可调）；契约错误（工具描述/输入校验）应趋零
+- 备注：responses 路径 cache 字段上游（DeepSeek）不返回，`cache_hit=0` 如实记录——cache_rate 对 codex 不可用，非漏采
+
 **E2. 稳定性（并发 / 版本）**
 - 设计意图：`f61e845` 多 agent 并发写锁；SQLITE_BUSY 重试
 - 量化指标：日志中 error/BUSY 次数；运行进程版本一致性

@@ -103,7 +103,7 @@ func handleResponsesPassthrough(w http.ResponseWriter, r *http.Request) {
 	w.Write(respBody)
 	finishCapture(capID, resp.StatusCode, time.Since(startTime), nil, string(respBody), "")
 
-	if in, out := extractResponsesStreamUsage(string(respBody)); in > 0 || out > 0 {
+	if in, out, cacheHit, cacheCreate := extractResponsesStreamUsage(string(respBody)); in > 0 || out > 0 {
 		RecordTokenUsage(TokenUsageRecord{
 			Agent:            agent,
 			Model:            effectiveModelName,
@@ -111,7 +111,7 @@ func handleResponsesPassthrough(w http.ResponseWriter, r *http.Request) {
 			CompletionTokens: out,
 		})
 		SetCaptureTokens(capID, in, out)
-		u.LogShared("LLM", "agent=codex model=%s in_tok=%d out_tok=%d lat=%.1fs", effectiveModelName, in, out, time.Since(startTime).Seconds())
+		u.LogShared("LLM", "agent=codex model=%s in_tok=%d out_tok=%d cache_hit=%d cache_create=%d injected=%s lat=%.1fs", effectiveModelName, in, out, cacheHit, cacheCreate, injectedFlag(r), time.Since(startTime).Seconds())
 	}
 }
 
@@ -174,7 +174,7 @@ func handleResponsesPassthroughStream(w http.ResponseWriter, r *http.Request, bo
 		}
 	}
 	finishCapture(capID, resp.StatusCode, time.Since(startTime), nil, captureBuf.String(), "")
-	if in, out := extractResponsesStreamUsage(captureBuf.String()); in > 0 || out > 0 {
+	if in, out, cacheHit, cacheCreate := extractResponsesStreamUsage(captureBuf.String()); in > 0 || out > 0 {
 		RecordTokenUsage(TokenUsageRecord{
 			Agent:            agent,
 			Model:            model,
@@ -182,6 +182,6 @@ func handleResponsesPassthroughStream(w http.ResponseWriter, r *http.Request, bo
 			CompletionTokens: out,
 		})
 		SetCaptureTokens(capID, in, out)
-		u.LogShared("LLM", "agent=codex model=%s in_tok=%d out_tok=%d lat=%.1fs", model, in, out, time.Since(startTime).Seconds())
+		u.LogShared("LLM", "agent=codex model=%s in_tok=%d out_tok=%d cache_hit=%d cache_create=%d injected=%s lat=%.1fs", model, in, out, cacheHit, cacheCreate, injectedFlag(r), time.Since(startTime).Seconds())
 	}
 }

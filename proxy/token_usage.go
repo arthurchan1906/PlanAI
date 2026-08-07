@@ -114,10 +114,25 @@ func extractAnthropicStreamUsage(body string) (inputTokens, outputTokens, cacheH
 	return
 }
 
-// extractResponsesStreamUsage 从上游 Responses API 的 SSE 中解析 token 用量。
-// 上游原生 Responses 的 response.completed 事件 usage 结构为
-// {input_tokens, output_tokens, total_tokens}。
-func extractResponsesStreamUsage(body string) (inputTokens, outputTokens int) {
+// extractResponsesStreamUsage 从上游 Responses API 响应中解析 token 用量。
+// 支持两种形态：SSE（data: 行，response.completed 事件）与纯 JSON（非流式）。
+// 尽力解析 cache_read_input_tokens / cache_creation_input_tokens——
+// DeepSeek responses 当前不返回 cache 字段（usage 仅 input/output/total），
+// 取到 0 即如实记录，与 anthropic 路径的 cache_hit/cache_create 对齐口径。
+func extractResponsesStreamUsage(body string) (inputTokens, outputTokens, cacheHitTokens, cacheCreationTokens int) {
+	// 纯 JSON（非流式）：单次解析整个 body。
+	var plain struct {
+		Usage struct {
+			InputTokens              int `json:"input_tokens"`
+			OutputTokens             int `json:"output_tokens"`
+			CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+			CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+		} `json:"usage"`
+	}
+	if json.Unmarshal([]byte(body), &plain) == nil && (plain.Usage.InputTokens > 0 || plain.Usage.OutputTokens > 0) {
+		return plain.Usage.InputTokens, plain.Usage.OutputTokens, plain.Usage.CacheReadInputTokens, plain.Usage.CacheCreationInputTokens
+	}
+
 	lines := strings.Split(body, "\n")
 	for _, line := range lines {
 		line = strings.TrimRight(line, "\r")
@@ -128,8 +143,10 @@ func extractResponsesStreamUsage(body string) (inputTokens, outputTokens int) {
 		var event struct {
 			Type  string `json:"type"`
 			Usage struct {
-				InputTokens  int `json:"input_tokens"`
-				OutputTokens int `json:"output_tokens"`
+				InputTokens              int `json:"input_tokens"`
+				OutputTokens             int `json:"output_tokens"`
+				CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+				CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 			} `json:"usage"`
 		}
 		if json.Unmarshal([]byte(data), &event) != nil {
@@ -141,6 +158,12 @@ func extractResponsesStreamUsage(body string) (inputTokens, outputTokens int) {
 			}
 			if event.Usage.OutputTokens > 0 {
 				outputTokens = event.Usage.OutputTokens
+			}
+			if event.Usage.CacheReadInputTokens > 0 {
+				cacheHitTokens = event.Usage.CacheReadInputTokens
+			}
+			if event.Usage.CacheCreationInputTokens > 0 {
+				cacheCreationTokens = event.Usage.CacheCreationInputTokens
 			}
 		}
 	}

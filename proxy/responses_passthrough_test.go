@@ -93,9 +93,20 @@ func TestExtractResponsesStreamUsage(t *testing.T) {
 data: {"type":"response.completed","response":{"status":"completed"},"usage":{"input_tokens":11,"output_tokens":22,"total_tokens":33}}
 
 `
-	in, out := extractResponsesStreamUsage(sse)
+	in, out, cacheHit, cacheCreate := extractResponsesStreamUsage(sse)
 	if in != 11 || out != 22 {
 		t.Fatalf("usage: got in=%d out=%d want in=11 out=22", in, out)
+	}
+	if cacheHit != 0 || cacheCreate != 0 {
+		t.Fatalf("deepseek usage has no cache fields, got hit=%d create=%d", cacheHit, cacheCreate)
+	}
+}
+
+func TestExtractResponsesStreamUsagePlainJSON(t *testing.T) {
+	body := `{"usage":{"input_tokens":5,"output_tokens":7,"cache_read_input_tokens":3,"cache_creation_input_tokens":2}}`
+	in, out, cacheHit, cacheCreate := extractResponsesStreamUsage(body)
+	if in != 5 || out != 7 || cacheHit != 3 || cacheCreate != 2 {
+		t.Fatalf("plain json usage: got in=%d out=%d hit=%d create=%d", in, out, cacheHit, cacheCreate)
 	}
 }
 
