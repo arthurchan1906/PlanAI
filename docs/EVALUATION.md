@@ -240,6 +240,8 @@
 | `ConvertIdeaToTask`/`ConvertIdeaToDecision` 裸断言 6 处（panic 风险） | — | 🔴 | 已修（8/7 加 ok 断言 + 空值错误返回） |
 | codex/gemini/opencode hook 错误路径默认静默 | B8 | 🟡 | 已修（8/7 无条件 stderr + LogShared） |
 | StoreGitCommit 预检 LIKE 匹配空 hash 行 → hook 记录静默丢失（13:38 后 6 个 commit 被吞） | B8/数据完整性 | 🔴 | 已修（8/7 排除空 hash + 回归测试，bug-20260807-144853-f2c39e） |
+| done-gate 空 hash commit 放行 task done（不可溯源记录通过验收） | 数据完整性 | 🔴 | 已修（8/7 `countVerifiedCommits` 要求 hash 非空，e75b726） |
+| `[MCP]` 日志无 agent 字段 → 无法按 agent 拆 MCP 指标 | E 观测 | 🟡 | 已修（8/7 补 `src=`/`name=`，取自 initialize clientInfo，e75b726） |
 | gitsync Chdir 无错误检查 | — | 🟡 | P3 待办（可能操作错误目录） |
 | extractSessionText 预算溢出（S 级消息无预算控制） | B1 | 🟡 | P3 待办 |
 | 多 pipeline 并发 CWD 竞争（进程级全局状态） | — | 🟡 | P3 待办 |
