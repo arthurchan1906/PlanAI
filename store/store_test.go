@@ -124,3 +124,60 @@ func TestBatchCreateCommitsRejectsEmptyHash(t *testing.T) {
 		t.Fatalf("failed item must mention commit_hash, got %q", result.Details[0].Error)
 	}
 }
+
+// Regression: a hook-recorded commit (task_id='') must be bindable when the
+// agent later calls record_commit with the same hash — previously the dedup
+// branch returned "already exists" and the orphan could never be linked.
+func TestBackfillCommitTask(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".pmai", "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	d, err := sql.Open("sqlite", filepath.Join(dir, ".pmai", "data", "pmai.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if err := db.EnsureSchema(d); err != nil {
+		t.Fatal(err)
+	}
+	now := u.NowISO()
+	// Simulate the git post-commit hook: no task context, full hash, files known.
+	hookRow := "INSERT INTO commits (id, title, summary, evidence_summary, review_notes, branch, commit_hash, task_id, decision_id, status, test_status, review_status, files_json, created_at, updated_at) VALUES ('commit-hook-1', 'hook title', '', '', '', 'main', 'aa65155a4225d891e21d844eb391cc5adcaf4748', '', '', 'committed', 'auto', 'auto', '[]', ?, ?)"
+	if _, err := d.Exec(hookRow, now, now); err != nil {
+		t.Fatal(err)
+	}
+
+	// Agent calls record_commit for the same hash — must bind the orphan.
+	outcome, err := BackfillCommitTask(dir, "commit-hook-1", "task-x", "hook title", []string{"a.go", "b.go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome != BackfillBound {
+		t.Fatalf("first backfill must bind (BackfillBound), got %d", outcome)
+	}
+	var taskID, filesJSON string
+	if err := d.QueryRow("SELECT task_id, files_json FROM commits WHERE id = 'commit-hook-1'").Scan(&taskID, &filesJSON); err != nil {
+		t.Fatal(err)
+	}
+	if taskID != "task-x" {
+		t.Fatalf("task_id must be backfilled, got %q", taskID)
+	}
+	if filesJSON != `["a.go","b.go"]` {
+		t.Fatalf("files must be backfilled, got %q", filesJSON)
+	}
+
+	// Second call with the same task is a no-op.
+	outcome, err = BackfillCommitTask(dir, "commit-hook-1", "task-x", "hook title", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome != BackfillNoop {
+		t.Fatalf("repeat backfill must be no-op, got %d", outcome)
+	}
+
+	// Rebinding to a different task is rejected.
+	if _, err := BackfillCommitTask(dir, "commit-hook-1", "task-other", "hook title", nil); err != ErrCommitTaskConflict {
+		t.Fatalf("conflicting task must return ErrCommitTaskConflict, got %v", err)
+	}
+}

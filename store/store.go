@@ -664,6 +664,67 @@ func UpdateCommit(id string, payload map[string]any) (map[string]any, error) {
 	return existing, nil
 }
 
+// Backfill outcome codes for BackfillCommitTask.
+const (
+	BackfillNoop = iota // already bound to taskID, nothing missing
+	BackfillSynced      // already bound; empty title/files backfilled
+	BackfillBound       // task_id was empty; now bound (orphan resolved)
+)
+
+// ErrCommitTaskConflict is returned when the commit is already bound to a
+// different task than the incoming one.
+var ErrCommitTaskConflict = errors.New("commit already bound to a different task")
+
+// BackfillCommitTask binds task_id onto a commit recorded without one
+// (typically by the git hook, which has no task context), and backfills
+// title/files when empty. Idempotent: safe to call after every hook record.
+// Binding resolves the commit's orphan event. projectPath overrides CWD for
+// multi-project databases.
+func BackfillCommitTask(projectPath, id, taskID, title string, files []string) (int, error) {
+	db, err := pmdb.OpenProject(projectPath)
+	if err != nil {
+		return BackfillNoop, err
+	}
+	defer db.Close()
+
+	var existingTask, existingTitle, existingFiles string
+	if err := db.QueryRow("SELECT COALESCE(task_id,''), COALESCE(title,''), COALESCE(files_json,'') FROM commits WHERE id = ?", id).
+		Scan(&existingTask, &existingTitle, &existingFiles); err != nil {
+		return BackfillNoop, err
+	}
+	if existingTask != "" && existingTask != taskID {
+		return BackfillNoop, ErrCommitTaskConflict
+	}
+
+	setParts := []string{}
+	args := []any{}
+	if existingTask == "" && taskID != "" {
+		setParts = append(setParts, "task_id = ?")
+		args = append(args, taskID)
+	}
+	if existingTitle == "" && title != "" {
+		setParts = append(setParts, "title = ?")
+		args = append(args, title)
+	}
+	if (existingFiles == "" || existingFiles == "[]" || existingFiles == "null") && len(files) > 0 {
+		setParts = append(setParts, "files_json = ?")
+		args = append(args, u.JsonStr(files))
+	}
+	if len(setParts) == 0 {
+		return BackfillNoop, nil
+	}
+	setParts = append(setParts, "updated_at = ?")
+	args = append(args, u.NowISO(), id)
+	if _, err := db.Exec(fmt.Sprintf("UPDATE commits SET %s WHERE id = ?", strings.Join(setParts, ", ")), args...); err != nil {
+		return BackfillNoop, err
+	}
+	if existingTask == "" && taskID != "" {
+		MarkEventProcessed("commit_orphan", id)
+		return BackfillBound, nil
+	}
+	return BackfillSynced, nil
+}
+
 // ============================================================
 // Plans
 // ============================================================

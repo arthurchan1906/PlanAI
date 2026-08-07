@@ -1240,14 +1240,11 @@ func (s *mcpServer) handleRecordCommit(args map[string]interface{}) mcpToolResul
 	if commitHash != "" {
 		db, err := pmdb.OpenProject(projectPath)
 		if err == nil {
-			var existingID string
-			db.QueryRow("SELECT id FROM commits WHERE commit_hash = ? LIMIT 1", commitHash).Scan(&existingID)
+			var existingID, existingTask string
+			db.QueryRow("SELECT id, COALESCE(task_id,'') FROM commits WHERE commit_hash = ? LIMIT 1", commitHash).Scan(&existingID, &existingTask)
 			db.Close()
 			if existingID != "" {
-				return mcpToolResult{
-					Content:        []mcpContent{{Type: "text", Text: fmt.Sprintf("Commit 已存在 (commit_hash 去重): %s [%s]", existingID, title)}},
-					RelatedContext: map[string]interface{}{"dedup": true, "existing_id": existingID},
-				}
+				return s.recordCommitDedup(projectPath, existingID, existingTask, taskID, title, files)
 			}
 		}
 	}
@@ -1301,6 +1298,50 @@ func (s *mcpServer) handleRecordCommit(args map[string]interface{}) mcpToolResul
 		},
 		RelatedContext: related,
 		Reflection:     reflection,
+	}
+}
+
+// recordCommitDedup handles a commit that already exists — typically recorded
+// by the git hook (which has no task context) moments before the agent calls
+// record_commit. The hook row has task_id='', so this is the one chance to
+// bind the orphan to a task: we backfill task_id instead of silently
+// returning "already exists" (previously orphaned commits could never be
+// linked through record_commit).
+func (s *mcpServer) recordCommitDedup(projectPath, existingID, existingTask, taskID, title string, files []string) mcpToolResult {
+	if taskID == "" {
+		return mcpToolResult{
+			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf(
+				"Commit 已存在 (commit_hash 去重): %s [%s]。该 commit 未关联 task（hook 记录）。请用 aipm_update_commit(commit_id=\"%s\", task_id=\"<task_id>\") 绑定，或用 aipm_search_context 查找匹配 task。",
+				existingID, title, existingID)}},
+			RelatedContext: map[string]interface{}{"dedup": true, "existing_id": existingID, "orphan": true},
+		}
+	}
+	if existingTask != "" && existingTask != taskID {
+		return mcpToolResult{
+			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf(
+				"Commit 已存在且已绑定 task %s，与传入 %s 冲突。如需重绑请用 aipm_update_commit(commit_id=\"%s\", task_id=\"<正确task_id>\")。",
+				existingTask, taskID, existingID)}},
+			IsError: true,
+		}
+	}
+
+	outcome, err := store.BackfillCommitTask(projectPath, existingID, taskID, title, files)
+	if err != nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("回填 task 绑定失败: %v", err)}}, IsError: true}
+	}
+	switch outcome {
+	case store.BackfillBound:
+		return mcpToolResult{
+			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf(
+				"✅ Commit 已存在，已回填 task 绑定: %s → %s（hook 记录的孤儿 commit 已关联）", existingID, taskID)}},
+			RelatedContext: map[string]interface{}{"dedup": true, "existing_id": existingID, "task_id": taskID, "backfilled": true},
+		}
+	default: // BackfillNoop / BackfillSynced
+		return mcpToolResult{
+			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf(
+				"Commit 已存在 (commit_hash 去重): %s [%s]，task 绑定一致。", existingID, title)}},
+			RelatedContext: map[string]interface{}{"dedup": true, "existing_id": existingID, "task_id": existingTask},
+		}
 	}
 }
 
