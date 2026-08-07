@@ -200,17 +200,8 @@ func hotspotUntracked() {
 
 // helpers
 
-func dupEvent(typ, etype, eid string) bool {
-	events, err := store.ListEvents("unconsumed")
-	if err != nil {
-		return false
-	}
-	for _, e := range events {
-		if u.Str(e["type"]) == typ && u.Str(e["entity_type"]) == etype && u.Str(e["entity_id"]) == eid {
-			return true
-		}
-	}
-	return false
+func dupEvent(typ, entityType, eid string) bool {
+	return store.HasEvent(typ, entityType, eid)
 }
 
 func extractFiles(evJSON, key string, out map[string]bool) {

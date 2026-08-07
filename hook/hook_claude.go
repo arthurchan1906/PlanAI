@@ -31,6 +31,7 @@ func ProcessClaudeHook() {
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Fprintf(os.Stderr, "[aipm-claude %s] PANIC: %v\n%s\n", now, r, string(debug.Stack()))
+			u.LogShared("HOOK", "panic src=claude err=%v", r)
 			os.Exit(0)
 		}
 	}()
@@ -73,6 +74,7 @@ func ProcessClaudeHook() {
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		fmt.Fprintf(os.Stderr, "[aipm-claude %s] JSON parse FAILED: %v — raw(first 200): %s\n", now, err, safePrefix(string(data), 200))
+		u.LogShared("HOOK", "json_parse_err src=claude err=%v", err)
 		os.Exit(0)
 	}
 

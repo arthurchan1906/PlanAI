@@ -149,7 +149,7 @@ func UpdateTask(projectPath string, id, status, note string, allowWithoutCommit,
 	if err := ScanTaskRow(row, existing); err != nil {
 		return nil, err
 	}
-	oldStatus := existing["status"].(string)
+	oldStatus, _ := existing["status"].(string)
 	if status == "" {
 		status = oldStatus
 	}
@@ -166,7 +166,7 @@ func UpdateTask(projectPath string, id, status, note string, allowWithoutCommit,
 			return nil, fmt.Errorf("task cannot be marked done without at least one verified approved commit")
 		}
 	}
-	nextNote := existing["last_note"].(string)
+	nextNote, _ := existing["last_note"].(string)
 	if note != "" {
 		if appendNote && nextNote != "" {
 			nextNote = strings.TrimRight(nextNote, "\n") + "\n\n" + note
@@ -177,6 +177,10 @@ func UpdateTask(projectPath string, id, status, note string, allowWithoutCommit,
 	_, err = db.Exec("UPDATE tasks SET status = ?, last_note = ?, updated_at = ? WHERE id = ?", status, nextNote, u.Today(), id)
 	if err != nil {
 		return nil, err
+	}
+	if status == "done" {
+		// 2.3: a done task resolves its stale-file events (processed vs consumed).
+		MarkEventProcessed("task_stale_file", id)
 	}
 	title := u.Str(existing["title"])
 	planID := u.Str(existing["plan_id"])
@@ -268,9 +272,13 @@ func UpdateTaskCheckpoint(taskID string, index int, done bool) (map[string]any, 
 		return nil, err
 	}
 	var acc []map[string]any
-	json.Unmarshal([]byte(existing["acceptance_json"].(string)), &acc)
+	accJSON, _ := existing["acceptance_json"].(string)
+	json.Unmarshal([]byte(accJSON), &acc)
 	if index < 0 || index >= len(acc) {
 		return nil, fmt.Errorf("checkpoint index %d out of range", index)
+	}
+	if acc[index] == nil {
+		acc[index] = map[string]any{}
 	}
 	acc[index]["done"] = done
 	db.Exec("UPDATE tasks SET acceptance_json = ?, updated_at = ? WHERE id = ?", u.JsonStr(acc), u.Today(), taskID)
@@ -454,6 +462,10 @@ func CreateCommit(projectPath string, title, summary, evidenceSummary, reviewNot
 	if err != nil {
 		return nil, err
 	}
+	if taskID != "" {
+		// 2.3: a commit recorded with a task resolves any prior orphan event.
+		MarkEventProcessed("commit_orphan", id)
+	}
 	commitContent := title + " " + summary
 	if evidenceSummary != "" {
 		commitContent += " " + evidenceSummary
@@ -612,6 +624,10 @@ func UpdateCommit(id string, payload map[string]any) (map[string]any, error) {
 	_, err = db.Exec(fmt.Sprintf("UPDATE commits SET %s WHERE id = ?", strings.Join(setParts, ", ")), args...)
 	if err != nil {
 		return nil, err
+	}
+	if tid, _ := payload["task_id"].(string); tid != "" {
+		// 2.3: binding an orphan commit to a task resolves its orphan event.
+		MarkEventProcessed("commit_orphan", id)
 	}
 	return existing, nil
 }
@@ -792,6 +808,7 @@ func CreateBug(projectPath string, title, description, severity, status, commitI
 	if err != nil {
 		return nil, err
 	}
+	pmdb.SyncFTS5Entity(db, "bug", id, title, title+" "+description+" "+errMsg)
 	return GetBug(id)
 }
 
@@ -1004,13 +1021,21 @@ func ConvertIdeaToTask(ideaID, planID string) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	task, err := CreateTask("", idea["title"].(string), "P1", "todo", "general", planID, nil)
+	title, _ := idea["title"].(string)
+	if title == "" {
+		return nil, fmt.Errorf("idea %s has no title", ideaID)
+	}
+	task, err := CreateTask("", title, "P1", "todo", "general", planID, nil)
 	if err != nil {
 		return nil, err
 	}
-	CreateLink("", "idea", ideaID, "converted_to", "task", task["id"].(string), "Converted from idea thread")
+	taskID, _ := task["id"].(string)
+	if taskID == "" {
+		return nil, fmt.Errorf("created task for idea %s has no id", ideaID)
+	}
+	CreateLink("", "idea", ideaID, "converted_to", "task", taskID, "Converted from idea thread")
 	UpdateIdea(ideaID, map[string]any{"status": "under_review", "recommended_next_action": "converted_to_task"})
-	return map[string]any{"type": "task", "id": task["id"], "title": task["title"]}, nil
+	return map[string]any{"type": "task", "id": taskID, "title": title}, nil
 }
 
 func ConvertIdeaToDecision(ideaID string) (map[string]any, error) {
@@ -1018,17 +1043,25 @@ func ConvertIdeaToDecision(ideaID string) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	bg := idea["title"].(string)
+	title, _ := idea["title"].(string)
+	if title == "" {
+		return nil, fmt.Errorf("idea %s has no title", ideaID)
+	}
+	bg := title
 	if cs, _ := idea["current_summary"].(string); cs != "" {
 		bg = cs
 	}
-	dec, err := CreateDecision("", idea["title"].(string), bg, idea["title"].(string), "proposed")
+	dec, err := CreateDecision("", title, bg, title, "proposed")
 	if err != nil {
 		return nil, err
 	}
-	CreateLink("", "idea", ideaID, "converted_to", "decision", dec["id"].(string), "Converted from idea thread")
+	decID, _ := dec["id"].(string)
+	if decID == "" {
+		return nil, fmt.Errorf("created decision for idea %s has no id", ideaID)
+	}
+	CreateLink("", "idea", ideaID, "converted_to", "decision", decID, "Converted from idea thread")
 	UpdateIdea(ideaID, map[string]any{"status": "accepted", "recommended_next_action": "converted_to_decision"})
-	return map[string]any{"type": "decision", "id": dec["id"], "title": dec["title"]}, nil
+	return map[string]any{"type": "decision", "id": decID, "title": title}, nil
 }
 
 // ============================================================
@@ -2422,6 +2455,40 @@ func HasUnconsumedEvent(typ, entityID string) bool {
 	return count > 0
 }
 
+// HasEvent checks if an event of the given type+entity already exists in any
+// state (including consumed). Prevents duplicate events from being re-created
+// after an agent has consumed them.
+func HasEvent(typ, entityType, entityID string) bool {
+	db, err := pmdb.Open()
+	if err != nil {
+		return false
+	}
+	defer db.Close()
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM events WHERE type=? AND entity_type=? AND entity_id=?",
+		typ, entityType, entityID).Scan(&count); err != nil {
+		return false
+	}
+	return count > 0
+}
+
+// MarkEventProcessed marks matching events as processed (2.3: 已读/已处理分离).
+// Returns the number of events marked. Processed means the agent has actually
+// resolved the underlying issue (e.g. bound an orphan commit, done a task),
+// as opposed to consumed_by_agent which only means the event was shown.
+func MarkEventProcessed(typ, entityID string) (int64, error) {
+	db, err := pmdb.Open()
+	if err != nil {
+		return 0, err
+	}
+	defer db.Close()
+	res, err := db.Exec("UPDATE events SET processed_by_agent = 1 WHERE type = ? AND entity_id = ? AND processed_by_agent = 0", typ, entityID)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 func ListEvents(consumedOnly string) ([]map[string]any, error) {
 	db, err := pmdb.Open()
 	if err != nil {
@@ -2430,7 +2497,9 @@ func ListEvents(consumedOnly string) ([]map[string]any, error) {
 	defer db.Close()
 	q := "SELECT * FROM events"
 	if consumedOnly == "unconsumed" {
-		q += " WHERE consumed_by_agent = 0"
+		// 2.3: "unconsumed" = 未读 AND 未处理。Agent 已处理的事件（processed_by_agent=1）
+		// 不再注入/展示，避免已解决问题反复打扰（D2 已读/已处理分离）。
+		q += " WHERE consumed_by_agent = 0 AND processed_by_agent = 0"
 	}
 	q += " ORDER BY created_at DESC LIMIT 50"
 	rows, err := db.Query(q)
@@ -2441,11 +2510,12 @@ func ListEvents(consumedOnly string) ([]map[string]any, error) {
 	var events []map[string]any
 	for rows.Next() {
 		var id, typ, entityType, entityID, summary, createdAt string
-		var consumed int
-		rows.Scan(&id, &typ, &entityType, &entityID, &summary, &createdAt, &consumed)
+		var consumed, processed int
+		rows.Scan(&id, &typ, &entityType, &entityID, &summary, &createdAt, &consumed, &processed)
 		events = append(events, map[string]any{
 			"id": id, "type": typ, "entity_type": entityType, "entity_id": entityID,
 			"summary": summary, "created_at": createdAt, "consumed_by_agent": consumed == 1,
+			"processed_by_agent": processed == 1,
 		})
 	}
 	if events == nil {

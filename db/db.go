@@ -90,7 +90,7 @@ func OpenProject(projectPath string) (*sql.DB, error) {
 		if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 			return nil, fmt.Errorf("PMAI database not found: %s — run aipmc init first", dbPath)
 		}
-		d, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=15000&_synchronous=NORMAL")
+		d, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(15000)&_pragma=synchronous(NORMAL)")
 		if err != nil {
 			return nil, err
 		}
@@ -118,7 +118,7 @@ func Open() (*sql.DB, error) {
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		return nil, fmt.Errorf("PMAI database not found: %s — run aipmc init first", dbPath)
 	}
-	d, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=15000&_synchronous=NORMAL")
+	d, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(15000)&_pragma=synchronous(NORMAL)")
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +163,7 @@ func OpenVectors() (*sql.DB, error) {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
 		return nil, err
 	}
-	d, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=15000&_synchronous=NORMAL")
+	d, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(15000)&_pragma=synchronous(NORMAL)")
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +192,7 @@ func Bootstrap() (string, error) {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
 		return "", err
 	}
-	d, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=15000&_synchronous=NORMAL")
+	d, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(15000)&_pragma=synchronous(NORMAL)")
 	if err != nil {
 		return "", err
 	}
@@ -241,7 +241,7 @@ var schemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS commits (id TEXT PRIMARY KEY, title TEXT NOT NULL, summary TEXT NOT NULL DEFAULT '', evidence_summary TEXT NOT NULL DEFAULT '', review_notes TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL, commit_hash TEXT NOT NULL, task_id TEXT, decision_id TEXT, status TEXT NOT NULL, test_status TEXT NOT NULL, review_status TEXT NOT NULL, files_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS bugs (id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL, severity TEXT NOT NULL, status TEXT NOT NULL, commit_id TEXT, error TEXT NOT NULL DEFAULT '', files TEXT NOT NULL DEFAULT '', root_cause TEXT NOT NULL DEFAULT '', fix TEXT NOT NULL DEFAULT '', tags TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(commit_id) REFERENCES commits(id))`,
 	`CREATE TABLE IF NOT EXISTS task_notes (id TEXT PRIMARY KEY, task_id TEXT NOT NULL, content TEXT NOT NULL, mode TEXT NOT NULL, created_at TEXT NOT NULL, FOREIGN KEY(task_id) REFERENCES tasks(id))`,
-	`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, type TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, summary TEXT NOT NULL, created_at TEXT NOT NULL, consumed_by_agent INTEGER NOT NULL DEFAULT 0)`,
+	`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, type TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, summary TEXT NOT NULL, created_at TEXT NOT NULL, consumed_by_agent INTEGER NOT NULL DEFAULT 0, processed_by_agent INTEGER NOT NULL DEFAULT 0)`,
 	`CREATE TABLE IF NOT EXISTS threads (id TEXT PRIMARY KEY, title TEXT NOT NULL, summary TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active', source TEXT NOT NULL DEFAULT 'manual', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS thread_items (thread_id TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, added_at TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', PRIMARY KEY (thread_id, entity_type, entity_id), FOREIGN KEY(thread_id) REFERENCES threads(id))`,
 	`CREATE VIRTUAL TABLE IF NOT EXISTS fts5_index USING fts5(content, entity_type UNINDEXED, entity_id UNINDEXED, title, tokenize='unicode61')`,
@@ -263,6 +263,7 @@ func migrate(d *sql.DB) error {
 		sql    string
 	}
 	migrations := []migration{
+		{"events", "processed_by_agent", "ALTER TABLE events ADD COLUMN processed_by_agent INTEGER NOT NULL DEFAULT 0"},
 		{"tasks", "roadmap_id", "ALTER TABLE tasks ADD COLUMN roadmap_id TEXT"},
 		{"tasks", "plan_id", "ALTER TABLE tasks ADD COLUMN plan_id TEXT"},
 		{"tasks", "created_at", "ALTER TABLE tasks ADD COLUMN created_at TEXT NOT NULL DEFAULT ''"},
@@ -410,87 +411,127 @@ func DeleteFTS5Entity(d *sql.DB, entityType, entityID string) {
 }
 
 // RebuildFTS5Index repopulates the FTS5 index from all entity tables.
+// It first repairs a corrupt index (shadow-table state mismatch makes
+// DELETE/INSERT fail with "constraint failed" 1555), then backfills every
+// searchable entity type — including discussion_log, which incremental
+// SyncFTS5Entity calls otherwise cover.
 func RebuildFTS5Index(d *sql.DB) {
-	d.Exec("DELETE FROM fts5_index")
-
-	rows, _ := d.Query("SELECT id, title, last_note FROM tasks")
-	if rows != nil {
-		for rows.Next() {
-			var id, title, note string
-			rows.Scan(&id, &title, &note)
-			d.Exec("INSERT INTO fts5_index (content, entity_type, entity_id, title) VALUES (?, 'task', ?, ?)", title+" "+note, id, title)
-		}
-		rows.Close()
+	if _, err := d.Exec("INSERT INTO fts5_index(fts5_index, rank) VALUES('rebuild', 0)"); err != nil {
+		u.LogShared("FTS5", "rebuild repair err=%v", err)
+	}
+	// Run the repopulation in a single transaction: on a live DB
+	// (proxy writing discussion rows), per-statement writes race and fail
+	// with SQLITE_BUSY. One write-lock acquisition avoids that entirely.
+	tx, err := d.Begin()
+	if err != nil {
+		u.LogShared("FTS5", "rebuild begin err=%v", err)
+		return
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec("DELETE FROM fts5_index"); err != nil {
+		u.LogShared("FTS5", "rebuild delete err=%v", err)
+		return
 	}
 
-	rows2, _ := d.Query("SELECT id, title, goal FROM plans")
-	if rows2 != nil {
-		for rows2.Next() {
-			var id, title, goal string
-			rows2.Scan(&id, &title, &goal)
-			d.Exec("INSERT INTO fts5_index (content, entity_type, entity_id, title) VALUES (?, 'plan', ?, ?)", title+" "+goal, id, title)
+	indexRows(tx, "SELECT id, title, last_note FROM tasks", "task", func(r *sql.Rows) (string, string, string) {
+		var id, title, note string
+		r.Scan(&id, &title, &note)
+		return id, title, title + " " + note
+	})
+	indexRows(tx, "SELECT id, title, goal FROM plans", "plan", func(r *sql.Rows) (string, string, string) {
+		var id, title, goal string
+		r.Scan(&id, &title, &goal)
+		return id, title, title + " " + goal
+	})
+	indexRows(tx, "SELECT id, title, summary, evidence_summary, review_notes, files_json FROM commits", "commit", func(r *sql.Rows) (string, string, string) {
+		var id, title, summary, evidence, reviewNotes, filesJSON string
+		r.Scan(&id, &title, &summary, &evidence, &reviewNotes, &filesJSON)
+		content := title + " " + summary
+		if evidence != "" {
+			content += " " + evidence
 		}
-		rows2.Close()
+		if reviewNotes != "" {
+			content += " " + reviewNotes
+		}
+		if filesJSON != "" && filesJSON != "[]" {
+			content += " " + filesJSON
+		}
+		return id, title, content
+	})
+	indexRows(tx, "SELECT id, title, description, error, root_cause, fix, tags FROM bugs", "bug", func(r *sql.Rows) (string, string, string) {
+		var id, title, desc, errStr, root, fix, tags string
+		r.Scan(&id, &title, &desc, &errStr, &root, &fix, &tags)
+		return id, title, title + " " + desc + " " + errStr + " " + root + " " + fix + " " + tags
+	})
+	indexRows(tx, "SELECT id, title, background, decision_text FROM decisions", "decision", func(r *sql.Rows) (string, string, string) {
+		var id, title, bg, dt string
+		r.Scan(&id, &title, &bg, &dt)
+		return id, title, title + " " + bg + " " + dt
+	})
+	indexRows(tx, "SELECT id, title, summary FROM ideas", "idea", func(r *sql.Rows) (string, string, string) {
+		var id, title, summary string
+		r.Scan(&id, &title, &summary)
+		return id, title, title + " " + summary
+	})
+	indexRows(tx, "SELECT id, title, summary FROM threads", "thread", func(r *sql.Rows) (string, string, string) {
+		var id, title, summary string
+		r.Scan(&id, &title, &summary)
+		return id, title, title + " " + summary
+	})
+	indexRows(tx, "SELECT id, title, summary FROM principles", "principle", func(r *sql.Rows) (string, string, string) {
+		var id, title, summary string
+		r.Scan(&id, &title, &summary)
+		return id, title, title + " " + summary
+	})
+	indexRows(tx, "SELECT id, title, summary FROM visions", "vision", func(r *sql.Rows) (string, string, string) {
+		var id, title, summary string
+		r.Scan(&id, &title, &summary)
+		return id, title, title + " " + summary
+	})
+	indexRows(tx, "SELECT id, title FROM roadmap", "roadmap", func(r *sql.Rows) (string, string, string) {
+		var id, title string
+		r.Scan(&id, &title)
+		return id, title, title
+	})
+	indexRows(tx, "SELECT id, name, role FROM agent_profiles", "agent", func(r *sql.Rows) (string, string, string) {
+		var id, name, role string
+		r.Scan(&id, &name, &role)
+		return id, name, name + " " + role
+	})
+	indexRows(tx, "SELECT id, role, source, content FROM discussion_log", "discussion", func(r *sql.Rows) (string, string, string) {
+		var id, role, source, content string
+		r.Scan(&id, &role, &source, &content)
+		preview := content
+		if rr := []rune(content); len(rr) > 80 {
+			preview = string(rr[:80])
+		}
+		return id, "[" + role + "][" + source + "] " + preview, content
+	})
+	if err := tx.Commit(); err != nil {
+		u.LogShared("FTS5", "rebuild commit err=%v", err)
 	}
+}
 
-	rows3, _ := d.Query("SELECT id, title, summary, evidence_summary, review_notes, files_json FROM commits")
-	if rows3 != nil {
-		for rows3.Next() {
-			var id, title, summary, evidence, reviewNotes, filesJSON string
-			rows3.Scan(&id, &title, &summary, &evidence, &reviewNotes, &filesJSON)
-			content := title + " " + summary
-			if evidence != "" {
-				content += " " + evidence
-			}
-			if reviewNotes != "" {
-				content += " " + reviewNotes
-			}
-			if filesJSON != "" && filesJSON != "[]" {
-				content += " " + filesJSON
-			}
-			d.Exec("INSERT INTO fts5_index (content, entity_type, entity_id, title) VALUES (?, 'commit', ?, ?)", content, id, title)
-		}
-		rows3.Close()
+// rowQuerier is satisfied by both *sql.DB and *sql.Tx.
+type rowQuerier interface {
+	Query(string, ...any) (*sql.Rows, error)
+	Exec(string, ...any) (sql.Result, error)
+}
+
+// indexRows runs query and inserts each row into the FTS5 index.
+// Failures are logged instead of silently swallowed.
+func indexRows(d rowQuerier, query, entityType string, scan func(*sql.Rows) (id, title, content string)) {
+	rows, err := d.Query(query)
+	if err != nil {
+		u.LogShared("FTS5", "rebuild query err type=%s err=%v", entityType, err)
+		return
 	}
-
-	rows4, _ := d.Query("SELECT id, title, description, error, root_cause, fix, tags FROM bugs")
-	if rows4 != nil {
-		for rows4.Next() {
-			var id, title, desc, errStr, root, fix, tags string
-			rows4.Scan(&id, &title, &desc, &errStr, &root, &fix, &tags)
-			d.Exec("INSERT INTO fts5_index (content, entity_type, entity_id, title) VALUES (?, 'bug', ?, ?)", title+" "+desc+" "+errStr+" "+root+" "+fix+" "+tags, id, title)
+	defer rows.Close()
+	for rows.Next() {
+		id, title, content := scan(rows)
+		if _, err := d.Exec("INSERT INTO fts5_index (content, entity_type, entity_id, title) VALUES (?, ?, ?, ?)", content, entityType, id, title); err != nil {
+			u.LogShared("FTS5", "rebuild insert err type=%s id=%s err=%v", entityType, id, err)
 		}
-		rows4.Close()
-	}
-
-	rows5, _ := d.Query("SELECT id, title, background, decision_text FROM decisions")
-	if rows5 != nil {
-		for rows5.Next() {
-			var id, title, bg, dt string
-			rows5.Scan(&id, &title, &bg, &dt)
-			d.Exec("INSERT INTO fts5_index (content, entity_type, entity_id, title) VALUES (?, 'decision', ?, ?)", title+" "+bg+" "+dt, id, title)
-		}
-		rows5.Close()
-	}
-
-	rows6, _ := d.Query("SELECT id, title, summary FROM ideas")
-	if rows6 != nil {
-		for rows6.Next() {
-			var id, title, summary string
-			rows6.Scan(&id, &title, &summary)
-			d.Exec("INSERT INTO fts5_index (content, entity_type, entity_id, title) VALUES (?, 'idea', ?, ?)", title+" "+summary, id, title)
-		}
-		rows6.Close()
-	}
-
-	rows7, _ := d.Query("SELECT id, title, summary FROM threads")
-	if rows7 != nil {
-		for rows7.Next() {
-			var id, title, summary string
-			rows7.Scan(&id, &title, &summary)
-			d.Exec("INSERT INTO fts5_index (content, entity_type, entity_id, title) VALUES (?, 'thread', ?, ?)", title+" "+summary, id, title)
-		}
-		rows7.Close()
 	}
 }
 

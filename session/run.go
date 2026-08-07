@@ -124,11 +124,11 @@ func Run(opts RunOpts) (RunResult, error) {
 		if opts.Summarizer != nil {
 			// Check cache first: don't waste LLM calls on already-summarized sessions
 			if old, _ := store.GetSessionSummary(s.SessionID); old != nil && old.Summary != "" {
-				summary = old.Summary
+				summary = NormalizeSummaryGoal(old.Summary)
 				l2status = "cached"
 				l2Cached++
 			} else {
-				summary = GenerateL2Summary(messages, review, opts.Summarizer)
+				summary = NormalizeSummaryGoal(GenerateL2Summary(messages, review, opts.Summarizer))
 				if summary != "" {
 					l2status = "ok"
 					l2New++

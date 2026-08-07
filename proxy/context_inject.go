@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -22,9 +23,11 @@ import (
 )
 
 const (
-	maxInjectChars  = 800             // hard cap to prevent context explosion
+	maxInjectChars   = 800            // hard cap to prevent context explosion
 	guidelinesBudget = 600            // dedicated char budget for guidelines.md
-	sessionTTL     = 48 * time.Hour  // ignore sessions older than this
+	sessionTTL       = 48 * time.Hour // ignore sessions older than this
+	actionItemCeil   = 10             // 2.1: safety ceiling for formatted action items
+	perTypeCap       = 5              // 2.1: max individual items per event type
 )
 
 // isEmergeEvent checks if an event type should be surfaced as an actionable item.
@@ -45,7 +48,6 @@ var (
 		goals       []string
 		warnings    []string
 		actionItems []string // ⚠️ emerge events → actionable nudge
-		maxActions  int
 		contentHash string
 		updatedAt   time.Time
 		ttl         time.Duration
@@ -60,7 +62,6 @@ var (
 
 func init() {
 	sessionCache.ttl = 5 * time.Minute
-	sessionCache.maxActions = 3 // cap actionable items to avoid flooding
 	guidelinesCache.ttl = 10 * time.Minute
 }
 
@@ -76,7 +77,7 @@ func InjectSessionContext(body []byte, agent string) []byte {
 
 	// File awareness is computed per-request — must NOT be inside the
 	// 5-minute session cache, or it returns nil on every cache hit.
-	fileAssoc := resolveFileContext(body)
+	fileAssoc := resolveFileContext(body, agent)
 
 	if len(goals) == 0 && len(fileAssoc) == 0 && len(guidelines) > 0 {
 		u.LogShared("INJECT", "inject agent=%s source=guidelines_only", agent)
@@ -138,6 +139,7 @@ func getCachedContext() (goals, warnings, actionItems []string, hash string) {
 	for _, r := range rows {
 		var l2 session.SessionL2Summary
 		if json.Unmarshal([]byte(r.Summary), &l2) == nil && l2.Goal != "" {
+			l2.Goal = session.UnnestGoal(l2.Goal)
 			sid := u.Prefix(r.SessionID, 8)
 			goals = append(goals, fmt.Sprintf("[%s] %s", sid, l2.Goal))
 		}
@@ -177,36 +179,148 @@ func getCachedContext() (goals, warnings, actionItems []string, hash string) {
 }
 
 // buildActionItems reads unconsumed pipeline emerge events and formats them
-// as actionable items for INJECT. Each event type is mapped to the specific
-// MCP tool(s) the agent can use to address it.
+// as actionable items for INJECT. 2.1: events are priority-ordered (most
+// actionable first) and aggregated by type — hotspot_untracked / mcp_error
+// collapse into one line each, while commit_orphan / task_stale_file stay
+// per-entity with a per-type cap. The old maxActions=3 hard cap is replaced
+// by budget-driven formatting in buildContextBlock.
 func buildActionItems() []string {
 	events, err := store.GetUnconsumedEvents()
 	if err != nil || len(events) == 0 {
 		return nil
 	}
-	var items []string
-	for _, ev := range events {
-		typ, _ := ev["type"].(string)
+	var list []emergeEvent
+	for _, e := range events {
+		typ, _ := e["type"].(string)
 		if !isEmergeEvent(typ) {
 			continue
 		}
-		summary, _ := ev["summary"].(string)
+		summary, _ := e["summary"].(string)
 		if summary == "" {
 			continue
 		}
-		entityID, _ := ev["entity_id"].(string)
-		line := fmt.Sprintf("\u26a0\ufe0f %s", summary)
-		// Bind each event type to the MCP tool that can fix it
-		if hint := actionToolHint(typ, entityID); hint != "" {
+		entityID, _ := e["entity_id"].(string)
+		createdAt, _ := e["created_at"].(string)
+		list = append(list, emergeEvent{typ, entityID, summary, createdAt, eventPriority(typ)})
+	}
+	if len(list) == 0 {
+		return nil
+	}
+	items := formatActionItems(list)
+	// Keep the emerge_events observability line (EVALUATION.md C3 复测方法依赖它):
+	// total = raw unconsumed emerge events, items = after priority/aggregation/caps.
+	u.LogShared("INJECT", "emerge_events total=%d types=%v items=%d perTypeCap=%d ceil=%d",
+		len(events), eventTypeBreakdown(events), len(items), perTypeCap, actionItemCeil)
+	return items
+}
+
+// formatActionItems is the pure formatting half of buildActionItems:
+// priority sort, aggregation, per-type caps, ceiling.
+func formatActionItems(list []emergeEvent) []string {
+	sort.SliceStable(list, func(i, j int) bool {
+		if list[i].prio != list[j].prio {
+			return list[i].prio > list[j].prio
+		}
+		return list[i].createdAt < list[j].createdAt
+	})
+
+	var items []string
+	// Aggregated types first: one compact line each.
+	if h := aggregateHotspots(list); h != "" {
+		items = append(items, h)
+	}
+	if m := aggregateMCPErrors(list); m != "" {
+		items = append(items, m)
+	}
+	// Per-entity items in priority order, capped per type.
+	perTypeCount := map[string]int{}
+	for _, e := range list {
+		if isAggregatedType(e.typ) {
+			continue
+		}
+		if perTypeCount[e.typ] >= perTypeCap {
+			continue
+		}
+		perTypeCount[e.typ]++
+		line := fmt.Sprintf("\u26a0\ufe0f %s", e.summary)
+		if hint := actionToolHint(e.typ, e.entityID); hint != "" {
 			line += "\n  \u2192 " + hint
 		}
 		items = append(items, line)
 	}
-	if len(items) > 0 {
-		u.LogShared("INJECT", "emerge_events total=%d types=%v items=%d cap=%d",
-			len(events), eventTypeBreakdown(events), len(items), sessionCache.maxActions)
+	if len(items) > actionItemCeil {
+		items = items[:actionItemCeil]
 	}
 	return items
+}
+
+// eventPriority ranks emerge event types for injection order: events with a
+// unique, concrete fix the agent can do now come first.
+func eventPriority(typ string) int {
+	switch {
+	case strings.HasSuffix(typ, "_orphan"):
+		return 4 // unique fix: bind commit to a task
+	case strings.HasSuffix(typ, "_stale_file"):
+		return 3 // unique fix: verify task completion
+	case typ == "mcp_error":
+		return 3 // unique fix: retry / check params
+	case strings.Contains(typ, "untracked"):
+		return 2 // aggregated: create tracking task
+	}
+	return 0
+}
+
+// isAggregatedType reports whether events of this type collapse into one
+// injected line (Claude 审核细化: hotspot/mcp_error 聚合, orphan/link 不聚合).
+func isAggregatedType(typ string) bool {
+	return strings.Contains(typ, "untracked") || typ == "mcp_error"
+}
+
+type emergeEvent struct {
+	typ, entityID, summary, createdAt string
+	prio                              int
+}
+
+// aggregateHotspots collapses all hotspot_untracked events into one line.
+func aggregateHotspots(list []emergeEvent) string {
+	var files []string
+	total := 0
+	for _, e := range list {
+		if !strings.Contains(e.typ, "untracked") {
+			continue
+		}
+		total++
+		if len(files) < 5 {
+			files = append(files, filepath.Base(e.entityID))
+		}
+	}
+	if total == 0 {
+		return ""
+	}
+	shown := strings.Join(files, ", ")
+	if total > len(files) {
+		shown += fmt.Sprintf(" 等 %d 个文件", total)
+	}
+	return fmt.Sprintf("\u26a0\ufe0f %d 个文件被多 session 修改且无 task 跟踪：%s\n  \u2192 aipm_create_task(title=\"跟踪热点文件\", plan_id=\"...\") 为最活跃文件建 task", total, shown)
+}
+
+// aggregateMCPErrors collapses all mcp_error events into one line.
+func aggregateMCPErrors(list []emergeEvent) string {
+	var parts []string
+	total := 0
+	for _, e := range list {
+		if e.typ != "mcp_error" {
+			continue
+		}
+		total++
+		if len(parts) < 3 {
+			parts = append(parts, e.summary)
+		}
+	}
+	if total == 0 {
+		return ""
+	}
+	return fmt.Sprintf("\u26a0\ufe0f %d 个 MCP 工具调用失败（最近：%s）\n  \u2192 检查参数后重试；持续失败用 aipm_search_context 查正确参数", total, strings.Join(parts, "；"))
 }
 
 // actionToolHint returns the MCP tool call suggestion for an event type.
@@ -287,16 +401,14 @@ func buildContextBlock(goals, warnings, actionItems, fileAssoc []string, guideli
 	// ⚠️ 待处理: actionable items from pipeline emerge events
 	if len(actionItems) > 0 {
 		buf.WriteString("\n⚠️ 待处理:")
-		count := 0
 		for _, a := range actionItems {
-			if count >= sessionCache.maxActions {
-				suppressed += len(actionItems) - count
-				break
-			}
 			line := "\n" + a
+			if written+len(line) > maxInjectChars-50 {
+				suppressed++
+				continue
+			}
 			buf.WriteString(line)
 			written += len(line)
-			count++
 		}
 	}
 
@@ -355,8 +467,8 @@ func hasVisionModels() bool {
 // resolveFileContext extracts file paths from the LLM request body and
 // returns PM entity associations for files the agent is working on.
 // This gives the agent immediate context: "mcp/mcp.go → task-xxx (P0, in_progress)".
-func resolveFileContext(body []byte) []string {
-	paths := extractFilePaths(body)
+func resolveFileContext(body []byte, agent string) []string {
+	paths := extractFilePaths(body, agent)
 	if len(paths) == 0 {
 		return nil
 	}
@@ -448,7 +560,7 @@ var codeExts = regexp.MustCompile(`\.(go|js|ts|jsx|tsx|py|rs|java|rb|c|cpp|h|hpp
 
 // extractFilePaths extracts file paths from the LLM request body.
 // Handles both Anthropic Messages format (messages[].content) and Codex format (instructions).
-func extractFilePaths(body []byte) []string {
+func extractFilePaths(body []byte, agent string) []string {
 	var raw map[string]any
 	if json.Unmarshal(body, &raw) == nil {
 		var textParts []string
@@ -497,8 +609,11 @@ func extractFilePaths(body []byte) []string {
 		return extractPaths(strings.Join(textParts, "\n"))
 	}
 
-	u.LogShared("INJECT", "file_assoc body_parse=err")
-	return nil
+	// Fallback: body is not a plain JSON object (SSE fragments, partial bodies,
+	// or non-standard request formats). Extract paths directly from raw text
+	// so codex/cursor-style payloads still get file awareness.
+	u.LogShared("INJECT", "file_assoc body_parse=err agent=%s", agent)
+	return extractPaths(string(body))
 }
 
 // extractPaths finds file-like paths in text. Matches both absolute paths
@@ -520,6 +635,14 @@ func extractPaths(text string) []string {
 			if codeExts.MatchString(rel) && !seen[rel] {
 				seen[rel] = true
 				paths = append(paths, rel)
+			}
+		} else if strings.HasPrefix(p, "/") {
+			// Absolute path outside CWD (proxy may run from another project):
+			// fall back to basename so file→task matching can still work.
+			base := filepath.Base(p)
+			if codeExts.MatchString(base) && !seen[base] {
+				seen[base] = true
+				paths = append(paths, base)
 			}
 		}
 	}

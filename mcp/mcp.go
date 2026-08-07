@@ -485,6 +485,19 @@ func (s *mcpServer) registerTools() {
 	}, s.handleMarkConsumed)
 
 	s.addTool(MCPTool{
+		Name:        "aipm_mark_event_processed",
+		Description: "标记指定实体的事件为「已处理」（区别于 mark_consumed 的「已读」）。当 Agent 已实际解决事件所指问题——如已将孤儿 commit 绑定到 task、已完成 task、已修复工具错误——调用此工具标记，使 D2 指标能区分已读/已处理。参数：entity_id（必填，commit/task 等实体 ID，与事件 entity_id 对应）、event_type（可选，如 commit_orphan/task_stale_file/hotspot_untracked/mcp_error，不传则标记该实体全部未处理事件）。",
+		InputSchema: MCPInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"entity_id":  map[string]string{"type": "string", "description": "实体 ID（commit id / task id / 文件路径 / 工具名等，与事件 entity_id 一致）"},
+				"event_type": map[string]string{"type": "string", "description": "可选: 事件类型，如 commit_orphan / task_stale_file / hotspot_untracked / mcp_error"},
+			},
+			Required: []string{"entity_id"},
+		},
+	}, s.handleMarkEventProcessed)
+
+	s.addTool(MCPTool{
 		Name:        "aipm_append_task_note",
 		Description: "向 Task 追加一条备注。Agent 在工作中需要记录思路、发现或设计讨论时使用，支持持续积累而不覆盖已有内容。",
 		InputSchema: MCPInputSchema{
@@ -1672,6 +1685,45 @@ func (s *mcpServer) handleMarkConsumed(args map[string]interface{}) mcpToolResul
 	}
 	return mcpToolResult{
 		Content: []mcpContent{{Type: "text", Text: "✅ 所有 PM 事件已标记为已消费。PM 可确认 Agent 已响应变更。"}},
+	}
+}
+
+func (s *mcpServer) handleMarkEventProcessed(args map[string]interface{}) mcpToolResult {
+	entityID := getStr(args, "entity_id", "")
+	if entityID == "" {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "entity_id 为必填项"}}, IsError: true}
+	}
+	eventType := getStr(args, "event_type", "")
+	db, err := pmdb.Open()
+	if err != nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("打开数据库失败: %v", err)}}, IsError: true}
+	}
+	defer db.Close()
+	var count int
+	var qerr error
+	if eventType != "" {
+		qerr = db.QueryRow("SELECT COUNT(*) FROM events WHERE type = ? AND entity_id = ? AND processed_by_agent = 0", eventType, entityID).Scan(&count)
+	} else {
+		qerr = db.QueryRow("SELECT COUNT(*) FROM events WHERE entity_id = ? AND processed_by_agent = 0", entityID).Scan(&count)
+	}
+	if qerr != nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("查询事件失败: %v", qerr)}}, IsError: true}
+	}
+	if count == 0 {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "该实体没有未处理事件（可能已标记或不存在）"}}}
+	}
+	var res sql.Result
+	if eventType != "" {
+		res, err = db.Exec("UPDATE events SET processed_by_agent = 1 WHERE type = ? AND entity_id = ? AND processed_by_agent = 0", eventType, entityID)
+	} else {
+		res, err = db.Exec("UPDATE events SET processed_by_agent = 1 WHERE entity_id = ? AND processed_by_agent = 0", entityID)
+	}
+	if err != nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("标记失败: %v", err)}}, IsError: true}
+	}
+	n, _ := res.RowsAffected()
+	return mcpToolResult{
+		Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("✅ 已标记 %d 个事件为已处理（entity=%s type=%s）", n, entityID, eventType)}},
 	}
 }
 

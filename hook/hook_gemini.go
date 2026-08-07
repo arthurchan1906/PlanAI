@@ -13,6 +13,7 @@ import (
 
 	pmdb "aipmc/db"
 	"aipmc/store"
+	"aipmc/u"
 )
 
 // processGeminiHook reads the Gemini CLI hook stdin JSON and saves to discussion_log.
@@ -36,11 +37,16 @@ func ProcessGeminiHook() {
 		fmt.Fprintf(os.Stderr, "[aipm-gemini %s] ", now)
 		fmt.Fprintf(os.Stderr, format+"\n", args...)
 	}
+	errf := func(format string, args ...any) {
+		fmt.Fprintf(os.Stderr, "[aipm-gemini %s] ", now)
+		fmt.Fprintf(os.Stderr, format+"\n", args...)
+	}
 
 	// Catch panics so a bug never crashes the parent process.
 	defer func() {
 		if r := recover(); r != nil {
-			logf("PANIC: %v\n%s", r, string(debug.Stack()))
+			errf("PANIC: %v\n%s", r, string(debug.Stack()))
+			u.LogShared("HOOK", "panic src=gemini err=%v", r)
 			os.Exit(0)
 		}
 	}()
@@ -66,7 +72,8 @@ func ProcessGeminiHook() {
 	}
 
 	if err := json.Unmarshal(data, &raw); err != nil {
-		logf("JSON parse FAILED: %v — raw(first 200): %s", err, safePrefix(string(data), 200))
+		errf("JSON parse FAILED: %v — raw(first 200): %s", err, safePrefix(string(data), 200))
+		u.LogShared("HOOK", "json_parse_err src=gemini err=%v", err)
 		os.Exit(0)
 	}
 	logf("event=%s tool=%s session=%s", raw.Event, raw.ToolName, raw.SessionID)

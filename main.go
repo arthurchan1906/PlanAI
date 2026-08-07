@@ -422,6 +422,20 @@ func serveCommand() int {
 		return 1
 	}
 
+	// Step 3b: Refuse duplicate instance of the same project on a different port
+	// (P15/E2: 多实例并发写日志会稀释评估数据；历史上曾出现同项目双 web 实例)
+	for path, entry := range pmdb.LoadProjects() {
+		if path != projectPath || entry.WebPort == webPort || entry.WebPort <= 0 {
+			continue
+		}
+		if isPortInUse(entry.WebPort) {
+			if project, ok := checkExistingInstance(entry.WebPort); ok && project == projectName {
+				fmt.Fprintf(os.Stderr, "项目 %s 已在 :%d 运行（http://127.0.0.1:%d），请先停止旧实例再启动，避免多实例并发写日志\n", projectName, entry.WebPort, entry.WebPort)
+				return 1
+			}
+		}
+	}
+
 	// Step 4: Check proxy status
 	proxyAddr := fmt.Sprintf("127.0.0.1:%d", gcfg.ProxyPort)
 	proxyRunning := false
@@ -435,7 +449,12 @@ func serveCommand() int {
 	}
 
 	if proxyRunning {
-		fmt.Printf("✓ Proxy 已在运行 :%d\n", gcfg.ProxyPort)
+		owner := portOwnerProcess(gcfg.ProxyPort)
+		if owner != "" {
+			fmt.Printf("✓ Proxy 已在运行 :%d (%s)\n", gcfg.ProxyPort, owner)
+		} else {
+			fmt.Printf("✓ Proxy 已在运行 :%d\n", gcfg.ProxyPort)
+		}
 	} else {
 		fmt.Printf("⚠ Proxy 未运行 — 运行 `aipmc proxy` 或在 Web UI 中启动\n")
 	}

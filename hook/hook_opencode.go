@@ -12,6 +12,7 @@ import (
 
 	pmdb "aipmc/db"
 	"aipmc/store"
+	"aipmc/u"
 )
 
 // ProcessOpencodeHook reads the OpenCode hook stdin JSON and saves to discussion_log.
@@ -36,11 +37,16 @@ func ProcessOpencodeHook() {
 		fmt.Fprintf(os.Stderr, "[aipm-opencode %s] ", now)
 		fmt.Fprintf(os.Stderr, format+"\n", args...)
 	}
+	errf := func(format string, args ...any) {
+		fmt.Fprintf(os.Stderr, "[aipm-opencode %s] ", now)
+		fmt.Fprintf(os.Stderr, format+"\n", args...)
+	}
 
 	// Catch panics so a bug never crashes the parent process.
 	defer func() {
 		if r := recover(); r != nil {
-			logf("PANIC: %v\n%s", r, string(debug.Stack()))
+			errf("PANIC: %v\n%s", r, string(debug.Stack()))
+			u.LogShared("HOOK", "panic src=opencode err=%v", r)
 			os.Exit(0)
 		}
 	}()
@@ -107,7 +113,8 @@ func ProcessOpencodeHook() {
 	}
 
 	if err := json.Unmarshal(data, &raw); err != nil {
-		logf("JSON parse FAILED: %v", err)
+		errf("JSON parse FAILED: %v", err)
+		u.LogShared("HOOK", "json_parse_err src=opencode err=%v", err)
 		os.Exit(0)
 	}
 

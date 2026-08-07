@@ -63,3 +63,6 @@ opencode.json
 
 build/
 vendor/
+
+# stray build artifact (no code references)
+webdata/aipmc

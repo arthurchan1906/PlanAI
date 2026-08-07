@@ -838,7 +838,7 @@ func openOrCurrentDB(projectPath string) (*sql.DB, error) {
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		return nil, fmt.Errorf("project not found at %s", projectPath)
 	}
-	return sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL")
+	return sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)")
 }
 
 // RecentUserMessages returns the most recent N user messages from discussion_log.
