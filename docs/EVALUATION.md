@@ -232,10 +232,11 @@
 
 **E3. 成本效率**
 - 设计意图：L2 缓存、INJECT 去重的核心收益
-- 量化指标：LLM 调用节省数（L2 cached）；token 使用（cache_hit 比例）；INJECT 重复注入避免数
-- 数据源：日志 `[LLM] cache_hit=`、`L2 summary cached=`
+- 量化指标：`cache_hit/in_tok`（命中 token 占输入比例，与 proxy inspect 前端 `tk()` 口径一致）；cache_hit 绝对量；LLM 调用节省数（L2 cached）；INJECT 重复注入避免数
+- 数据源：日志 `[LLM] cache_hit=`（anthropic 路径）/ `n_hit=`（responses 路径，metrics 双字段兼容 8/7 修复）；`L2 summary cached=`
 - 基线：L2 缓存 100% 命中；INJECT same_content 去重 19194 次（避免重复注入）；Claude LLM cache_hit 大量（99712/101728）
-- 目标值：缓存命中率持续高位；无显著 token 浪费
+- **8/7 复测：cache_hit_rate 92.1%（43.1 亿 / 46.8 亿 tok）**——92% 输入命中上游 prefix cache，成本节省显著（DeepSeek 缓存读单价约为 miss 的 1/10）
+- 目标值：cache_hit_rate ≥ 90%；cache_create 上游（DeepSeek responses）不返回恒 0——`hit/(hit+create)` 恒 100% 无信号，故用 `hit/in_tok` 口径；codex 的 n_hit 数据源缺失（非漏采，见 E5 备注）
 
 ## 3. 已知问题 → 目标映射
 

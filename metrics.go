@@ -186,10 +186,16 @@ func dispatchMetrics(args *cli.Args) {
 			ag.calls++
 			ag.inTok += atoi(fields["in_tok"])
 			ag.outTok += atoi(fields["out_tok"])
+			// 字段名兼容：anthropic 路径打 cache_hit=/cache_create=，
+			// responses 路径打 n_hit=/n_create=——统一归一化，字段名变更不破坏指标。
 			if v := fields["cache_hit"]; v != "" {
+				ag.cacheHit += atoi(v)
+			} else if v := fields["n_hit"]; v != "" {
 				ag.cacheHit += atoi(v)
 			}
 			if v := fields["cache_create"]; v != "" {
+				ag.cacheCreate += atoi(v)
+			} else if v := fields["n_create"]; v != "" {
 				ag.cacheCreate += atoi(v)
 			}
 			if fields["injected"] == "Y" {
@@ -388,6 +394,19 @@ func dispatchMetrics(args *cli.Args) {
 		dgReasons = " [" + strings.Join(rs, " ") + "]"
 	}
 	printRow("E9  done_gate", fmt.Sprintf("pass=%d reject=%d%s", dgPass, dgReject, dgReasons), "参考", dgReject == 0)
+	// E3 成本效率：cache_hit/in_tok — 上游自动 prefix cache 利用率（8/7 实测
+	// 43 亿 / 46.6 亿 ≈ 92%）。cache_create 上游不返回恒 0，hit/(hit+create)
+	// 恒 100% 无信号（观测缺口见 EVALUATION E3）。
+	var tCacheHit, tInTokAll int
+	for _, a := range byAgent {
+		tCacheHit += a.cacheHit
+		tInTokAll += a.inTok
+	}
+	cacheHitRate := 0.0
+	if tInTokAll > 0 {
+		cacheHitRate = float64(tCacheHit) / float64(tInTokAll)
+	}
+	printRow("E3  cache_hit_rate", pct(cacheHitRate)+" ("+comma(tCacheHit)+"/"+comma(tInTokAll)+" tok)", "≥90%", cacheHitRate >= 0.90)
 	fmt.Println()
 
 	// Self-check: if there were [LLM] lines but nothing parsed, the log format
@@ -406,8 +425,8 @@ func dispatchMetrics(args *cli.Args) {
 			continue
 		}
 		cr := 0.0
-		if a.cacheHit+a.cacheCreate > 0 {
-			cr = float64(a.cacheHit) / float64(a.cacheHit+a.cacheCreate)
+		if a.inTok > 0 {
+			cr = float64(a.cacheHit) / float64(a.inTok)
 		}
 		avg := a.latSum / float64(a.calls)
 		fmt.Printf("%-8s %7d %12s %12s %8.1fs %10s\n", ag, a.calls, comma(a.inTok), comma(a.outTok), avg, pct(cr))
