@@ -40,14 +40,6 @@ func ProcessClaudeHook() {
 		os.Exit(0)
 	}
 
-	type patchHunk struct {
-		OldStart int      `json:"oldStart"`
-		OldLines int      `json:"oldLines"`
-		NewStart int      `json:"newStart"`
-		NewLines int      `json:"newLines"`
-		Lines    []string `json:"lines"`
-	}
-
 	var raw struct {
 		Event                string `json:"hook_event_name"`
 		SessionID            string `json:"session_id"`
@@ -61,16 +53,7 @@ func ProcessClaudeHook() {
 			OldString string `json:"old_string"`
 			NewString string `json:"new_string"`
 		} `json:"tool_input"`
-		ToolResponse struct {
-			OriginalFile    string      `json:"originalFile"`
-			FilePath        string      `json:"filePath"`
-			Stdout          string      `json:"stdout"`
-			Stderr          string      `json:"stderr"`
-			ExitCode        int         `json:"exitCode"`
-			Content         string      `json:"content"`
-			LinesCount      int         `json:"linesCount"`
-			StructuredPatch []patchHunk `json:"structuredPatch"`
-		} `json:"tool_response"`
+		ToolResponse toolResponse `json:"tool_response"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		fmt.Fprintf(os.Stderr, "[aipm-claude %s] JSON parse FAILED: %v — raw(first 200): %s\n", now, err, safePrefix(string(data), 200))
@@ -295,5 +278,51 @@ func SetupClaudeHooks(commandPath string) error {
 		return fmt.Errorf("write settings: %w", err)
 	}
 	fmt.Printf("  ✅ Hooks configured → %s\n", settingsPath)
+	return nil
+}
+
+// patchHunk mirrors Claude Code's structuredPatch hunk shape.
+type patchHunk struct {
+	OldStart int      `json:"oldStart"`
+	OldLines int      `json:"oldLines"`
+	NewStart int      `json:"newStart"`
+	NewLines int      `json:"newLines"`
+	Lines    []string `json:"lines"`
+}
+
+// toolResponse matches Claude Code's PostToolUse tool_response. It is
+// usually a single object, but Claude emits an ARRAY when a tool yields
+// multiple results (e.g. multi-file Write) — previously that shape failed
+// json.Unmarshal and the whole hook event was silently dropped.
+type toolResponse struct {
+	OriginalFile    string      `json:"originalFile"`
+	FilePath        string      `json:"filePath"`
+	Stdout          string      `json:"stdout"`
+	Stderr          string      `json:"stderr"`
+	ExitCode        int         `json:"exitCode"`
+	Content         string      `json:"content"`
+	LinesCount      int         `json:"linesCount"`
+	StructuredPatch []patchHunk `json:"structuredPatch"`
+}
+
+// UnmarshalJSON accepts both a single object and an array of objects,
+// keeping the first element when multiple results are present.
+func (t *toolResponse) UnmarshalJSON(b []byte) error {
+	if len(b) > 0 && b[0] == '[' {
+		var arr []toolResponse
+		if err := json.Unmarshal(b, &arr); err != nil {
+			return err
+		}
+		if len(arr) > 0 {
+			*t = arr[0]
+		}
+		return nil
+	}
+	type plain toolResponse
+	var p plain
+	if err := json.Unmarshal(b, &p); err != nil {
+		return err
+	}
+	*t = toolResponse(p)
 	return nil
 }
