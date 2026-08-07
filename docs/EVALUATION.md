@@ -250,6 +250,8 @@
 | StoreGitCommit 预检 LIKE 匹配空 hash 行 → hook 记录静默丢失（13:38 后 6 个 commit 被吞） | B8/数据完整性 | 🔴 | 已修（8/7 排除空 hash + 回归测试，bug-20260807-144853-f2c39e） |
 | done-gate 空 hash commit 放行 task done（不可溯源记录通过验收） | 数据完整性 | 🔴 | 已修（8/7 `countVerifiedCommits` 要求 hash 非空，e75b726） |
 | `[MCP]` 日志无 agent 字段 → 无法按 agent 拆 MCP 指标 | E 观测 | 🟡 | 已修（8/7 补 `src=`/`name=`，取自 initialize clientInfo，e75b726） |
+| hook 抢跑后 `record_commit` 去重直接返回 → 孤儿 commit 永远无法绑定 task（三件套首跑窗口内 50% orphan） | P0 commit 三件套 | 🔴 | 已修（8/7 `BackfillCommitTask` 幂等回填 + 去重回填语义，e007ee4；窗口内 orphan 12→0） |
+| `record_commit` 去重精确匹配短 hash → hook 完整 hash 行不命中，产生重复行 | P0 commit 三件套 | 🔴 | 已修（8/7 双向前缀匹配，5356486；实测触发后合并数据） |
 | gitsync Chdir 无错误检查 | — | 🟡 | P3 待办（可能操作错误目录） |
 | extractSessionText 预算溢出（S 级消息无预算控制） | B1 | 🟡 | P3 待办 |
 | 多 pipeline 并发 CWD 竞争（进程级全局状态） | — | 🟡 | P3 待办 |
