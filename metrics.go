@@ -45,13 +45,19 @@ func dispatchMetrics(args *cli.Args) {
 		db.QueryRow("SELECT COUNT(*), COALESCE(SUM(processed_by_agent),0) FROM events").Scan(&evTotal, &evProcessed)
 		var evUnique int
 		db.QueryRow("SELECT COUNT(DISTINCT type || '|' || entity_type || '|' || entity_id) FROM events").Scan(&evUnique)
-		var cTotal, cOrphan, cHashOk, cHashUnique int
+		var cTotal, cOrphan, cHashOk, cHashDupRows, cMultiTaskGroups int
+		// hash_uniqueness 语义：只把「采集 bug 重复」标红——同 task 重复行 / 含空 task 的重复组行。
+		// 多 task 同 hash（同一物理 commit 被多个 task 引用，relates_to 多对多）是合法语义，单独计数不告警。
+		const dupRowsSQL = "SELECT COALESCE(SUM(1),0) FROM commits c WHERE c.commit_hash IS NOT NULL AND c.commit_hash != '' AND c.commit_hash IN (SELECT commit_hash FROM commits WHERE commit_hash IS NOT NULL AND commit_hash != '' %s GROUP BY commit_hash HAVING COUNT(*) > 1 AND (COUNT(DISTINCT task_id) = 1 OR SUM(CASE WHEN task_id IS NULL OR task_id='' THEN 1 ELSE 0 END) > 0))"
+		const multiTaskSQL = "SELECT COUNT(*) FROM (SELECT commit_hash FROM commits WHERE commit_hash IS NOT NULL AND commit_hash != '' %s GROUP BY commit_hash HAVING COUNT(*) > 1 AND COUNT(DISTINCT task_id) > 1 AND SUM(CASE WHEN task_id IS NULL OR task_id='' THEN 1 ELSE 0 END) = 0)"
 		if since != "" && since != "all" {
 			db.QueryRow("SELECT COUNT(*), COALESCE(SUM(CASE WHEN task_id IS NULL OR task_id='' THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN commit_hash IS NOT NULL AND commit_hash != '' THEN 1 ELSE 0 END),0) FROM commits WHERE created_at >= ?", since).Scan(&cTotal, &cOrphan, &cHashOk)
-			db.QueryRow("SELECT COUNT(DISTINCT commit_hash) FROM commits WHERE created_at >= ? AND commit_hash IS NOT NULL AND commit_hash != ''", since).Scan(&cHashUnique)
+			db.QueryRow(fmt.Sprintf(dupRowsSQL, "AND created_at >= ?"), since).Scan(&cHashDupRows)
+			db.QueryRow(fmt.Sprintf(multiTaskSQL, "AND created_at >= ?"), since).Scan(&cMultiTaskGroups)
 		} else {
 			db.QueryRow("SELECT COUNT(*), COALESCE(SUM(CASE WHEN task_id IS NULL OR task_id='' THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN commit_hash IS NOT NULL AND commit_hash != '' THEN 1 ELSE 0 END),0) FROM commits").Scan(&cTotal, &cOrphan, &cHashOk)
-			db.QueryRow("SELECT COUNT(DISTINCT commit_hash) FROM commits WHERE commit_hash IS NOT NULL AND commit_hash != ''").Scan(&cHashUnique)
+			db.QueryRow(fmt.Sprintf(dupRowsSQL, "")).Scan(&cHashDupRows)
+			db.QueryRow(fmt.Sprintf(multiTaskSQL, "")).Scan(&cMultiTaskGroups)
 		}
 		// D3 workflow_score：启发式规则分（100 起扣，非 AI 质量评估）— 覆盖率标注分母。
 		var wfTotal, wfScored, wfSum int
@@ -131,12 +137,13 @@ func dispatchMetrics(args *cli.Args) {
 			hashTrace = float64(cHashOk) / float64(cTotal)
 		}
 		if cHashOk > 0 {
-			hashDup = 1.0 - float64(cHashUnique)/float64(cHashOk)
+			hashDup = float64(cHashDupRows) / float64(cHashOk)
 		}
 		fmt.Println("P0  commit 三件套（采集管道完整性）")
 		printRow("     orphan_rate", pct(orphanRate)+" ("+fmt.Sprint(cOrphan)+"/"+fmt.Sprint(cTotal)+")", "<10%", orphanRate < 0.10)
 		printRow("     hash_traceability", pct(hashTrace)+" ("+fmt.Sprint(cHashOk)+"/"+fmt.Sprint(cTotal)+")", ">90%", hashTrace > 0.90)
-		printRow("     hash_uniqueness", pct(hashDup), "=0", hashDup == 0)
+		printRow("     hash_uniqueness", pct(hashDup)+" ("+fmt.Sprint(cHashDupRows)+"行/"+fmt.Sprint(cHashOk)+")", "=0", hashDup == 0)
+		fmt.Printf("      hash 多task引用: %d 组（同 commit 多 task 关联，合法 relates_to，不告警）\n", cMultiTaskGroups)
 		fmt.Println()
 	} else {
 		fmt.Printf("⚠ 当前项目无 pmai.db（%v）— 跳过 DB 类指标\n\n", err)

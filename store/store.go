@@ -452,6 +452,21 @@ func CreateCommit(projectPath string, title, summary, evidenceSummary, reviewNot
 	if err := db.QueryRow("SELECT 1 FROM tasks WHERE id = ?", taskID).Scan(&_x); err != nil {
 		return nil, fmt.Errorf("task not found: %s", taskID)
 	}
+	// Dedup: the git hook / GITSYNC usually records the commit first as a
+	// task-less row; a later record_commit for the same hash must bind that
+	// row instead of inserting a duplicate (empty-task dup pollutes
+	// hash_uniqueness and orphan metrics). Rows already bound to a task keep
+	// the current insert semantics (multi-task references are allowed).
+	if existingID := findExistingCommitByHash(db, commitHash); existingID != "" {
+		var curTask string
+		if err := db.QueryRow("SELECT COALESCE(task_id,'') FROM commits WHERE id = ?", existingID).Scan(&curTask); err == nil && curTask == "" {
+			if _, err := BackfillCommitTask(projectPath, existingID, taskID, title, files); err != nil {
+				return nil, fmt.Errorf("merge existing commit %s: %w", existingID, err)
+			}
+			u.LogShared("MCP", "tool=aipm_record_commit status=dedup id=%s task=%s", existingID, taskID)
+			return GetCommit(existingID)
+		}
+	}
 	id := u.Slug("commit")
 	now := u.NowISO()
 	filesJSON := "[]"
@@ -534,6 +549,41 @@ func BatchCreateCommits(projectPath, taskID, branch, status, testStatus, reviewS
 		if item.CommitHash == "" {
 			result.Failed++
 			result.Details[i] = BatchRecordItem{Index: i, Success: false, Error: "commit requires commit_hash — run `git rev-parse HEAD` and pass the full SHA"}
+			continue
+		}
+		// Dedup: same hash may already exist (hook/GITSYNC task-less row) —
+		// bind task + backfill gaps instead of inserting a duplicate row.
+		var existingID, existingTask string
+		tx.QueryRow("SELECT id, COALESCE(task_id,'') FROM commits WHERE commit_hash IS NOT NULL AND commit_hash != '' AND (? LIKE commit_hash || '%' OR commit_hash LIKE ? || '%') LIMIT 1",
+			item.CommitHash, item.CommitHash).Scan(&existingID, &existingTask)
+		if existingID != "" {
+			upd := []string{}
+			args := []any{}
+			if existingTask == "" {
+				upd = append(upd, "task_id = ?")
+				args = append(args, taskID)
+			}
+			var curTitle, curFiles string
+			tx.QueryRow("SELECT COALESCE(title,''), COALESCE(files_json,'') FROM commits WHERE id = ?", existingID).Scan(&curTitle, &curFiles)
+			if curTitle == "" && item.Title != "" {
+				upd = append(upd, "title = ?")
+				args = append(args, item.Title)
+			}
+			if (curFiles == "" || curFiles == "[]" || curFiles == "null") && len(item.Files) > 0 {
+				upd = append(upd, "files_json = ?")
+				args = append(args, u.JsonStr(item.Files))
+			}
+			if len(upd) > 0 {
+				args = append(args, u.NowISO(), existingID)
+				if _, err := tx.Exec("UPDATE commits SET "+strings.Join(upd, ", ")+", updated_at = ? WHERE id = ?", args...); err != nil {
+					result.Failed++
+					result.Details[i] = BatchRecordItem{Index: i, Success: false, Error: err.Error()}
+					continue
+				}
+			}
+			u.LogShared("MCP", "tool=aipm_record_commits status=dedup id=%s task=%s", existingID, taskID)
+			result.Success++
+			result.Details[i] = BatchRecordItem{Index: i, Success: true, ID: existingID}
 			continue
 		}
 		id := u.Slug("commit")

@@ -256,6 +256,8 @@
 | `[MCP]` 日志无 agent 字段 → 无法按 agent 拆 MCP 指标 | E 观测 | 🟡 | 已修（8/7 补 `src=`/`name=`，取自 initialize clientInfo，e75b726） |
 | hook 抢跑后 `record_commit` 去重直接返回 → 孤儿 commit 永远无法绑定 task（三件套首跑窗口内 50% orphan） | P0 commit 三件套 | 🔴 | 已修（8/7 `BackfillCommitTask` 幂等回填 + 去重回填语义，e007ee4；窗口内 orphan 12→0） |
 | `record_commit` 去重精确匹配短 hash → hook 完整 hash 行不命中，产生重复行 | P0 commit 三件套 | 🔴 | 已修（8/7 双向前缀匹配，5356486；实测触发后合并数据） |
+| `aipm_record_commits` 批量路径无按 hash 去重 → hook 抢跑后批量记录产生重复行（8/7 实测 3 组实时重复） | P0 commit 三件套 | 🔴 | 已修（8/7 `CreateCommit` 去重兜底 + `BatchCreateCommits` 逐条双向前缀去重合并；存量 3 组已并） |
+| hash_uniqueness 原 distinct 口径把多 task 同 hash（合法 relates_to）标红 → 误报 | P0 commit 三件套 | 🟡 | 已修（8/7 细化口径：只统计同 task/含空 task 重复组，多 task 单列不告警） |
 | gitsync Chdir 无错误检查 | — | 🟡 | P3 待办（可能操作错误目录） |
 | extractSessionText 预算溢出（S 级消息无预算控制） | B1 | 🟡 | P3 待办 |
 | 多 pipeline 并发 CWD 竞争（进程级全局状态） | — | 🟡 | P3 待办 |
@@ -300,3 +302,13 @@
 - 数据源：`[DONE-GATE]` 日志（reject 埋点 8/7 补：`reject task=... reason=no_verified_commit`）
 - 基线（8/7）：pass=20 / reject=0（历史仅 pass 埋点；reject 埋点上线后才有拒绝数据）
 - 目标值：reject=0（参考）；若 reject>0，原因分布用于定位「任务为何无法闭环」（无 commit/未 approve/空 hash）
+
+**P0. commit 三件套：采集管道完整性**（8/7 审计新增）
+- 设计意图：任一标红 = 采集管道异常（任务关联 / 来源可追踪 / 去重正确性）。三件套互为补充：orphan 看关联、hash 非空率看来源、去重率看「同一 commit 是否被重复记录」
+- 量化指标与语义：
+  - `orphan_rate`：`task_id` 空占比，目标 <10%
+  - `hash_traceability`：`commit_hash` 非空率，目标 >90%（空 hash 不可溯源）
+  - `hash_uniqueness`：**只统计「采集 bug 重复」行**——同 task 重复行 + 含空 task 的重复组行，目标 =0。多 task 同 hash（同一物理 commit 被多个 task 引用，`relates_to` 多对多）是合法语义，单列 `hash 多task引用: N 组` 不告警（8/7 细化：原 distinct 口径会把合法多对多也标红，狼来了）
+- 数据源：`commits` 表（窗口参数 `--since`，默认 8/7 14:00 起只看修复后数据；`--since all` 看全表）
+- 基线（8/7 ED 全表清理后）：orphan 5.6% ✅ / hash_traceability 96.8% ✅ / hash_uniqueness 0.0% ✅ / 多 task 引用 132 组（合法）
+- **8/7 ED 存量清理记录**：547 空 hash → 精确/高置信回填 518（94.7%），29 行为 Session/重写记录无 git 对应保留；短 hash 归一化 102 行；同 task 真重复合并 12 组删 16 行 + 空 task 重复组删 29 行 + 实时重复 3 组（引用全部迁移，审计写入 `audit_log`）；hash_traceability 62.4% → 96.8%
