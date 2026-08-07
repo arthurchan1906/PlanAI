@@ -1179,7 +1179,7 @@ func BuildBriefing(aiClient *ai.Client, graphSection string) string {
 			for _, e := range events {
 				b.WriteString(fmt.Sprintf("- [%s] %s\n", e["type"], e["summary"]))
 			}
-			b.WriteString(fmt.Sprintf("  → 建议: 用 aipm_mark_consumed 标记已读\n\n"))
+			b.WriteString("  → 建议: 事件处理完毕用 aipm_mark_event_processed(entity_id=..., event_type=...) 标记已处理（计入 D2 已处理率）；仅浏览用 aipm_mark_consumed 标记已读\n\n")
 		}
 
 		if len(report.Blocked) > 0 {
