@@ -85,7 +85,7 @@ func mcpClientName(ci *mcpClientInfo) string {
 	switch strings.ToLower(ci.Name) {
 	case "claude", "claude-code", "claudecode":
 		return "claude-code"
-	case "codex", "codex-cli":
+	case "codex", "codex-cli", "codex-mcp-client":
 		return "codex-cli"
 	case "cursor":
 		return "cursor"
