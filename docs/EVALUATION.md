@@ -217,6 +217,7 @@
 - 数据源：`~/.aipmc/logs/aipmc.log` 的 `[MCP]`（结构化 `tool=/status=/src=`，双源方案见 DATA-AUDIT 3.5）
 - 基线（8/7）：~2,927 行，成功率待首跑确认（含历史契约错误 record_commits/record_bug）
 - **8/7 复测修正：成功率 94.6%（160/2973 ERR）——旧值 95.9% 是虚高**。根因：`parseKVFields` 后覆盖前，`aipm_update_task_status` 参数回显 `status=done` 覆盖真实 `status=ERR`（89 行双 status，39 条 ERR 漏计）。已改首见优先（P2 批次）。ERR 分布：aipmc_vision 62 / update_task_status 39 / record_commit 23——vision 错误率需单独排查
+- **8/7 vision 修复**：ERR 主因是本地量化 VL 模型（Qwen3.5-4B）间歇性 `empty_response`（实测同批图片 ERR→重试 OK）；`vision.go` 已加空响应自动重试 2 次（82c3e61，需重启 serve 生效）。`image_read`（文件缺失）不重试
 - 目标值：成功率 ≥ 95%（基线确认后可调）；契约错误（工具描述/输入校验）应趋零
 - 备注：responses 路径 cache 字段上游（DeepSeek）不返回，`cache_hit=0` 如实记录——cache_rate 对 codex 不可用，非漏采
 
