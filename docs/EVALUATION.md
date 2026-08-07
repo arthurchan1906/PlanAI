@@ -312,3 +312,4 @@
 - 数据源：`commits` 表（窗口参数 `--since`，默认 8/7 14:00 起只看修复后数据；`--since all` 看全表）
 - 基线（8/7 ED 全表清理后）：orphan 5.6% ✅ / hash_traceability 96.8% ✅ / hash_uniqueness 0.0% ✅ / 多 task 引用 132 组（合法）
 - **8/7 ED 存量清理记录**：547 空 hash → 精确/高置信回填 518（94.7%），29 行为 Session/重写记录无 git 对应保留；短 hash 归一化 102 行；同 task 真重复合并 12 组删 16 行 + 空 task 重复组删 29 行 + 实时重复 3 组（引用全部迁移，审计写入 `audit_log`）；hash_traceability 62.4% → 96.8%
+- **8/7 aipmc 自身库清理记录**：36 空 hash（97993d9 前 MCP 未传 hash 的旧行）→ 标题精确回填 24（66.7%），12 行为代理拟稿标题与 git subject 不符，归档不强行回填；回填暴露同款「hook+MCP 双记」重复 → 合并 20 组删 21 行（引用迁移 31）；hash_traceability 82.3% → 93.4%，uniqueness 0.0%。历史孤儿 79 个（GITSYNC/hook 未绑定）属「孤儿绑定」P0 并行工作，需人工判断任务归属
