@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -31,9 +30,11 @@ func dispatchMetrics(args *cli.Args) {
 	// ── DB class (current project) ──
 	db, err := pmdb.Open()
 	if err == nil {
-		var total, withL2, nested int
+		var total, withL2, nested, mdBlock int
 		db.QueryRow("SELECT COUNT(*), COALESCE(SUM(CASE WHEN summary!='' THEN 1 ELSE 0 END),0) FROM session_summaries").Scan(&total, &withL2)
-		db.QueryRow("SELECT COUNT(*) FROM session_summaries WHERE summary LIKE '%\"goal\":\"{%' OR summary LIKE '%```json%'").Scan(&nested)
+		// B2 双口径：nested_goal = goal 值本身是嵌套 JSON；md_block = 摘要含 ```json 代码块（不同缺陷，分开统计）。
+		db.QueryRow("SELECT COUNT(*) FROM session_summaries WHERE summary LIKE '%\"goal\":\"{%'").Scan(&nested)
+		db.QueryRow("SELECT COUNT(*) FROM session_summaries WHERE summary LIKE '%```json%'").Scan(&mdBlock)
 		var evTotal, evProcessed int
 		db.QueryRow("SELECT COUNT(*), COALESCE(SUM(processed_by_agent),0) FROM events").Scan(&evTotal, &evProcessed)
 		var evUnique int
@@ -55,6 +56,7 @@ func dispatchMetrics(args *cli.Args) {
 		}
 		printRow("B1  l2_coverage", pct(l2), "≥85%", l2 >= 0.85)
 		printRow("B2  l2_nested_goal", fmt.Sprint(nested), "=0", nested == 0)
+		printRow("B2  l2_md_block", fmt.Sprint(mdBlock), "=0", mdBlock == 0)
 		printRow("B6  event_dup_rate", pct(dup), "<10%", dup < 0.10)
 		printRow("D2  event_processed_rate", pct(proc), "≥40%", proc >= 0.40)
 		fmt.Println()
@@ -77,40 +79,44 @@ func dispatchMetrics(args *cli.Args) {
 	var latestItems, latestTotal int
 	haveLatest := false
 
-	llmRe := regexp.MustCompile(`agent=(\w+).*?in_tok=(\d+) out_tok=(\d+)(?: cache_hit=(\d+))?(?: cache_create=(\d+))? injected=([YN]) lat=([\d.]+)s`)
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1024*1024), 1024*1024)
+	llmLines := 0
 	for sc.Scan() {
 		line := sc.Text()
 		switch {
 		case strings.Contains(line, "[LLM]"):
-			m := llmRe.FindStringSubmatch(line)
-			if m == nil {
+			llmLines++
+			fields := parseKVFields(line)
+			agName := fields["agent"]
+			if agName == "" || fields["in_tok"] == "" || fields["out_tok"] == "" {
 				continue
 			}
-			ag := byAgent[m[1]]
+			ag := byAgent[agName]
 			if ag == nil {
 				ag = &llm{}
-				byAgent[m[1]] = ag
+				byAgent[agName] = ag
 			}
 			ag.calls++
-			ag.inTok += atoi(m[2])
-			ag.outTok += atoi(m[3])
-			if m[4] != "" {
-				ag.cacheHit += atoi(m[4])
+			ag.inTok += atoi(fields["in_tok"])
+			ag.outTok += atoi(fields["out_tok"])
+			if v := fields["cache_hit"]; v != "" {
+				ag.cacheHit += atoi(v)
 			}
-			if m[5] != "" {
-				ag.cacheCreate += atoi(m[5])
+			if v := fields["cache_create"]; v != "" {
+				ag.cacheCreate += atoi(v)
 			}
-			if m[6] == "Y" {
+			if fields["injected"] == "Y" {
 				ag.injectedY++
 			} else {
 				ag.injectedN++
 			}
-			lat := atof(m[7])
-			ag.latSum += lat
-			if lat > ag.latMax {
-				ag.latMax = lat
+			if v := fields["lat"]; v != "" {
+				lat := atof(strings.TrimSuffix(v, "s"))
+				ag.latSum += lat
+				if lat > ag.latMax {
+					ag.latMax = lat
+				}
 			}
 		case strings.Contains(line, "[HOOK]"):
 			if strings.Contains(line, "hook=post-commit") {
@@ -172,8 +178,16 @@ func dispatchMetrics(args *cli.Args) {
 	}
 	fmt.Println()
 
+	// Self-check: if there were [LLM] lines but nothing parsed, the log format
+	// changed (e.g. new field inserted) and metrics would silently read zero.
+	if llmLines > 100 && len(byAgent) == 0 {
+		fmt.Printf("⚠ 自检: 日志有 %d 条 [LLM] 行但解析为 0 — 日志格式可能已变化，请检查 key=value 解析\n", llmLines)
+	}
+
 	fmt.Println("── [消耗参考] ──")
 	fmt.Printf("%-8s %7s %12s %12s %10s %10s\n", "agent", "calls", "in_tok", "out_tok", "avg_lat", "cache_rate")
+	var tCalls, tIn, tOut int
+	var tLat float64
 	for _, ag := range []string{"claude", "codex", "cursor", "opencode"} {
 		a := byAgent[ag]
 		if a == nil || a.calls == 0 {
@@ -185,7 +199,33 @@ func dispatchMetrics(args *cli.Args) {
 		}
 		avg := a.latSum / float64(a.calls)
 		fmt.Printf("%-8s %7d %12s %12s %8.1fs %10s\n", ag, a.calls, comma(a.inTok), comma(a.outTok), avg, pct(cr))
+		tCalls += a.calls
+		tIn += a.inTok
+		tOut += a.outTok
+		tLat += a.latSum
 	}
+	if tCalls > 0 {
+		fmt.Printf("%-8s %7d %12s %12s %8.1fs\n", "totals", tCalls, comma(tIn), comma(tOut), tLat/float64(tCalls))
+	}
+}
+
+// parseKVFields extracts key=value tokens from a log line (after the [TAG]
+// marker) into a map. Order-independent, so inserting a new field (e.g.
+// project=) does not break parsing.
+func parseKVFields(line string) map[string]string {
+	out := map[string]string{}
+	idx := strings.Index(line, "]")
+	if idx < 0 {
+		return out
+	}
+	for _, tok := range strings.Fields(line[idx+1:]) {
+		eq := strings.Index(tok, "=")
+		if eq <= 0 {
+			continue
+		}
+		out[tok[:eq]] = tok[eq+1:]
+	}
+	return out
 }
 
 func printRow(name, val, target string, ok bool) {
