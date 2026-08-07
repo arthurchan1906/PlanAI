@@ -51,7 +51,10 @@ func (a *App) ReloadAI() {
 		a.mu.Unlock()
 		return
 	}
-	apiKey := os.Getenv("AI_API_KEY")
+	apiKey := cfg.AIApiKey
+	if apiKey == "" {
+		apiKey = os.Getenv("AI_API_KEY")
+	}
 	embEndpoint := cfg.AIEmbeddingEndpoint
 	if embEndpoint == "" {
 		embEndpoint = os.Getenv("AI_EMBEDDING_ENDPOINT")

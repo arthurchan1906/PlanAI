@@ -572,6 +572,7 @@ type Config struct {
 	AIEmbeddingEndpoint string                   `json:"ai_embedding_endpoint,omitempty"`
 	AIModel             string                   `json:"ai_model,omitempty"`
 	AIChatModel         string                   `json:"ai_chat_model,omitempty"`
+	AIApiKey            string                   `json:"ai_api_key,omitempty"`
 	Model               string                   `json:"model,omitempty"`               // per-project default virtual model
 	AgentOverrides      map[string]AgentOverride `json:"agent_overrides,omitempty"`     // per-project per-agent overrides
 }
@@ -590,6 +591,9 @@ func LoadConfig() Config {
 	}
 	if v := os.Getenv("AI_CHAT_MODEL"); v != "" {
 		cfg.AIChatModel = v
+	}
+	if v := os.Getenv("AI_API_KEY"); v != "" {
+		cfg.AIApiKey = v
 	}
 	dir, err := RuntimeDir()
 	if err != nil {
@@ -625,6 +629,11 @@ func LoadConfig() Config {
 		if cfg.AIChatModel == "" {
 			if v, ok := raw["ai_chat_model"].(string); ok {
 				cfg.AIChatModel = v
+			}
+		}
+		if cfg.AIApiKey == "" {
+			if v, ok := raw["ai_api_key"].(string); ok {
+				cfg.AIApiKey = v
 			}
 		}
 	}

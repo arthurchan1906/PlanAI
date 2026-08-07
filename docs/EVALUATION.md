@@ -56,6 +56,7 @@
 - 基线：**63/114 = 55%**（51 个 session 无摘要）
 - 目标值：≥85%（设计验收线）
 - 备注：无摘要的 51 个 session 需排查（AI 不可用 / session 太短 / 归类失败）
+- **8/7 根因排查（B1 归因）**：281 次 L2 summarize error = **225 次 DeepSeek 401**（`api.deepseek.com` 返回 `Authentication Fails (governor)`，config.json 无 `ai_api_key` 字段、env 无 `AI_API_KEY`）+ **55 次本地网关拒连**（aipmc 项目配 `localhost:8080` llama-server 未启动）+ 1 次 EOF。8/7 已修：`LoadConfig`/`ReloadAI` 支持 `ai_api_key`（config.json 字段，env 优先）；**剩余依赖环境**：EncryptDrive config.json 填入有效 DeepSeek key，或启动 llama-server:8080 后重跑 pipeline 复测覆盖率
 
 **B2. L2 goal 质量**
 - 设计意图：`7ec9826` L2 goal unnest（剥离嵌套 JSON）
