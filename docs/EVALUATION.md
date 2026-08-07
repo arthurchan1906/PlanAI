@@ -76,12 +76,13 @@
 - 备注：缓存命中会复用历史脏摘要（见 B2 根因），缓存读取需带 unnest 兜底
 
 **B4. L3 Reconcile 产出与质量**
-- 设计意图：`task-20260727-133003-10d121`「Baseline 数据收集 — reconcile 产出质量验证」（todo 未完成）
+- 设计意图：`task-20260727-133003-10d121`「Baseline 数据收集 — reconcile 产出质量验证」（8/7 完成）
 - 量化指标：commit↔session 自动链接数（relates_to 边）；tentative_link 假阳性率
 - 数据源：`graph_edges`、`events(type=tentative_link)`
-- 基线：709 条 commit↔session 链接（占比 63%）；595 条 file_touch；114 条 tentative_link 事件
+- 基线（8/7 采集）：relates_to **867** 条（commit→session 665 / commit→task 128 / discussion 相关 74 / task→bug 1）；file_touch 621 条；same_session 11141 条；fixes 3 条
+- 质量验证：随机抽样 5 条 commit→session 边，evidence 均为 2+ 真实文件交集，**无假阳性** ✅；`evidence_json` 含 `note`+`via`，证据可溯源
 - 目标值：tentative 低置信度链接占 auto_linked 比例 < 30%
-- 备注：**Baseline 任务尚未执行**——这是首要补齐项
+- 结论：tentative_link **116/867 = 13.4% < 30% ✅**
 
 **B5. graph_edges 覆盖率**
 - 设计意图：`3150030` IDF-weighted file_touch；Activity 图数据源
@@ -248,6 +249,6 @@
 ## 4. 评估执行建议
 
 1. **先固化基线**：本清单即基线 v1（2026-08-07）。后续每次评估更新基线。
-2. **优先补齐缺口**：B4（reconcile baseline 任务）和 E1（日志查询指南）是评估能力本身的前置项。
+2. **优先补齐缺口**：B4 已完成（reconcile 基线已验证）；E1（日志查询指南）是剩余前置项。
 3. **修复不急但需排期**：B6、C2、FTS5 三个 🔴 问题影响数据质量，建议在下一迭代修复并复测对应目标。
 4. **新增功能门槛**：任何功能合入前必须定义其可量化目标（本清单编号），否则视为未完成。
