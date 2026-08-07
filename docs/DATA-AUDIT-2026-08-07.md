@@ -131,13 +131,13 @@ ED 库 876 个 commit 记录中 **547 个（62.4%）无 commit_hash**——来�
 
 | 特征（review/test）| 行数 | 来源判断 |
 |---|---|---|
-| `pending/not_run` | **534** | MCP `aipm_record_commit` **不带 commit_hash 参数**（CreateCommit 默认 pending/not_run；hook 路径写 auto/auto） |
+| `pending/not_run` | **538**（534 committed + 3 approved 状态 + 1 draft） | MCP `aipm_record_commit` **不带 commit_hash 参数**（CreateCommit 默认 pending/not_run；hook 路径写 auto/auto） |
 | `approved/passed` | 3 | MCP 手动补录 |
-| 其他 | 10 | MCP 记录 |
+| 其他 | 6 | MCP 记录 |
 
-**根因：MCP 工具设计问题——`aipm_record_commit`/`aipm_record_commits` 允许不带 hash 创建 commit 记录**，而非 StoreGitCommit bug 残留。Agent 从 git 拿 hash 是成本极低的，工具应强制要求或自动从 git 补全。
+**根因：MCP 工具设计问题——`aipm_record_commit`/`aipm_record_commits` 允许不带 hash 创建 commit 记录**（538/547 = 98.4%），而非 StoreGitCommit bug 残留。Agent 从 git 拿 hash 是成本极低的，工具应强制要求或自动从 git 补全。
 
-**修复方向**：工具层要求 commit_hash 必填（或自动 `git rev-parse HEAD` 补全）；存量 547 行待一次性清理脚本评估（无法补的按来源归档/删除，可补的用 git log 回填）。
+**修复（8/7 已落地）**：store 层 `CreateCommit`/`BatchCreateCommits` 强制 commit_hash 必填（空 hash 直接报错，错误信息提示 `git rev-parse HEAD`）+ MCP 工具描述改为必填 + 回归测试。**水龙头已关**；存量 547 行待一次性清理脚本评估（无法补的按来源归档/删除，可补的用 git log 回填）。
 
 ### 2.9 🟡 Worktree 提交无法记录（采集缺口）
 

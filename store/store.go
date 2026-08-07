@@ -436,6 +436,9 @@ func GetCommit(id string) (map[string]any, error) {
 }
 
 func CreateCommit(projectPath string, title, summary, evidenceSummary, reviewNotes, branch, commitHash, taskID, decisionID, status, testStatus, reviewStatus string, files []string) (map[string]any, error) {
+	if commitHash == "" {
+		return nil, fmt.Errorf("commit requires commit_hash — run `git rev-parse HEAD` and pass the full SHA")
+	}
 	if taskID == "" {
 		return nil, fmt.Errorf("commit requires --task-id (or --task-ids for multi-task). Find a task: aipmc task list --status in_progress")
 	}
@@ -527,6 +530,11 @@ func BatchCreateCommits(projectPath, taskID, branch, status, testStatus, reviewS
 
 	now := u.NowISO()
 	for i, item := range items {
+		if item.CommitHash == "" {
+			result.Failed++
+			result.Details[i] = BatchRecordItem{Index: i, Success: false, Error: "commit requires commit_hash — run `git rev-parse HEAD` and pass the full SHA"}
+			continue
+		}
 		id := u.Slug("commit")
 		filesJSON := "[]"
 		if len(item.Files) > 0 {

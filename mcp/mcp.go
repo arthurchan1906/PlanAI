@@ -288,7 +288,7 @@ func (s *mcpServer) registerTools() {
 
 	s.addTool(MCPTool{
 		Name:        "aipm_record_commit",
-		Description: "每次完成一轮代码修改并 git commit 后，调用此工具将 commit 记录到 PM 系统中。这是连接「代码修改」和「task 跟踪」的关键桥梁——不记录 commit 会导致 task 无法标记为 done。\n\n调用时机：git commit 完成后立即调用。即使 commit 尚未 push 也可以记录。\n\n参数要点：task_id 是必填项，可从 aipm_search_context 或 aipm_list_tasks 中找到当前正在做的 task。review_status 设为 approved、test_status 设为 passed 可以让关联 task 通过 done-gate 检查。如果不确定填什么，review_status 和 test_status 不传即可（默认 pending/not_run）。\n\n自动行为：会检测 commit 中的文件是否超出 task 所属 plan 的 scope，如超出会返回 scope drift 警告。",
+		Description: "每次完成一轮代码修改并 git commit 后，调用此工具将 commit 记录到 PM 系统中。这是连接「代码修改」和「task 跟踪」的关键桥梁——不记录 commit 会导致 task 无法标记为 done。\n\n调用时机：git commit 完成后立即调用。即使 commit 尚未 push 也可以记录。\n\n参数要点：task_id（必填）、commit_hash（必填，`git rev-parse HEAD` 获取完整 SHA）是必填项。review_status 设为 approved、test_status 设为 passed 可以让关联 task 通过 done-gate 检查。如果不确定填什么，review_status 和 test_status 不传即可（默认 pending/not_run）。\n\n自动行为：会检测 commit 中的文件是否超出 task 所属 plan 的 scope，如超出会返回 scope drift 警告。",
 		InputSchema: MCPInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
@@ -300,7 +300,7 @@ func (s *mcpServer) registerTools() {
 				"status":        map[string]string{"type": "string", "description": "commit/draft"},
 				"project_path":  map[string]string{"type": "string", "description": "可选: 目标项目路径。例: /Users/dazsec/projects/EncryptDrive"},
 				"review_status": map[string]string{"type": "string", "description": "可选: pending/approved/rejected，默认 pending。设为 approved 后 task 可标记 done"},
-				"commit_hash":   map[string]string{"type": "string", "description": "可选: git SHA 哈希值。提供后可通过 commit_hash 精确去重，避免标题模糊匹配导致重复记录。强烈建议填写。"},
+				"commit_hash":   map[string]string{"type": "string", "description": "必填: git SHA 哈希值（`git rev-parse HEAD` 获取完整 SHA）。用于精确去重与溯源。"},
 				"test_status":   map[string]string{"type": "string", "description": "可选: not_run/passed/failed，默认 not_run。设为 passed 后 task 可标记 done"},
 			},
 			Required: []string{"task_id", "title"},
@@ -309,12 +309,12 @@ func (s *mcpServer) registerTools() {
 
 	s.addTool(MCPTool{
 		Name:        "aipm_record_commits",
-		Description: "批量记录多个 commit 到同一个 task。一次调用替代多次 record_commit，减少 API 往返。\n\n参数: task_id(必填)、commits(必填, 数组，每项含 title/commit_hash/files/summary)。\n返回: 成功/失败计数和详情。",
+		Description: "批量记录多个 commit 到同一个 task。一次调用替代多次 record_commit，减少 API 往返。\n\n参数: task_id(必填)、commits(必填, 数组，每项含 title/commit_hash(必填)/files/summary)。\n返回: 成功/失败计数和详情。",
 		InputSchema: MCPInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
 				"task_id":       map[string]string{"type": "string", "description": "关联的 Task ID。必填"},
-				"commits":       map[string]string{"type": "array", "description": "Commit 数组。每项: {title, commit_hash(可选), files(可选,逗号分隔), summary(可选)}"},
+				"commits":       map[string]string{"type": "array", "description": "Commit 数组。每项: {title, commit_hash(必填, git rev-parse HEAD 获取), files(可选,逗号分隔), summary(可选)}"},
 				"branch":        map[string]string{"type": "string", "description": "分支名，默认 main"},
 				"status":        map[string]string{"type": "string", "description": "commit/draft，默认 committed"},
 				"project_path":  map[string]string{"type": "string", "description": "可选: 目标项目路径。例: /Users/dazsec/projects/EncryptDrive"},

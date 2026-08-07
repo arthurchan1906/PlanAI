@@ -2,8 +2,13 @@ package store
 
 import (
 	"database/sql"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
+	"aipmc/db"
+	"aipmc/u"
 	_ "modernc.org/sqlite"
 )
 
@@ -75,5 +80,47 @@ func TestCountVerifiedCommitsRejectsEmptyHash(t *testing.T) {
 	}
 	if got := countVerifiedCommits(d, "task-none"); got != 0 {
 		t.Fatalf("unknown task must have 0 verified commits, got %d", got)
+	}
+}
+
+// Regression: the faucet — commit records must always carry a real git hash
+// (ED: 538/547 empty-hash rows were MCP-recorded without commit_hash).
+func TestCreateCommitRequiresHash(t *testing.T) {
+	_, err := CreateCommit("/tmp/nowhere", "t", "", "", "", "", "", "task-x", "", "committed", "not_run", "pending", nil)
+	if err == nil || !strings.Contains(err.Error(), "commit_hash") {
+		t.Fatalf("empty commit_hash must be rejected, got %v", err)
+	}
+}
+
+func TestBatchCreateCommitsRejectsEmptyHash(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".pmai", "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	d, err := sql.Open("sqlite", filepath.Join(dir, ".pmai", "data", "pmai.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if err := db.EnsureSchema(d); err != nil {
+		t.Fatal(err)
+	}
+	now := u.NowISO()
+	if _, err := d.Exec(`INSERT INTO tasks (id, title, status, priority, phase, acceptance_json, related_docs_json, related_decisions_json, last_note, updated_at, created_at) VALUES ('task-x', 't', 'todo', 'P1', 'general', '[]', '[]', '[]', '', ?, ?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := BatchCreateCommits(dir, "task-x", "main", "committed", "not_run", "pending", []BatchCommitItem{
+		{Title: "no-hash", CommitHash: ""},
+		{Title: "with-hash", CommitHash: "deadbeef1234"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Success != 1 || result.Failed != 1 {
+		t.Fatalf("want 1 success/1 failed, got %d/%d", result.Success, result.Failed)
+	}
+	if !strings.Contains(result.Details[0].Error, "commit_hash") {
+		t.Fatalf("failed item must mention commit_hash, got %q", result.Details[0].Error)
 	}
 }
