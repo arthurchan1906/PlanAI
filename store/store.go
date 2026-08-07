@@ -563,9 +563,12 @@ func StoreGitCommit(projectPath, title, commitHash, date string, files []string)
 	}
 	defer db.Close()
 
-	// Check if commit_hash already exists
-	var existingID string
-	db.QueryRow("SELECT id FROM commits WHERE ? LIKE commit_hash || '%' LIMIT 1", commitHash).Scan(&existingID)
+	// Check if commit_hash already exists. Empty/NULL hashes (e.g. commits
+	// recorded via MCP without --commit-hash) must NOT match here — a bare
+	// `? LIKE commit_hash || '%'` turns `'' || '%'` into `'%'`, which matches
+	// every row, silently merging new hook-recorded commits into old rows
+	// (data loss: hook reported success but no row was created).
+	existingID := findExistingCommitByHash(db, commitHash)
 
 	filesJSON := "[]"
 	if len(files) > 0 {
@@ -577,8 +580,10 @@ func StoreGitCommit(projectPath, title, commitHash, date string, files []string)
 		var existingFiles string
 		db.QueryRow("SELECT files_json FROM commits WHERE id = ?", existingID).Scan(&existingFiles)
 		if existingFiles == "" || existingFiles == "[]" || existingFiles == "null" {
-			db.Exec("UPDATE commits SET files_json = ?, commit_hash = ?, updated_at = ? WHERE id = ?",
-				filesJSON, commitHash, u.NowISO(), existingID)
+			if _, err := db.Exec("UPDATE commits SET files_json = ?, commit_hash = ?, updated_at = ? WHERE id = ?",
+				filesJSON, commitHash, u.NowISO(), existingID); err != nil {
+				return nil, err
+			}
 		}
 		return GetCommit(existingID)
 	}
@@ -592,6 +597,15 @@ func StoreGitCommit(projectPath, title, commitHash, date string, files []string)
 		return nil, err
 	}
 	return GetCommit(id)
+}
+
+// findExistingCommitByHash returns the id of a commit whose stored hash is a
+// prefix of commitHash. Empty/NULL stored hashes never match: `'' || '%'`
+// would otherwise match every row and swallow new commits into old rows.
+func findExistingCommitByHash(db *sql.DB, commitHash string) string {
+	var existingID string
+	db.QueryRow("SELECT id FROM commits WHERE commit_hash IS NOT NULL AND commit_hash != '' AND ? LIKE commit_hash || '%' LIMIT 1", commitHash).Scan(&existingID)
+	return existingID
 }
 
 func UpdateCommit(id string, payload map[string]any) (map[string]any, error) {
