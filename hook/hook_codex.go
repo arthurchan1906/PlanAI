@@ -76,10 +76,10 @@ func ProcessCodexHook() {
 		Query   string `json:"query"`
 
 		// PostToolUse
-		ToolName    string          `json:"tool_name"`
-		ToolUseID   string          `json:"tool_use_id"`
-		ToolInput   json.RawMessage `json:"tool_input"`
-		ToolResp    json.RawMessage `json:"tool_response"`
+		ToolName  string          `json:"tool_name"`
+		ToolUseID string          `json:"tool_use_id"`
+		ToolInput json.RawMessage `json:"tool_input"`
+		ToolResp  json.RawMessage `json:"tool_response"`
 
 		// Stop — multiple possible response fields
 		Response             string `json:"response"`
@@ -107,6 +107,7 @@ func ProcessCodexHook() {
 			meta := buildFullMeta("user_prompt", data)
 			if _, err := store.LogDiscussion(raw.SessionID, "user", "codex-cli", userPrompt, meta); err != nil {
 				logf("UserPromptSubmit log FAILED: %v", err)
+				u.LogShared("HOOK", "write_err src=codex role=user err=%v", err)
 			} else {
 				logf("UserPromptSubmit logged (%d chars)", len(userPrompt))
 			}
@@ -134,18 +135,19 @@ func ProcessCodexHook() {
 			content = buildCodexToolContent(normalizedName, raw.ToolInput, raw.ToolResp)
 		}
 		meta := buildFullMeta("post_tool", data)
-			// Inject file_path for L3 reconcile (classifyFiles)
-			if fpMeta := extractFileOpMeta(normalizedName, raw.ToolInput); fpMeta != "" {
-				meta = mergeMeta(meta, fpMeta)
-			}
+		// Inject file_path for L3 reconcile (classifyFiles)
+		if fpMeta := extractFileOpMeta(normalizedName, raw.ToolInput); fpMeta != "" {
+			meta = mergeMeta(meta, fpMeta)
+		}
 
 		if content != "" {
 			if _, err := store.LogDiscussion(raw.SessionID, "assistant", "codex-cli", content, meta); err != nil {
 				logf("PostToolUse %s log FAILED: %v", raw.ToolName, err)
+				u.LogShared("HOOK", "write_err src=codex role=assistant tool=%s err=%v", raw.ToolName, err)
 			} else {
 				logf("PostToolUse %s logged", raw.ToolName)
 			}
-			} else {
+		} else {
 			logf("PostToolUse %s — empty content, skipped", raw.ToolName)
 		}
 
@@ -158,6 +160,7 @@ func ProcessCodexHook() {
 			meta := buildFullMeta("stop", data)
 			if _, err := store.LogDiscussion(raw.SessionID, "assistant", "codex-cli", respText, meta); err != nil {
 				logf("Stop log FAILED: %v", err)
+				u.LogShared("HOOK", "write_err src=codex role=assistant err=%v", err)
 			} else {
 				logf("Stop logged (%d chars)", len(respText))
 			}
@@ -165,6 +168,7 @@ func ProcessCodexHook() {
 			meta := buildFullMeta("stop", data)
 			if _, err := store.LogDiscussion(raw.SessionID, "assistant", "codex-cli", "(turn stopped)", meta); err != nil {
 				logf("Stop (no-text) log FAILED: %v", err)
+				u.LogShared("HOOK", "write_err src=codex role=assistant err=%v", err)
 			} else {
 				logf("Stop logged (no response text)")
 			}
@@ -174,6 +178,7 @@ func ProcessCodexHook() {
 		logf("unhandled event=%s, ignored", raw.Event)
 	}
 }
+
 // stripThoughtBlock removes <thought>...</thought> from text.
 // Codex may send thinking content as the response in Stop hooks.
 func stripThoughtBlock(s string) string {
@@ -191,7 +196,6 @@ func stripThoughtBlock(s string) string {
 	}
 	return strings.TrimSpace(s)
 }
-
 
 // firstNonEmpty returns the first non-empty string from the candidates.
 func firstNonEmpty(candidates ...string) string {
@@ -302,6 +306,7 @@ func extractFileOpMeta(toolName string, toolInput json.RawMessage) string {
 	}
 	return ""
 }
+
 // mergeMeta merges file_op metadata into the full hook metadata JSON.
 func mergeMeta(baseJSON, fileOpJSON string) string {
 	var base map[string]any
@@ -318,7 +323,6 @@ func mergeMeta(baseJSON, fileOpJSON string) string {
 	b, _ := json.Marshal(base)
 	return string(b)
 }
-
 
 // buildCodexToolContent builds
 // buildCodexToolContent builds a human-readable description for a Codex tool call.
@@ -596,11 +600,11 @@ func parseBashFileOp(cmd string) *fileOp {
 				path = ""
 			}
 		}
-			if path != "" {
-				// Set-Content always writes/overwrites — 📝 like Claude Write / Gemini write_file.
-				// Only New-Item gets 🆕 because we know it explicitly creates.
-				return makeFileOp("modify", path)
-			}
+		if path != "" {
+			// Set-Content always writes/overwrites — 📝 like Claude Write / Gemini write_file.
+			// Only New-Item gets 🆕 because we know it explicitly creates.
+			return makeFileOp("modify", path)
+		}
 	}
 
 	// ----- PowerShell: Add-Content -Path 'file' (append) -----
@@ -658,7 +662,7 @@ func parseBashFileOp(cmd string) *fileOp {
 		if path := extractLastQuoted(cmd); path != "" {
 			// Only if it looks like a file path
 			if strings.Contains(path, ".") || strings.Contains(path, "/") || strings.Contains(path, "\\") {
-			return makeFileOp("modify", path)
+				return makeFileOp("modify", path)
 			}
 		}
 	}
@@ -670,9 +674,9 @@ func parseBashFileOp(cmd string) *fileOp {
 		path := extractFirstQuoted(cmd)
 		if path != "" && (strings.Contains(path, ".") || strings.Contains(path, "/") || strings.Contains(path, "\\")) {
 			if strings.Contains(cmd, "-replace") {
-			return makeFileOp("modify", path)
+				return makeFileOp("modify", path)
 			}
-		return makeFileOp("modify", path)
+			return makeFileOp("modify", path)
 		}
 	}
 
@@ -686,14 +690,14 @@ func parseBashFileOp(cmd string) *fileOp {
 	if idx := strings.LastIndex(cmd, ">"); idx >= 0 && (idx == 0 || cmd[idx-1] != '>') {
 		rest := strings.TrimSpace(cmd[idx+1:])
 		if path := extractBareToken(rest); path != "" && !strings.Contains(path, "/dev/") {
-		return makeFileOp("modify", path)
+			return makeFileOp("modify", path)
 		}
 	}
 
 	// ----- Unix: sed -i 's/old/new/' file -----
 	if strings.Contains(cmd, "sed ") {
 		if path := extractLastBare(cmd); path != "" {
-		return makeFileOp("modify", path)
+			return makeFileOp("modify", path)
 		}
 	}
 

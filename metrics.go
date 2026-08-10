@@ -45,6 +45,10 @@ func dispatchMetrics(args *cli.Args) {
 		db.QueryRow("SELECT COUNT(*), COALESCE(SUM(processed_by_agent),0) FROM events").Scan(&evTotal, &evProcessed)
 		var evUnique int
 		db.QueryRow("SELECT COUNT(DISTINCT type || '|' || entity_type || '|' || entity_id) FROM events").Scan(&evUnique)
+		// H2 metadata 健康（8/10 T2）：空串（对话消息本应空）与非法 JSON 分开统计；
+		// valid_rate 分母排除空串——口径固定，防止与 tool role 缺失混为一谈。
+		var dlTotal, dlValid, dlEmpty, dlInvalid int
+		db.QueryRow("SELECT COUNT(*), COALESCE(SUM(CASE WHEN metadata!='' AND json_valid(metadata) THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN metadata='' THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN metadata!='' AND json_valid(metadata)=0 THEN 1 ELSE 0 END),0) FROM discussion_log").Scan(&dlTotal, &dlValid, &dlEmpty, &dlInvalid)
 		var cTotal, cOrphan, cHashOk, cHashDupRows, cMultiTaskGroups int
 		// hash_uniqueness 语义：只把「采集 bug 重复」标红——同 task 重复行 / 含空 task 的重复组行。
 		// 多 task 同 hash（同一物理 commit 被多个 task 引用，relates_to 多对多）是合法语义，单独计数不告警。
@@ -144,6 +148,14 @@ func dispatchMetrics(args *cli.Args) {
 		printRow("     hash_traceability", pct(hashTrace)+" ("+fmt.Sprint(cHashOk)+"/"+fmt.Sprint(cTotal)+")", ">90%", hashTrace > 0.90)
 		printRow("     hash_uniqueness", pct(hashDup)+" ("+fmt.Sprint(cHashDupRows)+"行/"+fmt.Sprint(cHashOk)+")", "=0", hashDup == 0)
 		fmt.Printf("      hash 多task引用: %d 组（同 commit 多 task 关联，合法 relates_to，不告警）\n", cMultiTaskGroups)
+		// H2 metadata 健康（8/10 T2）：valid_rate 分母排除空串（对话消息本应空）；
+		// invalid = 非空但非合法 JSON，必须为 0。
+		dlNonEmpty := dlTotal - dlEmpty
+		dlValidRate := 0.0
+		if dlNonEmpty > 0 {
+			dlValidRate = float64(dlValid) / float64(dlNonEmpty)
+		}
+		printRow("H2  metadata_health", fmt.Sprintf("valid=%s (%d/%d) empty=%d invalid=%d", pct(dlValidRate), dlValid, dlNonEmpty, dlEmpty, dlInvalid), "valid≥99.5% invalid=0", dlInvalid == 0 && dlValidRate >= 0.995)
 		fmt.Println()
 	} else {
 		fmt.Printf("⚠ 当前项目无 pmai.db（%v）— 跳过 DB 类指标\n\n", err)
@@ -158,7 +170,11 @@ func dispatchMetrics(args *cli.Args) {
 	}
 	defer f.Close()
 
-	type llm struct{ calls, inTok, outTok, cacheHit, cacheCreate, injectedY, injectedN int; latSum float64; latMax float64 }
+	type llm struct {
+		calls, inTok, outTok, cacheHit, cacheCreate, injectedY, injectedN int
+		latSum                                                            float64
+		latMax                                                            float64
+	}
 	byAgent := map[string]*llm{}
 	var agentHookErr, postCommitErr, faOK, faErr, supTotal, supChar, skipTotal int
 	var injOK, injGuidelines, injSame, injNoSum int

@@ -32,6 +32,11 @@ type EntityRef struct {
 
 // LogDiscussion records a discussion entry in the discussion_log table.
 func LogDiscussion(sessionID, role, source, content, metadataJSON string) (map[string]any, error) {
+	// T2：metadata 写入前合法性检查——非法 JSON 落 LogShared（8/10）
+	// 空串（对话消息本应无 metadata）不计；非空但非 JSON 才告警。
+	if metadataJSON != "" && !json.Valid([]byte(metadataJSON)) {
+		u.LogShared("HOOK", "metadata_invalid src=%s role=%s", source, role)
+	}
 	var lastErr error
 	for attempt := 0; attempt < 15; attempt++ {
 		if attempt > 0 {
@@ -588,9 +593,9 @@ func EntityExists(entityType, entityID string) bool {
 
 // CommitSummary is a lightweight commit record for B1 context injection.
 type CommitSummary struct {
-	ID      string
-	Title   string
-	Files   []string
+	ID    string
+	Title string
+	Files []string
 }
 
 // FindCommitsInWindow returns commits whose created_at falls between start and end (+2h margin).

@@ -84,6 +84,7 @@ func ProcessGeminiHook() {
 			meta := buildFullMeta("before_agent", data)
 			if _, err := store.LogDiscussion(raw.SessionID, "user", "gemini-cli", raw.Prompt, meta); err != nil {
 				logf("BeforeAgent log FAILED: %v", err)
+				u.LogShared("HOOK", "write_err src=gemini role=user err=%v", err)
 			} else {
 				logf("BeforeAgent logged (%d chars)", len(raw.Prompt))
 			}
@@ -98,6 +99,7 @@ func ProcessGeminiHook() {
 			meta := buildFullMeta("after_agent", data)
 			if _, err := store.LogDiscussion(raw.SessionID, "assistant", "gemini-cli", clean, meta); err != nil {
 				logf("AfterAgent log FAILED: %v", err)
+				u.LogShared("HOOK", "write_err src=gemini role=assistant err=%v", err)
 			} else {
 				logf("AfterAgent logged (%d/%d chars)", len(clean), len(raw.Response))
 			}
@@ -122,10 +124,11 @@ func ProcessGeminiHook() {
 		if content != "" {
 			if _, err := store.LogDiscussion(raw.SessionID, "assistant", "gemini-cli", content, meta); err != nil {
 				logf("AfterTool %s log FAILED: %v", raw.ToolName, err)
+				u.LogShared("HOOK", "write_err src=gemini role=assistant tool=%s err=%v", raw.ToolName, err)
 			} else {
 				logf("AfterTool %s logged", raw.ToolName)
 			}
-			} else {
+		} else {
 			logf("AfterTool %s — empty content, skipped", raw.ToolName)
 		}
 	}

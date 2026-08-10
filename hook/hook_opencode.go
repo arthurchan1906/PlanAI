@@ -191,6 +191,7 @@ func ProcessOpencodeHook() {
 		meta := buildFullMeta(eventType, data)
 		if _, err := store.LogDiscussion(sid, role, "opencode", content, meta); err != nil {
 			logf("%s log FAILED (role=%s): %v", raw.Event, role, err)
+			u.LogShared("HOOK", "write_err src=opencode role=%s err=%v", role, err)
 		} else {
 			logf("%s logged (role=%s, %d chars)", raw.Event, role, len(content))
 		}
@@ -221,10 +222,11 @@ func ProcessOpencodeHook() {
 		if content != "" {
 			if _, err := store.LogDiscussion(sid, "assistant", "opencode", content, meta); err != nil {
 				logf("tool.execute.after %s log FAILED: %v", raw.ToolName, err)
+				u.LogShared("HOOK", "write_err src=opencode role=assistant tool=%s err=%v", raw.ToolName, err)
 			} else {
 				logf("tool.execute.after %s logged", raw.ToolName)
 			}
-			} else {
+		} else {
 			logf("tool.execute.after %s — empty content, skipped", raw.ToolName)
 		}
 
@@ -234,6 +236,7 @@ func ProcessOpencodeHook() {
 		meta := buildFullMeta("session_idle", data)
 		if _, err := store.LogDiscussion(sid, "assistant", "opencode", "⏸ Session idle", meta); err != nil {
 			logf("session.idle log FAILED: %v", err)
+			u.LogShared("HOOK", "write_err src=opencode role=assistant err=%v", err)
 		} else {
 			logf("session.idle logged")
 		}
@@ -590,10 +593,10 @@ func buildEditMeta(filePath string, toolResp, toolInput json.RawMessage) string 
 		Metadata struct {
 			Diff     string `json:"diff"`
 			FileDiff struct {
-				File       string `json:"file"`
-				Patch      string `json:"patch"`
-				Additions  int    `json:"additions"`
-				Deletions  int    `json:"deletions"`
+				File      string `json:"file"`
+				Patch     string `json:"patch"`
+				Additions int    `json:"additions"`
+				Deletions int    `json:"deletions"`
 			} `json:"filediff"`
 		} `json:"metadata"`
 	}
@@ -640,12 +643,12 @@ func buildWriteMeta(filePath string, toolResp json.RawMessage, ti map[string]str
 	// Check if file is new or existing
 	var resp struct {
 		Metadata struct {
-			Exists   bool `json:"exists"`
-			IsNew    bool `json:"isNew"`
-			Created  bool `json:"created"`
+			Exists  bool `json:"exists"`
+			IsNew   bool `json:"isNew"`
+			Created bool `json:"created"`
 		} `json:"metadata"`
-		Created    bool `json:"created"`
-		IsNewFile  bool `json:"isNewFile"`
+		Created   bool `json:"created"`
+		IsNewFile bool `json:"isNewFile"`
 	}
 	isNew := false
 	if json.Unmarshal(toolResp, &resp) == nil {
