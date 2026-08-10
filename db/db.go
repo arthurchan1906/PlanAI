@@ -252,8 +252,8 @@ var schemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS agent_assignments (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, task_id TEXT, role TEXT NOT NULL, scope TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'assigned', assigned_by TEXT NOT NULL, assigned_at TEXT NOT NULL, claimed_at TEXT, completed_at TEXT, FOREIGN KEY(agent_id) REFERENCES agent_profiles(id), FOREIGN KEY(task_id) REFERENCES tasks(id))`,
 	`CREATE TABLE IF NOT EXISTS audit_log (id TEXT PRIMARY KEY, actor_type TEXT NOT NULL, actor_id TEXT NOT NULL, action TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, summary TEXT NOT NULL, detail_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS graph_edges (id TEXT PRIMARY KEY, source_type TEXT NOT NULL, source_id TEXT NOT NULL, edge_type TEXT NOT NULL, target_type TEXT NOT NULL, target_id TEXT NOT NULL, weight REAL NOT NULL DEFAULT 1.0, evidence_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL)`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_graph_edges_unique ON graph_edges(source_type, source_id, edge_type, target_type, target_id)`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_links_unique ON links(source_type, source_id, relation, target_type, target_id)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS idx_graph_edges_unique ON graph_edges(source_type, source_id, edge_type, target_type, target_id)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS idx_links_unique ON links(source_type, source_id, relation, target_type, target_id)`,
 }
 
 func migrate(d *sql.DB) error {
@@ -295,6 +295,19 @@ func migrate(d *sql.DB) error {
 	if !tableOrVTableExists(d, "audit_log") {
 		d.Exec(`CREATE TABLE IF NOT EXISTS audit_log (id TEXT PRIMARY KEY, actor_type TEXT NOT NULL, actor_id TEXT NOT NULL, action TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, summary TEXT NOT NULL, detail_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL)`)
 	}
+	// 建表必须先于 ALTER：全新库若先 ALTER 后 CREATE，ALTER 因表不存在
+	// 失败且错误被吞（8/10 T1 压测发现 discussion_log 缺 metadata 列）。
+	for _, spec := range []struct{ table, sql string }{
+		{"meeting_rooms", `CREATE TABLE IF NOT EXISTS meeting_rooms (id TEXT PRIMARY KEY, title TEXT NOT NULL, topic TEXT NOT NULL, context TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active', agent_roles_context TEXT NOT NULL DEFAULT '', auto_arbitrate INTEGER NOT NULL DEFAULT 0, meeting_mode TEXT NOT NULL DEFAULT 'discussion', created_by TEXT NOT NULL, created_at TEXT NOT NULL, closed_at TEXT)`},
+		{"meeting_turns", `CREATE TABLE IF NOT EXISTS meeting_turns (id TEXT PRIMARY KEY, room_id TEXT NOT NULL, turn_number INTEGER NOT NULL, speaker_type TEXT NOT NULL, speaker_id TEXT NOT NULL, question TEXT NOT NULL, response TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'waiting', reply_to TEXT NOT NULL DEFAULT '', address_to TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, FOREIGN KEY(room_id) REFERENCES meeting_rooms(id))`},
+		{"discussion_log", `CREATE TABLE IF NOT EXISTS discussion_log (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, role TEXT NOT NULL, source TEXT NOT NULL DEFAULT '', content TEXT NOT NULL, created_at TEXT NOT NULL, embedding_json TEXT DEFAULT '', metadata TEXT DEFAULT '', thread_id TEXT DEFAULT '')`},
+	} {
+		if !tableOrVTableExists(d, spec.table) {
+			if _, err := d.Exec(spec.sql); err != nil {
+				return fmt.Errorf("migration %s: %w", spec.table, err)
+			}
+		}
+	}
 	if !ColumnExists(d, "meeting_rooms", "agent_roles_context") {
 		d.Exec("ALTER TABLE meeting_rooms ADD COLUMN agent_roles_context TEXT DEFAULT ''")
 	}
@@ -319,10 +332,6 @@ func migrate(d *sql.DB) error {
 	if !ColumnExists(d, "discussion_log", "thread_id") {
 		d.Exec("ALTER TABLE discussion_log ADD COLUMN thread_id TEXT DEFAULT ''")
 	}
-	if !tableOrVTableExists(d, "discussion_log") {
-		d.Exec(`CREATE TABLE IF NOT EXISTS discussion_log (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, role TEXT NOT NULL, source TEXT NOT NULL DEFAULT '', content TEXT NOT NULL, created_at TEXT NOT NULL)`)
-	}
-
 	if !ColumnExists(d, "discussion_log", "source") {
 		d.Exec("ALTER TABLE discussion_log ADD COLUMN source TEXT NOT NULL DEFAULT ''")
 	}
@@ -336,8 +345,6 @@ func migrate(d *sql.DB) error {
 		d.Exec("ALTER TABLE meeting_rooms ADD COLUMN plan_id TEXT DEFAULT ''")
 	}
 	for _, spec := range []struct{ table, sql string }{
-		{"meeting_rooms", `CREATE TABLE IF NOT EXISTS meeting_rooms (id TEXT PRIMARY KEY, title TEXT NOT NULL, topic TEXT NOT NULL, context TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active', agent_roles_context TEXT NOT NULL DEFAULT '', auto_arbitrate INTEGER NOT NULL DEFAULT 0, meeting_mode TEXT NOT NULL DEFAULT 'discussion', created_by TEXT NOT NULL, created_at TEXT NOT NULL, closed_at TEXT)`},
-		{"meeting_turns", `CREATE TABLE IF NOT EXISTS meeting_turns (id TEXT PRIMARY KEY, room_id TEXT NOT NULL, turn_number INTEGER NOT NULL, speaker_type TEXT NOT NULL, speaker_id TEXT NOT NULL, question TEXT NOT NULL, response TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'waiting', reply_to TEXT NOT NULL DEFAULT '', address_to TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, FOREIGN KEY(room_id) REFERENCES meeting_rooms(id))`},
 		{"meeting_participants", `CREATE TABLE IF NOT EXISTS meeting_participants (meeting_id TEXT NOT NULL, agent_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', confirmed_at TEXT NOT NULL, PRIMARY KEY (meeting_id, agent_id), FOREIGN KEY(meeting_id) REFERENCES meeting_rooms(id), FOREIGN KEY(agent_id) REFERENCES agent_profiles(id))`},
 		{"agent_assignments", `CREATE TABLE IF NOT EXISTS agent_assignments (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, task_id TEXT, role TEXT NOT NULL, scope TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'assigned', assigned_by TEXT NOT NULL, assigned_at TEXT NOT NULL, claimed_at TEXT, completed_at TEXT, FOREIGN KEY(agent_id) REFERENCES agent_profiles(id), FOREIGN KEY(task_id) REFERENCES tasks(id))`},
 	} {
@@ -540,28 +547,28 @@ func indexRows(d rowQuerier, query, entityType string, scan func(*sql.Rows) (id,
 // AgentOverride mirrors the key fields of agent profiles for per-project overrides.
 // Empty fields are not applied — the global value is kept.
 type AgentOverride struct {
-	Model          string            `json:"model,omitempty"`
-	EffortLevel    string            `json:"effort_level,omitempty"`
-	SubAgentModel  string            `json:"sub_agent_model,omitempty"`
-	OpusModel      string            `json:"opus_model,omitempty"`
-	SonnetModel    string            `json:"sonnet_model,omitempty"`
-	HaikuModel     string            `json:"haiku_model,omitempty"`
-	SmallFastModel string            `json:"small_fast_model,omitempty"`
-	ReasoningEffort string           `json:"reasoning_effort,omitempty"`
-	ExtraEnv       map[string]string `json:"extra_env,omitempty"`
+	Model           string            `json:"model,omitempty"`
+	EffortLevel     string            `json:"effort_level,omitempty"`
+	SubAgentModel   string            `json:"sub_agent_model,omitempty"`
+	OpusModel       string            `json:"opus_model,omitempty"`
+	SonnetModel     string            `json:"sonnet_model,omitempty"`
+	HaikuModel      string            `json:"haiku_model,omitempty"`
+	SmallFastModel  string            `json:"small_fast_model,omitempty"`
+	ReasoningEffort string            `json:"reasoning_effort,omitempty"`
+	ExtraEnv        map[string]string `json:"extra_env,omitempty"`
 }
 
 // AgentRuntime is the resolved agent configuration after merging global profile + project overrides.
 type AgentRuntime struct {
-	Model          string
-	EffortLevel    string
-	SubAgentModel  string
-	OpusModel      string
-	SonnetModel    string
-	HaikuModel     string
-	SmallFastModel string
+	Model           string
+	EffortLevel     string
+	SubAgentModel   string
+	OpusModel       string
+	SonnetModel     string
+	HaikuModel      string
+	SmallFastModel  string
 	ReasoningEffort string
-	ExtraEnv       map[string]string
+	ExtraEnv        map[string]string
 }
 
 // Config holds runtime configuration.
@@ -573,8 +580,8 @@ type Config struct {
 	AIModel             string                   `json:"ai_model,omitempty"`
 	AIChatModel         string                   `json:"ai_chat_model,omitempty"`
 	AIApiKey            string                   `json:"ai_api_key,omitempty"`
-	Model               string                   `json:"model,omitempty"`               // per-project default virtual model
-	AgentOverrides      map[string]AgentOverride `json:"agent_overrides,omitempty"`     // per-project per-agent overrides
+	Model               string                   `json:"model,omitempty"`           // per-project default virtual model
+	AgentOverrides      map[string]AgentOverride `json:"agent_overrides,omitempty"` // per-project per-agent overrides
 }
 
 // LoadConfig reads config from environment and config.json.
@@ -652,20 +659,20 @@ func SaveConfig(cfg Config) error {
 
 // ClaudeProfile stores Claude Code–specific launch configuration.
 type ClaudeProfile struct {
-	Model          string            `json:"model"`             // → ANTHROPIC_MODEL
-	SubAgentModel  string            `json:"sub_agent_model"`   // → CLAUDE_CODE_SUBAGENT_MODEL
-	OpusModel      string            `json:"opus_model"`        // → ANTHROPIC_DEFAULT_OPUS_MODEL
-	SonnetModel    string            `json:"sonnet_model"`      // → ANTHROPIC_DEFAULT_SONNET_MODEL
-	HaikuModel     string            `json:"haiku_model"`       // → ANTHROPIC_DEFAULT_HAIKU_MODEL
-	SmallFastModel string            `json:"small_fast_model"`  // → ANTHROPIC_SMALL_FAST_MODEL
-	EffortLevel    string            `json:"effort_level"`      // → CLAUDE_CODE_EFFORT_LEVEL
+	Model          string            `json:"model"`            // → ANTHROPIC_MODEL
+	SubAgentModel  string            `json:"sub_agent_model"`  // → CLAUDE_CODE_SUBAGENT_MODEL
+	OpusModel      string            `json:"opus_model"`       // → ANTHROPIC_DEFAULT_OPUS_MODEL
+	SonnetModel    string            `json:"sonnet_model"`     // → ANTHROPIC_DEFAULT_SONNET_MODEL
+	HaikuModel     string            `json:"haiku_model"`      // → ANTHROPIC_DEFAULT_HAIKU_MODEL
+	SmallFastModel string            `json:"small_fast_model"` // → ANTHROPIC_SMALL_FAST_MODEL
+	EffortLevel    string            `json:"effort_level"`     // → CLAUDE_CODE_EFFORT_LEVEL
 	ExtraEnv       map[string]string `json:"extra_env,omitempty"`
 }
 
 // CodexProfile stores Codex CLI–specific launch configuration.
 type CodexProfile struct {
-	Model           string            `json:"model"`             // → proxy.config.toml model
-	ReasoningEffort string            `json:"reasoning_effort"`  // → proxy.config.toml model_reasoning_effort
+	Model           string            `json:"model"`            // → proxy.config.toml model
+	ReasoningEffort string            `json:"reasoning_effort"` // → proxy.config.toml model_reasoning_effort
 	ExtraEnv        map[string]string `json:"extra_env,omitempty"`
 }
 
@@ -682,13 +689,13 @@ type OpenCodeProfile struct {
 
 // GlobalConfig holds proxy configuration stored at ~/.aipmc/config.json.
 type GlobalConfig struct {
-	ProxyPort    int               `json:"proxy_port"`
-	ProxyBindAddr string           `json:"proxy_bind_addr,omitempty"`
-	UpstreamURL  string            `json:"upstream_url"`
-	ProxyModel   string            `json:"proxy_model"`    // deprecated: use per-agent profiles
-	ProxyLogDir  string            `json:"proxy_log_dir"`
-	AnthropicURL string            `json:"anthropic_url"`
-	ExtraEnv     map[string]string `json:"extra_env,omitempty"` // deprecated: use per-agent profiles
+	ProxyPort     int               `json:"proxy_port"`
+	ProxyBindAddr string            `json:"proxy_bind_addr,omitempty"`
+	UpstreamURL   string            `json:"upstream_url"`
+	ProxyModel    string            `json:"proxy_model"` // deprecated: use per-agent profiles
+	ProxyLogDir   string            `json:"proxy_log_dir"`
+	AnthropicURL  string            `json:"anthropic_url"`
+	ExtraEnv      map[string]string `json:"extra_env,omitempty"` // deprecated: use per-agent profiles
 
 	// DefaultModel is the fallback virtual model used when no per-agent model is configured.
 	DefaultModel string `json:"default_model,omitempty"`
