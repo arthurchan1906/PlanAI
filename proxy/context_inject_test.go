@@ -39,3 +39,36 @@ func TestExtractFilePathsAnthropicMessages(t *testing.T) {
 		t.Fatalf("Anthropic parse: got %v", got)
 	}
 }
+
+// OpenAI Chat Completions format must keep working (cursor/opencode path):
+// messages array with role=system/user and string content.
+func TestExtractFilePathsOpenAIChat(t *testing.T) {
+	body := []byte(`{"messages":[{"role":"system","content":"you are a coder"},{"role":"user","content":"refactor services/auth.go and fix models/user.go"}]}`)
+	got := extractFilePaths(body, "cursor")
+	sort.Strings(got)
+	want := []string{"models/user.go", "services/auth.go"}
+	if len(got) != len(want) {
+		t.Fatalf("chat parse: got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("chat parse: got %v, want %v", got, want)
+		}
+	}
+}
+
+// Gemini format must keep working: systemInstruction.parts[].text.
+func TestExtractFilePathsGeminiSystemInstruction(t *testing.T) {
+	body := []byte(`{"systemInstruction":{"parts":[{"text":"examine cmd/serve.go and proxy/router.go"}]},"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`)
+	got := extractFilePaths(body, "gemini")
+	sort.Strings(got)
+	want := []string{"cmd/serve.go", "proxy/router.go"}
+	if len(got) != len(want) {
+		t.Fatalf("gemini parse: got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("gemini parse: got %v, want %v", got, want)
+		}
+	}
+}

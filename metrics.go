@@ -276,6 +276,11 @@ func dispatchMetrics(args *cli.Args) {
 					mcpErr++
 				}
 				if src := fields["src"]; src != "" && src != "-" {
+					// 决策 43：历史旧行 src=codex-mcp-client（8/7 归一化前）并入 codex-cli，
+					// 避免按 agent 统计分裂。
+					if strings.EqualFold(src, "codex-mcp-client") {
+						src = "codex-cli"
+					}
 					mcpByAgent[src]++
 				}
 			}

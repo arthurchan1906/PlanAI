@@ -220,7 +220,7 @@
 - **8/7 复测修正：成功率 94.6%（160/2973 ERR）——旧值 95.9% 是虚高**。根因：`parseKVFields` 后覆盖前，`aipm_update_task_status` 参数回显 `status=done` 覆盖真实 `status=ERR`（89 行双 status，39 条 ERR 漏计）。已改首见优先（P2 批次）。ERR 分布：aipmc_vision 62 / update_task_status 39 / record_commit 23——vision 错误率需单独排查
 - **8/7 vision 修复**：ERR 主因是本地量化 VL 模型（Qwen3.5-4B）间歇性 `empty_response`（实测同批图片 ERR→重试 OK）；`vision.go` 已加空响应自动重试 2 次（82c3e61，需重启 serve 生效）。`image_read`（文件缺失）不重试
 - 目标值：成功率 ≥ 95%（基线确认后可调）；契约错误（工具描述/输入校验）应趋零
-- 备注：responses 路径 cache 字段上游（DeepSeek）不返回，`cache_hit=0` 如实记录——cache_rate 对 codex 不可用，非漏采
+- 备注（8/10 修正）：**「codex 恒 0」已过时**——实测 codex 路径 `cache_hit=` 8,328 行中 8,290 行非 0（8/10 复核），E3 数据已含 codex 贡献（codex 占 in_tok ~21%）。8/7 观测的恒 0 应为当时上游/字段兼容问题，非协议性缺失；metrics 双字段（cache_hit/n_hit）兼容保留
 
 **E2. 稳定性（并发 / 版本）**
 - 设计意图：`f61e845` 多 agent 并发写锁；SQLITE_BUSY 重试
@@ -236,7 +236,7 @@
 - 数据源：日志 `[LLM] cache_hit=`（anthropic 路径）/ `n_hit=`（responses 路径，metrics 双字段兼容 8/7 修复）；`L2 summary cached=`
 - 基线：L2 缓存 100% 命中；INJECT same_content 去重 19194 次（避免重复注入）；Claude LLM cache_hit 大量（99712/101728）
 - **8/7 复测：cache_hit_rate 92.1%（43.1 亿 / 46.8 亿 tok）**——92% 输入命中上游 prefix cache，成本节省显著（DeepSeek 缓存读单价约为 miss 的 1/10）
-- 目标值：cache_hit_rate ≥ 90%；cache_create 上游（DeepSeek responses）不返回恒 0——`hit/(hit+create)` 恒 100% 无信号，故用 `hit/in_tok` 口径；codex 的 n_hit 数据源缺失（非漏采，见 E5 备注）
+- 目标值：cache_hit_rate ≥ 90%；cache_create 上游（DeepSeek responses）不返回恒 0——`hit/(hit+create)` 恒 100% 无信号，故用 `hit/in_tok` 口径；**codex 的 cache_hit 数据 8/10 已确认可解析**（见 E5 备注修正），按 agent 拆分观测 codex injected=Y 命中率 36.9%（POC-1 基线）
 
 ## 3. 已知问题 → 目标映射
 
