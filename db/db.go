@@ -290,10 +290,14 @@ func migrate(d *sql.DB) error {
 			}
 		}
 	}
-	d.Exec(`UPDATE ideas SET current_summary = CASE WHEN current_summary = '' THEN summary ELSE current_summary END, updated_at = CASE WHEN updated_at = '' THEN created_at ELSE updated_at END`)
+	if _, err := d.Exec(`UPDATE ideas SET current_summary = CASE WHEN current_summary = '' THEN summary ELSE current_summary END, updated_at = CASE WHEN updated_at = '' THEN created_at ELSE updated_at END`); err != nil {
+		return fmt.Errorf("migration ideas backfill: %w", err)
+	}
 
 	if !tableOrVTableExists(d, "audit_log") {
-		d.Exec(`CREATE TABLE IF NOT EXISTS audit_log (id TEXT PRIMARY KEY, actor_type TEXT NOT NULL, actor_id TEXT NOT NULL, action TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, summary TEXT NOT NULL, detail_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL)`)
+		if _, err := d.Exec(`CREATE TABLE IF NOT EXISTS audit_log (id TEXT PRIMARY KEY, actor_type TEXT NOT NULL, actor_id TEXT NOT NULL, action TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, summary TEXT NOT NULL, detail_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL)`); err != nil {
+			return fmt.Errorf("migration audit_log: %w", err)
+		}
 	}
 	// 建表必须先于 ALTER：全新库若先 ALTER 后 CREATE，ALTER 因表不存在
 	// 失败且错误被吞（8/10 T1 压测发现 discussion_log 缺 metadata 列）。
@@ -309,40 +313,64 @@ func migrate(d *sql.DB) error {
 		}
 	}
 	if !ColumnExists(d, "meeting_rooms", "agent_roles_context") {
-		d.Exec("ALTER TABLE meeting_rooms ADD COLUMN agent_roles_context TEXT DEFAULT ''")
+		if _, err := d.Exec("ALTER TABLE meeting_rooms ADD COLUMN agent_roles_context TEXT DEFAULT ''"); err != nil {
+			return fmt.Errorf("migration meeting_rooms.agent_roles_context: %w", err)
+		}
 	}
 	if !ColumnExists(d, "meeting_rooms", "auto_arbitrate") {
-		d.Exec("ALTER TABLE meeting_rooms ADD COLUMN auto_arbitrate INTEGER DEFAULT 0")
+		if _, err := d.Exec("ALTER TABLE meeting_rooms ADD COLUMN auto_arbitrate INTEGER DEFAULT 0"); err != nil {
+			return fmt.Errorf("migration meeting_rooms.auto_arbitrate: %w", err)
+		}
 	}
 	if !ColumnExists(d, "meeting_rooms", "meeting_mode") {
-		d.Exec("ALTER TABLE meeting_rooms ADD COLUMN meeting_mode TEXT DEFAULT 'discussion'")
+		if _, err := d.Exec("ALTER TABLE meeting_rooms ADD COLUMN meeting_mode TEXT DEFAULT 'discussion'"); err != nil {
+			return fmt.Errorf("migration meeting_rooms.meeting_mode: %w", err)
+		}
 	}
 	if !ColumnExists(d, "meeting_turns", "reply_to") {
-		d.Exec("ALTER TABLE meeting_turns ADD COLUMN reply_to TEXT DEFAULT ''")
+		if _, err := d.Exec("ALTER TABLE meeting_turns ADD COLUMN reply_to TEXT DEFAULT ''"); err != nil {
+			return fmt.Errorf("migration meeting_turns.reply_to: %w", err)
+		}
 	}
 	if !ColumnExists(d, "meeting_turns", "address_to") {
-		d.Exec("ALTER TABLE meeting_turns ADD COLUMN address_to TEXT DEFAULT ''")
+		if _, err := d.Exec("ALTER TABLE meeting_turns ADD COLUMN address_to TEXT DEFAULT ''"); err != nil {
+			return fmt.Errorf("migration meeting_turns.address_to: %w", err)
+		}
 	}
 	if !ColumnExists(d, "discussion_log", "embedding_json") {
-		d.Exec("ALTER TABLE discussion_log ADD COLUMN embedding_json TEXT DEFAULT ''")
+		if _, err := d.Exec("ALTER TABLE discussion_log ADD COLUMN embedding_json TEXT DEFAULT ''"); err != nil {
+			return fmt.Errorf("migration discussion_log.embedding_json: %w", err)
+		}
 	}
 	if !ColumnExists(d, "discussion_log", "metadata") {
-		d.Exec("ALTER TABLE discussion_log ADD COLUMN metadata TEXT DEFAULT ''")
+		if _, err := d.Exec("ALTER TABLE discussion_log ADD COLUMN metadata TEXT DEFAULT ''"); err != nil {
+			return fmt.Errorf("migration discussion_log.metadata: %w", err)
+		}
 	}
 	if !ColumnExists(d, "discussion_log", "thread_id") {
-		d.Exec("ALTER TABLE discussion_log ADD COLUMN thread_id TEXT DEFAULT ''")
+		if _, err := d.Exec("ALTER TABLE discussion_log ADD COLUMN thread_id TEXT DEFAULT ''"); err != nil {
+			return fmt.Errorf("migration discussion_log.thread_id: %w", err)
+		}
 	}
 	if !ColumnExists(d, "discussion_log", "source") {
-		d.Exec("ALTER TABLE discussion_log ADD COLUMN source TEXT NOT NULL DEFAULT ''")
+		if _, err := d.Exec("ALTER TABLE discussion_log ADD COLUMN source TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("migration discussion_log.source: %w", err)
+		}
 	}
 	if !ColumnExists(d, "meeting_rooms", "pm_typing") {
-		d.Exec("ALTER TABLE meeting_rooms ADD COLUMN pm_typing INTEGER DEFAULT 0")
+		if _, err := d.Exec("ALTER TABLE meeting_rooms ADD COLUMN pm_typing INTEGER DEFAULT 0"); err != nil {
+			return fmt.Errorf("migration meeting_rooms.pm_typing: %w", err)
+		}
 	}
 	if !ColumnExists(d, "meeting_rooms", "pm_last_visit_at") {
-		d.Exec("ALTER TABLE meeting_rooms ADD COLUMN pm_last_visit_at TEXT DEFAULT ''")
+		if _, err := d.Exec("ALTER TABLE meeting_rooms ADD COLUMN pm_last_visit_at TEXT DEFAULT ''"); err != nil {
+			return fmt.Errorf("migration meeting_rooms.pm_last_visit_at: %w", err)
+		}
 	}
 	if !ColumnExists(d, "meeting_rooms", "plan_id") {
-		d.Exec("ALTER TABLE meeting_rooms ADD COLUMN plan_id TEXT DEFAULT ''")
+		if _, err := d.Exec("ALTER TABLE meeting_rooms ADD COLUMN plan_id TEXT DEFAULT ''"); err != nil {
+			return fmt.Errorf("migration meeting_rooms.plan_id: %w", err)
+		}
 	}
 	for _, spec := range []struct{ table, sql string }{
 		{"meeting_participants", `CREATE TABLE IF NOT EXISTS meeting_participants (meeting_id TEXT NOT NULL, agent_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', confirmed_at TEXT NOT NULL, PRIMARY KEY (meeting_id, agent_id), FOREIGN KEY(meeting_id) REFERENCES meeting_rooms(id), FOREIGN KEY(agent_id) REFERENCES agent_profiles(id))`},
@@ -355,17 +383,23 @@ func migrate(d *sql.DB) error {
 		}
 	}
 	if !tableOrVTableExists(d, "agent_profiles") {
-		d.Exec(`CREATE TABLE IF NOT EXISTS agent_profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'coder', capabilities TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`)
+		if _, err := d.Exec(`CREATE TABLE IF NOT EXISTS agent_profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'coder', capabilities TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`); err != nil {
+			return fmt.Errorf("migration agent_profiles: %w", err)
+		}
 	}
 	if !ColumnExists(d, "meeting_participants", "last_seen_turn") {
-		d.Exec("ALTER TABLE meeting_participants ADD COLUMN last_seen_turn INTEGER DEFAULT 0")
+		if _, err := d.Exec("ALTER TABLE meeting_participants ADD COLUMN last_seen_turn INTEGER DEFAULT 0"); err != nil {
+			return fmt.Errorf("migration meeting_participants.last_seen_turn: %w", err)
+		}
 	}
 	if !tableOrVTableExists(d, "fts5_index") {
-		d.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS fts5_index USING fts5(content, entity_type UNINDEXED, entity_id UNINDEXED, title, tokenize='unicode61')`)
+		if _, err := d.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS fts5_index USING fts5(content, entity_type UNINDEXED, entity_id UNINDEXED, title, tokenize='unicode61')`); err != nil {
+			return fmt.Errorf("migration fts5_index: %w", err)
+		}
 		RebuildFTS5Index(d)
 	}
 	if !tableOrVTableExists(d, "session_summaries") {
-		d.Exec(`CREATE TABLE IF NOT EXISTS session_summaries (
+		if _, err := d.Exec(`CREATE TABLE IF NOT EXISTS session_summaries (
 			session_id TEXT PRIMARY KEY,
 			source TEXT NOT NULL DEFAULT '',
 			review_json TEXT NOT NULL DEFAULT '{}',
@@ -374,7 +408,9 @@ func migrate(d *sql.DB) error {
 			entity_refs TEXT NOT NULL DEFAULT '[]',
 			quality_score INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL
-		)`)
+		)`); err != nil {
+			return fmt.Errorf("migration session_summaries: %w", err)
+		}
 	}
 	return nil
 }
