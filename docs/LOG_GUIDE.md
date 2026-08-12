@@ -1,7 +1,7 @@
 # 日志查询指南（E1 观测基线）
 
 > 目的：沉淀日志 tag 清单与查询命令，让每次修复都能用日志复测 `docs/EVALUATION.md` 中的指标。
-> 版本：2026-08-07（配合 Phase 1 修复后的观测口径）
+> 版本：2026-08-12（日志行加日期 + B1 口径修正 + BSD grep 工具链规范）
 
 ## 1. 日志位置
 
@@ -60,7 +60,10 @@
 
 - **不要用 `grep -P`（PCRE）**：macOS 自带 BSD grep 不支持，会报 `grep: -P not supported`。用 `grep -E`（ERE）或直接 `rg`（推荐，仓库内已大量使用）。
 - `rg` 默认大小写敏感；`rg -i` 忽略大小写；`rg -o` 只输出匹配片段，配合 `sort | uniq -c | sort -rn` 做分布统计。
-- 时间过滤：日志行首为 `[HH:MM:SS]`（当天），跨天需配合文件轮转或 `tail -n` 行数控制。
+- 时间过滤：8/12 起日志行首为 `[YYYY-MM-DD HH:MM:SS]`（历史行仅 `[HH:MM:SS]` 无日期，`--window`/按日期过滤只对带日期行生效）。当天行：`rg "^\[$(date +%F)" ~/.aipmc/logs/aipmc.log`；窗口统计：`aipmc metrics --window 24h`。
+- **UTF-8/NEL 陷阱（8/12 实测）**：aipmc.log 含约 0.7% 非法 UTF-8 与 NEL 行终止符（file 类型 `Non-ISO extended-ASCII text, with LF, NEL line terminators`）。BSD 工具在默认 locale 下会报 `illegal byte sequence` 或漏匹配：
+  - 查询一律加 `LC_ALL=C`；`grep` 再加 `-a`（按文本处理）：`LC_ALL=C grep -a "pattern" ~/.aipmc/logs/aipmc.log`
+  - 不要用 `strings`/`ugrep` 做全量行匹配（NEL 会被当成行分隔，计数失真）。
 
 ## 4. 从数据库复测关键指标（sqlite3 只读）
 
@@ -68,8 +71,11 @@
 DB=<项目>/.pmai/data/pmai.db
 # B6 事件重复率（Phase 1.1 后应≈0）
 sqlite3 "file:$DB?mode=ro" "SELECT type, COUNT(*)-COUNT(DISTINCT entity_id) AS dup FROM events GROUP BY type HAVING dup>0;"
-# B1 L2 覆盖率（≥85% 验收线）
-sqlite3 "file:$DB?mode=ro" "SELECT ROUND(100.0*SUM(summary!='')/COUNT(*),1) FROM session_summaries;"
+# B1 L2 覆盖率（≥85% 验收线；8/12 口径修正：分母=discussion_log 去重 session_id，
+# 排除空/unknown；分子=这些 session 中至少有一条非空 summary 的 session 数。
+# 旧口径 session_summaries 行数作分母会高估——ED 实测 58% vs 真实 34%。输出由
+# `aipmc metrics` B1 行直接给出，SQL 复测保持同口径）
+sqlite3 "file:$DB?mode=ro" "SELECT (SELECT COUNT(DISTINCT session_id) FROM discussion_log WHERE session_id!='' AND session_id!='unknown'), (SELECT COUNT(DISTINCT s.session_id) FROM session_summaries s JOIN discussion_log d ON d.session_id=s.session_id WHERE s.summary!='' AND d.session_id!='' AND d.session_id!='unknown');"
 # B2 嵌套 goal 残留（Phase 1.4 后应=0）
 sqlite3 "file:$DB?mode=ro" "SELECT COUNT(*) FROM session_summaries WHERE summary LIKE '%\"goal\":\"{%';"
 # FTS5 覆盖（plan/bug 应>0，Phase 1.3 后）

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"aipmc/cli"
 	pmdb "aipmc/db"
@@ -25,11 +26,24 @@ func dispatchMetrics(args *cli.Args) {
 	// 避免历史污染（ED 547 空 hash、aipmc 历史孤儿）淹没告警信号。
 	// --since all 看全表（存量状态）；--since 2026-08-01 自定义窗口。
 	since := args.Str("since", "2026-08-07T14:00:00")
+	// --window 生效于日志类指标：解析为截止时间，扫描时跳过更早的行。
+	// DB 类指标不支持窗口回算（始终为当前值）。
+	var cutoff time.Time
+	var hasCutoff bool
+	if window != "" {
+		d, err := time.ParseDuration(window)
+		if err != nil {
+			fmt.Printf("⚠ 无效 --window %q（示例: 24h、72h）— 忽略窗口\n", window)
+		} else {
+			cutoff = time.Now().Add(-d)
+			hasCutoff = true
+		}
+	}
 	fmt.Println("AIPM 评估指标 — 目标值来自 docs/EVALUATION.md")
 	fmt.Println("DB 类指标: 当前项目 point-in-time；日志类指标: ~/.aipmc/logs/aipmc.log 全局（无 project 字段）")
 	fmt.Printf("commit 三件套窗口: since=%s（--since all 看全表）\n", since)
-	if window != "" {
-		fmt.Printf("日志窗口: %s（DB 类指标不支持窗口回算，始终为当前值）\n", window)
+	if hasCutoff {
+		fmt.Printf("日志窗口: %s（截止 %s）\n", window, cutoff.Format("2006-01-02 15:04:05"))
 	}
 	fmt.Println()
 
@@ -37,7 +51,14 @@ func dispatchMetrics(args *cli.Args) {
 	db, err := pmdb.Open()
 	if err == nil {
 		var total, withL2, nested, mdBlock int
-		db.QueryRow("SELECT COUNT(*), COALESCE(SUM(CASE WHEN summary!='' THEN 1 ELSE 0 END),0) FROM session_summaries").Scan(&total, &withL2)
+		// B1 分母口径（8/12 修正，写死）：分母=discussion_log 去重 session_id
+		// （排除空/unknown）；分子=这些 session 中至少有一条非空 summary 的 session 数
+		// （JOIN discussion_log 保证分子属于分母宇宙）。旧口径用 session_summaries 行数
+		// 作分母会高估覆盖率（ED 实测 58% vs 真实 34%——session_summaries 只收录
+		// 跑过 pipeline 的 session）。
+		db.QueryRow(`SELECT
+			(SELECT COUNT(DISTINCT session_id) FROM discussion_log WHERE session_id!='' AND session_id!='unknown'),
+			(SELECT COUNT(DISTINCT s.session_id) FROM session_summaries s JOIN discussion_log d ON d.session_id=s.session_id WHERE s.summary!='' AND d.session_id!='' AND d.session_id!='unknown')`).Scan(&total, &withL2)
 		// B2 双口径：nested_goal = goal 值本身是嵌套 JSON；md_block = 摘要含 ```json 代码块（不同缺陷，分开统计）。
 		db.QueryRow("SELECT COUNT(*) FROM session_summaries WHERE summary LIKE '%\"goal\":\"{%'").Scan(&nested)
 		db.QueryRow("SELECT COUNT(*) FROM session_summaries WHERE summary LIKE '%```json%'").Scan(&mdBlock)
@@ -100,7 +121,7 @@ func dispatchMetrics(args *cli.Args) {
 		if evTotal > 0 {
 			dup = 1.0 - float64(evUnique)/float64(evTotal)
 		}
-		printRow("B1  l2_coverage", pct(l2), "≥85%", l2 >= 0.85)
+		printRow("B1  l2_coverage", pct(l2)+fmt.Sprintf(" (%d/%d sessions)", withL2, total), "≥85%", l2 >= 0.85)
 		printRow("B2  l2_nested_goal", fmt.Sprint(nested), "=0", nested == 0)
 		printRow("B2  l2_md_block", fmt.Sprint(mdBlock), "=0", mdBlock == 0)
 		printRow("B6  event_dup_rate", pct(dup), "<10%", dup < 0.10)
@@ -184,15 +205,30 @@ func dispatchMetrics(args *cli.Args) {
 	var mcpTotal, mcpErr int
 	mcpByTool := map[string]int{}
 	mcpByAgent := map[string]int{}
+	mcpErrReason := map[string]int{}
 	var pipeL3, pipeReconDone, pipeReconErr, reviewErr int
 	var dgTotal, dgPass, dgReject int
 	dgReason := map[string]int{}
+	oldFmtLines := 0
 
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1024*1024), 1024*1024)
 	llmLines := 0
 	for sc.Scan() {
 		line := sc.Text()
+		if hasCutoff {
+			ts, hasDate, ok := parseLogTimestamp(line)
+			if !ok || !hasDate {
+				if ok {
+					// 旧格式 [HH:MM:SS] 无日期，无法定位到具体日期，窗口下保守跳过。
+					oldFmtLines++
+				}
+				continue
+			}
+			if ts.Before(cutoff) {
+				continue
+			}
+		}
 		switch {
 		case strings.Contains(line, "[LLM]"):
 			llmLines++
@@ -266,7 +302,9 @@ func dispatchMetrics(args *cli.Args) {
 				supChar++
 			}
 		case strings.Contains(line, "[MCP-ERR]"):
-			// 错误已由 [MCP] status=ERR 计数（避免双计），此处仅保留分类锚点。
+			// 错误已由 [MCP] status=ERR 计数（避免双计），此处统计 reason 分类分布
+			// （8/12 起 recordMCPError 输出 reason=business_reject|idempotent|system_fault）。
+			mcpErrReason[parseField(line, "reason=")]++
 		case strings.Contains(line, "[MCP]"):
 			fields := parseKVFields(line)
 			if tool := fields["tool"]; tool != "" {
@@ -308,13 +346,18 @@ func dispatchMetrics(args *cli.Args) {
 			haveLatest = true
 			latestTotal = parseFieldInt(line, "total=")
 			latestItems = parseFieldInt(line, "items=")
-			if len(line) >= 9 && line[0] == '[' {
-				latestAt = line[1:9]
+			if len(line) >= 2 && line[0] == '[' {
+				if end := strings.Index(line, "]"); end > 0 {
+					latestAt = line[1:end]
+				}
 			}
 		}
 	}
 
 	fmt.Println("── [日志全局] ──")
+	if hasCutoff && oldFmtLines > 0 {
+		fmt.Printf("  ⚠ 跳过旧格式（无日期）日志 %d 条 — --window 只对 8/12 起带日期行生效\n", oldFmtLines)
+	}
 	inj := 0
 	injTot := 0
 	for _, a := range byAgent {
@@ -363,6 +406,17 @@ func dispatchMetrics(args *cli.Args) {
 	}
 	printRow("E5  mcp_success_rate", pct(mcpRate), "≥95%", mcpRate >= 0.95)
 	printRow("E5  mcp_calls", fmt.Sprint(mcpTotal)+" 次", "参考", true)
+	if len(mcpErrReason) > 0 {
+		rs := make([]string, 0, len(mcpErrReason))
+		for r, n := range mcpErrReason {
+			if r == "" {
+				r = "unknown"
+			}
+			rs = append(rs, fmt.Sprintf("%s=%d", r, n))
+		}
+		sort.Strings(rs)
+		printRow("E5  mcp_err_reason", strings.Join(rs, " "), "参考", true)
+	}
 	readN, writeN := 0, 0
 	for tool, n := range mcpByTool {
 		if isWriteTool(tool) {
@@ -560,4 +614,26 @@ func parseField(line, field string) string {
 		end = len(rest)
 	}
 	return rest[:end]
+}
+
+// parseLogTimestamp extracts the leading "[...]" timestamp from a log line.
+// 8/12 起 LogShared 输出 [2006-01-02 15:04:05]；历史行只有 [15:04:05]（无日期）。
+// 返回解析后的时间、是否含日期、是否解析成功。无日期旧行 ok=true 但 hasDate=false，
+// 供 --window 保守跳过（旧行无法定位日期）。
+func parseLogTimestamp(line string) (t time.Time, hasDate, ok bool) {
+	if len(line) < 2 || line[0] != '[' {
+		return time.Time{}, false, false
+	}
+	end := strings.Index(line, "]")
+	if end < 0 {
+		return time.Time{}, false, false
+	}
+	s := line[1:end]
+	if t, err := time.ParseInLocation("2006-01-02 15:04:05", s, time.Local); err == nil {
+		return t, true, true
+	}
+	if t, err := time.ParseInLocation("15:04:05", s, time.Local); err == nil {
+		return t, false, true
+	}
+	return time.Time{}, false, false
 }

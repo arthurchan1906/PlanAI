@@ -2357,11 +2357,6 @@ func recordMCPError(toolName, src string, args map[string]interface{}, result mc
 		entityID = toolName // fallback: dedup by tool name
 	}
 
-	// Dedup: skip if same entity already has an unconsumed mcp_error
-	if store.HasUnconsumedEvent("mcp_error", entityID) {
-		return
-	}
-
 	// Extract error text
 	errText := ""
 	for _, c := range result.Content {
@@ -2370,10 +2365,34 @@ func recordMCPError(toolName, src string, args map[string]interface{}, result mc
 		}
 	}
 
+	// 观测层不丢：MCP-ERR 日志无条件输出（metrics 计数依赖它）。8/12 修复：
+	// 此前 LogShared 在 dedup return 之后，同 entity 重复 ERR 时连日志都不记
+	// （实测 201 条 status=ERR 仅 75 条有 MCP-ERR 行 → 126 条缺口）。
+	u.LogShared("MCP-ERR", "tool=%s src=%s entity=%s reason=%s error=%s",
+		toolName, src, entityID[:min(len(entityID), 16)], classifyMCPErr(errText), u.TruncateStr(errText, 60))
+
+	// INJECT 提示去重保留：同 entity 已有未消费 mcp_error 事件时不重复注入。
+	if store.HasUnconsumedEvent("mcp_error", entityID) {
+		return
+	}
+
 	summary := fmt.Sprintf("工具 %s 失败: %s", toolName, u.TruncateStr(errText, 120))
 	store.CreateEvent("mcp_error", toolName, entityID, summary)
-	u.LogShared("MCP-ERR", "tool=%s src=%s entity=%s error=%s",
-		toolName, src, entityID[:min(len(entityID), 16)], u.TruncateStr(errText, 60))
+}
+
+// classifyMCPErr buckets an MCP error by nature for the metrics layer:
+// business_reject = 业务规则拒绝（如 done-gate 无已验证 commit）——agent 行为问题，非系统故障；
+// idempotent = 幂等重复（如 commit 已绑定同 task）——无害重复操作；
+// system_fault = 其余（DB 锁、解析失败等）——需要人工关注。
+func classifyMCPErr(errText string) string {
+	switch {
+	case strings.Contains(errText, "cannot be marked done"):
+		return "business_reject"
+	case strings.Contains(errText, "Commit 已存在且已绑定"):
+		return "idempotent"
+	default:
+		return "system_fault"
+	}
 }
 
 func (s *mcpServer) handleToolsCall(msg *jsonrpcMessage) {

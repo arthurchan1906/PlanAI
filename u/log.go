@@ -52,6 +52,8 @@ func pmaiRuntimeDir() string {
 
 // LogShared writes a tagged log line to .pmai/logs/aipmc.log.
 // tag is a short component label like "PIPELINE", "INJECT", "LLM".
+// 8/12 起带日期前缀 [2006-01-02 15:04:05]（此前仅 [15:04:05]），
+// 跨天排障无需再靠上下文猜日期；metrics --window 依赖该日期过滤。
 func LogShared(tag string, format string, args ...any) {
 	initSharedLogger()
 	if logLogger == nil {
@@ -59,7 +61,7 @@ func LogShared(tag string, format string, args ...any) {
 	}
 	logMu.Lock()
 	defer logMu.Unlock()
-	ts := time.Now().Format("15:04:05")
+	ts := time.Now().Format("2006-01-02 15:04:05")
 	msg := fmt.Sprintf(format, args...)
 	logLogger.Printf("[%s] [%s] %s", ts, tag, msg)
 }

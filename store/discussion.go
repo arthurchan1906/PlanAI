@@ -118,7 +118,7 @@ func logDiscussionOnce(sessionID, role, source, content, metadataJSON string) (m
 	if len([]rune(preview)) > 80 {
 		preview = string([]rune(preview)[:80])
 	}
-	pmdb.SyncFTS5Entity(db, "discussion", id, "["+role+"]["+source+"] "+preview, content)
+	_ = pmdb.SyncFTS5Entity(db, "discussion", id, "["+role+"]["+source+"] "+preview, content)
 	return map[string]any{"id": id, "status": "created"}, nil
 }
 

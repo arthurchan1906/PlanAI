@@ -443,9 +443,10 @@ func ColumnExists(d *sql.DB, table, column string) bool {
 // ── FTS5 helpers ──────────────────────────────────────────────────────
 
 // SyncFTS5Entity inserts or updates an entity in the FTS5 index.
-func SyncFTS5Entity(d *sql.DB, entityType, entityID, title, content string) {
-	d.Exec("INSERT OR REPLACE INTO fts5_index (content, entity_type, entity_id, title) VALUES (?, ?, ?, ?)",
+func SyncFTS5Entity(d *sql.DB, entityType, entityID, title, content string) error {
+	_, err := d.Exec("INSERT OR REPLACE INTO fts5_index (content, entity_type, entity_id, title) VALUES (?, ?, ?, ?)",
 		content, entityType, entityID, title)
+	return err
 }
 
 // DeleteFTS5Entity removes an entity from the FTS5 index.

@@ -129,7 +129,7 @@ func CreateTask(projectPath string, title, priority, status, phase, planID strin
 	if planID != "" {
 		planIDContent += " " + planID
 	}
-	pmdb.SyncFTS5Entity(db, "task", id, title, planIDContent)
+	_ = pmdb.SyncFTS5Entity(db, "task", id, title, planIDContent)
 
 	// Auto-create event
 	CreateEvent("task_created", "task", id, fmt.Sprintf("New task: %s", title))
@@ -160,7 +160,13 @@ func UpdateTask(projectPath string, id, status, note string, allowWithoutCommit,
 		status = oldStatus
 	}
 	if status != oldStatus {
-		db.Exec("INSERT INTO task_notes (id, task_id, content, mode, created_at) VALUES (?, ?, ?, ?, ?)", u.Slug("task-note"), id, fmt.Sprintf("Status changed from %s to %s", oldStatus, status), "system", u.NowISO())
+		noteID := u.Slug("task-note")
+		if err := retryOnBusy(func() error {
+			_, e := db.Exec("INSERT INTO task_notes (id, task_id, content, mode, created_at) VALUES (?, ?, ?, ?, ?)", noteID, id, fmt.Sprintf("Status changed from %s to %s", oldStatus, status), "system", u.NowISO())
+			return e
+		}); err != nil {
+			return nil, err
+		}
 	}
 	if status == "done" && oldStatus != "done" && !allowWithoutCommit {
 		count := countVerifiedCommits(db, id)
@@ -180,13 +186,17 @@ func UpdateTask(projectPath string, id, status, note string, allowWithoutCommit,
 			nextNote = note
 		}
 	}
-	_, err = db.Exec("UPDATE tasks SET status = ?, last_note = ?, updated_at = ? WHERE id = ?", status, nextNote, u.Today(), id)
-	if err != nil {
-		return nil, err
+	if err := retryOnBusy(func() error {
+		_, e := db.Exec("UPDATE tasks SET status = ?, last_note = ?, updated_at = ? WHERE id = ?", status, nextNote, u.Today(), id)
+		return e
+	}); err != nil {
+		return nil, fmt.Errorf("update tasks %s: %w", id, err)
 	}
 	if status == "done" {
 		// 2.3: a done task resolves its stale-file events (processed vs consumed).
-		MarkEventProcessed("task_stale_file", id)
+		if _, err := MarkEventProcessed("task_stale_file", id); err != nil {
+			u.LogShared("EVENTS", "MarkEventProcessed err=%v", err)
+		}
 	}
 	title := u.Str(existing["title"])
 	planID := u.Str(existing["plan_id"])
@@ -194,13 +204,24 @@ func UpdateTask(projectPath string, id, status, note string, allowWithoutCommit,
 	if planID != "" {
 		content += " " + planID
 	}
-	pmdb.SyncFTS5Entity(db, "task", id, title, content)
+	if err := retryOnBusy(func() error {
+		e := pmdb.SyncFTS5Entity(db, "task", id, title, content)
+		return e
+	}); err != nil {
+		u.LogShared("FTS5", "sync task=%s err=%v", id[:min(len(id), 12)], err)
+	}
 	if note != "" {
 		mode := "replace"
 		if appendNote {
 			mode = "append"
 		}
-		db.Exec("INSERT INTO task_notes (id, task_id, content, mode, created_at) VALUES (?, ?, ?, ?, ?)", u.Slug("task-note"), id, note, mode, u.NowISO())
+		noteID := u.Slug("task-note")
+		if err := retryOnBusy(func() error {
+			_, e := db.Exec("INSERT INTO task_notes (id, task_id, content, mode, created_at) VALUES (?, ?, ?, ?, ?)", noteID, id, note, mode, u.NowISO())
+			return e
+		}); err != nil {
+			return nil, err
+		}
 	}
 	return GetTaskSimple(id)
 }
@@ -224,8 +245,19 @@ func AppendTaskNote(projectPath string, taskID, content string) (map[string]any,
 	if ln, _ := existing["last_note"].(string); ln != "" {
 		nextNote = strings.TrimRight(ln, "\n") + "\n\n" + content
 	}
-	db.Exec("INSERT INTO task_notes (id, task_id, content, mode, created_at) VALUES (?, ?, ?, ?, ?)", u.Slug("task-note"), taskID, content, "append", u.NowISO())
-	db.Exec("UPDATE tasks SET last_note = ?, updated_at = ? WHERE id = ?", nextNote, u.Today(), taskID)
+	noteID := u.Slug("task-note")
+	if err := retryOnBusy(func() error {
+		_, e := db.Exec("INSERT INTO task_notes (id, task_id, content, mode, created_at) VALUES (?, ?, ?, ?, ?)", noteID, taskID, content, "append", u.NowISO())
+		return e
+	}); err != nil {
+		return nil, err
+	}
+	if err := retryOnBusy(func() error {
+		_, e := db.Exec("UPDATE tasks SET last_note = ?, updated_at = ? WHERE id = ?", nextNote, u.Today(), taskID)
+		return e
+	}); err != nil {
+		return nil, err
+	}
 	return GetTask(taskID)
 }
 
@@ -512,7 +544,7 @@ func CreateCommit(projectPath string, title, summary, evidenceSummary, reviewNot
 	if filesJSON != "" && filesJSON != "[]" {
 		commitContent += " " + filesJSON
 	}
-	pmdb.SyncFTS5Entity(db, "commit", id, title, commitContent)
+	_ = pmdb.SyncFTS5Entity(db, "commit", id, title, commitContent)
 	c, _ := GetCommit(id)
 	return c, nil
 }
@@ -618,7 +650,7 @@ func BatchCreateCommits(projectPath, taskID, branch, status, testStatus, reviewS
 		}
 		// FTS5 indexing
 		commitContent := item.Title + " " + item.Summary + " " + filesJSON
-		pmdb.SyncFTS5Entity(db, "commit", id, item.Title, commitContent)
+		_ = pmdb.SyncFTS5Entity(db, "commit", id, item.Title, commitContent)
 		result.Success++
 		result.Details[i] = BatchRecordItem{Index: i, Success: true, ID: id}
 	}
@@ -676,7 +708,7 @@ func StoreGitCommit(projectPath, title, commitHash, date string, files []string)
 }
 
 // findExistingCommitByHash returns the id of a commit whose stored hash is a
-// prefix of commitHash. Empty/NULL stored hashes never match: `'' || '%'`
+// prefix of commitHash. Empty/NULL stored hashes never match: `” || '%'`
 // would otherwise match every row and swallow new commits into old rows.
 func findExistingCommitByHash(db *sql.DB, commitHash string) string {
 	var existingID string
@@ -741,9 +773,9 @@ func UpdateCommitFor(projectPath, id string, payload map[string]any) (map[string
 
 // Backfill outcome codes for BackfillCommitTask.
 const (
-	BackfillNoop = iota // already bound to taskID, nothing missing
-	BackfillSynced      // already bound; empty title/files backfilled
-	BackfillBound       // task_id was empty; now bound (orphan resolved)
+	BackfillNoop   = iota // already bound to taskID, nothing missing
+	BackfillSynced        // already bound; empty title/files backfilled
+	BackfillBound         // task_id was empty; now bound (orphan resolved)
 )
 
 // ErrCommitTaskConflict is returned when the commit is already bound to a
@@ -863,7 +895,7 @@ func CreatePlan(title, goal, roadmapID, visionID, priority, status string, scope
 		return nil, err
 	}
 	// Auto-create event for PM tracking
-	pmdb.SyncFTS5Entity(db, "plan", id, title, title+" "+goal)
+	_ = pmdb.SyncFTS5Entity(db, "plan", id, title, title+" "+goal)
 	CreateEvent("plan_created", "plan", id, fmt.Sprintf("New plan created: %s", title))
 	return GetPlan(id)
 }
@@ -976,7 +1008,7 @@ func CreateBug(projectPath string, title, description, severity, status, commitI
 	if err != nil {
 		return nil, err
 	}
-	pmdb.SyncFTS5Entity(db, "bug", id, title, title+" "+description+" "+errMsg)
+	_ = pmdb.SyncFTS5Entity(db, "bug", id, title, title+" "+description+" "+errMsg)
 	return GetBug(id)
 }
 
@@ -1056,7 +1088,7 @@ func CreateDecision(projectPath string, title, background, decision, status stri
 	if err != nil {
 		return nil, err
 	}
-		pmdb.SyncFTS5Entity(db, "decision", id, title, title+" "+background+" "+decision)
+	_ = pmdb.SyncFTS5Entity(db, "decision", id, title, title+" "+background+" "+decision)
 	return GetDecision(id)
 }
 
@@ -1092,7 +1124,17 @@ func ListIdeas(status string) ([]map[string]any, error) {
 		return nil, err
 	}
 	defer rows.Close()
-		ideas, err := ScanIdeaRows(rows); if err != nil { return nil, err }; for _, idea := range ideas { var cc int; db.QueryRow("SELECT COUNT(*) FROM idea_comments WHERE idea_id = ?", idea["id"]).Scan(&cc); idea["comment_count"] = cc; idea["converted_to"] = nil }; return ideas, nil
+	ideas, err := ScanIdeaRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	for _, idea := range ideas {
+		var cc int
+		db.QueryRow("SELECT COUNT(*) FROM idea_comments WHERE idea_id = ?", idea["id"]).Scan(&cc)
+		idea["comment_count"] = cc
+		idea["converted_to"] = nil
+	}
+	return ideas, nil
 }
 
 func GetIdea(id string) (map[string]any, error) {
@@ -1125,7 +1167,7 @@ func CreateIdea(title, summary, impact, source string, canonConflict bool, curre
 	if err != nil {
 		return nil, err
 	}
-		pmdb.SyncFTS5Entity(db, "idea", id, title, title+" "+summary)
+	_ = pmdb.SyncFTS5Entity(db, "idea", id, title, title+" "+summary)
 	return GetIdea(id)
 }
 
@@ -1283,7 +1325,7 @@ func CreateRoadmap(title, targetDate, visionID, status, priority string) (map[st
 	if err != nil {
 		return nil, err
 	}
-		pmdb.SyncFTS5Entity(db, "roadmap", id, title, title)
+	_ = pmdb.SyncFTS5Entity(db, "roadmap", id, title, title)
 	return GetRoadmap(id)
 }
 
@@ -1375,7 +1417,7 @@ func CreatePrinciple(title, summary, kind, status string) (map[string]any, error
 	if err != nil {
 		return nil, err
 	}
-		pmdb.SyncFTS5Entity(db, "principle", id, title, title+" "+summary)
+	_ = pmdb.SyncFTS5Entity(db, "principle", id, title, title+" "+summary)
 	return GetPrinciple(id)
 }
 
@@ -1612,7 +1654,6 @@ func UpdateDocRecord(path string, payload map[string]any) (map[string]any, error
 	return map[string]any{"ok": true}, nil
 }
 
-
 func ReadDocContent(path string) (string, error) {
 	dir, err := pmdb.RuntimeDir()
 	if err != nil {
@@ -1754,7 +1795,7 @@ func CreateVision(title, summary, status, horizon string) (map[string]any, error
 	id := u.Slug("vision")
 	now := u.NowISO()
 	db.Exec("INSERT INTO visions (id, title, summary, status, horizon, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", id, title, summary, status, horizon, now, now)
-		pmdb.SyncFTS5Entity(db, "vision", id, title, title+" "+summary)
+	_ = pmdb.SyncFTS5Entity(db, "vision", id, title, title+" "+summary)
 	return GetVision(id)
 }
 
@@ -1801,7 +1842,7 @@ func GetCanon() (map[string]any, error) {
 	var id int
 	var updatedAt, productGoal, engFocus, arch string
 	if err := row.Scan(&id, &updatedAt, &productGoal, &engFocus, &arch); err != nil {
-		return map[string]any{"id":"canon-current","product_goal":"","engineering_focus":"","architecture":"","updated_at":"","version_scope":[]any{},"avoid_now":[]any{},"top_tasks":[]any{},"source_docs":[]any{},"related_decisions":[]any{}}, nil
+		return map[string]any{"id": "canon-current", "product_goal": "", "engineering_focus": "", "architecture": "", "updated_at": "", "version_scope": []any{}, "avoid_now": []any{}, "top_tasks": []any{}, "source_docs": []any{}, "related_decisions": []any{}}, nil
 	}
 	items := map[string][]string{}
 	itemRows, _ := db.Query("SELECT item_type, value FROM canon_items ORDER BY item_type, position")
@@ -1816,17 +1857,19 @@ func GetCanon() (map[string]any, error) {
 	gi := func(k string) []any {
 		if vals, ok := items[k]; ok {
 			r := make([]any, len(vals))
-			for i, v := range vals { r[i] = v }
+			for i, v := range vals {
+				r[i] = v
+			}
 			return r
 		}
 		return []any{}
 	}
 	return map[string]any{
-		"id":"canon-current","product_goal":productGoal,"engineering_focus":engFocus,
-		"architecture":arch,"updated_at":updatedAt,
-		"version_scope":gi("version_scope"),"avoid_now":gi("avoid_now"),
-		"top_tasks":gi("top_tasks"),"source_docs":gi("source_docs"),
-		"related_decisions":gi("related_decisions"),
+		"id": "canon-current", "product_goal": productGoal, "engineering_focus": engFocus,
+		"architecture": arch, "updated_at": updatedAt,
+		"version_scope": gi("version_scope"), "avoid_now": gi("avoid_now"),
+		"top_tasks": gi("top_tasks"), "source_docs": gi("source_docs"),
+		"related_decisions": gi("related_decisions"),
 	}, nil
 }
 
@@ -1852,14 +1895,14 @@ func UpdateCanon(decisionID, productGoal, engFocus, arch string, addScope, addAv
 // ============================================================
 
 type Thread struct {
-	ID        string          `json:"id"`
-	Title     string          `json:"title"`
-	Summary   string          `json:"summary"`
-	Status    string          `json:"status"`
-	Source    string          `json:"source"`
-	Items     []ThreadItem    `json:"items"`
-	CreatedAt string          `json:"created_at"`
-	UpdatedAt string          `json:"updated_at"`
+	ID        string       `json:"id"`
+	Title     string       `json:"title"`
+	Summary   string       `json:"summary"`
+	Status    string       `json:"status"`
+	Source    string       `json:"source"`
+	Items     []ThreadItem `json:"items"`
+	CreatedAt string       `json:"created_at"`
+	UpdatedAt string       `json:"updated_at"`
 }
 
 type ThreadItem struct {
@@ -1872,10 +1915,10 @@ type ThreadItem struct {
 }
 
 type ThreadSuggestion struct {
-	SuggestedTitle string        `json:"suggested_title"`
-	Rationale      string        `json:"rationale"`
-	SourceEntities []ThreadItem  `json:"source_entities"`
-	Score          float64       `json:"score"`
+	SuggestedTitle string       `json:"suggested_title"`
+	Rationale      string       `json:"rationale"`
+	SourceEntities []ThreadItem `json:"source_entities"`
+	Score          float64      `json:"score"`
 }
 
 func ListThreads(status string) ([]map[string]any, error) {
@@ -1948,7 +1991,7 @@ func CreateThread(title, summary, source string) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-		pmdb.SyncFTS5Entity(db, "thread", id, title, title+" "+summary)
+	_ = pmdb.SyncFTS5Entity(db, "thread", id, title, title+" "+summary)
 	return GetThread(id)
 }
 
@@ -2188,7 +2231,7 @@ func MapKeyToColumn(k string) string {
 		"kind": "kind", "source": "source", "impact": "impact",
 		"current_summary": "current_summary", "main_question": "main_question",
 		"recommended_next_action": "recommended_next_action",
-		"task_ids": "task_ids_json",
+		"task_ids":                "task_ids_json",
 		"target_date":             "target_date", "horizon": "horizon",
 		"note": "note", "content": "content",
 	}
@@ -2674,7 +2717,12 @@ func MarkEventProcessed(typ, entityID string) (int64, error) {
 		return 0, err
 	}
 	defer db.Close()
-	res, err := db.Exec("UPDATE events SET processed_by_agent = 1 WHERE type = ? AND entity_id = ? AND processed_by_agent = 0", typ, entityID)
+	var res sql.Result
+	err = retryOnBusy(func() error {
+		var e error
+		res, e = db.Exec("UPDATE events SET processed_by_agent = 1 WHERE type = ? AND entity_id = ? AND processed_by_agent = 0", typ, entityID)
+		return e
+	})
 	if err != nil {
 		return 0, err
 	}
@@ -2784,7 +2832,7 @@ func CreateAgentProfile(name, role, capabilities string) (map[string]any, error)
 	if err != nil {
 		return nil, err
 	}
-	pmdb.SyncFTS5Entity(db, "agent", id, name, name+" "+role)
+	_ = pmdb.SyncFTS5Entity(db, "agent", id, name, name+" "+role)
 	return GetAgentProfile(id)
 }
 
@@ -2799,7 +2847,12 @@ func GetAgentProfile(id string) (map[string]any, error) {
 	var caps string
 	var aid, aname, arole, astatus, acreatedAt, aupdatedAt string
 	row.Scan(&aid, &aname, &arole, &caps, &astatus, &acreatedAt, &aupdatedAt)
-	a["id"] = aid; a["name"] = aname; a["role"] = arole; a["status"] = astatus; a["created_at"] = acreatedAt; a["updated_at"] = aupdatedAt
+	a["id"] = aid
+	a["name"] = aname
+	a["role"] = arole
+	a["status"] = astatus
+	a["created_at"] = acreatedAt
+	a["updated_at"] = aupdatedAt
 	a["capabilities"] = u.ParseJSONList(caps)
 	return a, nil
 }
@@ -2821,7 +2874,12 @@ func ListAgentProfiles() ([]map[string]any, error) {
 		var caps string
 		var id, name, role, status, createdAt, updatedAt string
 		rows.Scan(&id, &name, &role, &caps, &status, &createdAt, &updatedAt)
-		a["id"] = id; a["name"] = name; a["role"] = role; a["status"] = status; a["created_at"] = createdAt; a["updated_at"] = updatedAt
+		a["id"] = id
+		a["name"] = name
+		a["role"] = role
+		a["status"] = status
+		a["created_at"] = createdAt
+		a["updated_at"] = updatedAt
 		a["capabilities"] = u.ParseJSONList(caps)
 		result = append(result, a)
 	}
@@ -2863,7 +2921,7 @@ func UpdateAgentProfile(id string, payload map[string]any) (map[string]any, erro
 		return nil, err
 	}
 	a, _ := GetAgentProfile(id)
-	pmdb.SyncFTS5Entity(db, "agent", id, u.Str(a["name"]), u.Str(a["name"])+" "+u.Str(a["role"]))
+	_ = pmdb.SyncFTS5Entity(db, "agent", id, u.Str(a["name"]), u.Str(a["name"])+" "+u.Str(a["role"]))
 	return a, nil
 }
 
