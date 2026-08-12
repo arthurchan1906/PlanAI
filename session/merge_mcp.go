@@ -18,7 +18,7 @@ func IsOrphanSessionID(sessionID string) bool {
 
 // MergeOrphans attaches orphan MCP rows to sessions by source and timestamp proximity.
 // When multiple sessions match, the nearest (preferring shorter sessions on tie) wins.
-func MergeOrphans(
+func MergeOrphans(projectPath string,
 	sessions []SessionAnchor,
 	orphans []map[string]any,
 	consumed map[string]bool,
@@ -43,7 +43,7 @@ func MergeOrphans(
 		// Write session_id back to discussion_log
 		parts := strings.SplitN(key, "|", 2)
 		if len(parts) == 2 {
-			store.UpdateDiscussionSessionID(id, parts[1])
+			store.UpdateDiscussionSessionIDFor(projectPath, id, parts[1])
 		}
 	}
 	return out

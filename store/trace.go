@@ -246,7 +246,13 @@ func TraceContextJSON(fromType, fromID, direction string, minWeight float64, lim
 
 // ListSessionsWithEdges returns distinct session IDs that have graph edges.
 func ListSessionsWithEdges(limit int) ([]string, error) {
-	db, err := pmdb.Open()
+	return ListSessionsWithEdgesFor("", limit)
+}
+
+// ListSessionsWithEdgesFor reads session IDs from a specific project's
+// database; empty projectPath resolves to the cwd project.
+func ListSessionsWithEdgesFor(projectPath string, limit int) ([]string, error) {
+	db, err := pmdb.OpenProject(projectPath)
 	if err != nil {
 		return nil, err
 	}

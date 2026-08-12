@@ -31,7 +31,7 @@ const minGoalRunes = 5
 
 // GenerateL2Summary produces a structured JSON summary of a session using the AI Summarizer.
 // Returns "" if summarizer is nil or AI call fails (graceful degradation).
-func GenerateL2Summary(messages []map[string]any, review ReviewResult, summarizer ai.Summarizer) string {
+func GenerateL2Summary(projectPath string, messages []map[string]any, review ReviewResult, summarizer ai.Summarizer) string {
 	if summarizer == nil {
 		return ""
 	}
@@ -59,7 +59,7 @@ func GenerateL2Summary(messages []map[string]any, review ReviewResult, summarize
 		return ""
 	}
 
-	return parseL2Response(raw)
+	return parseL2Response(projectPath, raw)
 }
 
 // extractSessionText filters and truncates messages using density-based strategy.
@@ -283,7 +283,7 @@ func buildL2Prompt(extracted string, review ReviewResult) (instruction, text str
 // parseL2Response validates and normalizes the AI JSON response.
 // Uses map[string]any to preserve extra fields from customized prompts.
 // Falls back gracefully on malformed output.
-func parseL2Response(raw string) string {
+func parseL2Response(projectPath, raw string) string {
 	cleaned := strings.TrimSpace(raw)
 	// Strip <think>...</think> wrapper — multimodal models with thinking=1 wrap JSON in think tags
 	cleaned = stripThinkTags(cleaned)
@@ -330,7 +330,7 @@ func parseL2Response(raw string) string {
 			if len(parts) < 4 {
 				continue
 			}
-			if store.EntityExists(parts[0], eidStr) {
+			if store.EntityExistsFor(projectPath, parts[0], eidStr) {
 				valid = append(valid, eidStr)
 			}
 		}

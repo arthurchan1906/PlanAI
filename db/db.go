@@ -620,8 +620,18 @@ type Config struct {
 	AgentOverrides      map[string]AgentOverride `json:"agent_overrides,omitempty"` // per-project per-agent overrides
 }
 
-// LoadConfig reads config from environment and config.json.
+// LoadConfig reads config from environment and config.json for the current
+// project (cwd or PMAI_HOME). Env vars take precedence over the file,
+// matching LoadConfigFor.
 func LoadConfig() Config {
+	return LoadConfigFor("")
+}
+
+// LoadConfigFor reads a specific project's .pmai/config.json without changing
+// the process cwd. An empty projectPath resolves via RuntimeDir (PMAI_HOME /
+// PLANAI_HOME / upward .pmai lookup), preserving LoadConfig's pre-existing
+// semantics. Used by the pipeline to give each project its own AI model.
+func LoadConfigFor(projectPath string) Config {
 	cfg := Config{WebHost: "127.0.0.1", WebPort: 8720}
 	if v := os.Getenv("AI_ENDPOINT"); v != "" {
 		cfg.AIEndpoint = v
@@ -638,11 +648,18 @@ func LoadConfig() Config {
 	if v := os.Getenv("AI_API_KEY"); v != "" {
 		cfg.AIApiKey = v
 	}
-	dir, err := RuntimeDir()
-	if err != nil {
+	var configPath string
+	if projectPath == "" {
+		if dir, err := RuntimeDir(); err == nil {
+			configPath = filepath.Join(dir, "config.json")
+		}
+	} else {
+		configPath = filepath.Join(projectPath, ".pmai", "config.json")
+	}
+	if configPath == "" {
 		return cfg
 	}
-	data, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return cfg
 	}

@@ -53,7 +53,13 @@ type Task struct {
 }
 
 func ListTasks(status, planID string) ([]Task, error) {
-	db, err := pmdb.Open()
+	return ListTasksFor("", status, planID)
+}
+
+// ListTasksFor reads tasks from a specific project's database;
+// empty projectPath resolves to the cwd project.
+func ListTasksFor(projectPath, status, planID string) ([]Task, error) {
+	db, err := pmdb.OpenProject(projectPath)
 	if err != nil {
 		return nil, err
 	}
@@ -290,7 +296,13 @@ func UpdateTaskCheckpoint(taskID string, index int, done bool) (map[string]any, 
 // ============================================================
 
 func ListCommits(status, taskID, decisionID, since string, limit int) ([]map[string]any, error) {
-	db, err := pmdb.Open()
+	return ListCommitsFor("", status, taskID, decisionID, since, limit)
+}
+
+// ListCommitsFor reads commits from a specific project's database;
+// empty projectPath resolves to the cwd project.
+func ListCommitsFor(projectPath, status, taskID, decisionID, since string, limit int) ([]map[string]any, error) {
+	db, err := pmdb.OpenProject(projectPath)
 	if err != nil {
 		return nil, err
 	}
@@ -411,7 +423,13 @@ func ListOrphanCommits(limit, offset int) ([]map[string]any, error) {
 }
 
 func GetCommit(id string) (map[string]any, error) {
-	db, err := pmdb.Open()
+	return GetCommitFor("", id)
+}
+
+// GetCommitFor reads a commit from a specific project's database;
+// empty projectPath resolves to the cwd project.
+func GetCommitFor(projectPath, id string) (map[string]any, error) {
+	db, err := pmdb.OpenProject(projectPath)
 	if err != nil {
 		return nil, err
 	}
@@ -464,7 +482,7 @@ func CreateCommit(projectPath string, title, summary, evidenceSummary, reviewNot
 				return nil, fmt.Errorf("merge existing commit %s: %w", existingID, err)
 			}
 			u.LogShared("MCP", "tool=aipm_record_commit status=dedup id=%s task=%s", existingID, taskID)
-			return GetCommit(existingID)
+			return GetCommitFor(projectPath, existingID)
 		}
 	}
 	id := u.Slug("commit")
@@ -643,7 +661,7 @@ func StoreGitCommit(projectPath, title, commitHash, date string, files []string)
 				return nil, err
 			}
 		}
-		return GetCommit(existingID)
+		return GetCommitFor(projectPath, existingID)
 	}
 
 	// Insert new
@@ -654,7 +672,7 @@ func StoreGitCommit(projectPath, title, commitHash, date string, files []string)
 	if err != nil {
 		return nil, err
 	}
-	return GetCommit(id)
+	return GetCommitFor(projectPath, id)
 }
 
 // findExistingCommitByHash returns the id of a commit whose stored hash is a
@@ -678,7 +696,13 @@ func countVerifiedCommits(db *sql.DB, taskID string) int {
 }
 
 func UpdateCommit(id string, payload map[string]any) (map[string]any, error) {
-	db, err := pmdb.Open()
+	return UpdateCommitFor("", id, payload)
+}
+
+// UpdateCommitFor updates a commit in a specific project's database;
+// empty projectPath resolves to the cwd project.
+func UpdateCommitFor(projectPath, id string, payload map[string]any) (map[string]any, error) {
+	db, err := pmdb.OpenProject(projectPath)
 	if err != nil {
 		return nil, err
 	}
@@ -1389,7 +1413,13 @@ func UpdatePrinciple(id string, payload map[string]any) (map[string]any, error) 
 // ============================================================
 
 func ListLinks(sourceID, targetID, relation string) ([]map[string]any, error) {
-	db, err := pmdb.Open()
+	return ListLinksFor("", sourceID, targetID, relation)
+}
+
+// ListLinksFor reads links from a specific project's database;
+// empty projectPath resolves to the cwd project.
+func ListLinksFor(projectPath, sourceID, targetID, relation string) ([]map[string]any, error) {
+	db, err := pmdb.OpenProject(projectPath)
 	if err != nil {
 		return nil, err
 	}
@@ -2567,7 +2597,13 @@ func DeleteBug(id string) error {
 // ============================================================
 
 func CreateEvent(typ, entityType, entityID, summary string) (map[string]any, error) {
-	db, err := pmdb.Open()
+	return CreateEventFor("", typ, entityType, entityID, summary)
+}
+
+// CreateEventFor creates an event in a specific project's database;
+// empty projectPath resolves to the cwd project.
+func CreateEventFor(projectPath, typ, entityType, entityID, summary string) (map[string]any, error) {
+	db, err := pmdb.OpenProject(projectPath)
 	if err != nil {
 		return nil, err
 	}
@@ -2583,7 +2619,13 @@ func CreateEvent(typ, entityType, entityID, summary string) (map[string]any, err
 
 // HasUnconsumedEvent checks if an unconsumed event of the given type+entity already exists.
 func HasUnconsumedEvent(typ, entityID string) bool {
-	db, err := pmdb.Open()
+	return HasUnconsumedEventFor("", typ, entityID)
+}
+
+// HasUnconsumedEventFor checks for an unconsumed event in a specific project's
+// database; empty projectPath resolves to the cwd project.
+func HasUnconsumedEventFor(projectPath, typ, entityID string) bool {
+	db, err := pmdb.OpenProject(projectPath)
 	if err != nil {
 		return false
 	}
@@ -2603,7 +2645,13 @@ func HasUnconsumedEvent(typ, entityID string) bool {
 // state (including consumed). Prevents duplicate events from being re-created
 // after an agent has consumed them.
 func HasEvent(typ, entityType, entityID string) bool {
-	db, err := pmdb.Open()
+	return HasEventFor("", typ, entityType, entityID)
+}
+
+// HasEventFor checks for an event in a specific project's database;
+// empty projectPath resolves to the cwd project.
+func HasEventFor(projectPath, typ, entityType, entityID string) bool {
+	db, err := pmdb.OpenProject(projectPath)
 	if err != nil {
 		return false
 	}
@@ -2857,10 +2905,16 @@ func relationWeight(relation string) float64 {
 }
 
 func CreateGraphEdge(sourceType, sourceID, edgeType, targetType, targetID string, weight float64, evidence map[string]any) error {
+	return CreateGraphEdgeFor("", sourceType, sourceID, edgeType, targetType, targetID, weight, evidence)
+}
+
+// CreateGraphEdgeFor writes a graph edge into a specific project's database;
+// empty projectPath resolves to the cwd project.
+func CreateGraphEdgeFor(projectPath, sourceType, sourceID, edgeType, targetType, targetID string, weight float64, evidence map[string]any) error {
 	if !allowedEdgeTypes[edgeType] {
 		return fmt.Errorf("edge_type '%s' is not allowed", edgeType)
 	}
-	db, err := pmdb.Open()
+	db, err := pmdb.OpenProject(projectPath)
 	if err != nil {
 		return err
 	}
@@ -2874,7 +2928,13 @@ func CreateGraphEdge(sourceType, sourceID, edgeType, targetType, targetID string
 }
 
 func ListGraphEdges(sourceID, targetID, edgeType string) ([]map[string]any, error) {
-	db, err := pmdb.Open()
+	return ListGraphEdgesFor("", sourceID, targetID, edgeType)
+}
+
+// ListGraphEdgesFor reads graph edges from a specific project's database;
+// empty projectPath resolves to the cwd project.
+func ListGraphEdgesFor(projectPath, sourceID, targetID, edgeType string) ([]map[string]any, error) {
+	db, err := pmdb.OpenProject(projectPath)
 	if err != nil {
 		return nil, err
 	}

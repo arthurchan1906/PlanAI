@@ -3,7 +3,6 @@ package session
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 
 	"aipmc/store"
@@ -56,20 +55,14 @@ const reconcileWindow = 30 // minutes around session for commit matching
 // and generates tentative events for low-confidence matches.
 // projectPath overrides CWD for multi-project scanning.
 func Reconcile(since, projectPath string) (ReconcileResult, error) {
-	if projectPath != "" {
-		home, _ := os.Getwd()
-		if err := os.Chdir(projectPath); err != nil {
-			return ReconcileResult{}, err
-		}
-		defer os.Chdir(home)
-	}
+	// No global CWD mutation: every store call passes projectPath explicitly.
 	out := ReconcileResult{Since: since}
 
 	// Sync commits from git — backfill missing files and create missing entries
 	// Full backfill on first run per session (files_json=[] indicates missing data)
 	syncCommitsFromGit(projectPath, true)
 
-	summaries, err := store.ListSessionSummariesSince(since, 50)
+	summaries, err := store.ListSessionSummariesSinceFor(projectPath, since, 50)
 	if err != nil {
 		return out, err
 	}
@@ -77,7 +70,7 @@ func Reconcile(since, projectPath string) (ReconcileResult, error) {
 
 	for _, ss := range summaries {
 		// Get session messages for Hard-path file extraction (works without L2)
-		messages, err := store.GetSessionMessages(ss.SessionID)
+		messages, err := store.GetSessionMessagesFor(projectPath, ss.SessionID)
 		if err != nil || len(messages) == 0 {
 			continue
 		}
@@ -99,7 +92,7 @@ func Reconcile(since, projectPath string) (ReconcileResult, error) {
 		}
 
 		// Find commits in time window
-		commits, err := store.ListCommits("", "", "", "", 200)
+		commits, err := store.ListCommitsFor(projectPath, "", "", "", "", 200)
 		if err != nil {
 			continue
 		}
@@ -163,7 +156,7 @@ func Reconcile(since, projectPath string) (ReconcileResult, error) {
 					continue
 				}
 				reason := fmt.Sprintf("%d hard + %d soft file matches", len(hardMatches), len(softMatches))
-				eventID := createTentativeEvent("commit", cid, ss.SessionID, reason)
+				eventID := createTentativeEvent(projectPath, "commit", cid, ss.SessionID, reason)
 				out.TentativeLinks = append(out.TentativeLinks, TentativeLink{
 					SessionID:  ss.SessionID,
 					SourceType: "commit",
@@ -181,18 +174,18 @@ func Reconcile(since, projectPath string) (ReconcileResult, error) {
 		// Execute auto-links for this session's batch
 		for _, link := range out.AutoLinked {
 			if link.SessionID == ss.SessionID {
-				store.CreateLink("", link.SourceType, link.SourceID, "relates_to",
+				store.CreateLink(projectPath, link.SourceType, link.SourceID, "relates_to",
 					link.TargetType, link.TargetID,
 					fmt.Sprintf("reconcile: %s", link.Reason))
 			}
 		}
 
 		// Build graph edges for this session (file_touch only)
-		buildGraphEdges(ss.SessionID, touchedFiles, readFiles, commits)
+		buildGraphEdges(projectPath, ss.SessionID, touchedFiles, readFiles, commits)
 	}
 
 	// Phase 2: same_session edges derived from confirmed session↔commit links
-	buildSameSessionEdges(out.AutoLinked)
+	buildSameSessionEdges(projectPath, out.AutoLinked)
 
 	crossSessionEdges(projectPath, since)
 
@@ -210,7 +203,7 @@ func Reconcile(since, projectPath string) (ReconcileResult, error) {
 }
 
 // createTentativeEvent records a low-confidence link as a PM event.
-func createTentativeEvent(sourceType, sourceID, sessionID, reason string) string {
+func createTentativeEvent(projectPath, sourceType, sourceID, sessionID, reason string) string {
 	prefix := sessionID
 	if len(prefix) > 8 {
 		prefix = prefix[:8]
@@ -218,10 +211,10 @@ func createTentativeEvent(sourceType, sourceID, sessionID, reason string) string
 	summary := fmt.Sprintf("reconcile: session %s may relate to %s %s (reason: %s, confidence: low)",
 		prefix, sourceType, sourceID, reason)
 	// Dedup: skip if this entity already has an unconsumed tentative_link
-	if store.HasUnconsumedEvent("tentative_link", sourceID) {
+	if store.HasUnconsumedEventFor(projectPath, "tentative_link", sourceID) {
 		return ""
 	}
-	evt, err := store.CreateEvent("tentative_link", sourceType, sourceID, summary)
+	evt, err := store.CreateEventFor(projectPath, "tentative_link", sourceType, sourceID, summary)
 	if err != nil {
 		return ""
 	}

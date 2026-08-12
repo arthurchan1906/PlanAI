@@ -3,7 +3,6 @@ package session
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -14,27 +13,17 @@ import (
 const maxEmergPerRule = 5
 
 // emergeOnce runs all emergence detection rules for the given project.
-// It temporarily switches CWD to projectPath so that CWD-based store
-// functions (CreateEvent, ListEvents, etc.) write to the correct database.
+// No global CWD mutation: every store call passes projectPath explicitly.
 func emergeOnce(projectPath string) {
-	if projectPath != "" {
-		home, _ := os.Getwd()
-		if err := os.Chdir(projectPath); err != nil {
-			u.LogShared("EMERGE", "chdir fail %s: %v", projectPath, err)
-			return
-		}
-		defer os.Chdir(home)
-	}
-
-	commitOrphans()
-	staleFileTasks()
-	hotspotUntracked()
+	commitOrphans(projectPath)
+	staleFileTasks(projectPath)
+	hotspotUntracked(projectPath)
 }
 
 // commitOrphans flags commits from last 7 days that have no task link.
-func commitOrphans() {
+func commitOrphans(projectPath string) {
 	since := time.Now().Add(-7 * 24 * time.Hour).Format("2006-01-02T15:04:05")
-	commits, err := store.ListCommits("", "", "", since, 200)
+	commits, err := store.ListCommitsFor(projectPath, "", "", "", since, 200)
 	if err != nil {
 		return
 	}
@@ -48,7 +37,7 @@ func commitOrphans() {
 		// Check for existing task links (both directions)
 		hasTask := false
 		for _, dir := range [][3]string{{cid, "", ""}, {"", cid, ""}} {
-			links, _ := store.ListLinks(dir[0], dir[1], dir[2])
+			links, _ := store.ListLinksFor(projectPath, dir[0], dir[1], dir[2])
 			for _, l := range links {
 				if u.Str(l["target_type"]) == "task" || u.Str(l["source_type"]) == "task" {
 					hasTask = true
@@ -59,10 +48,10 @@ func commitOrphans() {
 				break
 			}
 		}
-		if hasTask || dupEvent("commit_orphan", "commit", cid) {
+		if hasTask || dupEvent(projectPath, "commit_orphan", "commit", cid) {
 			continue
 		}
-		store.CreateEvent("commit_orphan", "commit", cid,
+		store.CreateEventFor(projectPath, "commit_orphan", "commit", cid,
 			fmt.Sprintf("orphan commit '%s' has no task link", ctitle))
 		count++
 	}
@@ -72,8 +61,8 @@ func commitOrphans() {
 }
 
 // staleFileTasks finds done tasks whose linked files still appear in newer commits.
-func staleFileTasks() {
-	tasks, err := store.ListTasks("done", "")
+func staleFileTasks(projectPath string) {
+	tasks, err := store.ListTasksFor(projectPath, "done", "")
 	if err != nil || len(tasks) == 0 {
 		return
 	}
@@ -85,14 +74,14 @@ func staleFileTasks() {
 		tid := t.ID
 		ttitle := t.Title
 		// Find the newest commit linked to this task
-		links, _ := store.ListLinks("", tid, "")
+		links, _ := store.ListLinksFor(projectPath, "", tid, "")
 		var newestTime string
 		var taskCommitIDs []string
 		for _, l := range links {
 			if u.Str(l["source_type"]) == "commit" {
 				cid := u.Str(l["source_id"])
 				taskCommitIDs = append(taskCommitIDs, cid)
-				cm, err := store.GetCommit(cid)
+				cm, err := store.GetCommitFor(projectPath, cid)
 				if err == nil && cm != nil {
 					if ct := u.Str(cm["created_at"]); ct > newestTime {
 						newestTime = ct
@@ -104,7 +93,7 @@ func staleFileTasks() {
 			continue
 		}
 		// Find commits newer than the task's newest commit
-		newerCommits, _ := store.ListCommits("", "", "", newestTime, 200)
+		newerCommits, _ := store.ListCommitsFor(projectPath, "", "", "", newestTime, 200)
 		stale := false
 		for _, nc := range newerCommits {
 			cid := u.Str(nc["id"])
@@ -121,7 +110,7 @@ func staleFileTasks() {
 			}
 			// Check file overlap via graph_edges
 			for _, tcid := range taskCommitIDs {
-				edges, _ := store.ListGraphEdges("", tcid, "file_touch")
+				edges, _ := store.ListGraphEdgesFor(projectPath, "", tcid, "file_touch")
 				for _, e := range edges {
 					if u.Str(e["target_type"]) == "commit" && u.Str(e["target_id"]) == cid {
 						stale = true
@@ -136,10 +125,10 @@ func staleFileTasks() {
 				break
 			}
 		}
-		if !stale || dupEvent("task_stale_file", "task", tid) {
+		if !stale || dupEvent(projectPath, "task_stale_file", "task", tid) {
 			continue
 		}
-		store.CreateEvent("task_stale_file", "task", tid,
+		store.CreateEventFor(projectPath, "task_stale_file", "task", tid,
 			fmt.Sprintf("done task '%s' — files still modified by newer commits", ttitle))
 		count++
 	}
@@ -149,8 +138,8 @@ func staleFileTasks() {
 }
 
 // hotspotUntracked finds files modified by 2+ sessions with no tracking task.
-func hotspotUntracked() {
-	sessions, err := store.ListSessionsWithEdges(50)
+func hotspotUntracked(projectPath string) {
+	sessions, err := store.ListSessionsWithEdgesFor(projectPath, 50)
 	if err != nil || len(sessions) < 2 {
 		return
 	}
@@ -158,7 +147,7 @@ func hotspotUntracked() {
 	sessFiles := map[string]map[string]bool{}
 	globalCount := map[string]int{}
 	for _, sid := range sessions {
-		edges, _ := store.ListGraphEdges(sid, "", "file_touch")
+		edges, _ := store.ListGraphEdgesFor(projectPath, sid, "", "file_touch")
 		files := map[string]bool{}
 		for _, e := range edges {
 			evJSON := u.Str(e["evidence_json"])
@@ -179,7 +168,7 @@ func hotspotUntracked() {
 		if sc < 2 {
 			continue
 		}
-		if dupEvent("hotspot_untracked", "file", f) {
+		if dupEvent(projectPath, "hotspot_untracked", "file", f) {
 			continue
 		}
 		// Count sessions touching this file
@@ -189,7 +178,7 @@ func hotspotUntracked() {
 				sids = append(sids, u.Prefix(sid, 8))
 			}
 		}
-		store.CreateEvent("hotspot_untracked", "file", f,
+		store.CreateEventFor(projectPath, "hotspot_untracked", "file", f,
 			fmt.Sprintf("file '%s' modified by %d sessions (%s) without task", f, sc, strings.Join(sids, ",")))
 		count++
 	}
@@ -200,8 +189,8 @@ func hotspotUntracked() {
 
 // helpers
 
-func dupEvent(typ, entityType, eid string) bool {
-	return store.HasEvent(typ, entityType, eid)
+func dupEvent(projectPath, typ, entityType, eid string) bool {
+	return store.HasEventFor(projectPath, typ, entityType, eid)
 }
 
 func extractFiles(evJSON, key string, out map[string]bool) {

@@ -484,12 +484,15 @@ func serveCommand() int {
 		LogDir:       gcfg.ProxyLogDir,
 		AnthropicURL: gcfg.AnthropicURL,
 	})
-	srv := web.NewServer(staticFS, newAPIHandler(), "127.0.0.1", webPort, proxyHandler, projectName, projectPath)
+	srv := web.NewServer(staticFS, newAPIHandler(projectPath), "127.0.0.1", webPort, proxyHandler, projectName, projectPath)
 
 	// Step 7: Start web server (blocking)
 	fmt.Printf("✓ Web 启动 :%d → http://127.0.0.1:%d\n", webPort, webPort)
 	fmt.Printf("✓ 项目 %s 已注册\n", projectName)
-	// Start background session review pipeline (B1→L2→L3 auto-run) across all registered projects
+	// Start background session review pipeline (B1→L2→L3 auto-run) across all registered projects.
+	// Each project's L2 summaries use that project's own AI model (its .pmai/config.json),
+	// not the serve instance's home model — so a local model configured for one project
+	// no longer gets used to summarize every project.
 	if application.AI() != nil {
 		var otherProjects []string
 		for p := range pmdb.LoadProjects() {
@@ -497,7 +500,9 @@ func serveCommand() int {
 				otherProjects = append(otherProjects, p)
 			}
 		}
-		session.RunAuto(func() ai.Summarizer { return application.AI() }, 30*time.Minute, otherProjects)
+		session.RunAuto(func(p string) ai.Summarizer {
+			return application.SummarizerFor(p)
+		}, 30*time.Minute, otherProjects)
 	}
 
 	if err := srv.Listen(); err != nil {
@@ -631,8 +636,8 @@ func formatTimeAgo(iso string) string {
 	}
 }
 
-func newAPIHandler() http.Handler {
-	return apipkg.New(apipkg.Deps{App: application}).Handler()
+func newAPIHandler(projectPath string) http.Handler {
+	return apipkg.New(apipkg.Deps{App: application, ProjectPath: projectPath}).Handler()
 }
 
 func writeSkillFile() {

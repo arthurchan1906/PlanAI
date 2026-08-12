@@ -18,7 +18,7 @@ const maxEdgeAgeDays = 7
 //   - file_read: session → commit with read-file intersection
 // same_session edges are built separately via buildSameSessionEdges
 // after reconcile has confirmed session↔commit links.
-func buildGraphEdges(sessionID string, touchedFiles, readFiles []string, commits []map[string]any) {
+func buildGraphEdges(projectPath, sessionID string, touchedFiles, readFiles []string, commits []map[string]any) {
 	if len(touchedFiles) == 0 {
 		return
 	}
@@ -61,7 +61,7 @@ func buildGraphEdges(sessionID string, touchedFiles, readFiles []string, commits
 			avgIDF := avgFileIDF(inter, idf)
 			weight := jaccard * avgIDF
 			if weight >= 0.1 {
-				store.CreateGraphEdge("session", sessionID, "file_touch", "commit", cid, weight,
+				store.CreateGraphEdgeFor(projectPath, "session", sessionID, "file_touch", "commit", cid, weight,
 					map[string]any{
 						"intersect":     safeSlice(inter, 5),
 						"session_files": len(touchedFiles),
@@ -76,7 +76,7 @@ func buildGraphEdges(sessionID string, touchedFiles, readFiles []string, commits
 		readInter := intersectFiles(readFiles, cfiles)
 		if len(readInter) > 0 {
 			weight := float64(len(readInter)) / float64(len(cfiles))
-			store.CreateGraphEdge("session", sessionID, "file_read", "commit", cid, weight,
+			store.CreateGraphEdgeFor(projectPath, "session", sessionID, "file_read", "commit", cid, weight,
 				map[string]any{"read_files": safeSlice(readInter, 3)})
 		}
 	}
@@ -85,7 +85,7 @@ func buildGraphEdges(sessionID string, touchedFiles, readFiles []string, commits
 // buildSameSessionEdges creates same_session edges between commits that
 // reconcile has linked to the same session. Only commits with confirmed
 // session membership get connected — no time-window heuristics.
-func buildSameSessionEdges(links []LinkAction) {
+func buildSameSessionEdges(projectPath string, links []LinkAction) {
 	// Group commit IDs by session
 	sessionCommits := map[string][]string{}
 	for _, link := range links {
@@ -101,7 +101,7 @@ func buildSameSessionEdges(links []LinkAction) {
 		// Create edges between all pairs of commits in the same session
 		for i := 0; i < len(commits); i++ {
 			for j := i + 1; j < len(commits); j++ {
-				store.CreateGraphEdge("commit", commits[i], "same_session", "commit", commits[j], 1.0,
+				store.CreateGraphEdgeFor(projectPath, "commit", commits[i], "same_session", "commit", commits[j], 1.0,
 					map[string]any{"session_id": sessionID})
 			}
 		}

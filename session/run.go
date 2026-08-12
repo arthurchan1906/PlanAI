@@ -35,16 +35,10 @@ type RunResult struct {
 
 // Run reviews recent agent sessions and writes session_summaries rows.
 func Run(opts RunOpts) (RunResult, error) {
-	// Scope chdir to this function to avoid global CWD side effects
-	if opts.ProjectPath != "" {
-		home, _ := os.Getwd()
-		if err := os.Chdir(opts.ProjectPath); err != nil {
-			return RunResult{}, err
-		}
-		defer os.Chdir(home)
-	}
+	// No global CWD mutation: every store call below passes opts.ProjectPath
+	// explicitly, so concurrent web/MCP reads never see the wrong project.
 
-	if err := store.EnsureSessionSummariesTable(); err != nil {
+	if err := store.EnsureSessionSummariesTableFor(opts.ProjectPath); err != nil {
 		return RunResult{}, err
 	}
 	since := opts.Since
@@ -56,11 +50,11 @@ func Run(opts RunOpts) (RunResult, error) {
 		limit = 50
 	}
 
-	sessions, err := store.RecentAgentActivity(since, limit)
+	sessions, err := store.RecentAgentActivityFor(opts.ProjectPath, since, limit)
 	if err != nil {
 		return RunResult{}, err
 	}
-	orphans, err := store.ListOrphanMCPRows(since)
+	orphans, err := store.ListOrphanMCPRowsFor(opts.ProjectPath, since)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -72,7 +66,7 @@ func Run(opts RunOpts) (RunResult, error) {
 		})
 	}
 	consumed := map[string]bool{}
-	merged := MergeOrphans(anchors, orphans, consumed)
+	merged := MergeOrphans(opts.ProjectPath, anchors, orphans, consumed)
 
 	var unmerged []orphanEvent
 	for _, o := range orphans {
@@ -91,21 +85,21 @@ func Run(opts RunOpts) (RunResult, error) {
 	out := RunResult{Since: since, UnmergedOrphans: unmerged}
 	var l2Cached, l2New int
 	for _, s := range sessions {
-		rows, err := store.GetSessionMessages(s.SessionID)
+		rows, err := store.GetSessionMessagesFor(opts.ProjectPath, s.SessionID)
 		if err != nil {
 			continue
 		}
 		key := s.Source + "|" + s.SessionID
 		mergedRows := merged[key]
 		messages := CombineMessages(rows, mergedRows)
-		review := ReviewSession(s.SessionID, s.Source, messages, len(mergedRows), nil)
+		review := ReviewSession(opts.ProjectPath, s.SessionID, s.Source, messages, len(mergedRows), nil)
 
 		// Inject commits in the session's time window as B1 context
 		// Dual source: git log (authoritative) + AIPM commits (entity links)
-		if gitCommits, err := store.FindGitCommitsInWindow(s.FirstSeen, s.LastSeen); err == nil {
+		if gitCommits, err := store.FindGitCommitsInWindowFor(opts.ProjectPath, s.FirstSeen, s.LastSeen); err == nil {
 			review.CommitsInWindow = gitCommits
 		}
-		if aipmCommits, err := store.FindCommitsInWindow(s.FirstSeen, s.LastSeen); err == nil {
+		if aipmCommits, err := store.FindCommitsInWindowFor(opts.ProjectPath, s.FirstSeen, s.LastSeen); err == nil {
 			// Merge AIPM commits — if not already present, add for entity context
 			seen := make(map[string]bool)
 			for _, c := range review.CommitsInWindow {
@@ -123,12 +117,12 @@ func Run(opts RunOpts) (RunResult, error) {
 		l2status := "skip_no_ai"
 		if opts.Summarizer != nil {
 			// Check cache first: don't waste LLM calls on already-summarized sessions
-			if old, _ := store.GetSessionSummary(s.SessionID); old != nil && old.Summary != "" {
+			if old, _ := store.GetSessionSummaryFor(opts.ProjectPath, s.SessionID); old != nil && old.Summary != "" {
 				summary = NormalizeSummaryGoal(old.Summary)
 				l2status = "cached"
 				l2Cached++
 			} else {
-				summary = NormalizeSummaryGoal(GenerateL2Summary(messages, review, opts.Summarizer))
+				summary = NormalizeSummaryGoal(GenerateL2Summary(opts.ProjectPath, messages, review, opts.Summarizer))
 				if summary != "" {
 					l2status = "ok"
 					l2New++
@@ -159,7 +153,7 @@ func Run(opts RunOpts) (RunResult, error) {
 		}
 
 		entityRefs := review.EntityRefsJSON()
-		if err := store.UpsertSessionSummary(store.SessionSummary{
+		if err := store.UpsertSessionSummaryFor(opts.ProjectPath, store.SessionSummary{
 			SessionID:    s.SessionID,
 			Source:       s.Source,
 			ReviewJSON:   review.ReviewJSON(),
@@ -194,12 +188,15 @@ func Run(opts RunOpts) (RunResult, error) {
 	}
 
 	// Write cross-session lessons file if L2 summaries exist
-	if summaries, err := store.ListSessionSummariesWithSummary("", 50); err == nil && len(summaries) > 0 {
+	if summaries, err := store.ListSessionSummariesWithSummaryFor(opts.ProjectPath, "", 50); err == nil && len(summaries) > 0 {
 		knowledge := AggregateCrossSessionKnowledge(summaries)
 		lessonsPath := ".pmai/cache/recent_lessons.json"
+		if opts.ProjectPath != "" {
+			lessonsPath = filepath.Join(opts.ProjectPath, ".pmai", "cache", "recent_lessons.json")
+		}
 		if err := WriteLessonsFile(lessonsPath, knowledge); err != nil {
-				// non-fatal
-			}
+			// non-fatal
+		}
 	}
 
 	return out, nil

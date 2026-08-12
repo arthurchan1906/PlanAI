@@ -23,7 +23,13 @@ type SessionSummary struct {
 
 // UpsertSessionSummary inserts or replaces a session review row.
 func UpsertSessionSummary(row SessionSummary) error {
-	db, err := pmdb.Open()
+	return UpsertSessionSummaryFor("", row)
+}
+
+// UpsertSessionSummaryFor writes a session review row into a specific
+// project's database; empty projectPath resolves to the cwd project.
+func UpsertSessionSummaryFor(projectPath string, row SessionSummary) error {
+	db, err := pmdb.OpenProject(projectPath)
 	if err != nil {
 		return err
 	}
@@ -52,10 +58,16 @@ func UpsertSessionSummary(row SessionSummary) error {
 
 // ListSessionSummariesSince returns reviewed sessions since the ISO cutoff.
 func ListSessionSummariesSince(since string, limit int) ([]SessionSummary, error) {
+	return ListSessionSummariesSinceFor("", since, limit)
+}
+
+// ListSessionSummariesSinceFor reads reviewed sessions from a specific
+// project's database; empty projectPath resolves to the cwd project.
+func ListSessionSummariesSinceFor(projectPath, since string, limit int) ([]SessionSummary, error) {
 	if limit <= 0 {
 		limit = 100
 	}
-	db, err := pmdb.Open()
+	db, err := pmdb.OpenProject(projectPath)
 	if err != nil {
 		return nil, err
 	}
@@ -93,7 +105,13 @@ func ListSessionSummariesSince(since string, limit int) ([]SessionSummary, error
 
 // GetSessionSummary returns one row or nil if missing.
 func GetSessionSummary(sessionID string) (*SessionSummary, error) {
-	db, err := pmdb.Open()
+	return GetSessionSummaryFor("", sessionID)
+}
+
+// GetSessionSummaryFor reads one session summary row from a specific
+// project's database; empty projectPath resolves to the cwd project.
+func GetSessionSummaryFor(projectPath, sessionID string) (*SessionSummary, error) {
+	db, err := pmdb.OpenProject(projectPath)
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +133,13 @@ func GetSessionSummary(sessionID string) (*SessionSummary, error) {
 
 // ListOrphanMCPRows returns MCP log rows with no real session_id.
 func ListOrphanMCPRows(since string) ([]map[string]any, error) {
-	db, err := pmdb.Open()
+	return ListOrphanMCPRowsFor("", since)
+}
+
+// ListOrphanMCPRowsFor reads orphan MCP rows from a specific project's
+// database; empty projectPath resolves to the cwd project.
+func ListOrphanMCPRowsFor(projectPath, since string) ([]map[string]any, error) {
+	db, err := pmdb.OpenProject(projectPath)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +181,13 @@ func ListOrphanMCPRows(since string) ([]map[string]any, error) {
 
 // EnsureSessionSummariesTable is a no-op when schema migration already ran.
 func EnsureSessionSummariesTable() error {
-	db, err := pmdb.Open()
+	return EnsureSessionSummariesTableFor("")
+}
+
+// EnsureSessionSummariesTableFor ensures the session_summaries table exists in
+// a specific project's database; empty projectPath resolves to the cwd project.
+func EnsureSessionSummariesTableFor(projectPath string) error {
+	db, err := pmdb.OpenProject(projectPath)
 	if err != nil {
 		return err
 	}
@@ -181,10 +211,16 @@ func EnsureSessionSummariesTable() error {
 
 // ListSessionSummariesWithSummary returns sessions that have a non-empty L2 summary.
 func ListSessionSummariesWithSummary(since string, limit int) ([]SessionSummary, error) {
+	return ListSessionSummariesWithSummaryFor("", since, limit)
+}
+
+// ListSessionSummariesWithSummaryFor reads summarized sessions from a specific
+// project's database; empty projectPath resolves to the cwd project.
+func ListSessionSummariesWithSummaryFor(projectPath, since string, limit int) ([]SessionSummary, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	db, err := pmdb.Open()
+	db, err := pmdb.OpenProject(projectPath)
 	if err != nil {
 		return nil, err
 	}

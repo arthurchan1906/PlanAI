@@ -2,7 +2,6 @@ package session
 
 import (
 	"encoding/json"
-	"os"
 	"os/exec"
 	"strings"
 
@@ -15,18 +14,13 @@ import (
 // Subsequent runs: incremental (only recent commits from git).
 // projectPath overrides cwd for multi-project scanning.
 func syncCommitsFromGit(projectPath string, fullBackfill bool) (created, updated int) {
-	if projectPath != "" {
-		home, _ := os.Getwd()
-		os.Chdir(projectPath)
-		defer os.Chdir(home)
-	}
-
-	// Build git log command — scan last 30 days (StoreGitCommit is idempotent,
-	// so repeated runs don't duplicate data, just backfill missing files)
+	// Build git log command — run inside the project dir (cmd.Dir, no global
+	// CWD change). Store calls below pass projectPath explicitly.
 	args := []string{"log", "--all", "--format=%H|%s|%aI", "--since=30.days"}
 	args = append(args, "--name-only")
 
 	cmd := exec.Command("git", args...)
+	cmd.Dir = projectPath
 	out, err := cmd.Output()
 	if err != nil {
 		u.LogShared("GITSYNC", "git log error: %v", err)
@@ -39,7 +33,7 @@ func syncCommitsFromGit(projectPath string, fullBackfill bool) (created, updated
 	}
 
 	// Get all existing commits from DB to find matches
-	existing, _ := store.ListCommits("", "", "", "", 0)
+	existing, _ := store.ListCommitsFor(projectPath, "", "", "", "", 0)
 	// Build prefix-based hash index — DB hashes may be short (7-8 chars)
 	// while git log produces full 40-char hashes
 	dbHashes := make([]struct{ hash, id string }, 0)
@@ -71,7 +65,7 @@ func syncCommitsFromGit(projectPath string, fullBackfill bool) (created, updated
 			filesStr := u.Str(existingCommit["files_json"])
 			if filesStr == "" || filesStr == "[]" || filesStr == "null" {
 				filesJSON, _ := json.Marshal(gc.files)
-				if _, err := store.UpdateCommit(u.Str(existingCommit["id"]), map[string]any{
+				if _, err := store.UpdateCommitFor(projectPath, u.Str(existingCommit["id"]), map[string]any{
 					"files":       string(filesJSON),
 					"commit_hash": gc.hash,
 				}); err == nil {
@@ -112,7 +106,7 @@ func syncCommitsFromGit(projectPath string, fullBackfill bool) (created, updated
 			if candidates, ok := titleIndex[gc.title]; ok {
 				for _, c := range candidates {
 					filesJSON, _ := json.Marshal(gc.files)
-					if _, err := store.UpdateCommit(u.Str(c["id"]), map[string]any{
+					if _, err := store.UpdateCommitFor(projectPath, u.Str(c["id"]), map[string]any{
 						"files":       string(filesJSON),
 						"commit_hash": gc.hash,
 					}); err == nil {

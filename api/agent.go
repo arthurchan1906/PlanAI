@@ -60,6 +60,59 @@ func (s *Server) handleAgentLaunch(w http.ResponseWriter, body map[string]any) {
 		return
 	}
 
+	// codex: write its proxy profile as a launch side effect (kept here, not in
+	// buildAgentCmd, so the pure command builder stays side-effect-free).
+	if agentName == "codex" || agentName == "openai-codex" {
+		effort := rt.ReasoningEffort
+		if effort == "" {
+			effort = "medium"
+		}
+		if err := codexWriteProxyProfile(proxyURL, rt.Model, effort); err != nil {
+			web.SendError(w, 500, fmt.Sprintf("Codex 配置失败: %v", err))
+			return
+		}
+	}
+
+	// Launch inside the web-served project, not the serve process cwd — when
+	// multiple `aipmc serve` instances run, os.Getwd() alone lands agents in
+	// the wrong directory.
+	workDir := s.deps.ProjectPath
+	if workDir == "" {
+		workDir, _ = os.Getwd()
+	}
+	cmd, envOverrides, err := buildAgentCmd(agentName, proxyURL, rt, workDir)
+	if err != nil {
+		web.SendError(w, 400, err.Error())
+		return
+	}
+
+	essential := essentialSystemEnv()
+	// Apply resolved extra env vars (merged global + profile + project overrides)
+	for k, v := range rt.ExtraEnv {
+		envOverrides = append(envOverrides, k+"="+v)
+	}
+	cmd.Env = append(essential, envOverrides...)
+
+	if err := launchInTerminal(cmd, envOverrides); err != nil {
+		web.SendError(w, 500, fmt.Sprintf("启动失败: %v", err))
+		return
+	}
+
+	s.ensureSessionGC()
+	s.sessionsMu.Lock()
+	s.sessions = append(s.sessions, agentSession{
+		Agent:     agentName,
+		StartedAt: time.Now().Unix(),
+	})
+	s.sessionsMu.Unlock()
+
+	web.SendJSON(w, map[string]any{"ok": true, "agent": agentName})
+}
+
+// buildAgentCmd constructs the exec.Cmd (and env overrides) that launches an AI
+// coding agent. projectDir is the working directory the agent runs in. It has
+// no side effects (no profile/file writes) so it is unit-testable.
+func buildAgentCmd(agentName, proxyURL string, rt pmdb.AgentRuntime, projectDir string) (*exec.Cmd, []string, error) {
 	var cmd *exec.Cmd
 	var envOverrides []string
 	switch agentName {
@@ -91,14 +144,6 @@ func (s *Server) handleAgentLaunch(w http.ResponseWriter, body map[string]any) {
 			envOverrides = append(envOverrides, "CLAUDE_CODE_EFFORT_LEVEL="+rt.EffortLevel)
 		}
 	case "codex", "openai-codex":
-		effort := rt.ReasoningEffort
-		if effort == "" {
-			effort = "medium"
-		}
-		if err := codexWriteProxyProfile(proxyURL, rt.Model, effort); err != nil {
-			web.SendError(w, 500, fmt.Sprintf("Codex 配置失败: %v", err))
-			return
-		}
 		cmd = exec.Command("codex", "-p", "proxy")
 		envOverrides = []string{
 			"OPENAI_API_KEY=local",
@@ -120,32 +165,10 @@ func (s *Server) handleAgentLaunch(w http.ResponseWriter, body map[string]any) {
 		}
 		envOverrides = nil
 	default:
-		web.SendError(w, 400, fmt.Sprintf("未知 agent: %s (支持 claude/codex/gemini/opencode)", agentName))
-		return
+		return nil, nil, fmt.Errorf("未知 agent: %s (支持 claude/codex/gemini/opencode)", agentName)
 	}
-
-	essential := essentialSystemEnv()
-	// Apply resolved extra env vars (merged global + profile + project overrides)
-	for k, v := range rt.ExtraEnv {
-		envOverrides = append(envOverrides, k+"="+v)
-	}
-	cmd.Env = append(essential, envOverrides...)
-	cmd.Dir, _ = os.Getwd()
-
-	if err := launchInTerminal(cmd, envOverrides); err != nil {
-		web.SendError(w, 500, fmt.Sprintf("启动失败: %v", err))
-		return
-	}
-
-	s.ensureSessionGC()
-	s.sessionsMu.Lock()
-	s.sessions = append(s.sessions, agentSession{
-		Agent:     agentName,
-		StartedAt: time.Now().Unix(),
-	})
-	s.sessionsMu.Unlock()
-
-	web.SendJSON(w, map[string]any{"ok": true, "agent": agentName})
+	cmd.Dir = projectDir
+	return cmd, envOverrides, nil
 }
 
 // handleAgentCmd returns the shell command to launch an agent so users can

@@ -219,7 +219,13 @@ func ListRecentDiscussions(source, typeFilter, projectPath string, lastN int, cu
 
 // GetSessionMessages returns all messages for a given session, ordered by time.
 func GetSessionMessages(sessionID string) ([]map[string]any, error) {
-	db, err := pmdb.Open()
+	return GetSessionMessagesFor("", sessionID)
+}
+
+// GetSessionMessagesFor reads a session's messages from a specific project's
+// database; empty projectPath resolves to the cwd project.
+func GetSessionMessagesFor(projectPath, sessionID string) ([]map[string]any, error) {
+	db, err := pmdb.OpenProject(projectPath)
 	if err != nil {
 		return nil, err
 	}
@@ -417,10 +423,16 @@ type AgentSessionSummary struct {
 // RecentAgentActivity returns per-session summaries grouped by source,
 // limited to sessions with activity since the given ISO timestamp.
 func RecentAgentActivity(since string, limit int) ([]AgentSessionSummary, error) {
+	return RecentAgentActivityFor("", since, limit)
+}
+
+// RecentAgentActivityFor reads active sessions from a specific project's
+// database; empty projectPath resolves to the cwd project.
+func RecentAgentActivityFor(projectPath, since string, limit int) ([]AgentSessionSummary, error) {
 	if limit <= 0 {
 		limit = 10
 	}
-	db, err := pmdb.Open()
+	db, err := pmdb.OpenProject(projectPath)
 	if err != nil {
 		return nil, err
 	}
@@ -560,10 +572,16 @@ func AutoLinkDiscussions(sessions []AgentSessionSummary) (int, error) {
 
 // EntityExists returns true when the entity ID exists in the PM database.
 func EntityExists(entityType, entityID string) bool {
+	return EntityExistsFor("", entityType, entityID)
+}
+
+// EntityExistsFor checks entity existence in a specific project's database;
+// empty projectPath resolves to the cwd project.
+func EntityExistsFor(projectPath, entityType, entityID string) bool {
 	if entityID == "" {
 		return false
 	}
-	db, err := pmdb.Open()
+	db, err := pmdb.OpenProject(projectPath)
 	if err != nil {
 		return false
 	}
@@ -600,7 +618,13 @@ type CommitSummary struct {
 
 // FindCommitsInWindow returns commits whose created_at falls between start and end (+2h margin).
 func FindCommitsInWindow(start, end string) ([]CommitSummary, error) {
-	db, err := pmdb.Open()
+	return FindCommitsInWindowFor("", start, end)
+}
+
+// FindCommitsInWindowFor reads commits from a specific project's database;
+// empty projectPath resolves to the cwd project.
+func FindCommitsInWindowFor(projectPath, start, end string) ([]CommitSummary, error) {
+	db, err := pmdb.OpenProject(projectPath)
 	if err != nil {
 		return nil, err
 	}
@@ -637,12 +661,19 @@ func parseFilesJSON(raw string) []string {
 
 // FindGitCommitsInWindow runs `git log` in the current directory for commits between start and end.
 func FindGitCommitsInWindow(start, end string) ([]CommitSummary, error) {
+	return FindGitCommitsInWindowFor("", start, end)
+}
+
+// FindGitCommitsInWindowFor runs `git log` inside the given project directory
+// (no cwd mutation); empty projectPath uses the cwd.
+func FindGitCommitsInWindowFor(projectPath, start, end string) ([]CommitSummary, error) {
 	cmd := exec.Command("git", "log",
 		"--since="+start,
 		"--until="+end,
 		"--format=%H|%s",
 		"--name-only",
 	)
+	cmd.Dir = projectPath
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
@@ -825,7 +856,13 @@ func LinkedDiscussionSessions(targetType, targetID string, limit int) ([]map[str
 
 // UpdateDiscussionSessionID writes back a resolved session_id for orphan MCP rows.
 func UpdateDiscussionSessionID(id, sessionID string) error {
-	db, err := pmdb.Open()
+	return UpdateDiscussionSessionIDFor("", id, sessionID)
+}
+
+// UpdateDiscussionSessionIDFor writes back a resolved session_id in a specific
+// project's database; empty projectPath resolves to the cwd project.
+func UpdateDiscussionSessionIDFor(projectPath, id, sessionID string) error {
+	db, err := pmdb.OpenProject(projectPath)
 	if err != nil {
 		return err
 	}

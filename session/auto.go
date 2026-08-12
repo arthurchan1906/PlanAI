@@ -14,28 +14,29 @@ import (
 // across all registered projects. The home project runs first, then all
 // other registered projects in sequence.
 // The first run happens after 5 seconds, then every interval thereafter.
-// getSummarizer is called each tick to fetch the current AI client,
-// so config changes (e.g. model switch via web UI) take effect without restart.
-func RunAuto(getSummarizer func() ai.Summarizer, interval time.Duration, projectPaths []string) {
+// getSummarizer is called per project each tick with that project's path, so
+// each project's L2 summaries use its own AI model (its .pmai/config.json),
+// and config changes take effect without restart.
+func RunAuto(getSummarizer func(projectPath string) ai.Summarizer, interval time.Duration, projectPaths []string) {
 	home, _ := os.Getwd()
 	u.LogShared("PIPELINE", "auto-run started interval=%v projects=%d home=%s", interval, len(projectPaths), home)
 
 	go func() {
 		time.Sleep(5 * time.Second)
-		runAllProjects(home, projectPaths, getSummarizer())
+		runAllProjects(home, projectPaths, getSummarizer)
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for range ticker.C {
-			runAllProjects(home, projectPaths, getSummarizer())
+			runAllProjects(home, projectPaths, getSummarizer)
 		}
 	}()
 }
 
-func runAllProjects(home string, projectPaths []string, summarizer ai.Summarizer) {
+func runAllProjects(home string, projectPaths []string, getSummarizer func(projectPath string) ai.Summarizer) {
 	all := dedupeProjects(home, projectPaths)
 	for i, p := range all {
 		u.LogShared("PIPELINE", "project=%s (%d/%d)", p, i+1, len(all))
-		runOnce(p, summarizer)
+		runOnce(p, getSummarizer(p))
 	}
 }
 

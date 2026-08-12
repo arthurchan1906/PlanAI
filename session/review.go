@@ -68,14 +68,15 @@ type taggedItem struct {
 }
 
 // ReviewSession applies B1 rules to merged session messages.
-func ReviewSession(sessionID, source string, messages []map[string]any, mergedMCP int, orphans []orphanEvent) ReviewResult {
+// projectPath routes entity-existence checks to the correct project DB.
+func ReviewSession(projectPath, sessionID, source string, messages []map[string]any, mergedMCP int, orphans []orphanEvent) ReviewResult {
 	tools := extractMCPTools(messages)
 	compliance := buildCompliance(tools)
 	intent := inferIntent(messages, compliance)
 	userCount, toolCount := countRoles(messages)
 	hookCoverage := hookCoverageStatus(userCount, toolCount, messages)
 	sqliteViolation := detectSQLiteViolation(messages)
-	edges := buildLayer0Edges(sessionID, messages)
+	edges := buildLayer0Edges(projectPath, sessionID, messages)
 	baseline := compliance.HasBriefing
 	completed := workflowCompleted(intent, compliance, messages)
 	findings, positives := buildFindings(sessionID, intent, baseline, completed, compliance, hookCoverage, sqliteViolation, messages)
@@ -296,7 +297,7 @@ func detectSQLiteViolation(messages []map[string]any) bool {
 	return false
 }
 
-func buildLayer0Edges(sessionID string, messages []map[string]any) []layer0Edge {
+func buildLayer0Edges(projectPath, sessionID string, messages []map[string]any) []layer0Edge {
 	from := "session:" + sessionID
 	seen := map[string]bool{}
 	var edges []layer0Edge
@@ -315,7 +316,7 @@ func buildLayer0Edges(sessionID string, messages []map[string]any) []layer0Edge 
 			continue
 		}
 		seen[key] = true
-		if store.EntityExists(m[1], m[0]) {
+		if store.EntityExistsFor(projectPath, m[1], m[0]) {
 			edges = append(edges, layer0Edge{Type: "entity_ref", From: from, To: key, Weight: 1})
 		}
 	}

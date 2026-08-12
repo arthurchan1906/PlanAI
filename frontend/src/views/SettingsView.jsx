@@ -305,17 +305,27 @@ export default function SettingsView() {
     }
     return gatewayModelOpts;
   }
-  // Auto-fill endpoint from a selected model's first provider URL, then auto-save
+  // Auto-fill endpoint from a selected model's OpenAI-compatible provider URL, then auto-save.
+  // AIPM 自身 AI 只走 OpenAI-compatible 协议：模型必须有 openai_url 的 provider 才能用。
+  // 只取 routes[0] 且缺 openai_url 时静默沿用旧 endpoint，会把云端模型名发到旧地址（如本地 8080）。
   function applyModelChange(modelId, endpointField) {
     if (!modelId) return;
     const model = (models || []).find(m => m.id === modelId);
+    let endpoint = "";
     if (model && model.routes && model.routes.length > 0) {
-      const providerName = model.routes[0].provider;
-      const provider = (providers || []).find(p => p.name === providerName);
-      if (provider && provider.openai_url) {
-        aiForm.setFieldsValue({ [endpointField]: provider.openai_url });
+      for (const route of model.routes) {
+        const provider = (providers || []).find(p => p.name === route.provider);
+        if (provider && provider.openai_url) { endpoint = provider.openai_url; break; }
       }
     }
+    if (!endpoint) {
+      message.warning(`模型 ${modelId} 无 OpenAI-compatible endpoint，AIPM AI 无法使用，已取消选择`);
+      // 清空模型选择并中止自动保存，避免旧 endpoint + 新模型名发到错误服务器
+      const field = endpointField === "ai_endpoint" ? "ai_chat_model" : "ai_model";
+      aiForm.setFieldsValue({ [field]: undefined });
+      return;
+    }
+    aiForm.setFieldsValue({ [endpointField]: endpoint });
     // 动态更新：选完模型立刻保存生效，无需手动点 Save
     const values = aiForm.getFieldsValue();
     api("/pmai/config", { method: "POST", body: JSON.stringify(values) })

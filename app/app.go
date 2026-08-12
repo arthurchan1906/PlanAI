@@ -10,6 +10,7 @@ import (
 	"aipmc/mcp"
 	"aipmc/project"
 	"aipmc/search"
+	"aipmc/u"
 )
 
 // App holds runtime services shared by CLI, web API, and MCP.
@@ -62,6 +63,20 @@ func (a *App) ReloadAI() {
 	a.mu.Lock()
 	a.ai = ai.NewClient(endpoint, embEndpoint, model, chatModel, apiKey)
 	a.mu.Unlock()
+}
+
+// SummarizerFor builds an AI summarizer from the given project's own
+// .pmai/config.json, so the pipeline uses the model configured for that
+// project rather than the serve instance's home project. Returns nil when the
+// project has no AI endpoint configured (L2 summary is then skipped).
+func (a *App) SummarizerFor(projectPath string) ai.Summarizer {
+	cfg := pmdb.LoadConfigFor(projectPath)
+	if cfg.AIEndpoint == "" {
+		u.LogShared("PIPELINE", "summarizer project=%s none (no ai_endpoint)", projectPath)
+		return nil
+	}
+	u.LogShared("PIPELINE", "summarizer project=%s endpoint=%s chat_model=%s", projectPath, cfg.AIEndpoint, cfg.AIChatModel)
+	return ai.NewClient(cfg.AIEndpoint, cfg.AIEmbeddingEndpoint, cfg.AIModel, cfg.AIChatModel, cfg.AIApiKey)
 }
 
 // RunMCP starts the MCP stdio server with project services wired in.
