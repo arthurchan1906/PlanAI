@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // ── Time ──────────────────────────────────────────────────────────────
@@ -113,10 +114,16 @@ func Itoa(n int) string {
 	return digits
 }
 
-// TruncateStr truncates s to maxLen bytes.
+// TruncateStr truncates s to at most maxLen bytes, backing off to a rune
+// boundary so multi-byte characters are never cut mid-rune. 8/12: bare byte
+// slicing cut Chinese text mid-rune and produced invalid UTF-8 — the source
+// of the log "illegal byte sequence / NEL" trap (1857 截断行 100% 含 "...")
 func TruncateStr(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
+	}
+	for maxLen > 0 && !utf8.RuneStart(s[maxLen]) {
+		maxLen--
 	}
 	return s[:maxLen] + "..."
 }
@@ -141,9 +148,14 @@ func FirstNonEmpty(candidates ...string) string {
 }
 
 // SafePrefix returns the first n bytes of s with "..." appended when truncated.
+// Like TruncateStr, backs off to a rune boundary (kept for future callers;
+// currently unused).
 func SafePrefix(s string, n int) string {
 	if len(s) <= n {
 		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
 	}
 	return s[:n] + "..."
 }

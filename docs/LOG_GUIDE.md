@@ -61,9 +61,9 @@
 - **不要用 `grep -P`（PCRE）**：macOS 自带 BSD grep 不支持，会报 `grep: -P not supported`。用 `grep -E`（ERE）或直接 `rg`（推荐，仓库内已大量使用）。
 - `rg` 默认大小写敏感；`rg -i` 忽略大小写；`rg -o` 只输出匹配片段，配合 `sort | uniq -c | sort -rn` 做分布统计。
 - 时间过滤：8/12 起日志行首为 `[YYYY-MM-DD HH:MM:SS]`（历史行仅 `[HH:MM:SS]` 无日期，`--window`/按日期过滤只对带日期行生效）。当天行：`rg "^\[$(date +%F)" ~/.aipmc/logs/aipmc.log`；窗口统计：`aipmc metrics --window 24h`。
-- **UTF-8/NEL 陷阱（8/12 实测）**：aipmc.log 含约 0.7% 非法 UTF-8 与 NEL 行终止符（file 类型 `Non-ISO extended-ASCII text, with LF, NEL line terminators`）。BSD 工具在默认 locale 下会报 `illegal byte sequence` 或漏匹配：
+- **非法 UTF-8 陷阱（8/12 实测，根因已修）**：aipmc.log 有 1857 条非法 UTF-8 行（约 0.7%），**全部是 `TruncateStr`/`truncArg` 按字节截断中文 rune 的产物**（每行都含 `...`，97% 以 `...` 结尾）。8/12 已改为 rune 边界回退，新日志不再产生；存量非法行需等日志轮转。注意：`file` 报的 "NEL line terminators" 是**误报**——实测日志 0 个真正 NEL 字符（`0xC2 0x85`），它把截断序列里的裸 `0x85` 连续字节误读成了 NEL。BSD 工具在默认 locale 下遇非法 UTF-8 会报 `illegal byte sequence` 或漏匹配：
   - 查询一律加 `LC_ALL=C`；`grep` 再加 `-a`（按文本处理）：`LC_ALL=C grep -a "pattern" ~/.aipmc/logs/aipmc.log`
-  - 不要用 `strings`/`ugrep` 做全量行匹配（NEL 会被当成行分隔，计数失真）。
+  - 不要用 `strings`/`ugrep` 做全量行匹配（会把截断字节/0x85 当特殊字符，计数失真）。
 
 ## 4. 从数据库复测关键指标（sqlite3 只读）
 

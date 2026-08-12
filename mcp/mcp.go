@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"unicode/utf8"
 
 	"aipmc/ai"
 	"aipmc/analyze"
@@ -2579,6 +2580,11 @@ func strArg(args map[string]interface{}, key string) string {
 func truncArg(args map[string]interface{}, key string, max int) string {
 	s := strArg(args, key)
 	if len(s) > max {
+		// 8/12: 裸字节切片会切坏中文 rune 产生非法 UTF-8（见 u.TruncateStr），
+		// 回退到 rune 边界。
+		for max > 0 && !utf8.RuneStart(s[max]) {
+			max--
+		}
 		return s[:max] + "..."
 	}
 	return s
