@@ -109,8 +109,11 @@ func handleResponsesPassthrough(w http.ResponseWriter, r *http.Request) {
 			Model:            effectiveModelName,
 			PromptTokens:     in,
 			CompletionTokens: out,
+			CacheHitTokens:      cacheHit,
+			CacheCreationTokens: cacheCreate,
 		})
 		SetCaptureTokens(capID, in, out)
+		SetCaptureCacheTokens(capID, cacheHit, cacheCreate)
 		u.LogShared("LLM", "agent=codex model=%s in_tok=%d out_tok=%d cache_hit=%d cache_create=%d injected=%s lat=%.1fs", effectiveModelName, in, out, cacheHit, cacheCreate, injectedFlag(r), time.Since(startTime).Seconds())
 	}
 }
@@ -180,8 +183,11 @@ func handleResponsesPassthroughStream(w http.ResponseWriter, r *http.Request, bo
 			Model:            model,
 			PromptTokens:     in,
 			CompletionTokens: out,
+			CacheHitTokens:      cacheHit,
+			CacheCreationTokens: cacheCreate,
 		})
 		SetCaptureTokens(capID, in, out)
+		SetCaptureCacheTokens(capID, cacheHit, cacheCreate)
 		u.LogShared("LLM", "agent=codex model=%s in_tok=%d out_tok=%d cache_hit=%d cache_create=%d injected=%s lat=%.1fs", model, in, out, cacheHit, cacheCreate, injectedFlag(r), time.Since(startTime).Seconds())
 	}
 }

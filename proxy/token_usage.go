@@ -116,9 +116,10 @@ func extractAnthropicStreamUsage(body string) (inputTokens, outputTokens, cacheH
 
 // extractResponsesStreamUsage 从上游 Responses API 响应中解析 token 用量。
 // 支持两种形态：SSE（data: 行，response.completed 事件）与纯 JSON（非流式）。
-// 尽力解析 cache_read_input_tokens / cache_creation_input_tokens——
-// DeepSeek responses 当前不返回 cache 字段（usage 仅 input/output/total），
-// 取到 0 即如实记录，与 anthropic 路径的 cache_hit/cache_create 对齐口径。
+// 缓存命中两种字段都认：
+//   - DeepSeek Responses（8/12 起支持）：usage.input_tokens_details.cached_tokens
+//   - 网关/兼容层：usage.cache_read_input_tokens
+// 后者保留兼容，两者都取非零值（优先 cached_tokens）。
 func extractResponsesStreamUsage(body string) (inputTokens, outputTokens, cacheHitTokens, cacheCreationTokens int) {
 	// 纯 JSON（非流式）：单次解析整个 body。
 	var plain struct {
@@ -127,10 +128,17 @@ func extractResponsesStreamUsage(body string) (inputTokens, outputTokens, cacheH
 			OutputTokens             int `json:"output_tokens"`
 			CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 			CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+			InputTokensDetails       struct {
+				CachedTokens int `json:"cached_tokens"`
+			} `json:"input_tokens_details"`
 		} `json:"usage"`
 	}
 	if json.Unmarshal([]byte(body), &plain) == nil && (plain.Usage.InputTokens > 0 || plain.Usage.OutputTokens > 0) {
-		return plain.Usage.InputTokens, plain.Usage.OutputTokens, plain.Usage.CacheReadInputTokens, plain.Usage.CacheCreationInputTokens
+		cacheHit := plain.Usage.InputTokensDetails.CachedTokens
+		if cacheHit == 0 {
+			cacheHit = plain.Usage.CacheReadInputTokens
+		}
+		return plain.Usage.InputTokens, plain.Usage.OutputTokens, cacheHit, plain.Usage.CacheCreationInputTokens
 	}
 
 	lines := strings.Split(body, "\n")
@@ -147,6 +155,9 @@ func extractResponsesStreamUsage(body string) (inputTokens, outputTokens, cacheH
 				OutputTokens             int `json:"output_tokens"`
 				CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 				CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+				InputTokensDetails       struct {
+					CachedTokens int `json:"cached_tokens"`
+				} `json:"input_tokens_details"`
 			} `json:"usage"`
 		}
 		if json.Unmarshal([]byte(data), &event) != nil {
@@ -159,7 +170,9 @@ func extractResponsesStreamUsage(body string) (inputTokens, outputTokens, cacheH
 			if event.Usage.OutputTokens > 0 {
 				outputTokens = event.Usage.OutputTokens
 			}
-			if event.Usage.CacheReadInputTokens > 0 {
+			if event.Usage.InputTokensDetails.CachedTokens > 0 {
+				cacheHitTokens = event.Usage.InputTokensDetails.CachedTokens
+			} else if event.Usage.CacheReadInputTokens > 0 {
 				cacheHitTokens = event.Usage.CacheReadInputTokens
 			}
 			if event.Usage.CacheCreationInputTokens > 0 {

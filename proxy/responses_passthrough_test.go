@@ -87,18 +87,23 @@ func TestResponsesPassthroughForwardsNativeBody(t *testing.T) {
 }
 
 // TestExtractResponsesStreamUsage 验证从上游 Responses SSE 解析 token 用量。
+// 8/12 起 DeepSeek Responses 返回 input_tokens_details.cached_tokens——
+// 此前按「无 cache 字段」固化断言，导致缓存命中恒 0（E3 cache_hit_rate 失真）。
 func TestExtractResponsesStreamUsage(t *testing.T) {
 	sse := `data: {"type":"response.output_text.delta","delta":"Hello"}
 
-data: {"type":"response.completed","response":{"status":"completed"},"usage":{"input_tokens":11,"output_tokens":22,"total_tokens":33}}
+data: {"type":"response.completed","response":{"status":"completed"},"usage":{"input_tokens":11,"input_tokens_details":{"cached_tokens":10},"output_tokens":22,"total_tokens":33}}
 
 `
 	in, out, cacheHit, cacheCreate := extractResponsesStreamUsage(sse)
 	if in != 11 || out != 22 {
 		t.Fatalf("usage: got in=%d out=%d want in=11 out=22", in, out)
 	}
-	if cacheHit != 0 || cacheCreate != 0 {
-		t.Fatalf("deepseek usage has no cache fields, got hit=%d create=%d", cacheHit, cacheCreate)
+	if cacheHit != 10 {
+		t.Fatalf("deepseek cached_tokens: got hit=%d want 10", cacheHit)
+	}
+	if cacheCreate != 0 {
+		t.Fatalf("deepseek has no cache_creation: got create=%d want 0", cacheCreate)
 	}
 }
 
@@ -107,6 +112,32 @@ func TestExtractResponsesStreamUsagePlainJSON(t *testing.T) {
 	in, out, cacheHit, cacheCreate := extractResponsesStreamUsage(body)
 	if in != 5 || out != 7 || cacheHit != 3 || cacheCreate != 2 {
 		t.Fatalf("plain json usage: got in=%d out=%d hit=%d create=%d", in, out, cacheHit, cacheCreate)
+	}
+}
+
+// TestExtractResponsesStreamUsageDeepSeekPlainJSON：DeepSeek Responses 非流式形态
+// 的缓存命中在 input_tokens_details.cached_tokens（8/12 起支持）。
+func TestExtractResponsesStreamUsageDeepSeekPlainJSON(t *testing.T) {
+	body := `{"usage":{"input_tokens":50,"input_tokens_details":{"cached_tokens":30},"output_tokens":8,"total_tokens":58}}`
+	in, out, cacheHit, cacheCreate := extractResponsesStreamUsage(body)
+	if in != 50 || out != 8 {
+		t.Fatalf("plain json usage: got in=%d out=%d want in=50 out=8", in, out)
+	}
+	if cacheHit != 30 {
+		t.Fatalf("deepseek cached_tokens: got hit=%d want 30", cacheHit)
+	}
+	if cacheCreate != 0 {
+		t.Fatalf("deepseek has no cache_creation: got create=%d want 0", cacheCreate)
+	}
+}
+
+// TestExtractResponsesStreamUsageCachedTokensPriority：两个缓存字段同时存在时
+// cached_tokens（DeepSeek/OpenAI 规范）优先于网关兼容字段 cache_read_input_tokens。
+func TestExtractResponsesStreamUsageCachedTokensPriority(t *testing.T) {
+	body := `{"usage":{"input_tokens":50,"input_tokens_details":{"cached_tokens":30},"output_tokens":8,"cache_read_input_tokens":99}}`
+	_, _, cacheHit, _ := extractResponsesStreamUsage(body)
+	if cacheHit != 30 {
+		t.Fatalf("cached_tokens should win: got hit=%d want 30", cacheHit)
 	}
 }
 
