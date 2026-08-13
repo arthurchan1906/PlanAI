@@ -116,7 +116,8 @@ func InjectSessionContext(body []byte, agent string) []byte {
 	// W1（8/13）：session/req 标识进 inject/suppressed 日志，供可见性漏斗按
 	// (agent, session, req, ts) 对齐注入与事件处理记录。
 	sessionID := extractSessionID(body)
-	reqID := fmt.Sprintf("r%d", atomic.AddUint64(&injectReqSeq, 1))
+	// req 标识带 pid：跨进程/重启后不冲突（P3，8/13 审核）。
+	reqID := fmt.Sprintf("r%d-%d", os.Getpid(), atomic.AddUint64(&injectReqSeq, 1))
 
 	if len(goals) == 0 && len(fileAssoc) == 0 && len(guidelines) > 0 {
 		u.LogShared("INJECT", "inject agent=%s source=guidelines_only", agent)

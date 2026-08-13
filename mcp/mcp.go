@@ -718,9 +718,11 @@ func (s *mcpServer) handleBriefing(args map[string]interface{}) mcpToolResult {
 	report := analyze.RunFullAnalysis()
 
 	// W2（8/13）事件→动作漏斗 surfaced 记录：简报展示了哪些 unconsumed 事件、发给谁。
-	// 与 hook 侧 get_briefing 调用记录（session_id+ts）按 agent+时间窗对齐。
+	// session 为尽力推导（serve 进程无 session 上下文，从 hook 的 discussion_log 取
+	// 该 agent 最近会话）——首调/空库为空时以 (src, ts) 兜底对齐。
 	if src := mcpClientName(s.clientInfo); len(eventIDs) > 0 {
-		u.LogShared("BRIEFING", "events=%d ids=[%s] src=%s", len(eventIDs), strings.Join(eventIDs, ","), src)
+		sid := recentSessionFor(src)
+		u.LogShared("BRIEFING", "events=%d ids=[%s] src=%s session=%s", len(eventIDs), strings.Join(eventIDs, ","), src, sid)
 	}
 
 	related := map[string]interface{}{
@@ -741,6 +743,25 @@ func (s *mcpServer) handleBriefing(args map[string]interface{}) mcpToolResult {
 		RelatedContext: related,
 		Reflection:     reflection,
 	}
+}
+
+// recentSessionFor 尽力取该 agent 当前会话 id：MCP serve 进程没有 session 上下文
+// （mcpLogDiscussion 写 discussion_log 时 session 为空），改用 hook 写入的
+// discussion_log 中该 agent 最近一条非空 session_id（同一 agent 同时只有一个活跃会话）。
+func recentSessionFor(src string) string {
+	if src == "" {
+		return ""
+	}
+	db, err := pmdb.Open()
+	if err != nil {
+		return ""
+	}
+	defer db.Close()
+	var sid string
+	if err := db.QueryRow("SELECT session_id FROM discussion_log WHERE source = ? AND session_id != '' ORDER BY created_at DESC LIMIT 1", src).Scan(&sid); err != nil {
+		return ""
+	}
+	return sid
 }
 
 func (s *mcpServer) handleSearch(args map[string]interface{}) mcpToolResult {

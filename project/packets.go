@@ -2,10 +2,12 @@ package project
 
 import (
 	"fmt"
+	"strings"
 
 	"aipmc/ai"
 	"aipmc/analyze"
 	"aipmc/store"
+	"aipmc/u"
 )
 
 func minInt(a, b int) int {
@@ -104,7 +106,12 @@ func AgentStartPacket(client *ai.Client) map[string]any {
 	plans, _ := store.ListPlans("", "active")
 	threads, _ := store.ListThreads("active")
 	events, _ := store.GetUnconsumedEvents()
-	briefing, _ := analyze.BuildBriefing(client, "")
+	briefing, eventIDs := analyze.BuildBriefing(client, "")
+	// W2-P2（8/13）：start 通道同样展示 PM 最新变更事件——surfaced 记录不能漏掉
+	// 这个更高频的通道。CLI 进程无 agent 归属，标 src=cli-start（统计上保守偏低）。
+	if len(eventIDs) > 0 {
+		u.LogShared("BRIEFING", "events=%d ids=[%s] src=cli-start", len(eventIDs), strings.Join(eventIDs, ","))
+	}
 
 	return map[string]any{
 		"role":    "ai_start",
