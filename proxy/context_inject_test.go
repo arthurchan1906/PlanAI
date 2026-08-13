@@ -114,3 +114,53 @@ func TestBuildContextBlockSegCounts(t *testing.T) {
 		t.Fatalf("no suppression expected, got %d", sc2.total())
 	}
 }
+
+// 8/13 F2: guidelines 超长时旧实现 written 按源长度计数（len(guidelines)+20=1642），
+// 后续所有段 guard 恒真被全裁。回归测试：written 按实际写入长度计数后，
+// 短 fileAssoc/goals 必须送达，guidelines 被截断需埋点。
+func TestBuildContextBlockGuidelinesCountBug(t *testing.T) {
+	gl := strings.Repeat("g", 1622)
+	files := []string{"a.go → task (in_progress, P0) task-1234567890"}
+	goals := []string{"short goal"}
+	block, sc := buildContextBlock(goals, nil, nil, files, gl)
+	if sc.fileAssoc != 0 {
+		t.Fatalf("fileAssoc suppressed: got %d want 0 (count bug would trim all)", sc.fileAssoc)
+	}
+	if sc.goals != 0 {
+		t.Fatalf("goals suppressed: got %d want 0 (count bug would trim all)", sc.goals)
+	}
+	if sc.guidelines != 1 {
+		t.Fatalf("guidelines trim flag: got %d want 1", sc.guidelines)
+	}
+	if sc.guidelinesDel != guidelinesBudget {
+		t.Fatalf("guidelines delivered: got %d want %d", sc.guidelinesDel, guidelinesBudget)
+	}
+	if !strings.Contains(block, "a.go → task") {
+		t.Fatal("fileAssoc line should be present")
+	}
+	if !strings.Contains(block, "short goal") {
+		t.Fatal("goal should be present")
+	}
+	if len(block) > maxInjectChars {
+		t.Fatalf("block %d exceeds cap %d", len(block), maxInjectChars)
+	}
+}
+
+// 8/13 F2: fileAssoc 独立硬子预算（200 字节）——超出部分记 fileAssoc 裁减，
+// 不再与 guidelines 共用 written 后名存实亡的预留。
+func TestBuildContextBlockFileAssocSubBudget(t *testing.T) {
+	files := make([]string, 20)
+	for i := range files {
+		files[i] = strings.Repeat("x", 30)
+	}
+	block, sc := buildContextBlock(nil, nil, nil, files, "")
+	if sc.fileAssoc != 14 {
+		t.Fatalf("fileAssoc suppressed: got %d want 14 (200B sub-budget fits 6 of 20)", sc.fileAssoc)
+	}
+	if sc.total() != sc.fileAssoc {
+		t.Fatalf("total %d != fileAssoc %d", sc.total(), sc.fileAssoc)
+	}
+	if len(block) > maxInjectChars {
+		t.Fatalf("block %d exceeds cap %d", len(block), maxInjectChars)
+	}
+}

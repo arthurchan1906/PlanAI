@@ -66,13 +66,17 @@ var (
 // 优先级顺序即注入顺序：fileAssoc > warnings > actionItems > goals——
 // 若裁剪集中在 goals（低优先级）属设计行为；若伤及 fileAssoc/warnings 才是问题。
 type segCounts struct {
-	fileAssoc  int
-	warnings   int
-	actionItems int
-	goals      int
+	fileAssoc     int
+	warnings      int
+	actionItems   int
+	goals         int
+	guidelines    int
+	guidelinesDel int
 }
 
-func (s segCounts) total() int { return s.fileAssoc + s.warnings + s.actionItems + s.goals }
+func (s segCounts) total() int {
+	return s.fileAssoc + s.warnings + s.actionItems + s.goals + s.guidelines
+}
 
 // extractSessionID 尽力从请求体取 session（codex 在 client_metadata.session_id；
 // claude/gemini 可能无，留空——漏斗按 agent+时间窗兜底对齐）。
@@ -140,13 +144,13 @@ func InjectSessionContext(body []byte, agent string) []byte {
 
 	result := injectIntoPrompt(body, block, agent)
 	injectTracker.Store(agent, injectState{lastAt: time.Now(), contentHash: fullHash})
-	u.LogShared("INJECT", "agent=%s session=%s req=%s goals=%d warnings=%d actions=%d file=%d guidelines=%d chars=%d",
-		agent, sessionID, reqID, len(goals), len(warnings), len(actionItems), len(fileAssoc), len(guidelines), len(block))
+	u.LogShared("INJECT", "agent=%s session=%s req=%s goals=%d warnings=%d actions=%d file=%d guidelines=%d guide_del=%d chars=%d",
+		agent, sessionID, reqID, len(goals), len(warnings), len(actionItems), len(fileAssoc), len(guidelines), sc.guidelinesDel, len(block))
 	// suppressed 计数移到 shouldInject 之后：去重跳过（same_content/cooldown）的请求
 	// 不产出抑制记录——收紧 F2 口径（旧实现把未注入请求的抑制也算进去，虚高）。
 	if sc.total() > 0 {
-		u.LogShared("INJECT", "suppressed=%d reason=char_limit cap=%d agent=%s session=%s req=%s segments=file:%d warn:%d act:%d goals:%d",
-			sc.total(), maxInjectChars, agent, sessionID, reqID, sc.fileAssoc, sc.warnings, sc.actionItems, sc.goals)
+		u.LogShared("INJECT", "suppressed=%d reason=char_limit cap=%d agent=%s session=%s req=%s segments=file:%d warn:%d act:%d goals:%d guide:%d",
+			sc.total(), maxInjectChars, agent, sessionID, reqID, sc.fileAssoc, sc.warnings, sc.actionItems, sc.goals, sc.guidelines)
 	}
 	return result
 }
@@ -405,32 +409,46 @@ func buildContextBlock(goals, warnings, actionItems, fileAssoc []string, guideli
 	written := 0
 	var sc segCounts
 
-	// ── Guidelines (highest priority, dedicated budget) ──
-	if guidelines != "" {
-		buf.WriteString("\n[项目编码规范]\n")
-		if len(guidelines) > guidelinesBudget {
-			buf.WriteString(guidelines[:guidelinesBudget] + "…")
-		} else {
-			buf.WriteString(guidelines)
-		}
-		written += len(guidelines) + 20
-		buf.WriteString("\n")
-	}
-
-	// ── File associations (highest priority, minimum 200 char reservation) ──
-	const fileAssocReservation = 200
+	// ── File associations (highest priority, independent hard sub-budget) ──
+	// 8/13 F2 修复：独立 200 字节子预算 + 前置写入。旧实现 guidelines 先写且
+	// written 按源长度计数（len(guidelines) 而非截断后长度），1622 字规范把
+	// written 顶到 1642，后续所有段 guard 恒真 → fileAssoc 100% 被裁。
+	const fileAssocBudget = 200
 	if len(fileAssoc) > 0 {
 		buf.WriteString("\n[文件关联]")
+		faWritten := 0
 		for _, fa := range fileAssoc {
 			line := "\n" + fa
-			// File associations bypass the general budget up to fileAssocReservation chars
-			if written > fileAssocReservation && written+len(line) > maxInjectChars-50 {
+			if faWritten+len(line) > fileAssocBudget {
 				sc.fileAssoc++
 				continue
 			}
 			buf.WriteString(line)
-			written += len(line)
+			faWritten += len(line)
 		}
+		written += faWritten
+		buf.WriteString("\n")
+	}
+
+	// ── Guidelines (dedicated budget, truncated to remaining headroom) ──
+	if guidelines != "" {
+		buf.WriteString("\n[项目编码规范]\n")
+		avail := min(len(guidelines), guidelinesBudget, maxInjectChars-50-written)
+		if avail < 0 {
+			avail = 0
+		}
+		sc.guidelinesDel = avail
+		if avail < len(guidelines) {
+			sc.guidelines = 1
+		}
+		if avail > 0 {
+			if avail < len(guidelines) {
+				buf.WriteString(guidelines[:avail] + "…")
+			} else {
+				buf.WriteString(guidelines[:avail])
+			}
+		}
+		written += avail + 20
 		buf.WriteString("\n")
 	}
 
