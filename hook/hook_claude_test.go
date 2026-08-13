@@ -45,14 +45,14 @@ func TestToolResponseArrayKeepsAllFiles(t *testing.T) {
 	if err := json.Unmarshal([]byte(in), &tr); err != nil {
 		t.Fatalf("multi-file array: %v", err)
 	}
-	if len(tr.MultiResults) != 2 {
-		t.Fatalf("MultiResults = %d, want 2", len(tr.MultiResults))
+	if len(tr.MultiResults) != 1 {
+		t.Fatalf("MultiResults = %d, want 1 (arr[1:] — primary excluded)", len(tr.MultiResults))
 	}
 	if tr.FilePath != "/p/a.swift" {
 		t.Fatalf("primary FilePath = %q", tr.FilePath)
 	}
-	if tr.MultiResults[1].FilePath != "/p/b.swift" {
-		t.Fatalf("second file lost: %+v", tr.MultiResults[1])
+	if tr.MultiResults[0].FilePath != "/p/b.swift" {
+		t.Fatalf("second file lost: %+v", tr.MultiResults[0])
 	}
 }
 

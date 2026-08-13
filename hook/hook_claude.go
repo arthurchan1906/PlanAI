@@ -413,7 +413,9 @@ func (t *toolResponse) UnmarshalJSON(b []byte) error {
 		}
 		if len(arr) > 0 {
 			*t = arr[0]
-			t.MultiResults = arr
+			if len(arr) > 1 {
+				t.MultiResults = arr[1:]
+			}
 		}
 		return nil
 	}

@@ -47,6 +47,9 @@ func extractBashFileOps(cmd string) []BashFileOp {
 			if i+1 < len(toks) && toks[i+1] == "add" {
 				for j := i + 2; j < len(toks); j++ {
 					a := toks[j]
+					if isCmdBreak(a) {
+						break
+					}
 					if strings.HasPrefix(a, "-") {
 						continue
 					}

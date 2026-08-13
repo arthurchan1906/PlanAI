@@ -26,6 +26,19 @@ func TestExtractBashFileOpsGitAdd(t *testing.T) {
 	if ops := extractBashFileOps("git add VaultTheme.swift"); len(ops) != 0 {
 		t.Fatalf("bare filename should be skipped, got %v", ops)
 	}
+
+	// B1 (8/13 review): git add args must stop at command-chain breaks —
+	// `git add . && xcodebuild ...` must NOT stage the xcodeproj.
+	ops = extractBashFileOps("git add . && xcodebuild -project EncryptDrive.xcodeproj build")
+	want = []BashFileOp{{Op: "read", File: "EncryptDrive.xcodeproj"}}
+	if !reflect.DeepEqual(ops, want) {
+		t.Fatalf("git add must not stage across &&; xcodebuild read only: %v, want %v", ops, want)
+	}
+	ops = extractBashFileOps("git add EncryptDrive/a.go && cp EncryptDrive/a.go EncryptDrive/backup.swift")
+	want = []BashFileOp{{Op: "stage", File: "EncryptDrive/a.go"}}
+	if !reflect.DeepEqual(ops, want) {
+		t.Fatalf("command chain leaked: %v, want %v", ops, want)
+	}
 }
 
 func TestExtractBashFileOpsReads(t *testing.T) {

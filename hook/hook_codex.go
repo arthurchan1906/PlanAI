@@ -300,6 +300,12 @@ func extractFileOpMeta(toolName string, toolInput, toolResp json.RawMessage) str
 	// rules. Low-confidence commands are left untouched (8/12 consensus).
 	bashOps := []BashFileOp{}
 	source := "structured"
+	if toolName == "apply_patch" {
+		// apply_patch targets come from patch-text parsing (stable 35/35
+		// protocol format), not a tool-returned structured field — label them
+		// patch_heuristic so consumers do not treat them as structured.
+		source = "patch_heuristic"
+	}
 	if toolName == "Bash" {
 		// Everything extracted from a Bash command — including apply_patch
 		// heredocs — is heuristic, not a structured tool field.

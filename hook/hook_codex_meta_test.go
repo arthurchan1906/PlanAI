@@ -26,8 +26,8 @@ func TestExtractFileOpMetaApplyPatchDirect(t *testing.T) {
 	if m["file_path"] != "EncryptDrive/Shared/UI/VaultTheme.swift" {
 		t.Fatalf("file_path = %v", m["file_path"])
 	}
-	if m["source"] != "structured" {
-		t.Fatalf("source = %v, want structured", m["source"])
+	if m["source"] != "patch_heuristic" {
+		t.Fatalf("source = %v, want patch_heuristic", m["source"])
 	}
 }
 
