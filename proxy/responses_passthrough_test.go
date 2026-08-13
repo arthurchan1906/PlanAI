@@ -141,6 +141,31 @@ func TestExtractResponsesStreamUsageCachedTokensPriority(t *testing.T) {
 	}
 }
 
+// TestExtractResponsesStreamUsageNestedResponseUsage：8/13 实测 DeepSeek 流式
+// response.completed 的 usage 在 response 对象内部（response.usage），不在顶层——
+// 此前只认顶层 usage，导致 codex→deepseek 的 in/out/cache 全为 0（capture 面板
+// 不显示缓存命中）。这是线上真实形态，必须覆盖。
+func TestExtractResponsesStreamUsageNestedResponseUsage(t *testing.T) {
+	sse := `data: {"type":"response.output_text.delta","delta":"hi"}
+
+data: {"type":"response.completed","response":{"id":"r1","status":"completed","usage":{"input_tokens":215779,"input_tokens_details":{"cached_tokens":215680},"output_tokens":178,"output_tokens_details":{"reasoning_tokens":14},"total_tokens":215957}}}
+
+`
+	in, out, cacheHit, cacheCreate := extractResponsesStreamUsage(sse)
+	if in != 215779 {
+		t.Fatalf("nested usage input: got %d want 215779", in)
+	}
+	if out != 178 {
+		t.Fatalf("nested usage output: got %d want 178", out)
+	}
+	if cacheHit != 215680 {
+		t.Fatalf("nested usage cached_tokens: got %d want 215680", cacheHit)
+	}
+	if cacheCreate != 0 {
+		t.Fatalf("nested usage cache_creation: got %d want 0", cacheCreate)
+	}
+}
+
 // Compile-time guard: responseWrapper must implement http.Flusher so the
 // byte-level SSE flush path in handleResponsesPassthroughStream is live in
 // production (handler() always wraps the writer in *responseWrapper). Without

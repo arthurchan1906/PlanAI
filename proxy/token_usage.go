@@ -114,31 +114,33 @@ func extractAnthropicStreamUsage(body string) (inputTokens, outputTokens, cacheH
 	return
 }
 
+// responsesUsage mirrors the usage object in both positions where DeepSeek
+// Responses can carry it: top-level (non-stream JSON) and nested inside the
+// response object (SSE response.completed — the actual wire shape, 8/13 实测).
+type responsesUsage struct {
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	InputTokensDetails       struct {
+		CachedTokens int `json:"cached_tokens"`
+	} `json:"input_tokens_details"`
+}
+
 // extractResponsesStreamUsage 从上游 Responses API 响应中解析 token 用量。
-// 支持两种形态：SSE（data: 行，response.completed 事件）与纯 JSON（非流式）。
-// 缓存命中两种字段都认：
-//   - DeepSeek Responses（8/12 起支持）：usage.input_tokens_details.cached_tokens
-//   - 网关/兼容层：usage.cache_read_input_tokens
-// 后者保留兼容，两者都取非零值（优先 cached_tokens）。
+// 支持三种形态：
+//   - 纯 JSON（非流式）：整个 body 是 response 对象，usage 在顶层
+//   - SSE data: 行：usage 可能在顶层（网关兼容），也可能在 response.usage
+//     （DeepSeek 8/12 起真实形态——response.completed 事件内）
+// 缓存命中两种字段都认：usage.input_tokens_details.cached_tokens（规范）
+// 与 usage.cache_read_input_tokens（网关兼容），优先 cached_tokens。
 func extractResponsesStreamUsage(body string) (inputTokens, outputTokens, cacheHitTokens, cacheCreationTokens int) {
 	// 纯 JSON（非流式）：单次解析整个 body。
 	var plain struct {
-		Usage struct {
-			InputTokens              int `json:"input_tokens"`
-			OutputTokens             int `json:"output_tokens"`
-			CacheReadInputTokens     int `json:"cache_read_input_tokens"`
-			CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
-			InputTokensDetails       struct {
-				CachedTokens int `json:"cached_tokens"`
-			} `json:"input_tokens_details"`
-		} `json:"usage"`
+		Usage responsesUsage `json:"usage"`
 	}
 	if json.Unmarshal([]byte(body), &plain) == nil && (plain.Usage.InputTokens > 0 || plain.Usage.OutputTokens > 0) {
-		cacheHit := plain.Usage.InputTokensDetails.CachedTokens
-		if cacheHit == 0 {
-			cacheHit = plain.Usage.CacheReadInputTokens
-		}
-		return plain.Usage.InputTokens, plain.Usage.OutputTokens, cacheHit, plain.Usage.CacheCreationInputTokens
+		return usageToTokens(plain.Usage)
 	}
 
 	lines := strings.Split(body, "\n")
@@ -149,36 +151,45 @@ func extractResponsesStreamUsage(body string) (inputTokens, outputTokens, cacheH
 		}
 		data := strings.TrimPrefix(line, "data: ")
 		var event struct {
-			Type  string `json:"type"`
-			Usage struct {
-				InputTokens              int `json:"input_tokens"`
-				OutputTokens             int `json:"output_tokens"`
-				CacheReadInputTokens     int `json:"cache_read_input_tokens"`
-				CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
-				InputTokensDetails       struct {
-					CachedTokens int `json:"cached_tokens"`
-				} `json:"input_tokens_details"`
-			} `json:"usage"`
+			Type     string        `json:"type"`
+			Usage    responsesUsage `json:"usage"`
+			Response struct {
+				Usage responsesUsage `json:"usage"`
+			} `json:"response"`
 		}
 		if json.Unmarshal([]byte(data), &event) != nil {
 			continue
 		}
-		if event.Type == "response.completed" || event.Usage.InputTokens > 0 || event.Usage.OutputTokens > 0 {
-			if event.Usage.InputTokens > 0 {
-				inputTokens = event.Usage.InputTokens
+		// Top-level usage first, then response.usage (DeepSeek wire shape).
+		u := event.Usage
+		if u.InputTokens == 0 && u.OutputTokens == 0 {
+			u = event.Response.Usage
+		}
+		if event.Type == "response.completed" || u.InputTokens > 0 || u.OutputTokens > 0 {
+			in, out, hit, create := usageToTokens(u)
+			if in > 0 {
+				inputTokens = in
 			}
-			if event.Usage.OutputTokens > 0 {
-				outputTokens = event.Usage.OutputTokens
+			if out > 0 {
+				outputTokens = out
 			}
-			if event.Usage.InputTokensDetails.CachedTokens > 0 {
-				cacheHitTokens = event.Usage.InputTokensDetails.CachedTokens
-			} else if event.Usage.CacheReadInputTokens > 0 {
-				cacheHitTokens = event.Usage.CacheReadInputTokens
+			if hit > 0 {
+				cacheHitTokens = hit
 			}
-			if event.Usage.CacheCreationInputTokens > 0 {
-				cacheCreationTokens = event.Usage.CacheCreationInputTokens
+			if create > 0 {
+				cacheCreationTokens = create
 			}
 		}
 	}
 	return
+}
+
+// usageToTokens normalizes a responsesUsage into the four token counters,
+// preferring cached_tokens over the gateway cache_read_input_tokens field.
+func usageToTokens(u responsesUsage) (in, out, hit, create int) {
+	hit = u.InputTokensDetails.CachedTokens
+	if hit == 0 {
+		hit = u.CacheReadInputTokens
+	}
+	return u.InputTokens, u.OutputTokens, hit, u.CacheCreationInputTokens
 }
