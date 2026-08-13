@@ -136,7 +136,7 @@ func ProcessCodexHook() {
 		}
 		meta := buildFullMeta("post_tool", data)
 		// Inject file_path for L3 reconcile (classifyFiles)
-		if fpMeta := extractFileOpMeta(normalizedName, raw.ToolInput); fpMeta != "" {
+		if fpMeta := extractFileOpMeta(normalizedName, raw.ToolInput, raw.ToolResp); fpMeta != "" {
 			meta = mergeMeta(meta, fpMeta)
 		}
 
@@ -257,13 +257,13 @@ func shellQuote(s string) string {
 }
 
 // extractFileOpMeta extracts file operation metadata from a Codex tool call.
-// Returns JSON like {"type":"edit","file_path":"...","rel_path":"..."} for
-// classifyFiles and the T4 rel_path query layer.
+// Returns JSON like {"type":"edit","file_path":"...","rel_path":"...","source":"structured"}
+// for classifyFiles and the T4 rel_path query layer.
 //
 // Codex has no structured file_path for apply_patch: targets live in the patch
 // text (tool_input.patch, or a Bash heredoc embedding it). `*** Update File:`
 // lines are stable across 35/35 ED samples (v1.14 decision 58 / H4-B).
-func extractFileOpMeta(toolName string, toolInput json.RawMessage) string {
+func extractFileOpMeta(toolName string, toolInput, toolResp json.RawMessage) string {
 	ti := parseToolInput(toolInput)
 	fp := ti["file_path"]
 	if fp == "" {
@@ -295,11 +295,33 @@ func extractFileOpMeta(toolName string, toolInput json.RawMessage) string {
 		opType = "edit"
 	}
 
-	// Also detect Bash-based file ops
+	// Detect Bash-based file ops: high-confidence structured subcommands first
+	// (git add/cat/wc/find/xcodebuild, multi-file), then legacy redirection/sed
+	// rules. Low-confidence commands are left untouched (8/12 consensus).
+	bashOps := []BashFileOp{}
+	source := "structured"
+	if toolName == "Bash" {
+		// Everything extracted from a Bash command — including apply_patch
+		// heredocs — is heuristic, not a structured tool field.
+		source = "bash_heuristic"
+		if extractExitCode(toolResp) != 0 {
+			source = "bash_heuristic_unverified"
+		}
+	}
 	if opType == "" {
 		if cmd := ti["command"]; cmd != "" {
-			fop := parseBashFileOp(cmd)
-			if fop != nil {
+			bashOps = extractBashFileOps(cmd)
+			if len(bashOps) > 0 {
+				fp = bashOps[0].File
+				switch bashOps[0].Op {
+				case "stage":
+					opType = "stage"
+				case "read":
+					opType = "read"
+				default:
+					opType = "edit"
+				}
+			} else if fop := parseBashFileOp(cmd); fop != nil {
 				fp = fop.File
 				switch fop.Op {
 				case "create", "new":
@@ -318,18 +340,23 @@ func extractFileOpMeta(toolName string, toolInput json.RawMessage) string {
 		m := map[string]any{
 			"type":      opType,
 			"file_path": fp,
+			"rel_path":  rel,
+			"source":    source,
 		}
-		m["rel_path"] = rel
-		if len(patchFiles) > 1 {
-			var rels []string
-			for _, pf := range patchFiles {
-				if r := ToRelPath(pf); r != "" {
-					rels = append(rels, r)
-				}
+		allFiles := patchFiles
+		if len(bashOps) > 0 && len(allFiles) == 0 {
+			for _, o := range bashOps {
+				allFiles = append(allFiles, o.File)
 			}
-			if len(rels) > 0 {
-				m["rel_paths"] = rels
+		}
+		var rels []string
+		for _, f := range allFiles {
+			if r := ToRelPath(f); r != "" {
+				rels = append(rels, r)
 			}
+		}
+		if len(rels) > 1 {
+			m["rel_paths"] = rels
 		}
 		b, _ := json.Marshal(m)
 		return string(b)

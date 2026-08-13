@@ -89,36 +89,53 @@ func ProcessClaudeHook() {
 
 		switch raw.ToolName {
 		case "Write":
-			if ti.FilePath != "" {
-				isNewFile := tr.OriginalFile == ""
-				if isNewFile {
-					desc = "🆕 " + ti.FilePath
-					type newFileMeta struct {
-						Type     string `json:"type"`
-						FilePath string `json:"file_path"`
-						RelPath  string `json:"rel_path,omitempty"`
+			files := collectWriteFiles(ti.FilePath, tr)
+			if len(files) > 0 {
+				allNew := true
+				for _, f := range files {
+					if f.OriginalFile != "" {
+						allNew = false
+						break
 					}
-					meta := newFileMeta{Type: "new_file", FilePath: ti.FilePath, RelPath: ToRelPath(ti.FilePath)}
+				}
+				if allNew {
+					desc = "🆕 " + files[0].File
+					type newFileMeta struct {
+						Type     string   `json:"type"`
+						FilePath string   `json:"file_path"`
+						RelPath  string   `json:"rel_path,omitempty"`
+						RelPaths []string `json:"rel_paths,omitempty"`
+						Source   string   `json:"source,omitempty"`
+					}
+					meta := newFileMeta{Type: "new_file", FilePath: files[0].File, RelPath: ToRelPath(files[0].File), Source: "structured"}
+					meta.RelPaths = relPathsOf(files)
 					if b, err := json.Marshal(meta); err == nil {
 						metadataJSON = string(b)
 					}
 				} else {
-					desc = "📝 " + ti.FilePath
+					desc = "📝 " + files[0].File
 					type editMeta struct {
 						Type     string      `json:"type"`
 						FilePath string      `json:"file_path"`
 						RelPath  string      `json:"rel_path,omitempty"`
+						RelPaths []string    `json:"rel_paths,omitempty"`
+						Source   string      `json:"source,omitempty"`
 						Hunks    []patchHunk `json:"hunks"`
 					}
-					meta := editMeta{Type: "edit", FilePath: ti.FilePath, RelPath: ToRelPath(ti.FilePath), Hunks: raw.ToolResponse.StructuredPatch}
+					meta := editMeta{Type: "edit", FilePath: files[0].File, RelPath: ToRelPath(files[0].File), Source: "structured", Hunks: raw.ToolResponse.StructuredPatch}
+					meta.RelPaths = relPathsOf(files)
 					if b, err := json.Marshal(meta); err == nil {
 						metadataJSON = string(b)
 					}
 				}
 			}
 		case "Edit":
-			if ti.FilePath != "" {
-				desc = "📝 " + ti.FilePath
+			editPath := ti.FilePath
+			if editPath == "" {
+				editPath = tr.FilePath
+			}
+			if editPath != "" {
+				desc = "📝 " + editPath
 				if ti.OldString != "" {
 					desc += "\n- " + strings.TrimSpace(ti.OldString)
 				}
@@ -129,14 +146,16 @@ func ProcessClaudeHook() {
 					Type      string      `json:"type"`
 					FilePath  string      `json:"file_path"`
 					RelPath   string      `json:"rel_path,omitempty"`
+					Source    string      `json:"source,omitempty"`
 					Hunks     []patchHunk `json:"hunks,omitempty"`
 					OldString string      `json:"old_string,omitempty"`
 					NewString string      `json:"new_string,omitempty"`
 				}
 				meta := editMeta{
 					Type:      "edit",
-					FilePath:  ti.FilePath,
-					RelPath:   ToRelPath(ti.FilePath),
+					FilePath:  editPath,
+					RelPath:   ToRelPath(editPath),
+					Source:    "structured",
 					Hunks:     raw.ToolResponse.StructuredPatch,
 					OldString: ti.OldString,
 					NewString: ti.NewString,
@@ -156,11 +175,14 @@ func ProcessClaudeHook() {
 
 				// Capture stdout/stderr in metadata
 				type bashMeta struct {
-					Type     string `json:"type"`
-					Command  string `json:"command"`
-					ExitCode int    `json:"exit_code"`
-					Stdout   string `json:"stdout,omitempty"`
-					Stderr   string `json:"stderr,omitempty"`
+					Type     string   `json:"type"`
+					Command  string   `json:"command"`
+					ExitCode int      `json:"exit_code"`
+					Stdout   string   `json:"stdout,omitempty"`
+					Stderr   string   `json:"stderr,omitempty"`
+					RelPath  string   `json:"rel_path,omitempty"`
+					RelPaths []string `json:"rel_paths,omitempty"`
+					Source   string   `json:"source,omitempty"`
 				}
 				stdout := u.TruncateStr(tr.Stdout, 2000)
 				stderr := u.TruncateStr(tr.Stderr, 500)
@@ -170,6 +192,24 @@ func ProcessClaudeHook() {
 					ExitCode: tr.ExitCode,
 					Stdout:   stdout,
 					Stderr:   stderr,
+				}
+				if ops := extractBashFileOps(ti.Command); len(ops) > 0 {
+					meta.Source = "bash_heuristic"
+					if tr.ExitCode != 0 {
+						meta.Source = "bash_heuristic_unverified"
+					}
+					var rels []string
+					for _, o := range ops {
+						if r := ToRelPath(o.File); r != "" {
+							rels = append(rels, r)
+						}
+					}
+					if len(rels) > 0 {
+						meta.RelPath = rels[0]
+						if len(rels) > 1 {
+							meta.RelPaths = rels
+						}
+					}
 				}
 				if b, err := json.Marshal(meta); err == nil {
 					metadataJSON = string(b)
@@ -199,6 +239,7 @@ func ProcessClaudeHook() {
 					Type       string `json:"type"`
 					FilePath   string `json:"file_path"`
 					RelPath    string `json:"rel_path,omitempty"`
+					Source     string `json:"source,omitempty"`
 					LinesCount int    `json:"lines_count"`
 					Preview    string `json:"preview,omitempty"`
 				}
@@ -206,6 +247,7 @@ func ProcessClaudeHook() {
 					Type:       "read",
 					FilePath:   ti.FilePath,
 					RelPath:    ToRelPath(ti.FilePath),
+					Source:     "structured",
 					LinesCount: tr.LinesCount,
 					Preview:    u.TruncateStr(tr.Content, 150),
 				}
@@ -237,6 +279,48 @@ func fmtExitCode(code int) string {
 		return ""
 	}
 	return " [exit:" + u.Itoa(code) + "]"
+}
+
+// claudeWriteFile is one target of a Write tool call (input + response side).
+type claudeWriteFile struct {
+	File         string
+	OriginalFile string
+}
+
+// collectWriteFiles merges Write targets from tool_input.file_path and every
+// tool_response element (single object or array), deduplicated. Files present
+// only in the response (tool_response.filePath, M1 fix) are no longer lost.
+func collectWriteFiles(inputPath string, tr toolResponse) []claudeWriteFile {
+	seen := map[string]bool{}
+	var out []claudeWriteFile
+	add := func(fp, orig string) {
+		if fp == "" || seen[fp] {
+			return
+		}
+		seen[fp] = true
+		out = append(out, claudeWriteFile{File: fp, OriginalFile: orig})
+	}
+	add(inputPath, tr.OriginalFile)
+	add(tr.FilePath, tr.OriginalFile)
+	for _, m := range tr.MultiResults {
+		add(m.FilePath, m.OriginalFile)
+	}
+	return out
+}
+
+// relPathsOf returns repo-relative paths for every collected file, dropping
+// project-external targets. Only set when there is more than one target.
+func relPathsOf(files []claudeWriteFile) []string {
+	var rels []string
+	for _, f := range files {
+		if r := ToRelPath(f.File); r != "" {
+			rels = append(rels, r)
+		}
+	}
+	if len(rels) <= 1 {
+		return nil
+	}
+	return rels
 }
 
 // setupClaudeHooks writes Claude Code hook configuration to settings.local.json.
@@ -311,10 +395,16 @@ type toolResponse struct {
 	Content         string      `json:"content"`
 	LinesCount      int         `json:"linesCount"`
 	StructuredPatch []patchHunk `json:"structuredPatch"`
+
+	// MultiResults holds every element when tool_response is an array
+	// (e.g. multi-file Write). Previously the array was collapsed to
+	// arr[0], silently dropping the other files (M1, 8/13 review).
+	MultiResults []toolResponse `json:"-"`
 }
 
 // UnmarshalJSON accepts both a single object and an array of objects,
-// keeping the first element when multiple results are present.
+// keeping the first element as the primary result and the rest in
+// MultiResults so no files are lost.
 func (t *toolResponse) UnmarshalJSON(b []byte) error {
 	if len(b) > 0 && b[0] == '[' {
 		var arr []toolResponse
@@ -323,6 +413,7 @@ func (t *toolResponse) UnmarshalJSON(b []byte) error {
 		}
 		if len(arr) > 0 {
 			*t = arr[0]
+			t.MultiResults = arr
 		}
 		return nil
 	}

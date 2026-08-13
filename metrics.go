@@ -70,17 +70,27 @@ func dispatchMetrics(args *cli.Args) {
 		// valid_rate 分母排除空串——口径固定，防止与 tool role 缺失混为一谈。
 		var dlTotal, dlValid, dlEmpty, dlInvalid int
 		db.QueryRow("SELECT COUNT(*), COALESCE(SUM(CASE WHEN metadata!='' AND json_valid(metadata) THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN metadata='' THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN metadata!='' AND json_valid(metadata)=0 THEN 1 ELSE 0 END),0) FROM discussion_log").Scan(&dlTotal, &dlValid, &dlEmpty, &dlInvalid)
-		// H2 rel_path 覆盖率（T3b+T4 闭环验收锚点）：分母=有 metadata 的工具记录，
-		// 分子=含 rel_path（单值或 rel_paths 数组）的记录。codex 按决策 19 边界
-		// 接受漏检（复合 Bash 命令不写）；claude 目标 ≥90%。
-		var rpClaudeTotal, rpClaudeHit, rpCodexTotal, rpCodexHit int
+		// H2 rel_path 覆盖率（T3b+T4 闭环验收锚点，M1 8/13 修正口径）：
+		// filetools = 结构化文件操作（claude type∈edit/new_file/read/write；
+		// codex tool_name∈apply_patch/Write/Read），锚点 claude≥90%；
+		// bash = 高置信模式才写 rel_path（git add/cat/wc/find...），锚点=参考
+		// （决策 19 接受漏检）。分母若含 bash 则 90% 物理不可达（ED bash 48%）。
+		var (
+			ftClaudeTotal, ftClaudeHit, ftCodexTotal, ftCodexHit   int
+			bsClaudeTotal, bsClaudeHit, bsCodexTotal, bsCodexHit   int
+		)
 		db.QueryRow(`SELECT
-			COALESCE(SUM(CASE WHEN source='claude-code' THEN 1 ELSE 0 END),0),
-			COALESCE(SUM(CASE WHEN source='claude-code' AND (json_extract(metadata,'$.rel_path') != '' OR EXISTS (SELECT 1 FROM json_each(metadata,'$.rel_paths'))) THEN 1 ELSE 0 END),0),
-			COALESCE(SUM(CASE WHEN source='codex-cli' THEN 1 ELSE 0 END),0),
-			COALESCE(SUM(CASE WHEN source='codex-cli' AND (json_extract(metadata,'$.rel_path') != '' OR EXISTS (SELECT 1 FROM json_each(metadata,'$.rel_paths'))) THEN 1 ELSE 0 END),0)
+			COALESCE(SUM(CASE WHEN source='claude-code' AND json_extract(metadata,'$.type') IN ('edit','new_file','read','write') THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN source='claude-code' AND json_extract(metadata,'$.type') IN ('edit','new_file','read','write') AND (json_extract(metadata,'$.rel_path') != '' OR EXISTS (SELECT 1 FROM json_each(metadata,'$.rel_paths'))) THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN source='codex-cli' AND json_extract(metadata,'$.tool_name') IN ('apply_patch','Write','Read') THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN source='codex-cli' AND json_extract(metadata,'$.tool_name') IN ('apply_patch','Write','Read') AND (json_extract(metadata,'$.rel_path') != '' OR EXISTS (SELECT 1 FROM json_each(metadata,'$.rel_paths'))) THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN source='claude-code' AND json_extract(metadata,'$.type')='bash' THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN source='claude-code' AND json_extract(metadata,'$.type')='bash' AND json_extract(metadata,'$.rel_path') != '' THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN source='codex-cli' AND json_extract(metadata,'$.tool_name')='Bash' THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN source='codex-cli' AND json_extract(metadata,'$.tool_name')='Bash' AND json_extract(metadata,'$.rel_path') != '' THEN 1 ELSE 0 END),0)
 			FROM discussion_log WHERE metadata != '' AND json_valid(metadata)`).
-			Scan(&rpClaudeTotal, &rpClaudeHit, &rpCodexTotal, &rpCodexHit)
+			Scan(&ftClaudeTotal, &ftClaudeHit, &ftCodexTotal, &ftCodexHit,
+				&bsClaudeTotal, &bsClaudeHit, &bsCodexTotal, &bsCodexHit)
 		var cTotal, cOrphan, cHashOk, cHashDupRows, cMultiTaskGroups int
 		// hash_uniqueness 语义：只把「采集 bug 重复」标红——同 task 重复行 / 含空 task 的重复组行。
 		// 多 task 同 hash（同一物理 commit 被多个 task 引用，relates_to 多对多）是合法语义，单独计数不告警。
@@ -188,14 +198,22 @@ func dispatchMetrics(args *cli.Args) {
 			dlValidRate = float64(dlValid) / float64(dlNonEmpty)
 		}
 		printRow("H2  metadata_health", fmt.Sprintf("valid=%s (%d/%d) empty=%d invalid=%d", pct(dlValidRate), dlValid, dlNonEmpty, dlEmpty, dlInvalid), "valid≥99.5% invalid=0", dlInvalid == 0 && dlValidRate >= 0.995)
-		rpClaudeRate, rpCodexRate := 0.0, 0.0
-		if rpClaudeTotal > 0 {
-			rpClaudeRate = float64(rpClaudeHit) / float64(rpClaudeTotal)
+		ftClaudeRate, ftCodexRate := 0.0, 0.0
+		if ftClaudeTotal > 0 {
+			ftClaudeRate = float64(ftClaudeHit) / float64(ftClaudeTotal)
 		}
-		if rpCodexTotal > 0 {
-			rpCodexRate = float64(rpCodexHit) / float64(rpCodexTotal)
+		if ftCodexTotal > 0 {
+			ftCodexRate = float64(ftCodexHit) / float64(ftCodexTotal)
 		}
-		printRow("H2  rel_path_coverage", fmt.Sprintf("claude=%s (%d/%d) codex=%s (%d/%d)", pct(rpClaudeRate), rpClaudeHit, rpClaudeTotal, pct(rpCodexRate), rpCodexHit, rpCodexTotal), "claude≥90% codex按决策19", rpClaudeTotal == 0 || rpClaudeRate >= 0.90)
+		printRow("H2  rel_path_coverage(filetools)", fmt.Sprintf("claude=%s (%d/%d) codex=%s (%d/%d)", pct(ftClaudeRate), ftClaudeHit, ftClaudeTotal, pct(ftCodexRate), ftCodexHit, ftCodexTotal), "claude≥90% codex按决策19", ftClaudeTotal == 0 || ftClaudeRate >= 0.90)
+		bsClaudeRate, bsCodexRate := 0.0, 0.0
+		if bsClaudeTotal > 0 {
+			bsClaudeRate = float64(bsClaudeHit) / float64(bsClaudeTotal)
+		}
+		if bsCodexTotal > 0 {
+			bsCodexRate = float64(bsCodexHit) / float64(bsCodexTotal)
+		}
+		printRow("H2  rel_path_coverage(bash)", fmt.Sprintf("claude=%s (%d/%d) codex=%s (%d/%d)", pct(bsClaudeRate), bsClaudeHit, bsClaudeTotal, pct(bsCodexRate), bsCodexHit, bsCodexTotal), "参考（高置信才写）", true)
 		fmt.Println()
 	} else {
 		fmt.Printf("⚠ 当前项目无 pmai.db（%v）— 跳过 DB 类指标\n\n", err)
