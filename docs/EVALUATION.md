@@ -280,6 +280,7 @@
 - 设计意图：`7d50ebd`/`ed3fcf9`/`e334131` 落地后，rel_path 数据地基的覆盖率验收
 - 量化指标：`H2 rel_path_coverage(filetools)` claude≥90% 锚点 / `(bash)` 参考（决策 19）
 - **验收命令（8/13 审核补充）**：必须显式 `aipmc metrics --since 2026-08-13T09:20:00`（rel_path 部署时刻）——默认 8/7 窗口含部署前存量（无 rel_path），会虚假稀释（全表口径 22.2% vs 部署后 100%）
+- **口径边界（8/13 审核注记）**：项目根过滤仅在路径含 `/.pmai/data/pmai.db` 时生效；`PMAI_HOME`/env 模式无项目根，回退全量口径（安全不崩溃，覆盖率会偏低）
 - 数据源：metrics H2（**当前阻塞：全表统计被修复前 2851 条存量稀释成 0.5%/58.8% 假象；DB 类指标无 `--since` 窗口——EPIC W3 待修**）
 - 基线（8/13 部署后实测）：claude filetools **10/10 = 100%** ✅（缺 rel_path 7 条全是部署前）；codex filetools 分母**结构性为 0**（codex CLI 文件操作全是 exec_command/Bash，无独立 apply_patch/Write/Read tool_name——真实信号在 bash 桶，157 条 Bash/12 条带 rel_path）
 - 目标：`--since` 窗口落地后按部署后数据正式验收
