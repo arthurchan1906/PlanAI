@@ -286,7 +286,8 @@ func main() {
 		}
 		dispatchReview(reviewSub, cli.ParseArgs(reviewRaw))
 	case "briefing":
-		fmt.Println(analyze.BuildBriefing(application.AI(), ""))
+		b, _ := analyze.BuildBriefing(application.AI(), "")
+		fmt.Println(b)
 	case "inbox":
 		cli.PrintJSON(application.InboxSummary())
 	case "doctor":

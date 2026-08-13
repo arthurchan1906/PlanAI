@@ -714,8 +714,14 @@ func (s *mcpServer) addTool(tool MCPTool, handler mcpToolHandler) {
 // ---- Tool Handlers ----
 
 func (s *mcpServer) handleBriefing(args map[string]interface{}) mcpToolResult {
-	briefing := analyze.BuildBriefing(s.ai, buildBriefingGraph())
+	briefing, eventIDs := analyze.BuildBriefing(s.ai, buildBriefingGraph())
 	report := analyze.RunFullAnalysis()
+
+	// W2（8/13）事件→动作漏斗 surfaced 记录：简报展示了哪些 unconsumed 事件、发给谁。
+	// 与 hook 侧 get_briefing 调用记录（session_id+ts）按 agent+时间窗对齐。
+	if src := mcpClientName(s.clientInfo); len(eventIDs) > 0 {
+		u.LogShared("BRIEFING", "events=%d ids=[%s] src=%s", len(eventIDs), strings.Join(eventIDs, ","), src)
+	}
 
 	related := map[string]interface{}{
 		"analysis_summary":   report.Summary,

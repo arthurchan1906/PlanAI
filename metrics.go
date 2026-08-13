@@ -26,8 +26,16 @@ func dispatchMetrics(args *cli.Args) {
 	// 避免历史污染（ED 547 空 hash、aipmc 历史孤儿）淹没告警信号。
 	// --since all 看全表（存量状态）；--since 2026-08-01 自定义窗口。
 	since := args.Str("since", "2026-08-07T14:00:00")
+	// F1/F4 DB 类窗口（W3 8/13）：--since 仅作用于验收/诊断类行（D2 events、H2 rel_path），
+	// 其他 DB 行保持全表=机制健康现状——不静默改变已有指标语义。
+	dbSince := ""
+	var dbSinceArgs []any
+	if since != "" && since != "all" {
+		dbSince = " AND created_at >= ?"
+		dbSinceArgs = []any{since}
+	}
 	// --window 生效于日志类指标：解析为截止时间，扫描时跳过更早的行。
-	// DB 类指标不支持窗口回算（始终为当前值）。
+	// DB 类指标仅 F1/F4 支持窗口回算（见上），其余行始终为当前全表值。
 	var cutoff time.Time
 	var hasCutoff bool
 	if window != "" {
@@ -41,7 +49,7 @@ func dispatchMetrics(args *cli.Args) {
 	}
 	fmt.Println("AIPM 评估指标 — 目标值来自 docs/EVALUATION.md")
 	fmt.Println("DB 类指标: 当前项目 point-in-time；日志类指标: ~/.aipmc/logs/aipmc.log 全局（无 project 字段）")
-	fmt.Printf("commit 三件套窗口: since=%s（--since all 看全表）\n", since)
+	fmt.Printf("窗口: since=%s（--since all 看全表；F1/F4 验收诊断行随窗口，其余 DB 行保持全表=机制健康现状）\n", since)
 	if hasCutoff {
 		fmt.Printf("日志窗口: %s（截止 %s）\n", window, cutoff.Format("2006-01-02 15:04:05"))
 	}
@@ -63,9 +71,33 @@ func dispatchMetrics(args *cli.Args) {
 		db.QueryRow("SELECT COUNT(*) FROM session_summaries WHERE summary LIKE '%\"goal\":\"{%'").Scan(&nested)
 		db.QueryRow("SELECT COUNT(*) FROM session_summaries WHERE summary LIKE '%```json%'").Scan(&mdBlock)
 		var evTotal, evProcessed int
-		db.QueryRow("SELECT COUNT(*), COALESCE(SUM(processed_by_agent),0) FROM events").Scan(&evTotal, &evProcessed)
+		evWhere := ""
+		var evArgs []any
+		if dbSince != "" {
+			evWhere = " WHERE created_at >= ?"
+			evArgs = dbSinceArgs
+		}
+		db.QueryRow("SELECT COUNT(*), COALESCE(SUM(processed_by_agent),0) FROM events"+evWhere, evArgs...).Scan(&evTotal, &evProcessed)
 		var evUnique int
-		db.QueryRow("SELECT COUNT(DISTINCT type || '|' || entity_type || '|' || entity_id) FROM events").Scan(&evUnique)
+		db.QueryRow("SELECT COUNT(DISTINCT type || '|' || entity_type || '|' || entity_id) FROM events"+evWhere, evArgs...).Scan(&evUnique)
+		// F1 事件→动作漏斗（W2 8/13）：三口径拆分 + 按类型处理分布。
+		// 免处理 = 生成即完成使命（创建通知/低置信建议）；可行动 = 需 agent 响应；
+		// 诊断问题：处理分布是否集中于单一类型（8/13 实测 19 个已处理全为 commit_orphan）。
+		type evTypeStat struct {
+			typ       string
+			total     int
+			processed int
+		}
+		var evStats []evTypeStat
+		if evRows, err := db.Query("SELECT type, COUNT(*), COALESCE(SUM(processed_by_agent),0) FROM events"+evWhere+" GROUP BY type ORDER BY COUNT(*) DESC", evArgs...); err == nil {
+			for evRows.Next() {
+				var es evTypeStat
+				if err := evRows.Scan(&es.typ, &es.total, &es.processed); err == nil {
+					evStats = append(evStats, es)
+				}
+			}
+			evRows.Close()
+		}
 		// H2 metadata 健康（8/10 T2）：空串（对话消息本应空）与非法 JSON 分开统计；
 		// valid_rate 分母排除空串——口径固定，防止与 tool role 缺失混为一谈。
 		var dlTotal, dlValid, dlEmpty, dlInvalid int
@@ -79,16 +111,41 @@ func dispatchMetrics(args *cli.Args) {
 			ftClaudeTotal, ftClaudeHit, ftCodexTotal, ftCodexHit   int
 			bsClaudeTotal, bsClaudeHit, bsCodexTotal, bsCodexHit   int
 		)
-		db.QueryRow(`SELECT
-			COALESCE(SUM(CASE WHEN source='claude-code' AND json_extract(metadata,'$.type') IN ('edit','new_file','read','write') THEN 1 ELSE 0 END),0),
-			COALESCE(SUM(CASE WHEN source='claude-code' AND json_extract(metadata,'$.type') IN ('edit','new_file','read','write') AND (json_extract(metadata,'$.rel_path') != '' OR EXISTS (SELECT 1 FROM json_each(metadata,'$.rel_paths'))) THEN 1 ELSE 0 END),0),
-			COALESCE(SUM(CASE WHEN source='codex-cli' AND json_extract(metadata,'$.tool_name') IN ('apply_patch','Write','Read') THEN 1 ELSE 0 END),0),
-			COALESCE(SUM(CASE WHEN source='codex-cli' AND json_extract(metadata,'$.tool_name') IN ('apply_patch','Write','Read') AND (json_extract(metadata,'$.rel_path') != '' OR EXISTS (SELECT 1 FROM json_each(metadata,'$.rel_paths'))) THEN 1 ELSE 0 END),0),
+		// H2 窗口（W3）：rel_path 验收随 --since（部署后数据），避免存量稀释假象。
+		// F4 口径（W3 配套，8/13）：filetools 分母只计「项目内文件操作」——项目外路径
+		// （/tmp、~/.claude/plans、其他项目）ToRelPath 按设计返回空，永远不可能有 rel_path，
+		// 计入分母会虚假稀释 90% 锚点（ED 实测缺失 5/50 全为项目外）。bash 行保持原口径（参考）。
+		dbPath, _ := pmdb.FindPath()
+		projRoot := ""
+		if strings.HasSuffix(dbPath, string(filepath.Separator)+".pmai"+string(filepath.Separator)+"data"+string(filepath.Separator)+"pmai.db") {
+			projRoot = filepath.Dir(filepath.Dir(filepath.Dir(dbPath)))
+		}
+		ftCond := ""
+		var ftArgs []any
+		if projRoot != "" {
+			ftCond = " AND (instr(json_extract(metadata,'$.file_path'), ? || '/') = 1 OR json_extract(metadata,'$.file_path') = ?)"
+			ftArgs = []any{projRoot, projRoot}
+		}
+		h2Cond := " WHERE metadata != '' AND json_valid(metadata)"
+		var h2Args []any
+		if dbSince != "" {
+			h2Cond += dbSince
+			h2Args = dbSinceArgs
+		}
+		// 占位符顺序：SELECT 内 filetools 4 组条件（每组 2 个 ?）先于 WHERE 的 ?。
+		ftArgs4 := append(append(append(append([]any{}, ftArgs...), ftArgs...), ftArgs...), ftArgs...)
+		h2QueryArgs := append(ftArgs4, h2Args...)
+		h2SQL := fmt.Sprintf(`SELECT
+			COALESCE(SUM(CASE WHEN source='claude-code' AND json_extract(metadata,'$.type') IN ('edit','new_file','read','write')%s THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN source='claude-code' AND json_extract(metadata,'$.type') IN ('edit','new_file','read','write')%s AND (json_extract(metadata,'$.rel_path') != '' OR EXISTS (SELECT 1 FROM json_each(metadata,'$.rel_paths'))) THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN source='codex-cli' AND json_extract(metadata,'$.tool_name') IN ('apply_patch','Write','Read')%s THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN source='codex-cli' AND json_extract(metadata,'$.tool_name') IN ('apply_patch','Write','Read')%s AND (json_extract(metadata,'$.rel_path') != '' OR EXISTS (SELECT 1 FROM json_each(metadata,'$.rel_paths'))) THEN 1 ELSE 0 END),0),
 			COALESCE(SUM(CASE WHEN source='claude-code' AND json_extract(metadata,'$.type')='bash' THEN 1 ELSE 0 END),0),
 			COALESCE(SUM(CASE WHEN source='claude-code' AND json_extract(metadata,'$.type')='bash' AND json_extract(metadata,'$.rel_path') != '' THEN 1 ELSE 0 END),0),
 			COALESCE(SUM(CASE WHEN source='codex-cli' AND json_extract(metadata,'$.tool_name')='Bash' THEN 1 ELSE 0 END),0),
 			COALESCE(SUM(CASE WHEN source='codex-cli' AND json_extract(metadata,'$.tool_name')='Bash' AND json_extract(metadata,'$.rel_path') != '' THEN 1 ELSE 0 END),0)
-			FROM discussion_log WHERE metadata != '' AND json_valid(metadata)`).
+			FROM discussion_log`, ftCond, ftCond, ftCond, ftCond) + h2Cond
+		db.QueryRow(h2SQL, h2QueryArgs...).
 			Scan(&ftClaudeTotal, &ftClaudeHit, &ftCodexTotal, &ftCodexHit,
 				&bsClaudeTotal, &bsClaudeHit, &bsCodexTotal, &bsCodexHit)
 		var cTotal, cOrphan, cHashOk, cHashDupRows, cMultiTaskGroups int
@@ -147,6 +204,29 @@ func dispatchMetrics(args *cli.Args) {
 		printRow("B2  l2_md_block", fmt.Sprint(mdBlock), "=0", mdBlock == 0)
 		printRow("B6  event_dup_rate", pct(dup), "<10%", dup < 0.10)
 		printRow("D2  event_processed_rate", pct(proc), "≥40%", proc >= 0.40)
+		// F1 三口径（W2 8/13）：免处理/可行动/已处理 + 可行动分布诊断。
+		evFree, evAction, evActionProc := 0, 0, 0
+		freeNames := map[string]bool{"tentative_link": true, "task_created": true, "plan_created": true}
+		actionNames := map[string]bool{"commit_orphan": true, "mcp_error": true, "hotspot_untracked": true}
+		var actionDist []string
+		for _, es := range evStats {
+			switch {
+			case freeNames[es.typ]:
+				evFree += es.total
+			case actionNames[es.typ]:
+				evAction += es.total
+				evActionProc += es.processed
+				actionDist = append(actionDist, fmt.Sprintf("%s %d/%d", es.typ, es.processed, es.total))
+			}
+		}
+		actionRate := 0.0
+		if evAction > 0 {
+			actionRate = float64(evActionProc) / float64(evAction)
+		}
+		fmt.Printf("F1  事件→动作漏斗: 免处理=%d 可行动=%d 已处理=%d (%.1f%%)\n", evFree, evAction, evActionProc, actionRate*100)
+		if len(actionDist) > 0 {
+			fmt.Printf("     可行动处理分布: %s\n", strings.Join(actionDist, " · "))
+		}
 		wfAvg := 0.0
 		if wfScored > 0 {
 			wfAvg = float64(wfSum) / float64(wfScored)

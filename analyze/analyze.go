@@ -1141,13 +1141,17 @@ func DaysSince(dateStr string) int {
 }
 
 // BuildBriefing generates a structured Markdown briefing for the Agent.
-func BuildBriefing(aiClient *ai.Client, graphSection string) string {
+// BuildBriefing 生成结构化 Markdown 简报；返回 (简报文本, 展示的 unconsumed 事件 ids)。
+// 后者供 W2（8/13）事件→动作漏斗的 surfaced 记录——MCP get_briefing 返回时
+// 由调用方 LogShared，与 hook 侧调用记录（session+ts）按 agent+时间窗对齐。
+func BuildBriefing(aiClient *ai.Client, graphSection string) (string, []string) {
 	report := RunFullAnalysis()
 	tasks, _ := store.ListTasks("in_progress", "")
 	events, _ := store.GetUnconsumedEvents()
 	threadSummary := BuildThreadSummary()
 	suggestions := AnalyzeThreadSuggestions()
 	threadStatus := AnalyzeThreadStatus()
+	var surfaced []string
 
 	var b strings.Builder
 	b.WriteString("🏗️ 项目简报 — AIPM\n\n")
@@ -1178,6 +1182,9 @@ func BuildBriefing(aiClient *ai.Client, graphSection string) string {
 			b.WriteString("### PM 最新变更\n")
 			for _, e := range events {
 				b.WriteString(fmt.Sprintf("- [%s] %s\n", e["type"], e["summary"]))
+				if id, ok := e["id"].(string); ok && id != "" {
+					surfaced = append(surfaced, id)
+				}
 			}
 			b.WriteString("  → 建议: 事件处理完毕用 aipm_mark_event_processed(entity_id=..., event_type=...) 标记已处理（计入 D2 已处理率）；仅浏览用 aipm_mark_consumed 标记已读\n\n")
 		}
@@ -1410,7 +1417,7 @@ func BuildBriefing(aiClient *ai.Client, graphSection string) string {
 		}
 	}
 
-	return b.String()
+	return b.String(), surfaced
 }
 
 // getActionableSuggestion returns a context-aware suggestion for a task.

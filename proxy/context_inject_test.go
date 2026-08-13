@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -70,5 +71,46 @@ func TestExtractFilePathsGeminiSystemInstruction(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("gemini parse: got %v, want %v", got, want)
 		}
+	}
+}
+
+// W1 (8/13): extractSessionID — codex 在 client_metadata.session_id，兼容顶层字段。
+func TestExtractSessionID(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"codex client_metadata", `{"client_metadata":{"session_id":"ses_abc123"}}`, "ses_abc123"},
+		{"top-level", `{"session_id":"ses_top"}`, "ses_top"},
+		{"none", `{"foo":1}`, ""},
+		{"empty body", ``, ""},
+		{"invalid json", `not-json`, ""},
+	}
+	for _, c := range cases {
+		if got := extractSessionID([]byte(c.body)); got != c.want {
+			t.Fatalf("%s: got %q want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// W1 (8/13): buildContextBlock 分段裁剪计数——goals 尾部超 cap 只记 goals 段。
+func TestBuildContextBlockSegCounts(t *testing.T) {
+	long := strings.Repeat("x", 300)
+	block, sc := buildContextBlock(
+		[]string{long, long, long},
+		nil, nil, nil, "")
+	if sc.goals != 1 {
+		t.Fatalf("goals suppressed: got %d want 1", sc.goals)
+	}
+	if sc.total() != 1 {
+		t.Fatalf("total suppressed: got %d want 1", sc.total())
+	}
+	if block == "" {
+		t.Fatal("block should not be empty")
+	}
+	// 全部放得下 → 零裁剪
+	if _, sc2 := buildContextBlock([]string{"short"}, nil, nil, nil, ""); sc2.total() != 0 {
+		t.Fatalf("no suppression expected, got %d", sc2.total())
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	pmdb "aipmc/db"
@@ -43,6 +44,7 @@ type injectState struct {
 
 var (
 	injectTracker sync.Map // map[agent]injectState
+	injectReqSeq  uint64   // W1（8/13）per-request 标识，区分同 session 同秒多次请求
 	sessionCache  struct {
 		mu          sync.RWMutex
 		goals       []string
@@ -59,6 +61,39 @@ var (
 		ttl       time.Duration
 	}
 )
+
+// segCounts 按 source_segment 统计被 cap 裁剪的条目数（W1 8/13，F2 数据源）。
+// 优先级顺序即注入顺序：fileAssoc > warnings > actionItems > goals——
+// 若裁剪集中在 goals（低优先级）属设计行为；若伤及 fileAssoc/warnings 才是问题。
+type segCounts struct {
+	fileAssoc  int
+	warnings   int
+	actionItems int
+	goals      int
+}
+
+func (s segCounts) total() int { return s.fileAssoc + s.warnings + s.actionItems + s.goals }
+
+// extractSessionID 尽力从请求体取 session（codex 在 client_metadata.session_id；
+// claude/gemini 可能无，留空——漏斗按 agent+时间窗兜底对齐）。
+func extractSessionID(body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	var m map[string]any
+	if err := json.Unmarshal(body, &m); err != nil {
+		return ""
+	}
+	if md, ok := m["client_metadata"].(map[string]any); ok {
+		if sid, ok := md["session_id"].(string); ok && sid != "" {
+			return sid
+		}
+	}
+	if sid, ok := m["session_id"].(string); ok && sid != "" {
+		return sid
+	}
+	return ""
+}
 
 func init() {
 	sessionCache.ttl = 5 * time.Minute
@@ -78,6 +113,10 @@ func InjectSessionContext(body []byte, agent string) []byte {
 	// File awareness is computed per-request — must NOT be inside the
 	// 5-minute session cache, or it returns nil on every cache hit.
 	fileAssoc := resolveFileContext(body, agent)
+	// W1（8/13）：session/req 标识进 inject/suppressed 日志，供可见性漏斗按
+	// (agent, session, req, ts) 对齐注入与事件处理记录。
+	sessionID := extractSessionID(body)
+	reqID := fmt.Sprintf("r%d", atomic.AddUint64(&injectReqSeq, 1))
 
 	if len(goals) == 0 && len(fileAssoc) == 0 && len(guidelines) > 0 {
 		u.LogShared("INJECT", "inject agent=%s source=guidelines_only", agent)
@@ -91,7 +130,7 @@ func InjectSessionContext(body []byte, agent string) []byte {
 	// trigger re-injection even when session data is unchanged.
 	fullHash := hashString(fmt.Sprintf("%s%v%s", blockHash, fileAssoc, guidelines))
 
-	block := buildContextBlock(goals, warnings, actionItems, fileAssoc, guidelines, agent)
+	block, sc := buildContextBlock(goals, warnings, actionItems, fileAssoc, guidelines)
 
 	// Content-hash based dedup: only inject if content changed since last injection
 	if !shouldInject(agent, fullHash) {
@@ -100,7 +139,14 @@ func InjectSessionContext(body []byte, agent string) []byte {
 
 	result := injectIntoPrompt(body, block, agent)
 	injectTracker.Store(agent, injectState{lastAt: time.Now(), contentHash: fullHash})
-	u.LogShared("INJECT", "agent=%s goals=%d warnings=%d actions=%d file=%d guidelines=%d chars=%d", agent, len(goals), len(warnings), len(actionItems), len(fileAssoc), len(guidelines), len(block))
+	u.LogShared("INJECT", "agent=%s session=%s req=%s goals=%d warnings=%d actions=%d file=%d guidelines=%d chars=%d",
+		agent, sessionID, reqID, len(goals), len(warnings), len(actionItems), len(fileAssoc), len(guidelines), len(block))
+	// suppressed 计数移到 shouldInject 之后：去重跳过（same_content/cooldown）的请求
+	// 不产出抑制记录——收紧 F2 口径（旧实现把未注入请求的抑制也算进去，虚高）。
+	if sc.total() > 0 {
+		u.LogShared("INJECT", "suppressed=%d reason=char_limit cap=%d agent=%s session=%s req=%s segments=file:%d warn:%d act:%d goals:%d",
+			sc.total(), maxInjectChars, agent, sessionID, reqID, sc.fileAssoc, sc.warnings, sc.actionItems, sc.goals)
+	}
 	return result
 }
 
@@ -352,11 +398,11 @@ func eventTypeBreakdown(events []map[string]any) string {
 	return strings.Join(parts, " ")
 }
 
-func buildContextBlock(goals, warnings, actionItems, fileAssoc []string, guidelines, agent string) string {
+func buildContextBlock(goals, warnings, actionItems, fileAssoc []string, guidelines string) (string, segCounts) {
 	var buf bytes.Buffer
 	buf.WriteString("\n[AIPM Context]")
 	written := 0
-	suppressed := 0
+	var sc segCounts
 
 	// ── Guidelines (highest priority, dedicated budget) ──
 	if guidelines != "" {
@@ -378,7 +424,7 @@ func buildContextBlock(goals, warnings, actionItems, fileAssoc []string, guideli
 			line := "\n" + fa
 			// File associations bypass the general budget up to fileAssocReservation chars
 			if written > fileAssocReservation && written+len(line) > maxInjectChars-50 {
-				suppressed++
+				sc.fileAssoc++
 				continue
 			}
 			buf.WriteString(line)
@@ -391,7 +437,7 @@ func buildContextBlock(goals, warnings, actionItems, fileAssoc []string, guideli
 	for _, w := range warnings {
 		line := w + "\n"
 		if written+len(line) > maxInjectChars-50 {
-			suppressed++
+			sc.warnings++
 			continue
 		}
 		buf.WriteString(line)
@@ -404,7 +450,7 @@ func buildContextBlock(goals, warnings, actionItems, fileAssoc []string, guideli
 		for _, a := range actionItems {
 			line := "\n" + a
 			if written+len(line) > maxInjectChars-50 {
-				suppressed++
+				sc.actionItems++
 				continue
 			}
 			buf.WriteString(line)
@@ -417,7 +463,7 @@ func buildContextBlock(goals, warnings, actionItems, fileAssoc []string, guideli
 		for _, g := range goals {
 			line := "- " + g + "\n"
 			if written+len(line) > maxInjectChars-50 {
-				suppressed++
+				sc.goals++
 				continue
 			}
 			buf.WriteString(line)
@@ -425,16 +471,12 @@ func buildContextBlock(goals, warnings, actionItems, fileAssoc []string, guideli
 		}
 	}
 
-	if suppressed > 0 {
-		u.LogShared("INJECT", "suppressed=%d reason=char_limit cap=%d agent=%s", suppressed, maxInjectChars, agent)
-	}
-
 	// Vision tool tip: inject only when vision models are configured and room permits.
 	if tip := visionToolTip(written, maxInjectChars); tip != "" {
 		buf.WriteString(tip)
 	}
 
-	return buf.String()
+	return buf.String(), sc
 }
 
 // visionToolTip returns a usage hint for aipmc_vision if room permits.

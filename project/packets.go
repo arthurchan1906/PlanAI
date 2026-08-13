@@ -104,6 +104,7 @@ func AgentStartPacket(client *ai.Client) map[string]any {
 	plans, _ := store.ListPlans("", "active")
 	threads, _ := store.ListThreads("active")
 	events, _ := store.GetUnconsumedEvents()
+	briefing, _ := analyze.BuildBriefing(client, "")
 
 	return map[string]any{
 		"role":    "ai_start",
@@ -119,7 +120,7 @@ func AgentStartPacket(client *ai.Client) map[string]any {
 			"active_threads":    threads[:minInt(3, len(threads))],
 		},
 		"thread_suggestions": analyze.AnalyzeThreadSuggestions(),
-		"briefing":           analyze.BuildBriefing(client, ""),
+		"briefing":           briefing,
 		"pm_alerts":          pmAlerts(events),
 		"recommended_flow": []map[string]any{
 			{"when": "Before coding or creating anything new", "command": "aipmc start"},
