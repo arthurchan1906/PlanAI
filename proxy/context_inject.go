@@ -144,12 +144,12 @@ func InjectSessionContext(body []byte, agent string) []byte {
 
 	result := injectIntoPrompt(body, block, agent)
 	injectTracker.Store(agent, injectState{lastAt: time.Now(), contentHash: fullHash})
-	u.LogShared("INJECT", "agent=%s session=%s req=%s goals=%d warnings=%d actions=%d file=%d guidelines=%d guide_del=%d chars=%d",
+	u.LogShared("INJECT", "agent=%s session=%s req=%s goals=%d warnings=%d actions=%d file_total=%d guidelines=%d guide_del=%d chars=%d",
 		agent, sessionID, reqID, len(goals), len(warnings), len(actionItems), len(fileAssoc), len(guidelines), sc.guidelinesDel, len(block))
 	// suppressed 计数移到 shouldInject 之后：去重跳过（same_content/cooldown）的请求
 	// 不产出抑制记录——收紧 F2 口径（旧实现把未注入请求的抑制也算进去，虚高）。
 	if sc.total() > 0 {
-		u.LogShared("INJECT", "suppressed=%d reason=char_limit cap=%d agent=%s session=%s req=%s segments=file:%d warn:%d act:%d goals:%d guide:%d",
+		u.LogShared("INJECT", "suppressed=%d reason=char_limit cap=%d agent=%s session=%s req=%s segments=file_cut:%d warn:%d act:%d goals:%d guide:%d",
 			sc.total(), maxInjectChars, agent, sessionID, reqID, sc.fileAssoc, sc.warnings, sc.actionItems, sc.goals, sc.guidelines)
 	}
 	return result
