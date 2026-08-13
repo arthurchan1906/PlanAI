@@ -96,8 +96,9 @@ func ProcessClaudeHook() {
 					type newFileMeta struct {
 						Type     string `json:"type"`
 						FilePath string `json:"file_path"`
+						RelPath  string `json:"rel_path,omitempty"`
 					}
-					meta := newFileMeta{Type: "new_file", FilePath: ti.FilePath}
+					meta := newFileMeta{Type: "new_file", FilePath: ti.FilePath, RelPath: ToRelPath(ti.FilePath)}
 					if b, err := json.Marshal(meta); err == nil {
 						metadataJSON = string(b)
 					}
@@ -106,9 +107,10 @@ func ProcessClaudeHook() {
 					type editMeta struct {
 						Type     string      `json:"type"`
 						FilePath string      `json:"file_path"`
+						RelPath  string      `json:"rel_path,omitempty"`
 						Hunks    []patchHunk `json:"hunks"`
 					}
-					meta := editMeta{Type: "edit", FilePath: ti.FilePath, Hunks: raw.ToolResponse.StructuredPatch}
+					meta := editMeta{Type: "edit", FilePath: ti.FilePath, RelPath: ToRelPath(ti.FilePath), Hunks: raw.ToolResponse.StructuredPatch}
 					if b, err := json.Marshal(meta); err == nil {
 						metadataJSON = string(b)
 					}
@@ -126,6 +128,7 @@ func ProcessClaudeHook() {
 				type editMeta struct {
 					Type      string      `json:"type"`
 					FilePath  string      `json:"file_path"`
+					RelPath   string      `json:"rel_path,omitempty"`
 					Hunks     []patchHunk `json:"hunks,omitempty"`
 					OldString string      `json:"old_string,omitempty"`
 					NewString string      `json:"new_string,omitempty"`
@@ -133,6 +136,7 @@ func ProcessClaudeHook() {
 				meta := editMeta{
 					Type:      "edit",
 					FilePath:  ti.FilePath,
+					RelPath:   ToRelPath(ti.FilePath),
 					Hunks:     raw.ToolResponse.StructuredPatch,
 					OldString: ti.OldString,
 					NewString: ti.NewString,
@@ -189,23 +193,24 @@ func ProcessClaudeHook() {
 				if tr.LinesCount > 0 {
 					desc += " (" + u.Itoa(tr.LinesCount) + " lines)"
 				}
-				// Store content preview in metadata
-				if tr.Content != "" || tr.LinesCount > 0 {
-					type readMeta struct {
-						Type       string `json:"type"`
-						FilePath   string `json:"file_path"`
-						LinesCount int    `json:"lines_count"`
-						Preview    string `json:"preview,omitempty"`
-					}
-					meta := readMeta{
-						Type:       "read",
-						FilePath:   ti.FilePath,
-						LinesCount: tr.LinesCount,
-						Preview:    u.TruncateStr(tr.Content, 150),
-					}
-					if b, err := json.Marshal(meta); err == nil {
-						metadataJSON = string(b)
-					}
+				// Read metadata: rel_path is the part the query layer needs, so
+				// write it whenever a file path exists (content preview optional).
+				type readMeta struct {
+					Type       string `json:"type"`
+					FilePath   string `json:"file_path"`
+					RelPath    string `json:"rel_path,omitempty"`
+					LinesCount int    `json:"lines_count"`
+					Preview    string `json:"preview,omitempty"`
+				}
+				meta := readMeta{
+					Type:       "read",
+					FilePath:   ti.FilePath,
+					RelPath:    ToRelPath(ti.FilePath),
+					LinesCount: tr.LinesCount,
+					Preview:    u.TruncateStr(tr.Content, 150),
+				}
+				if b, err := json.Marshal(meta); err == nil {
+					metadataJSON = string(b)
 				}
 			}
 		case "Grep":

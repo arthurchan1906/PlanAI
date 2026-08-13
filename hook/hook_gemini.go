@@ -279,6 +279,9 @@ func enrichGeminiMeta(raw map[string]any) {
 	if isNew, ok := rd["isNewFile"].(bool); ok && isNew {
 		raw["type"] = "new_file"
 		raw["file_path"] = fp
+		if rel := ToRelPath(fp); rel != "" {
+			raw["rel_path"] = rel
+		}
 		return
 	}
 
@@ -290,6 +293,9 @@ func enrichGeminiMeta(raw map[string]any) {
 
 	raw["type"] = "edit"
 	raw["file_path"] = fp
+	if rel := ToRelPath(fp); rel != "" {
+		raw["rel_path"] = rel
+	}
 
 	hunks := parseDiffToHunks(fileDiff)
 	if len(hunks) > 0 {

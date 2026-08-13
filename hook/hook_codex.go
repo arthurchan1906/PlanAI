@@ -257,7 +257,12 @@ func shellQuote(s string) string {
 }
 
 // extractFileOpMeta extracts file operation metadata from a Codex tool call.
-// Returns JSON like {"type":"edit","file_path":"/path/to/file"} for classifyFiles.
+// Returns JSON like {"type":"edit","file_path":"...","rel_path":"..."} for
+// classifyFiles and the T4 rel_path query layer.
+//
+// Codex has no structured file_path for apply_patch: targets live in the patch
+// text (tool_input.patch, or a Bash heredoc embedding it). `*** Update File:`
+// lines are stable across 35/35 ED samples (v1.14 decision 58 / H4-B).
 func extractFileOpMeta(toolName string, toolInput json.RawMessage) string {
 	ti := parseToolInput(toolInput)
 	fp := ti["file_path"]
@@ -266,9 +271,6 @@ func extractFileOpMeta(toolName string, toolInput json.RawMessage) string {
 	}
 	if fp == "" {
 		fp = ti["filePath"]
-	}
-	if fp == "" {
-		return ""
 	}
 
 	opType := ""
@@ -279,6 +281,18 @@ func extractFileOpMeta(toolName string, toolInput json.RawMessage) string {
 		opType = "write"
 	case toolName == "Read" || strings.HasSuffix(toolName, "_read") || strings.HasSuffix(toolName, "_read_file"):
 		opType = "read"
+	}
+
+	patchText := ti["patch"]
+	if patchText == "" {
+		patchText = ti["command"]
+	}
+	patchFiles := ExtractPatchFiles(patchText)
+	if fp == "" && len(patchFiles) > 0 {
+		fp = patchFiles[0]
+	}
+	if opType == "" && len(patchFiles) > 0 {
+		opType = "edit"
 	}
 
 	// Also detect Bash-based file ops
@@ -299,8 +313,24 @@ func extractFileOpMeta(toolName string, toolInput json.RawMessage) string {
 		}
 	}
 
-	if opType != "" && fp != "" {
-		m := map[string]string{"type": opType, "file_path": fp}
+	rel := ToRelPath(fp)
+	if opType != "" && fp != "" && rel != "" {
+		m := map[string]any{
+			"type":      opType,
+			"file_path": fp,
+		}
+		m["rel_path"] = rel
+		if len(patchFiles) > 1 {
+			var rels []string
+			for _, pf := range patchFiles {
+				if r := ToRelPath(pf); r != "" {
+					rels = append(rels, r)
+				}
+			}
+			if len(rels) > 0 {
+				m["rel_paths"] = rels
+			}
+		}
 		b, _ := json.Marshal(m)
 		return string(b)
 	}
@@ -379,7 +409,19 @@ func buildCodexToolContent(toolName string, toolInput, toolResp json.RawMessage)
 		if fp != "" {
 			result = "📝 " + fp
 		} else {
-			result = "📝 apply_patch"
+			patchText := ti["patch"]
+			if patchText == "" {
+				patchText = ti["command"]
+			}
+			pf := ExtractPatchFiles(patchText)
+			switch len(pf) {
+			case 0:
+				result = "📝 apply_patch"
+			case 1:
+				result = "📝 " + pf[0]
+			default:
+				result = "📝 apply_patch (" + strings.Join(pf, ", ") + ")"
+			}
 		}
 		// Show old/new content previews
 		oldStr := ti["old_string"]

@@ -70,6 +70,17 @@ func dispatchMetrics(args *cli.Args) {
 		// valid_rate 分母排除空串——口径固定，防止与 tool role 缺失混为一谈。
 		var dlTotal, dlValid, dlEmpty, dlInvalid int
 		db.QueryRow("SELECT COUNT(*), COALESCE(SUM(CASE WHEN metadata!='' AND json_valid(metadata) THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN metadata='' THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN metadata!='' AND json_valid(metadata)=0 THEN 1 ELSE 0 END),0) FROM discussion_log").Scan(&dlTotal, &dlValid, &dlEmpty, &dlInvalid)
+		// H2 rel_path 覆盖率（T3b+T4 闭环验收锚点）：分母=有 metadata 的工具记录，
+		// 分子=含 rel_path（单值或 rel_paths 数组）的记录。codex 按决策 19 边界
+		// 接受漏检（复合 Bash 命令不写）；claude 目标 ≥90%。
+		var rpClaudeTotal, rpClaudeHit, rpCodexTotal, rpCodexHit int
+		db.QueryRow(`SELECT
+			COALESCE(SUM(CASE WHEN source='claude-code' THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN source='claude-code' AND (json_extract(metadata,'$.rel_path') != '' OR EXISTS (SELECT 1 FROM json_each(metadata,'$.rel_paths'))) THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN source='codex-cli' THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN source='codex-cli' AND (json_extract(metadata,'$.rel_path') != '' OR EXISTS (SELECT 1 FROM json_each(metadata,'$.rel_paths'))) THEN 1 ELSE 0 END),0)
+			FROM discussion_log WHERE metadata != '' AND json_valid(metadata)`).
+			Scan(&rpClaudeTotal, &rpClaudeHit, &rpCodexTotal, &rpCodexHit)
 		var cTotal, cOrphan, cHashOk, cHashDupRows, cMultiTaskGroups int
 		// hash_uniqueness 语义：只把「采集 bug 重复」标红——同 task 重复行 / 含空 task 的重复组行。
 		// 多 task 同 hash（同一物理 commit 被多个 task 引用，relates_to 多对多）是合法语义，单独计数不告警。
@@ -177,6 +188,14 @@ func dispatchMetrics(args *cli.Args) {
 			dlValidRate = float64(dlValid) / float64(dlNonEmpty)
 		}
 		printRow("H2  metadata_health", fmt.Sprintf("valid=%s (%d/%d) empty=%d invalid=%d", pct(dlValidRate), dlValid, dlNonEmpty, dlEmpty, dlInvalid), "valid≥99.5% invalid=0", dlInvalid == 0 && dlValidRate >= 0.995)
+		rpClaudeRate, rpCodexRate := 0.0, 0.0
+		if rpClaudeTotal > 0 {
+			rpClaudeRate = float64(rpClaudeHit) / float64(rpClaudeTotal)
+		}
+		if rpCodexTotal > 0 {
+			rpCodexRate = float64(rpCodexHit) / float64(rpCodexTotal)
+		}
+		printRow("H2  rel_path_coverage", fmt.Sprintf("claude=%s (%d/%d) codex=%s (%d/%d)", pct(rpClaudeRate), rpClaudeHit, rpClaudeTotal, pct(rpCodexRate), rpCodexHit, rpCodexTotal), "claude≥90% codex按决策19", rpClaudeTotal == 0 || rpClaudeRate >= 0.90)
 		fmt.Println()
 	} else {
 		fmt.Printf("⚠ 当前项目无 pmai.db（%v）— 跳过 DB 类指标\n\n", err)
