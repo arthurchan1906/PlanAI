@@ -41,7 +41,10 @@ func handleAnthropicPassthrough(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 4. Determine effective model name for capture/token recording
-	effectiveModelName := route.RealModel
+	var effectiveModelName string
+	if route != nil {
+		effectiveModelName = route.RealModel
+	}
 	if effectiveModelName == "" {
 		effectiveModelName = loadCfg().proxyModel
 	}

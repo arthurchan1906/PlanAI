@@ -15,6 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	pmdb "aipmc/db"
 
@@ -443,7 +444,13 @@ func buildContextBlock(goals, warnings, actionItems, fileAssoc []string, guideli
 		}
 		if avail > 0 {
 			if avail < len(guidelines) {
-				buf.WriteString(guidelines[:avail] + "…")
+				// avail is a byte budget — back off to a rune boundary so a
+				// multi-byte CJK character is never split mid-sequence.
+				cut := avail
+				for cut > 0 && !utf8.RuneStart(guidelines[cut]) {
+					cut--
+				}
+				buf.WriteString(guidelines[:cut] + "…")
 			} else {
 				buf.WriteString(guidelines[:avail])
 			}
