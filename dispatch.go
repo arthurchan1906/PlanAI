@@ -463,7 +463,7 @@ func dispatchCanon(subcmd string, args *cli.Args) {
 		c, _ := store.GetCanon()
 		cli.PrintJSON(c)
 	case "update":
-		c, _ := store.UpdateCanon(args.Get("decision_id"), args.Str("product_goal", ""), args.Str("engineering_focus", ""), args.Str("architecture", ""), nil, nil)
+		c, _ := store.UpdateCanon(args.Get("decision_id"), args.Str("product_goal", ""), args.Str("engineering_focus", ""), args.Str("architecture", ""), u.SplitAndTrim(args.Str("add_scope", ""), "|"), u.SplitAndTrim(args.Str("add_avoid", ""), "|"))
 		cli.PrintJSON(c)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown canon subcommand: %s\n", subcmd)

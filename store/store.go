@@ -1898,14 +1898,20 @@ func GetCanon() (map[string]any, error) {
 		return map[string]any{"id": "canon-current", "product_goal": "", "engineering_focus": "", "architecture": "", "updated_at": "", "version_scope": []any{}, "avoid_now": []any{}, "top_tasks": []any{}, "source_docs": []any{}, "related_decisions": []any{}}, nil
 	}
 	items := map[string][]string{}
-	itemRows, _ := db.Query("SELECT item_type, value FROM canon_items ORDER BY item_type, position")
-	if itemRows != nil {
-		defer itemRows.Close()
-		for itemRows.Next() {
-			var it, val string
-			itemRows.Scan(&it, &val)
-			items[it] = append(items[it], val)
+	itemRows, err := db.Query("SELECT item_type, value FROM canon_items ORDER BY item_type, position")
+	if err != nil {
+		return nil, err
+	}
+	defer itemRows.Close()
+	for itemRows.Next() {
+		var it, val string
+		if err := itemRows.Scan(&it, &val); err != nil {
+			return nil, err
 		}
+		items[it] = append(items[it], val)
+	}
+	if err := itemRows.Err(); err != nil {
+		return nil, err
 	}
 	gi := func(k string) []any {
 		if vals, ok := items[k]; ok {
@@ -1933,12 +1939,23 @@ func UpdateCanon(decisionID, productGoal, engFocus, arch string, addScope, addAv
 	}
 	defer db.Close()
 	now := u.NowISO()
-	db.Exec("INSERT OR REPLACE INTO canon (id, updated_at, product_goal, engineering_focus, architecture) VALUES (1, ?, ?, ?, ?)", now, productGoal, engFocus, arch)
+	if _, err := db.Exec("INSERT OR REPLACE INTO canon (id, updated_at, product_goal, engineering_focus, architecture) VALUES (1, ?, ?, ?, ?)", now, productGoal, engFocus, arch); err != nil {
+		return nil, err
+	}
+	// Read side (GetCanon) exposes these as version_scope / avoid_now.
+	// Older writes used "scope"/"avoid" which nothing ever read — clean them up.
+	if _, err := db.Exec("DELETE FROM canon_items WHERE item_type IN ('scope', 'avoid')"); err != nil {
+		return nil, err
+	}
 	for i, s := range addScope {
-		db.Exec("INSERT OR REPLACE INTO canon_items (item_type, position, value) VALUES (?, ?, ?)", "scope", i, s)
+		if _, err := db.Exec("INSERT OR REPLACE INTO canon_items (item_type, position, value) VALUES (?, ?, ?)", "version_scope", i, s); err != nil {
+			return nil, err
+		}
 	}
 	for i, s := range addAvoid {
-		db.Exec("INSERT OR REPLACE INTO canon_items (item_type, position, value) VALUES (?, ?, ?)", "avoid", i, s)
+		if _, err := db.Exec("INSERT OR REPLACE INTO canon_items (item_type, position, value) VALUES (?, ?, ?)", "avoid_now", i, s); err != nil {
+			return nil, err
+		}
 	}
 	return GetCanon()
 }

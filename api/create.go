@@ -114,7 +114,7 @@ func (s *Server) handleNestedPostRoutes(w http.ResponseWriter, method, path stri
 
 	switch {
 	case path == "canon/update":
-		c, err := store.UpdateCanon(u.Str(body["decision_id"]), pstr(body, "product_goal", ""), pstr(body, "engineering_focus", ""), pstr(body, "architecture", ""), nil, nil)
+		c, err := store.UpdateCanon(u.Str(body["decision_id"]), pstr(body, "product_goal", ""), pstr(body, "engineering_focus", ""), pstr(body, "architecture", ""), stringList(body["add_scope"]), stringList(body["add_avoid"]))
 		if err != nil {
 			web.SendError(w, 500, err.Error())
 			return true
@@ -152,7 +152,12 @@ func (s *Server) handleNestedPostSubRoutes(w http.ResponseWriter, path string, b
 		web.SendJSON(w, comment)
 	case strings.HasPrefix(path, "ideas/") && strings.HasSuffix(path, "/convert"):
 		id := extractID(path, "ideas/", "/convert")
-		if u.Str(body["to"]) == "task" {
+		// Frontend sends target_type; older clients used to. Accept both.
+		target := u.Str(body["target_type"])
+		if target == "" {
+			target = u.Str(body["to"])
+		}
+		if target == "task" {
 			result, err := store.ConvertIdeaToTask(id, u.Str(body["plan_id"]))
 			if err != nil {
 				web.SendError(w, 400, err.Error())
@@ -181,4 +186,17 @@ func (s *Server) handleNestedPostSubRoutes(w http.ResponseWriter, path string, b
 		return false
 	}
 	return true
+}
+
+// stringList converts a decoded JSON array into []string, dropping empties.
+func stringList(v any) []string {
+	var out []string
+	if arr, ok := v.([]any); ok {
+		for _, x := range arr {
+			if s := u.Str(x); s != "" {
+				out = append(out, s)
+			}
+		}
+	}
+	return out
 }
