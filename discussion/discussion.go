@@ -93,8 +93,8 @@ func Embed(client *ai.Client, batchSize int) (int, error) {
 	return count, nil
 }
 
-// Search queries discussion_log with source/type filters, pagination, and optional keyword LIKE match.
-func Search(client *ai.Client, query, source, typeFilter, projectPath string, page, pageSize int) ([]map[string]any, int, error) {
+// Search queries discussion_log with source/session/type filters, pagination, and optional keyword LIKE match.
+func Search(client *ai.Client, query, source, sessionID, typeFilter, projectPath string, page, pageSize int) ([]map[string]any, int, error) {
 	db, err := openProjectDB(projectPath)
 	if err != nil {
 		return nil, 0, err
@@ -115,6 +115,10 @@ func Search(client *ai.Client, query, source, typeFilter, projectPath string, pa
 	if source != "" {
 		where += " AND source = ?"
 		args = append(args, source)
+	}
+	if sessionID != "" {
+		where += " AND session_id = ?"
+		args = append(args, sessionID)
 	}
 	if query != "" {
 		terms := splitSearchTerms(query)

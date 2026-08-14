@@ -21,7 +21,7 @@ import (
 // SQLite's PRAGMA user_version. Every time the schema or migrations
 // change, bump this — connections with user_version >= this skip the
 // (expensive, write-lock-acquiring) EnsureSchema DDL entirely.
-const SCHEMA_VERSION = 1
+const SCHEMA_VERSION = 2
 
 // schemaUpToDate reports whether the database at d already has the
 // current schema version, so we can skip the DDL pass on hot paths.
@@ -246,6 +246,7 @@ var schemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS thread_items (thread_id TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, added_at TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', PRIMARY KEY (thread_id, entity_type, entity_id), FOREIGN KEY(thread_id) REFERENCES threads(id))`,
 	`CREATE VIRTUAL TABLE IF NOT EXISTS fts5_index USING fts5(content, entity_type UNINDEXED, entity_id UNINDEXED, title, tokenize='unicode61')`,
 	`CREATE TABLE IF NOT EXISTS agent_profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'coder', capabilities TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+	`CREATE TABLE IF NOT EXISTS agent_status (session_id TEXT PRIMARY KEY, source TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL, explicit INTEGER NOT NULL DEFAULT 0)`,
 	`CREATE TABLE IF NOT EXISTS meeting_rooms (id TEXT PRIMARY KEY, title TEXT NOT NULL, topic TEXT NOT NULL, context TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active', agent_roles_context TEXT NOT NULL DEFAULT '', auto_arbitrate INTEGER NOT NULL DEFAULT 0, meeting_mode TEXT NOT NULL DEFAULT 'discussion', created_by TEXT NOT NULL, created_at TEXT NOT NULL, closed_at TEXT)`,
 	`CREATE TABLE IF NOT EXISTS meeting_turns (id TEXT PRIMARY KEY, room_id TEXT NOT NULL, turn_number INTEGER NOT NULL, speaker_type TEXT NOT NULL, speaker_id TEXT NOT NULL, question TEXT NOT NULL, response TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'waiting', reply_to TEXT NOT NULL DEFAULT '', address_to TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, FOREIGN KEY(room_id) REFERENCES meeting_rooms(id))`,
 	`CREATE TABLE IF NOT EXISTS meeting_participants (meeting_id TEXT NOT NULL, agent_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', confirmed_at TEXT NOT NULL, PRIMARY KEY (meeting_id, agent_id), FOREIGN KEY(meeting_id) REFERENCES meeting_rooms(id), FOREIGN KEY(agent_id) REFERENCES agent_profiles(id))`,

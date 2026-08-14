@@ -59,7 +59,7 @@ func (s *Server) handleQueryRoutes(w http.ResponseWriter, method, path string, q
 		if p := q.Get("page"); p != "" {
 			fmt.Sscanf(p, "%d", &page)
 		}
-		results, total, _ := app.SearchDiscussions(q.Get("q"), q.Get("source"), q.Get("type"), q.Get("project_path"), page, 20)
+		results, total, _ := app.SearchDiscussions(q.Get("q"), q.Get("source"), q.Get("session_id"), q.Get("type"), q.Get("project_path"), page, 20)
 		web.SendJSON(w, map[string]any{"discussions": results, "total": total, "page": page})
 	case "discussions/sources":
 		sources, _ := store.ListDiscussionSources()

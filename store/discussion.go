@@ -114,6 +114,11 @@ func logDiscussionOnce(sessionID, role, source, content, metadataJSON string) (m
 	if err != nil {
 		return nil, err
 	}
+	// Auto-register "what this agent is working on": every user message
+	// refreshes the session's current status (last prompt wins).
+	if role == "user" && sid != "" && sid != "unknown" && isSubstantiveStatusPrompt(content) {
+		_ = touchAgentStatus(db, source, sid, content, false)
+	}
 	preview := content
 	if len([]rune(preview)) > 80 {
 		preview = string([]rune(preview)[:80])
@@ -129,6 +134,77 @@ func isSQLiteBusy(err error) bool {
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "database is locked") ||
 		strings.Contains(msg, "sqlite_busy")
+}
+
+// touchAgentStatus upserts the session's current status. Auto updates (from
+// user prompts) never overwrite an explicit declaration; explicit updates
+// (aipm_update_status) always win.
+func touchAgentStatus(db *sql.DB, source, sessionID, status string, explicit bool) error {
+	if len([]rune(status)) > 500 {
+		status = string([]rune(status)[:500])
+	}
+	var q string
+	if explicit {
+		q = `INSERT INTO agent_status (session_id, source, status, updated_at, explicit) VALUES (?, ?, ?, ?, 1)
+			ON CONFLICT(session_id) DO UPDATE SET source=excluded.source, status=excluded.status, updated_at=excluded.updated_at, explicit=1`
+	} else {
+		q = `INSERT INTO agent_status (session_id, source, status, updated_at, explicit) VALUES (?, ?, ?, ?, 0)
+			ON CONFLICT(session_id) DO UPDATE SET source=excluded.source, status=excluded.status, updated_at=excluded.updated_at
+			WHERE agent_status.explicit = 0`
+	}
+	_, err := db.Exec(q, sessionID, source, status, u.NowISO())
+	return err
+}
+
+// isSubstantiveStatusPrompt filters trivial continuation messages ("继续",
+// "ok") so they do not clobber a meaningful "what I am working on" status.
+func isSubstantiveStatusPrompt(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	if len([]rune(s)) < 4 {
+		return false
+	}
+	switch strings.ToLower(s) {
+	case "ok", "ok.", "好的", "好", "继续", "继续修", "继续改", "go", "go.", "continue", "y", "yes", "嗯", "恩":
+		return false
+	}
+	return true
+}
+
+// UpdateAgentStatus lets an agent explicitly declare what it is working on.
+// An empty projectPath resolves to the cwd project. Busy errors are retried
+// like LogDiscussion so concurrent hook/MCP processes do not drop updates.
+func UpdateAgentStatus(source, sessionID, status, projectPath string) error {
+	if sessionID == "" || sessionID == "unknown" {
+		return fmt.Errorf("session_id 不能为空")
+	}
+	if status == "" {
+		status = "(空闲)"
+	}
+	var lastErr error
+	for attempt := 0; attempt < 15; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt*25) * time.Millisecond)
+		}
+		withDiscussionLogLock(func() {
+			db, err := openOrCurrentDB(projectPath)
+			if err != nil {
+				lastErr = err
+				return
+			}
+			defer db.Close()
+			lastErr = touchAgentStatus(db, source, sessionID, status, true)
+		})
+		if lastErr == nil {
+			return nil
+		}
+		if !isSQLiteBusy(lastErr) {
+			return lastErr
+		}
+	}
+	return lastErr
 }
 
 // RecentUserPrompts returns the most recent user message contents for a session.
@@ -163,7 +239,7 @@ func RecentUserPrompts(sessionID, source string, limit int) ([]string, error) {
 }
 
 // ListRecentDiscussions returns the most recent N discussion entries, optionally filtered.
-func ListRecentDiscussions(source, typeFilter, projectPath string, lastN int, cursor string) ([]map[string]any, error) {
+func ListRecentDiscussions(source, typeFilter, sessionID, projectPath string, lastN int, cursor string) ([]map[string]any, error) {
 	if lastN <= 0 {
 		lastN = 10
 	}
@@ -178,6 +254,10 @@ func ListRecentDiscussions(source, typeFilter, projectPath string, lastN int, cu
 	if source != "" {
 		where += " AND source = ?"
 		args = append(args, source)
+	}
+	if sessionID != "" {
+		where += " AND session_id = ?"
+		args = append(args, sessionID)
 	}
 	if typeFilter != "" {
 		switch typeFilter {
@@ -258,6 +338,7 @@ func GetSessionMessagesFor(projectPath, sessionID string) ([]map[string]any, err
 // ReadDiscussionsOpts controls aipm_read_discussions queries.
 type ReadDiscussionsOpts struct {
 	Source      string
+	SessionID   string
 	LastN       int
 	Since       string
 	Cursor      string
@@ -272,6 +353,10 @@ func ReadDiscussions(opts ReadDiscussionsOpts) ([]map[string]any, error) {
 	if opts.Source != "" {
 		where += " AND source = ?"
 		args = append(args, opts.Source)
+	}
+	if opts.SessionID != "" {
+		where += " AND session_id = ?"
+		args = append(args, opts.SessionID)
 	}
 	if opts.Since != "" {
 		where += " AND created_at >= ?"
@@ -491,6 +576,117 @@ func recentUserPrompts(sessionID string, limit int) ([]string, error) {
 		 WHERE session_id = ? AND role = 'user'
 		 ORDER BY created_at DESC LIMIT ?`,
 		sessionID, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var prompts []string
+	for rows.Next() {
+		var content string
+		if err := rows.Scan(&content); err == nil {
+			prompts = append(prompts, content)
+		}
+	}
+	if prompts == nil {
+		prompts = []string{}
+	}
+	return prompts, nil
+}
+
+// AgentStatusRow describes one agent session for the public status board:
+// what the agent is working on (latest user prompt or explicit status) plus
+// recent activity counts.
+type AgentStatusRow struct {
+	Source           string
+	SessionID        string
+	Status           string
+	StatusUpdatedAt  string
+	UserPromptCount  int
+	ToolCallCount    int
+	SubstantiveCount int
+	FirstSeen        string
+	LastSeen         string
+	UserPrompts      []string
+}
+
+// ListActiveSessions returns sessions with activity since the cutoff, joined
+// with their registered current status (agent_status). This is the public
+// "who is doing what right now" query that lets an agent tell apart
+// same-source peers (e.g. multiple codex processes on one project).
+func ListActiveSessions(projectPath, source, since string, limit int) ([]AgentStatusRow, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	db, err := openOrCurrentDB(projectPath)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	q := `SELECT s.source, s.session_id, s.users, s.substantive, s.tools, s.first_seen, s.last_seen,
+		COALESCE(a.status, ''), COALESCE(a.updated_at, '')
+	FROM (
+		SELECT source, session_id,
+			SUM(CASE WHEN role = 'user' THEN 1 ELSE 0 END) AS users,
+			SUM(CASE WHEN ` + substantiveDiscussionSQL() + ` AND role != 'user' THEN 1 ELSE 0 END) AS substantive,
+			` + toolCallCountSQL() + ` AS tools,
+			MIN(created_at) AS first_seen,
+			MAX(created_at) AS last_seen
+		FROM discussion_log
+		WHERE created_at >= ? AND source != ''
+		GROUP BY source, session_id
+		HAVING users > 0
+	) s
+	LEFT JOIN agent_status a ON a.session_id = s.session_id
+	WHERE 1=1`
+	var args []any
+	args = append(args, since)
+	if source != "" {
+		q += " AND s.source = ?"
+		args = append(args, source)
+	}
+	q += " ORDER BY s.last_seen DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []AgentStatusRow
+	for rows.Next() {
+		var s AgentStatusRow
+		if err := rows.Scan(&s.Source, &s.SessionID, &s.UserPromptCount, &s.SubstantiveCount,
+			&s.ToolCallCount, &s.FirstSeen, &s.LastSeen, &s.Status, &s.StatusUpdatedAt); err != nil {
+			return nil, err
+		}
+		prompts, _ := recentUserPromptsFor(s.SessionID, s.Source, 2)
+		s.UserPrompts = prompts
+		result = append(result, s)
+	}
+	if result == nil {
+		result = []AgentStatusRow{}
+	}
+	return result, nil
+}
+
+// recentUserPromptsFor returns the most recent user prompts for a session
+// within the given source (used by ListActiveSessions).
+func recentUserPromptsFor(sessionID, source string, limit int) ([]string, error) {
+	db, err := pmdb.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	rows, err := db.Query(
+		`SELECT content FROM discussion_log
+		 WHERE session_id = ? AND source = ? AND role = 'user'
+		 ORDER BY created_at DESC LIMIT ?`,
+		sessionID, source, limit,
 	)
 	if err != nil {
 		return nil, err

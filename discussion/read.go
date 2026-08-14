@@ -11,6 +11,7 @@ import (
 // ReadOpts mirrors aipm_read_discussions MCP parameters.
 type ReadOpts struct {
 	Source      string
+	SessionID   string
 	LastN       int
 	Since       string
 	Cursor      string
@@ -22,6 +23,7 @@ type ReadOpts struct {
 func Read(opts ReadOpts) ([]map[string]any, error) {
 	return store.ReadDiscussions(store.ReadDiscussionsOpts{
 		Source:      opts.Source,
+		SessionID:   opts.SessionID,
 		LastN:       opts.LastN,
 		Since:       opts.Since,
 		Cursor:      opts.Cursor,
@@ -54,10 +56,23 @@ func FormatResults(rows []map[string]any, full bool) string {
 		if !full {
 			content = PreviewContent(content, PreviewRunes)
 		}
-		b.WriteString(fmt.Sprintf("%s %s [%s][%s]\n%s\n\n",
-			u.Str(r["id"]), u.Str(r["created_at"]), u.Str(r["role"]), u.Str(r["source"]), content))
+		b.WriteString(fmt.Sprintf("%s %s [%s][%s][sid=%s]\n%s\n\n",
+			u.Str(r["id"]), u.Str(r["created_at"]), u.Str(r["role"]), u.Str(r["source"]),
+			shortSessionID(u.Str(r["session_id"])), content))
 	}
 	return b.String()
+}
+
+// shortSessionID renders a compact session handle for text output; the full
+// id stays available in the structured results.
+func shortSessionID(sid string) string {
+	if sid == "" || sid == "unknown" {
+		return "?"
+	}
+	if len(sid) > 13 {
+		return sid[:13]
+	}
+	return sid
 }
 
 // FormatSessionMessages renders messages grouped under one session (search full_session mode).

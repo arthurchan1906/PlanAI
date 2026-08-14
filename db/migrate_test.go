@@ -31,7 +31,7 @@ func TestMigrateFreshDB(t *testing.T) {
 	if err := EnsureSchema(d); err != nil {
 		t.Fatalf("EnsureSchema fresh: %v", err)
 	}
-	for _, tbl := range []string{"audit_log", "meeting_rooms", "meeting_turns", "discussion_log", "agent_profiles", "meeting_participants", "fts5_index", "session_summaries"} {
+	for _, tbl := range []string{"audit_log", "meeting_rooms", "meeting_turns", "discussion_log", "agent_profiles", "meeting_participants", "fts5_index", "session_summaries", "agent_status"} {
 		if !tableOrVTableExists(d, tbl) {
 			t.Errorf("table %s missing after fresh schema", tbl)
 		}

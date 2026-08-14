@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"aipmc/ai"
@@ -111,7 +112,7 @@ type mcpServer struct {
 	searchFTS5        func(string, int) interface{}
 	searchLinear      func(string) interface{}
 	aiRerank          func(string, int, interface{}) interface{}
-	searchDiscussions func(string, string, string, string, int, int) ([]map[string]any, int, error)
+	searchDiscussions func(string, string, string, string, string, int, int) ([]map[string]any, int, error)
 }
 
 func NewServer(aiClient *ai.Client,
@@ -119,7 +120,7 @@ func NewServer(aiClient *ai.Client,
 	searchFTS5 func(string, int) interface{},
 	searchLinear func(string) interface{},
 	aiRerank func(string, int, interface{}) interface{},
-	searchDiscussions func(string, string, string, string, int, int) ([]map[string]any, int, error),
+	searchDiscussions func(string, string, string, string, string, int, int) ([]map[string]any, int, error),
 ) *mcpServer {
 	s := &mcpServer{
 		tools:             make(map[string]MCPTool),
@@ -650,6 +651,7 @@ func (s *mcpServer) registerTools() {
 			Type: "object",
 			Properties: map[string]interface{}{
 				"source":       map[string]string{"type": "string", "description": "想看哪个 Agent: claude-code / cursor / gemini-cli / opencode / codex-cli。例：看 Cursor 说了什么 → source=\"cursor\"。不传则看所有人。"},
+				"session_id":   map[string]string{"type": "string", "description": "可选: 只看某个具体 session（同一 source 可能有多个同名 agent 进程/会话，如多个 codex）。session_id 可从 aipm_list_sessions 获取。"},
 				"last_n":       map[string]string{"type": "integer", "description": "最近 N 条。默认 15。快速浏览用 5，深入阅读用 30（与 since / cursor 可组合）"},
 				"since":        map[string]string{"type": "string", "description": "可选: ISO 时间下限 (例 2026-06-15T21:48:00)"},
 				"cursor":       map[string]string{"type": "string", "description": "可选: 从上次返回的 cursor 之后继续读取，避免重复（传上次返回结果中 related_context.cursor 的值）"},
@@ -667,6 +669,7 @@ func (s *mcpServer) registerTools() {
 			Properties: map[string]interface{}{
 				"query":        map[string]string{"type": "string", "description": "搜索关键词（与 last_n 二选一）"},
 				"source":       map[string]string{"type": "string", "description": "可选: 按 agent 来源过滤 (claude-code / gemini-cli / codex-cli / codex / opencode / cursor)"},
+				"session_id":   map[string]string{"type": "string", "description": "可选: 只看某个具体 session（区分同名 agent 进程）"},
 				"type":         map[string]string{"type": "string", "description": "可选: 按消息类型过滤 (user / assistant / tool)"},
 				"last_n":       map[string]string{"type": "integer", "description": "可选: 返回最近 N 条记录（与 query 二选一，优先使用 last_n）"},
 				"cursor":       map[string]string{"type": "string", "description": "可选: 从上次返回的 cursor 之后继续读取（仅 last_n 模式生效）"},
@@ -676,6 +679,34 @@ func (s *mcpServer) registerTools() {
 			},
 		},
 	}, s.handleSearchDiscussions)
+
+	s.addTool(MCPTool{
+		Name:        "aipm_list_sessions",
+		Description: "查看当前活跃的 Agent 会话（公共状态板）：每个 agent 进程（session）正在做什么、最后活跃时间、最近的 user prompt。同一 source 下有多个同名进程（如多个 codex）时，用返回的 session_id 配合 aipm_read_discussions(session_id=...) 精准查看某一个。",
+		InputSchema: MCPInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"source":       map[string]string{"type": "string", "description": "可选: 只看某个来源 (claude-code / codex-cli / cursor / gemini-cli / opencode)。不传则看全部。"},
+				"since":        map[string]string{"type": "string", "description": "可选: ISO 时间下限 (例 2026-08-14T12:00:00)。默认最近 24 小时内有活动的 session。"},
+				"limit":        map[string]string{"type": "integer", "description": "可选: 返回条数上限，默认 10。"},
+				"project_path": map[string]string{"type": "string", "description": "可选: 目标项目路径，不传则读当前项目。"},
+			},
+		},
+	}, s.handleListSessions)
+
+	s.addTool(MCPTool{
+		Name:        "aipm_update_status",
+		Description: "声明/更新「我正在做什么」。每次开始处理一个新问题时调用一次，其他 agent 通过 aipm_list_sessions 公共查询看到。不传 session_id 时自动归属到本 source 最近活跃的会话。",
+		InputSchema: MCPInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"status":       map[string]string{"type": "string", "description": "必填: 当前正在处理的问题描述，如「修复 proxy token 认证」"},
+				"session_id":   map[string]string{"type": "string", "description": "可选: 目标会话 ID。不传时自动归属到本 agent 来源最近活跃的会话。"},
+				"project_path": map[string]string{"type": "string", "description": "可选: 目标项目路径，不传则写当前项目。"},
+			},
+			Required: []string{"status"},
+		},
+	}, s.handleUpdateStatus)
 
 	s.addTool(MCPTool{
 		Name:        "aipmc_vision",
@@ -1335,7 +1366,7 @@ func (s *mcpServer) handleRecordCommit(args map[string]interface{}) mcpToolResul
 
 // recordCommitDedup handles a commit that already exists — typically recorded
 // by the git hook (which has no task context) moments before the agent calls
-// record_commit. The hook row has task_id='', so this is the one chance to
+// record_commit. The hook row has task_id=”, so this is the one chance to
 // bind the orphan to a task: we backfill task_id instead of silently
 // returning "already exists" (previously orphaned commits could never be
 // linked through record_commit).
@@ -1903,6 +1934,7 @@ func (s *mcpServer) handleSmartSearch(args map[string]interface{}) mcpToolResult
 
 func (s *mcpServer) handleReadDiscussions(args map[string]interface{}) mcpToolResult {
 	source := getStr(args, "source", "")
+	sessionID := getStr(args, "session_id", "")
 	since := getStr(args, "since", "")
 	lastN := getInt(args, "last_n", 0)
 	cursor := getStr(args, "cursor", "")
@@ -1916,6 +1948,7 @@ func (s *mcpServer) handleReadDiscussions(args map[string]interface{}) mcpToolRe
 
 	rows, err := store.ReadDiscussions(store.ReadDiscussionsOpts{
 		Source:      source,
+		SessionID:   sessionID,
 		LastN:       lastN,
 		Since:       since,
 		Cursor:      cursor,
@@ -1934,6 +1967,9 @@ func (s *mcpServer) handleReadDiscussions(args map[string]interface{}) mcpToolRe
 	if source != "" {
 		header.WriteString(fmt.Sprintf(" [source=%s]", source))
 	}
+	if sessionID != "" {
+		header.WriteString(fmt.Sprintf(" [session=%s]", sessionID))
+	}
 	if since != "" {
 		header.WriteString(fmt.Sprintf(" [since=%s]", since))
 	}
@@ -1949,6 +1985,8 @@ func (s *mcpServer) handleReadDiscussions(args map[string]interface{}) mcpToolRe
 		}
 	} else if !full {
 		reflection = "内容为预览（约 200 字）。互读讨论请设 full=true。看某 Agent → source=\"cursor\" + full=true。"
+	} else if sessionID != "" {
+		reflection = fmt.Sprintf("已返回 session=%s 的全文。", sessionID)
 	} else if source == "" {
 		reflection = "已返回全文。若只看某个 Agent，加 source=\"cursor\" 或 source=\"claude-code\" 等。"
 	}
@@ -1963,6 +2001,7 @@ func (s *mcpServer) handleReadDiscussions(args map[string]interface{}) mcpToolRe
 func (s *mcpServer) handleSearchDiscussions(args map[string]interface{}) mcpToolResult {
 	query := getStr(args, "query", "")
 	source := getStr(args, "source", "")
+	sessionID := getStr(args, "session_id", "")
 	typeFilter := getStr(args, "type", "")
 	projectPath := getStr(args, "project_path", "")
 	mode := getStr(args, "mode", "matches")
@@ -1983,7 +2022,7 @@ func (s *mcpServer) handleSearchDiscussions(args map[string]interface{}) mcpTool
 	if lastN > 0 {
 		// Recent-N mode: fetch most recent N records
 		var err error
-		results, err = store.ListRecentDiscussions(source, typeFilter, projectPath, lastN, cursor)
+		results, err = store.ListRecentDiscussions(source, typeFilter, sessionID, projectPath, lastN, cursor)
 		if err != nil {
 			return mcpToolResult{
 				Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("获取最近讨论失败: %v", err)}},
@@ -1994,7 +2033,7 @@ func (s *mcpServer) handleSearchDiscussions(args map[string]interface{}) mcpTool
 	} else {
 		// Keyword search mode (existing behavior)
 		var err error
-		results, total, err = s.searchDiscussions(query, source, typeFilter, projectPath, 1, limit)
+		results, total, err = s.searchDiscussions(query, source, sessionID, typeFilter, projectPath, 1, limit)
 		if err != nil {
 			return mcpToolResult{
 				Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("搜索讨论失败: %v", err)}},
@@ -2023,6 +2062,9 @@ func (s *mcpServer) handleSearchDiscussions(args map[string]interface{}) mcpTool
 	}
 	if source != "" {
 		b.WriteString(fmt.Sprintf(" [source=%s]", source))
+	}
+	if sessionID != "" {
+		b.WriteString(fmt.Sprintf(" [session=%s]", sessionID))
 	}
 	if typeFilter != "" {
 		b.WriteString(fmt.Sprintf(" [type=%s]", typeFilter))
@@ -2054,8 +2096,8 @@ func (s *mcpServer) handleSearchDiscussions(args map[string]interface{}) mcpTool
 		reflection = fmt.Sprintf("已展开 %d 条 session 消息（全文，未截断）。", len(results))
 	} else {
 		reflection = fmt.Sprintf("匹配预览约 %d 字。全文请用 aipm_read_discussions(full=true) 或 mode=full_session。", discussion.PreviewRunes)
-		if source != "" || typeFilter != "" {
-			reflection += fmt.Sprintf(" 已过滤 source=%s type=%s。", source, typeFilter)
+		if source != "" || sessionID != "" || typeFilter != "" {
+			reflection += fmt.Sprintf(" 已过滤 source=%s session=%s type=%s。", source, sessionID, typeFilter)
 		}
 	}
 
@@ -2063,6 +2105,101 @@ func (s *mcpServer) handleSearchDiscussions(args map[string]interface{}) mcpTool
 		Content:        []mcpContent{{Type: "text", Text: b.String()}},
 		RelatedContext: map[string]interface{}{"results": results, "total": total, "mode": mode},
 		Reflection:     reflection,
+	}
+}
+
+// handleListSessions serves aipm_list_sessions: the public "who is doing what"
+// status board across all agent processes (same-source peers included).
+func (s *mcpServer) handleListSessions(args map[string]interface{}) mcpToolResult {
+	source := getStr(args, "source", "")
+	projectPath := getStr(args, "project_path", "")
+	since := getStr(args, "since", "")
+	limit := getInt(args, "limit", 0)
+	if since == "" {
+		since = time.Now().Add(-24 * time.Hour).Format("2006-01-02T15:04:05")
+	}
+	sessions, err := store.ListActiveSessions(projectPath, source, since, limit)
+	if err != nil {
+		return mcpToolResult{
+			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("查询活跃会话失败: %v", err)}},
+			IsError: true,
+		}
+	}
+	if len(sessions) == 0 {
+		return mcpToolResult{
+			Content:    []mcpContent{{Type: "text", Text: "(最近 24 小时无活跃 agent 会话)"}},
+			Reflection: "无活跃会话。扩大 since 时间窗，或确认项目路径。",
+		}
+	}
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("活跃 Agent 会话: %d 个\n\n", len(sessions)))
+	for _, s := range sessions {
+		status := strings.TrimSpace(s.Status)
+		if status == "" {
+			status = "(未登记状态)"
+		}
+		b.WriteString(fmt.Sprintf("- [%s] %s\n", s.Source, s.SessionID))
+		b.WriteString(fmt.Sprintf("  状态: %s\n", discussion.PreviewContent(status, 120)))
+		if s.StatusUpdatedAt != "" {
+			b.WriteString(fmt.Sprintf("  状态更新: %s\n", s.StatusUpdatedAt))
+		}
+		b.WriteString(fmt.Sprintf("  活跃: %s ~ %s (user:%d tool:%d)\n", s.FirstSeen, s.LastSeen, s.UserPromptCount, s.ToolCallCount))
+		if len(s.UserPrompts) > 0 {
+			b.WriteString(fmt.Sprintf("  最近 prompt: %s\n", discussion.PreviewContent(s.UserPrompts[0], 120)))
+		}
+		b.WriteString("\n")
+	}
+	return mcpToolResult{
+		Content:        []mcpContent{{Type: "text", Text: b.String()}},
+		RelatedContext: map[string]interface{}{"sessions": sessions, "count": len(sessions)},
+		Reflection:     "用返回的 session_id 配合 aipm_read_discussions(session_id=...) 可精准读某个同名 agent 的讨论。",
+	}
+}
+
+// handleUpdateStatus serves aipm_update_status: an agent declares what it is
+// working on right now. Without an explicit session_id it resolves to the
+// caller source's most recently active session (within the last 30 minutes).
+func (s *mcpServer) handleUpdateStatus(args map[string]interface{}) mcpToolResult {
+	status := getStr(args, "status", "")
+	sessionID := getStr(args, "session_id", "")
+	projectPath := getStr(args, "project_path", "")
+	if status == "" {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "status 为必填项"}}, IsError: true}
+	}
+	source := mcpClientName(s.clientInfo)
+	if source == "" {
+		source = "unknown"
+	}
+	if sessionID == "" {
+		since := time.Now().Add(-30 * time.Minute).Format("2006-01-02T15:04:05")
+		candidates, err := store.ListActiveSessions(projectPath, source, since, 5)
+		if err != nil {
+			return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("解析归属会话失败: %v", err)}}, IsError: true}
+		}
+		if len(candidates) == 0 {
+			return mcpToolResult{
+				Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("未检测到 %s 最近 30 分钟内的活跃会话，请显式传 session_id（用 aipm_list_sessions 查看）", source)}},
+				IsError: true,
+			}
+		}
+		if len(candidates) > 1 {
+			var ids []string
+			for _, c := range candidates {
+				ids = append(ids, c.SessionID)
+			}
+			return mcpToolResult{
+				Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("检测到多个活跃 %s 会话，无法自动归属，请显式传 session_id: %s", source, strings.Join(ids, " / "))}},
+				IsError: true,
+			}
+		}
+		sessionID = candidates[0].SessionID
+	}
+	if err := store.UpdateAgentStatus(source, sessionID, status, projectPath); err != nil {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("更新状态失败: %v", err)}}, IsError: true}
+	}
+	return mcpToolResult{
+		Content:        []mcpContent{{Type: "text", Text: fmt.Sprintf("✅ 状态已更新 [%s][%s]: %s", source, sessionID, status)}},
+		RelatedContext: map[string]interface{}{"source": source, "session_id": sessionID},
 	}
 }
 
