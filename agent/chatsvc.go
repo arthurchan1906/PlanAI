@@ -9,6 +9,7 @@ import (
 	"aipmc/ai"
 	pmdb "aipmc/db"
 	"aipmc/store"
+	"aipmc/u"
 )
 
 // ChatService runs the coding agent for web and CLI entry points.
@@ -60,10 +61,7 @@ func (c *ChatService) SendStream(sessionID, message string, emit StreamEmit) (*S
 				emit("tool_start", map[string]any{"id": id, "name": name, "args": args})
 			},
 			OnToolResult: func(id, name, result string) {
-				preview := result
-				if len(preview) > 200 {
-					preview = preview[:200] + "..."
-				}
+				preview := u.TruncateStr(result, 200)
 				emit("tool_result", map[string]any{"id": id, "name": name, "result": preview})
 			},
 		}

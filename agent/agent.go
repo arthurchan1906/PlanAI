@@ -13,6 +13,7 @@ import (
 
 
 	"aipmc/ai"
+	"aipmc/u"
 
 )
 
@@ -436,13 +437,7 @@ func formatToolCall(tc ToolCall) string {
 
 		if cmd != "" {
 
-			preview := cmd
-
-			if len(preview) > 150 {
-
-				preview = preview[:150] + "..."
-
-			}
+			preview := u.TruncateStr(cmd, 150)
 
 			return "🔧 " + preview
 
@@ -453,5 +448,4 @@ func formatToolCall(tc ToolCall) string {
 	return "🛠 " + tc.Name
 
 }
-
 
