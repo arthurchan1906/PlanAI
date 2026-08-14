@@ -5,8 +5,8 @@ import (
 	"sync"
 
 	"aipmc/ai"
-	"aipmc/discussion"
 	pmdb "aipmc/db"
+	"aipmc/discussion"
 	"aipmc/mcp"
 	"aipmc/project"
 	"aipmc/search"
@@ -75,8 +75,44 @@ func (a *App) SummarizerFor(projectPath string) ai.Summarizer {
 		u.LogShared("PIPELINE", "summarizer project=%s none (no ai_endpoint)", projectPath)
 		return nil
 	}
-	u.LogShared("PIPELINE", "summarizer project=%s endpoint=%s chat_model=%s", projectPath, cfg.AIEndpoint, cfg.AIChatModel)
-	return ai.NewClient(cfg.AIEndpoint, cfg.AIEmbeddingEndpoint, cfg.AIModel, cfg.AIChatModel, cfg.AIApiKey)
+	apiKey := cfg.AIApiKey
+	keySrc := "config"
+	if apiKey == "" {
+		apiKey = summarizerKeyFromCredentialStore(cfg.AIChatModel)
+		if apiKey != "" {
+			keySrc = "credential-store"
+		} else {
+			keySrc = "none"
+		}
+	}
+	u.LogShared("PIPELINE", "summarizer project=%s endpoint=%s chat_model=%s key=%s", projectPath, cfg.AIEndpoint, cfg.AIChatModel, keySrc)
+	return ai.NewClient(cfg.AIEndpoint, cfg.AIEmbeddingEndpoint, cfg.AIModel, cfg.AIChatModel, apiKey)
+}
+
+// summarizerKeyFromCredentialStore resolves the API key for the configured
+// chat model through the model registry + credential store, mirroring the
+// proxy's ModelRouter.Resolve. The L2 pipeline then uses the same working key
+// as agent traffic instead of 401-ing when the project config has no explicit
+// ai_api_key (8/14: ED L2 401 root cause).
+func summarizerKeyFromCredentialStore(chatModel string) string {
+	store := pmdb.GetCredentialStore()
+	if store == nil {
+		return ""
+	}
+	reg := pmdb.LoadModelRegistry()
+	if !reg.IsActive() {
+		return ""
+	}
+	vm := reg.FindModel(chatModel)
+	if vm == nil {
+		return ""
+	}
+	for i := range vm.Routes {
+		if k := store.Get(vm.Routes[i].Provider); k != "" {
+			return k
+		}
+	}
+	return ""
 }
 
 // RunMCP starts the MCP stdio server with project services wired in.
@@ -118,8 +154,8 @@ func (a *App) EmbedDiscussions(batchSize int) (int, error) {
 	return discussion.Embed(a.AI(), batchSize)
 }
 
-func (a *App) StatusSnapshot() map[string]any       { return project.StatusSnapshot() }
-func (a *App) ContextPack() map[string]any          { return project.ContextPack() }
-func (a *App) NextActionPacket() map[string]any     { return project.NextActionPacket() }
-func (a *App) AgentStartPacket() map[string]any     { return project.AgentStartPacket(a.AI()) }
-func (a *App) InboxSummary() map[string]any         { return project.InboxSummary() }
+func (a *App) StatusSnapshot() map[string]any   { return project.StatusSnapshot() }
+func (a *App) ContextPack() map[string]any      { return project.ContextPack() }
+func (a *App) NextActionPacket() map[string]any { return project.NextActionPacket() }
+func (a *App) AgentStartPacket() map[string]any { return project.AgentStartPacket(a.AI()) }
+func (a *App) InboxSummary() map[string]any     { return project.InboxSummary() }
