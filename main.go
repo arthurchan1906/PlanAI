@@ -262,6 +262,10 @@ func main() {
 
 	switch cmd {
 	case "search":
+		if len(os.Args) < 3 {
+			fmt.Fprintln(os.Stderr, "usage: aipmc search <query>")
+			os.Exit(1)
+		}
 		query := os.Args[2]
 		limit := args.Int("limit", 8)
 		cli.PrintJSON(search.ProjectContext(query, limit))
