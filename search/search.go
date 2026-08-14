@@ -278,13 +278,14 @@ func RerankWithAI(client *ai.Client, query string, limit int, candidates []Hit) 
 	for i := range candidates {
 		providers[i] = candidates[i]
 	}
+	// Re-rank the provided candidates instead of re-running FTS5: the caller
+	// already fetched them (FTS5 or Linear). Re-querying here doubled the
+	// search work and silently ignored the candidates argument.
 	reranked := ai.HybridSearch(query, limit, client, func(q string, l int) []ai.SearchResultProvider {
-		hits := FTS5(q, l)
-		out := make([]ai.SearchResultProvider, len(hits))
-		for i := range hits {
-			out[i] = hits[i]
+		if len(providers) > l {
+			return providers[:l]
 		}
-		return out
+		return providers
 	})
 	result := make([]Hit, len(reranked))
 	for i, p := range reranked {
