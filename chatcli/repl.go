@@ -39,8 +39,10 @@ func Run(application *app.App) {
 	var sess *agent.Session
 	if !newSession {
 		if sessionID != "" {
-			if s, err := agent.LoadSession(filepath.Join(sessionDir, sessionID+".json")); err == nil {
-				sess = s
+			if agent.IsValidSessionID(sessionID) {
+				if s, err := agent.LoadSession(filepath.Join(sessionDir, sessionID+".json")); err == nil {
+					sess = s
+				}
 			}
 		} else {
 			sess = agent.LoadLatestSession(workDir)

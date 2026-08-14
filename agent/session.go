@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 )
 
@@ -104,6 +105,17 @@ func LoadSession(filePath string) (*Session, error) {
 // SessionDir returns the directory where sessions are stored.
 func SessionDir(projectRoot string) string {
 	return filepath.Join(projectRoot, ".pmai", "agent", "sessions")
+}
+
+// sessionIDRe matches generated session IDs (s-YYYYMMDD-HHMMSS-hex).
+// The strict charset keeps IDs safe to embed in file paths: no separators,
+// no "." or ".." components, no drive/UNC prefixes.
+var sessionIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// IsValidSessionID reports whether id can be safely used as a session file
+// name. Callers must check before building paths with a user-supplied ID.
+func IsValidSessionID(id string) bool {
+	return id != "" && sessionIDRe.MatchString(id)
 }
 
 func randHex(n int) string {

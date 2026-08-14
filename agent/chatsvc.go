@@ -93,8 +93,10 @@ func (c *ChatService) send(sessionID, message string, cb *StreamCallbacks) (*Sen
 	sessionDir := SessionDir(workDir)
 	var sess *Session
 	if sessionID != "" {
-		if loaded, err := LoadSession(filepath.Join(sessionDir, sessionID+".json")); err == nil {
-			sess = loaded
+		if IsValidSessionID(sessionID) {
+			if loaded, err := LoadSession(filepath.Join(sessionDir, sessionID+".json")); err == nil {
+				sess = loaded
+			}
 		}
 	}
 	if sess == nil {

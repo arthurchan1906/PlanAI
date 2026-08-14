@@ -45,6 +45,10 @@ func (s *Server) handleChatGetSession(w http.ResponseWriter, sid string) {
 		web.SendError(w, 400, "缺少 id 参数")
 		return
 	}
+	if !agent.IsValidSessionID(sid) {
+		web.SendError(w, 400, "非法会话 id")
+		return
+	}
 	sessPath := filepath.Join(agent.SessionDir(agent.ProjectWorkDir()), sid+".json")
 	sess, err := agent.LoadSession(sessPath)
 	if err != nil {
