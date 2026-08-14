@@ -669,7 +669,7 @@ func (s *mcpServer) registerTools() {
 			Properties: map[string]interface{}{
 				"query":        map[string]string{"type": "string", "description": "搜索关键词（与 last_n 二选一）"},
 				"source":       map[string]string{"type": "string", "description": "可选: 按 agent 来源过滤 (claude-code / gemini-cli / codex-cli / codex / opencode / cursor)"},
-				"session_id":   map[string]string{"type": "string", "description": "可选: 只看某个具体 session（区分同名 agent 进程）"},
+				"session_id":   map[string]string{"type": "string", "description": "可选: 只看某个具体 session（区分同名 agent 进程）。session_id 可从 aipm_list_sessions 获取。"},
 				"type":         map[string]string{"type": "string", "description": "可选: 按消息类型过滤 (user / assistant / tool)"},
 				"last_n":       map[string]string{"type": "integer", "description": "可选: 返回最近 N 条记录（与 query 二选一，优先使用 last_n）"},
 				"cursor":       map[string]string{"type": "string", "description": "可选: 从上次返回的 cursor 之后继续读取（仅 last_n 模式生效）"},
@@ -682,7 +682,7 @@ func (s *mcpServer) registerTools() {
 
 	s.addTool(MCPTool{
 		Name:        "aipm_list_sessions",
-		Description: "查看当前活跃的 Agent 会话（公共状态板）：每个 agent 进程（session）正在做什么、最后活跃时间、最近的 user prompt。同一 source 下有多个同名进程（如多个 codex）时，用返回的 session_id 配合 aipm_read_discussions(session_id=...) 精准查看某一个。",
+		Description: "查看当前活跃的 Agent 会话（公共状态板）：每个 agent 进程（session）正在做什么、最后活跃时间、最近的 user prompt。状态列 = 最近 user prompt（自动登记）或 agent 显式声明（aipm_update_status，优先）。同一 source 下有多个同名进程（如多个 codex）时，用返回的 session_id 配合 aipm_read_discussions(session_id=...) 精准查看某一个。",
 		InputSchema: MCPInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
@@ -696,12 +696,12 @@ func (s *mcpServer) registerTools() {
 
 	s.addTool(MCPTool{
 		Name:        "aipm_update_status",
-		Description: "声明/更新「我正在做什么」。每次开始处理一个新问题时调用一次，其他 agent 通过 aipm_list_sessions 公共查询看到。不传 session_id 时自动归属到本 source 最近活跃的会话。",
+		Description: "声明/更新「我正在做什么」。仅在开始处理一个新问题时调用；琐碎跟进（继续、小修）不需要——user prompt 会自动登记。显式声明优先于自动登记，声明后不会被自动覆盖。其他 agent 通过 aipm_list_sessions 公共查询看到。不传 session_id 时自动归属到本 source 最近活跃的会话；若同 source 有多个活跃会话（如两个 codex），自动归属会失败，需先用 aipm_list_sessions 查自己的 session_id 显式传入。",
 		InputSchema: MCPInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
 				"status":       map[string]string{"type": "string", "description": "必填: 当前正在处理的问题描述，如「修复 proxy token 认证」"},
-				"session_id":   map[string]string{"type": "string", "description": "可选: 目标会话 ID。不传时自动归属到本 agent 来源最近活跃的会话。"},
+				"session_id":   map[string]string{"type": "string", "description": "可选: 目标会话 ID。不传时自动归属到本 agent 来源最近活跃的会话；同 source 有多个活跃会话时必须显式传入（用 aipm_list_sessions 查询）。"},
 				"project_path": map[string]string{"type": "string", "description": "可选: 目标项目路径，不传则写当前项目。"},
 			},
 			Required: []string{"status"},

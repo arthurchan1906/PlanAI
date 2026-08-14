@@ -1387,7 +1387,7 @@ func BuildBriefing(aiClient *ai.Client, graphSection string) (string, []string) 
 		for _, s := range sessions {
 			label := firstLine(s.UserPrompts, s.Source)
 			date := dateShort(s.FirstSeen)
-			b.WriteString(fmt.Sprintf("  • %s", label))
+			b.WriteString(fmt.Sprintf("  • [%s] %s", shortSID(s.SessionID), label))
 			parts := []string{}
 			if date != "" {
 				parts = append(parts, date)
@@ -1403,6 +1403,7 @@ func BuildBriefing(aiClient *ai.Client, graphSection string) (string, []string) 
 			}
 			b.WriteString("\n")
 		}
+		b.WriteString("用 aipm_list_sessions 可查看完整 session_id，再用 aipm_read_discussions(session_id=...) 精准读取某个会话。\n")
 		b.WriteString("\n")
 	}
 
@@ -1614,4 +1615,17 @@ func firstLine(prompts []string, fallback string) string {
 		return string(runes[:60]) + "…"
 	}
 	return content
+}
+
+// shortSID renders a compact session handle for briefing output so agents can
+// map an activity bullet to a session and read it precisely via
+// aipm_read_discussions(session_id=...).
+func shortSID(sid string) string {
+	if sid == "" || sid == "unknown" {
+		return "?"
+	}
+	if len(sid) > 13 {
+		return sid[:13]
+	}
+	return sid
 }
