@@ -24,6 +24,9 @@ env/
 /aipmc.exe
 
 dist/
+!frontend/dist/
+frontend/dist/*
+!frontend/dist/index.html
 src/aipm_cli.egg-info/
 
 # Logs and temp files
