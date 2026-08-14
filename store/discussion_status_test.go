@@ -1,7 +1,11 @@
 package store
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
+
+	pmdb "aipmc/db"
 )
 
 // Regression/feature: user messages must auto-register the session's current
@@ -93,5 +97,53 @@ func TestReadDiscussionsSessionFilter(t *testing.T) {
 	}
 	if rows[0]["content"] != "a 在做 A" {
 		t.Errorf("wrong row content: %v", rows[0]["content"])
+	}
+}
+
+// Cross-project regression (审核 #1): ListActiveSessions(project_path=...) must
+// read "recent prompts" from the target project's DB, not the cwd project's.
+func TestListActiveSessionsCrossProjectPrompts(t *testing.T) {
+	setupDailyDB(t)
+	if _, err := ReadDiscussions(ReadDiscussionsOpts{LastN: 5}); err != nil {
+		t.Fatalf("bootstrap cwd: %v", err)
+	}
+
+	// Build a second "project" DB with its own discussion + status.
+	proj := filepath.Join(t.TempDir(), "EncryptDrive")
+	if err := os.MkdirAll(filepath.Join(proj, ".pmai", "data"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proj, ".pmai", "data", "pmai.db"), nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	d, err := pmdb.OpenProject(proj)
+	if err != nil {
+		t.Fatalf("OpenProject: %v", err)
+	}
+	d.Close()
+
+	db, err := openOrCurrentDB(proj)
+	if err != nil {
+		t.Fatalf("openOrCurrentDB: %v", err)
+	}
+	defer db.Close()
+	sid := "ed-session-1"
+	if _, err := db.Exec(`INSERT INTO discussion_log (id, session_id, role, source, content, created_at) VALUES (?, ?, 'user', 'codex-cli', ?, ?)`,
+		"disc-ed-1", sid, "在 EncryptDrive 修同步 bug", "2026-08-14T10:00:00"); err != nil {
+		t.Fatalf("insert discussion: %v", err)
+	}
+	if err := UpdateAgentStatus("codex-cli", sid, "在 EncryptDrive 修同步 bug", proj); err != nil {
+		t.Fatalf("UpdateAgentStatus: %v", err)
+	}
+
+	sessions, err := ListActiveSessions(proj, "codex-cli", "2026-01-01T00:00:00", 10)
+	if err != nil {
+		t.Fatalf("ListActiveSessions: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 session in target project, got %d: %+v", len(sessions), sessions)
+	}
+	if len(sessions[0].UserPrompts) != 1 || sessions[0].UserPrompts[0] != "在 EncryptDrive 修同步 bug" {
+		t.Errorf("cross-project prompt read failed: %+v", sessions[0].UserPrompts)
 	}
 }

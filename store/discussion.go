@@ -552,7 +552,10 @@ func RecentAgentActivityFor(projectPath, since string, limit int) ([]AgentSessio
 		}
 
 		// Fetch up to 3 user prompts for context.
-		prompts, _ := recentUserPrompts(s.SessionID, 3)
+		prompts, err := recentUserPrompts(projectPath, s.SessionID, 3)
+		if err != nil {
+			return nil, err
+		}
 		s.UserPrompts = prompts
 
 		result = append(result, s)
@@ -563,9 +566,10 @@ func RecentAgentActivityFor(projectPath, since string, limit int) ([]AgentSessio
 	return result, nil
 }
 
-// recentUserPrompts returns the most recent user prompts for a session.
-func recentUserPrompts(sessionID string, limit int) ([]string, error) {
-	db, err := pmdb.Open()
+// recentUserPrompts returns the most recent user prompts for a session in the
+// given project (empty projectPath resolves to the cwd project).
+func recentUserPrompts(projectPath, sessionID string, limit int) ([]string, error) {
+	db, err := openOrCurrentDB(projectPath)
 	if err != nil {
 		return nil, err
 	}
@@ -663,7 +667,10 @@ func ListActiveSessions(projectPath, source, since string, limit int) ([]AgentSt
 			&s.ToolCallCount, &s.FirstSeen, &s.LastSeen, &s.Status, &s.StatusUpdatedAt); err != nil {
 			return nil, err
 		}
-		prompts, _ := recentUserPromptsFor(s.SessionID, s.Source, 2)
+		prompts, err := recentUserPromptsFor(projectPath, s.SessionID, s.Source, 2)
+		if err != nil {
+			return nil, err
+		}
 		s.UserPrompts = prompts
 		result = append(result, s)
 	}
@@ -673,10 +680,10 @@ func ListActiveSessions(projectPath, source, since string, limit int) ([]AgentSt
 	return result, nil
 }
 
-// recentUserPromptsFor returns the most recent user prompts for a session
-// within the given source (used by ListActiveSessions).
-func recentUserPromptsFor(sessionID, source string, limit int) ([]string, error) {
-	db, err := pmdb.Open()
+// recentUserPromptsFor returns the most recent user prompts for a session in
+// the given project and source (used by ListActiveSessions).
+func recentUserPromptsFor(projectPath, sessionID, source string, limit int) ([]string, error) {
+	db, err := openOrCurrentDB(projectPath)
 	if err != nil {
 		return nil, err
 	}
