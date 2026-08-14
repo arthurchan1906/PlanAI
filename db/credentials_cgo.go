@@ -17,8 +17,6 @@ func init() {
 	saveProfileImpl = saveCGOWithProfile
 }
 
-func clearBytes(b []byte) { for i := range b { b[i] = 0 } }
-
 // loadCGOWithProfile loads credentials from a specific profile (or active if empty).
 func loadCGOWithProfile(password []byte, profile string) (*CredentialStore, error) {
 	defer clearBytes(password)

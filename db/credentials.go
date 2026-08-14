@@ -50,6 +50,10 @@ type credentialsFile struct {
 	Data string `json:"data"` // base64 ciphertext + GCM tag
 }
 
+// clearBytes zeroes a byte slice in place. Used to wipe password buffers
+// after use; implementations must only ever wipe private copies.
+func clearBytes(b []byte) { for i := range b { b[i] = 0 } }
+
 // session state
 var (
 	globalStore    atomic.Value // stores *CredentialStore
@@ -198,8 +202,14 @@ func LoadCredentialsProfile(password []byte, profile string) (*CredentialStore, 
 	if profile == "" {
 		profile = "default"
 	}
+	// Hand the implementation a private copy so it can wipe its buffer
+	// without destroying caller-owned slices (e.g. a password reused for
+	// save after a load).
+	pw := make([]byte, len(password))
+	copy(pw, password)
+	defer clearBytes(pw)
 	if loadProfileImpl != nil {
-		store, err := loadProfileImpl(password, profile)
+		store, err := loadProfileImpl(pw, profile)
 		if err == nil && store != nil {
 			store.Profile = profile
 		}
@@ -218,11 +228,18 @@ func SaveCredentialsToProfile(store *CredentialStore, password []byte, profile s
 	if profile == "" {
 		profile = "default"
 	}
+	// Private copy again: CredentialStore.SaveToFile passes sessionKey in,
+	// and the CGO implementation wipes the buffer it receives. Without a
+	// copy, every save would zero the session key and re-encrypt with an
+	// all-zero key, locking the user out permanently.
+	pw := make([]byte, len(password))
+	copy(pw, password)
+	defer clearBytes(pw)
 	if saveProfileImpl != nil {
-		return saveProfileImpl(store, password, profile)
+		return saveProfileImpl(store, pw, profile)
 	}
 	if saveImpl != nil {
-		return saveImpl(store, password)
+		return saveImpl(store, pw)
 	}
 	return errNoCGO
 }
