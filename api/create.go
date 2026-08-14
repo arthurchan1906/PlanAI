@@ -114,7 +114,11 @@ func (s *Server) handleNestedPostRoutes(w http.ResponseWriter, method, path stri
 
 	switch {
 	case path == "canon/update":
-		c, _ := store.UpdateCanon(u.Str(body["decision_id"]), pstr(body, "product_goal", ""), pstr(body, "engineering_focus", ""), pstr(body, "architecture", ""), nil, nil)
+		c, err := store.UpdateCanon(u.Str(body["decision_id"]), pstr(body, "product_goal", ""), pstr(body, "engineering_focus", ""), pstr(body, "architecture", ""), nil, nil)
+		if err != nil {
+			web.SendError(w, 500, err.Error())
+			return true
+		}
 		web.SendJSON(w, c)
 	case path == "docs/sync":
 		web.SendJSON(w, map[string]any{"ok": true, "message": "docs synced"})
