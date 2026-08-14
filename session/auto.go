@@ -23,13 +23,24 @@ func RunAuto(getSummarizer func(projectPath string) ai.Summarizer, interval time
 
 	go func() {
 		time.Sleep(5 * time.Second)
-		runAllProjects(home, projectPaths, getSummarizer)
+		safeRunAllProjects(home, projectPaths, getSummarizer)
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for range ticker.C {
-			runAllProjects(home, projectPaths, getSummarizer)
+			safeRunAllProjects(home, projectPaths, getSummarizer)
 		}
 	}()
+}
+
+// safeRunAllProjects keeps the background pipeline alive across panics:
+// a single project failure must not silently kill the 30-minute loop.
+func safeRunAllProjects(home string, projectPaths []string, getSummarizer func(projectPath string) ai.Summarizer) {
+	defer func() {
+		if r := recover(); r != nil {
+			u.LogShared("PIPELINE", "panic recovered: %v", r)
+		}
+	}()
+	runAllProjects(home, projectPaths, getSummarizer)
 }
 
 func runAllProjects(home string, projectPaths []string, getSummarizer func(projectPath string) ai.Summarizer) {
