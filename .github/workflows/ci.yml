@@ -14,6 +14,15 @@ jobs:
         with:
           go-version: "1.25.x"
           cache: true
+      - name: Build frontend
+        # go:embed frontend/dist embeds whatever exists on disk; without an
+        # npm build the CI binary ships only index.html (blank web UI).
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+        env:
+          CI: true
       - name: Vet
         run: CGO_ENABLED=0 go vet ./...
       - name: Test
