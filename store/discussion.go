@@ -607,6 +607,7 @@ type AgentStatusRow struct {
 	SessionID        string
 	Status           string
 	StatusUpdatedAt  string
+	Explicit         bool // true = declared via update_status; false = auto-registered prompt
 	UserPromptCount  int
 	ToolCallCount    int
 	SubstantiveCount int
@@ -630,7 +631,7 @@ func ListActiveSessions(projectPath, source, since string, limit int) ([]AgentSt
 	defer db.Close()
 
 	q := `SELECT s.source, s.session_id, s.users, s.substantive, s.tools, s.first_seen, s.last_seen,
-		COALESCE(a.status, ''), COALESCE(a.updated_at, '')
+		COALESCE(a.status, ''), COALESCE(a.updated_at, ''), COALESCE(a.explicit, 0)
 	FROM (
 		SELECT source, session_id,
 			SUM(CASE WHEN role = 'user' THEN 1 ELSE 0 END) AS users,
@@ -663,10 +664,12 @@ func ListActiveSessions(projectPath, source, since string, limit int) ([]AgentSt
 	var result []AgentStatusRow
 	for rows.Next() {
 		var s AgentStatusRow
+		var explicit int
 		if err := rows.Scan(&s.Source, &s.SessionID, &s.UserPromptCount, &s.SubstantiveCount,
-			&s.ToolCallCount, &s.FirstSeen, &s.LastSeen, &s.Status, &s.StatusUpdatedAt); err != nil {
+			&s.ToolCallCount, &s.FirstSeen, &s.LastSeen, &s.Status, &s.StatusUpdatedAt, &explicit); err != nil {
 			return nil, err
 		}
+		s.Explicit = explicit != 0
 		prompts, err := recentUserPromptsFor(projectPath, s.SessionID, s.Source, 2)
 		if err != nil {
 			return nil, err

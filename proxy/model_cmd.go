@@ -9,11 +9,13 @@ import (
 	"time"
 
 	pmdb "aipmc/db"
+	"aipmc/store"
+	"aipmc/u"
 )
 
 // ModelCommand represents a parsed &aipmc-model command.
 type ModelCommand struct {
-	Subcommand string // switch | auto | current | list
+	Subcommand string // switch | auto | current | list | sessions
 	ModelID    string // model ID for "switch"
 }
 
@@ -39,7 +41,9 @@ func tryModelCommand(w http.ResponseWriter, r *http.Request, agent string, body 
 		return false
 	}
 
-	result := executeModelCommand(cmd, agent)
+	// Pass the caller's own session ID (codex provides it via client_metadata;
+	// other agents may not) so the sessions board can mark "current session".
+	result := executeModelCommand(cmd, agent, extractSessionID(body))
 
 	capID := startCapture(agent, r.Method, r.URL.Path, "", body, copyHeaders(r), nil)
 	finishCapture(capID, http.StatusOK, time.Duration(0), nil, result, "")
@@ -108,7 +112,7 @@ func parseModelCommand(text string) *ModelCommand {
 	}
 	sub := parts[1]
 	switch sub {
-	case "auto", "current", "list":
+	case "auto", "current", "list", "sessions":
 		return &ModelCommand{Subcommand: sub}
 	case "switch":
 		if len(parts) >= 3 {
@@ -130,7 +134,7 @@ func modelProvidersDisplay(vm *pmdb.VirtualModel) string {
 }
 
 // executeModelCommand runs the command and returns a user-facing result string.
-func executeModelCommand(cmd *ModelCommand, agent string) string {
+func executeModelCommand(cmd *ModelCommand, agent, sessionID string) string {
 	switch cmd.Subcommand {
 	case "switch":
 		reg := pmdb.LoadModelRegistry()
@@ -178,8 +182,80 @@ func executeModelCommand(cmd *ModelCommand, agent string) string {
 			lines = append(lines, line)
 		}
 		return fmt.Sprintf("Available models:\n%s", strings.Join(lines, "\n"))
+
+	case "sessions":
+		return executeSessionsCommand(agent, sessionID, "")
 	}
 	return "✗ Unknown command"
+}
+
+// executeSessionsCommand renders the active-agent board for the given project
+// ("" = proxy's CWD), marking the caller's own session. It gives the user
+// enough distinguishing info (source, short id, what each agent is doing,
+// activity window) to point at a specific session.
+func executeSessionsCommand(agent, sessionID, projectPath string) string {
+	since := time.Now().Add(-24 * time.Hour).Format("2006-01-02T15:04:05")
+	rows, err := store.ListActiveSessions(projectPath, "", since, 10)
+	if err != nil {
+		// Standalone "aipmc proxy" mode does not chdir to a project dir; if the
+		// proxy was started outside a project, session lookups would hit the
+		// wrong/no DB. Surface that instead of returning misleading data.
+		return fmt.Sprintf("✗ 无法读取会话状态板: %v\n   （proxy 需在 aipmc 项目目录下启动，否则 session 库定位会失效）", err)
+	}
+	if len(rows) == 0 {
+		return "No active agent sessions in the last 24h."
+	}
+
+	var lines []string
+	lines = append(lines, fmt.Sprintf("活跃 Agent 会话（最近 24h · %d 个）:", len(rows)))
+	for i, s := range rows {
+		marker := ""
+		if sessionID != "" && s.SessionID == sessionID {
+			marker = "  ← 当前会话（你）"
+		} else if sessionID == "" && s.Source == agent {
+			marker = "  ← 当前会话（你）"
+		}
+		lines = append(lines, fmt.Sprintf("[%d] %s %s%s", i+1, s.Source, u.Prefix(s.SessionID, 13), marker))
+
+		status := s.Status
+		statusKind := ""
+		if status == "" {
+			if len(s.UserPrompts) > 0 {
+				status = s.UserPrompts[0]
+				statusKind = "自动登记"
+			} else {
+				status = "—"
+			}
+		} else if s.Explicit {
+			statusKind = "显式声明"
+		} else {
+			statusKind = "自动登记"
+		}
+		if statusKind != "" {
+			status = fmt.Sprintf("%s（%s）", status, statusKind)
+		}
+		lines = append(lines, "    正在: "+u.TruncateStr(status, 60))
+
+		window := fmt.Sprintf("%s ~ %s", shortClock(s.FirstSeen), shortClock(s.LastSeen))
+		lines = append(lines, fmt.Sprintf("    活跃: %s · user %d · tool %d", window, s.UserPromptCount, s.ToolCallCount))
+
+		if len(s.UserPrompts) > 1 {
+			lines = append(lines, "    最近: "+u.TruncateStr(s.UserPrompts[1], 60))
+		}
+	}
+	lines = append(lines, "提示: 说「看 [N]」或短 id（如 019fff14-1437）即可指认某个会话")
+	return strings.Join(lines, "\n")
+}
+
+// shortClock renders a stored ISO timestamp as HH:MM for the activity window.
+// created_at is stored as "2006-01-02T15:04:05" (no zone); tolerate RFC3339 too.
+func shortClock(ts string) string {
+	for _, layout := range []string{"2006-01-02T15:04:05", time.RFC3339} {
+		if t, err := time.Parse(layout, ts); err == nil {
+			return t.Format("15:04")
+		}
+	}
+	return ts
 }
 
 // handleModelCommandResponse sends the command result in the agent's native protocol.
@@ -217,8 +293,8 @@ func handleModelCommandNonStream(w http.ResponseWriter, adapter ProtocolAdapter,
 			"id":     "model_cmd",
 			"object": "chat.completion",
 			"choices": []map[string]any{{
-				"index":   0,
-				"message": map[string]any{"role": "assistant", "content": result},
+				"index":         0,
+				"message":       map[string]any{"role": "assistant", "content": result},
 				"finish_reason": "stop",
 			}},
 			"usage": map[string]int{
@@ -254,7 +330,9 @@ func isStreaming(path string, body []byte) bool {
 	if strings.Contains(path, "streamGenerateContent") {
 		return true
 	}
-	var peek struct{ Stream bool `json:"stream"` }
+	var peek struct {
+		Stream bool `json:"stream"`
+	}
 	return json.Unmarshal(body, &peek) == nil && peek.Stream
 }
 
