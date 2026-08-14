@@ -7,6 +7,9 @@ import (
 	"bytes"
 	"bufio"
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -25,6 +28,38 @@ import (
 	pmdb "aipmc/db"
 	"aipmc/u"
 )
+
+// proxyToken guards state-changing /__proxy/* management endpoints. The proxy
+// binds 127.0.0.1, but any local process or cross-origin page could otherwise
+// POST /__proxy/reload or /__proxy/capture/clear without credentials.
+var proxyToken = newProxyToken()
+
+func newProxyToken() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "aipmc-" + fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	return "aipmc-" + hex.EncodeToString(b)
+}
+
+// requireProxyToken rejects requests without a matching token (query ?token=
+// or Authorization: Bearer). The embedded inspect page receives the token at
+// render time so its clear button keeps working.
+func requireProxyToken(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		tok := r.URL.Query().Get("token")
+		if tok == "" {
+			if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+				tok = strings.TrimPrefix(auth, "Bearer ")
+			}
+		}
+		if tok == "" || len(tok) != len(proxyToken) || subtle.ConstantTimeCompare([]byte(tok), []byte(proxyToken)) != 1 {
+			http.Error(w, "unauthorized: missing or invalid proxy token", http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
+	}
+}
 
 type ctxKey int
 
@@ -99,10 +134,10 @@ func NewHandler(opts Options) http.Handler {
 	mux.HandleFunc("/__proxy/status", handleProxyStatus)
 	mux.HandleFunc("/__proxy/traffic", handleProxyTraffic)
 	mux.HandleFunc("/__proxy/capture", handleCaptureList)
-	mux.HandleFunc("/__proxy/capture/clear", handleCaptureClear)
+	mux.HandleFunc("/__proxy/capture/clear", requireProxyToken(handleCaptureClear))
 	mux.HandleFunc("/__proxy/inspect", handleInspectPage)
-	mux.HandleFunc("/__proxy/reload", handleProxyReload)
-		mux.HandleFunc("/__proxy/models/reload", handleModelsReload)
+	mux.HandleFunc("/__proxy/reload", requireProxyToken(handleProxyReload))
+		mux.HandleFunc("/__proxy/models/reload", requireProxyToken(handleModelsReload))
 	mux.HandleFunc("/__proxy/tokens", handleTokenUsage)
 	mux.HandleFunc("/", handler)
 	return mux
@@ -1276,4 +1311,3 @@ func handleOpenAIChatPassthrough(w http.ResponseWriter, r *http.Request) {
 
 	finishCapture(capID, http.StatusOK, time.Since(startTime), nil, sseBuf.String(), sseBuf.String())
 }
-

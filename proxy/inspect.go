@@ -252,7 +252,7 @@ func handleCaptureClear(w http.ResponseWriter, r *http.Request) {
 // handleInspectPage serves the inspector HTML page.
 func handleInspectPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(inspectHTML))
+	w.Write([]byte(strings.ReplaceAll(inspectHTML, "__AIPMC_PROXY_TOKEN__", proxyToken)))
 }
 
 // =============================================================================
@@ -297,11 +297,12 @@ func (c *streamCapture) responseText() string {
 func copyHeaders(r *http.Request) map[string]string {
 	h := make(map[string]string)
 	for k, vs := range r.Header {
-		if k == "Authorization" {
-			h[k] = "Bearer ..."
-			continue
+		switch strings.ToLower(k) {
+		case "authorization", "x-goog-api-key", "x-api-key", "cookie":
+			h[k] = "***"
+		default:
+			h[k] = strings.Join(vs, ", ")
 		}
-		h[k] = strings.Join(vs, ", ")
 	}
 	return h
 }
@@ -507,7 +508,8 @@ function renderMessages(c){
     '</div>';
   }).join('');
 }
-async function clearAll(){if(confirm('Clear?')){await fetch('/__proxy/capture/clear',{method:'POST'});loadList()}}
+const AIPMC_TOKEN="__AIPMC_PROXY_TOKEN__";
+async function clearAll(){if(confirm('Clear?')){await fetch('/__proxy/capture/clear?token='+AIPMC_TOKEN,{method:'POST'});loadList()}}
 loadList();
 </script>
 </body>
