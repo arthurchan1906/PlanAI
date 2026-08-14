@@ -91,13 +91,13 @@ func ProcessCodexHook() {
 	}
 
 	if err := json.Unmarshal(data, &raw); err != nil {
-		errf("JSON parse FAILED: %v — raw(first 200): %s", err, safePrefix(string(data), 200))
+		errf("JSON parse FAILED: %v — raw(first 200): %s", err, u.SafePrefix(string(data), 200))
 		u.LogShared("HOOK", "json_parse_err src=codex err=%v", err)
 		os.Exit(0)
 	}
 
 	// Resolve user prompt from whichever field has content.
-	userPrompt := firstNonEmpty(raw.Prompt, raw.Message, raw.Content, raw.Query)
+	userPrompt := u.FirstNonEmpty(raw.Prompt, raw.Message, raw.Content, raw.Query)
 
 	logf("event=%s tool=%s session=%s prompt=%dch", raw.Event, raw.ToolName, raw.SessionID, len(userPrompt))
 
@@ -153,7 +153,7 @@ func ProcessCodexHook() {
 
 	case "Stop":
 		// Try all plausible response fields.
-		respText := firstNonEmpty(raw.Response, raw.Output, raw.Text, raw.LastAssistantMessage, raw.AssistantMsg, raw.Reply)
+		respText := u.FirstNonEmpty(raw.Response, raw.Output, raw.Text, raw.LastAssistantMessage, raw.AssistantMsg, raw.Reply)
 		// Strip <thought>...</thought> block — Codex may send thinking as the response field
 		respText = stripThoughtBlock(respText)
 		if respText != "" {
@@ -195,24 +195,6 @@ func stripThoughtBlock(s string) string {
 		s = s[:start] + s[start+end+len("</thought>"):]
 	}
 	return strings.TrimSpace(s)
-}
-
-// firstNonEmpty returns the first non-empty string from the candidates.
-func firstNonEmpty(candidates ...string) string {
-	for _, c := range candidates {
-		if c != "" {
-			return c
-		}
-	}
-	return ""
-}
-
-// safePrefix returns the first n bytes of s, safely truncated.
-func safePrefix(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "..."
 }
 
 // dumpRawHook persists the raw hook JSON to .pmai/logs/ for debugging.
@@ -420,10 +402,10 @@ func buildCodexToolContent(toolName string, toolInput, toolResp json.RawMessage)
 			return fileOpIcon(fop) + " " + fop.File
 		}
 
-		cmdPreview := truncateText(cmd, 150)
+		cmdPreview := u.TruncateText(cmd, 150)
 		result := "🔧 " + cmdPreview
 		if llmText != "" {
-			result += "\n  → " + strings.TrimSpace(truncateText(llmText, 120))
+			result += "\n  → " + strings.TrimSpace(u.TruncateText(llmText, 120))
 		}
 		if ec := extractExitCode(toolResp); ec != 0 {
 			result += fmtExitCode(ec)
@@ -509,7 +491,7 @@ func buildCodexToolContent(toolName string, toolInput, toolResp json.RawMessage)
 			q = ti["q"]
 		}
 		if q != "" {
-			q = truncateText(q, 60)
+			q = u.TruncateText(q, 60)
 			result += " \"" + q + "\""
 		}
 		return result
@@ -520,7 +502,7 @@ func buildCodexToolContent(toolName string, toolInput, toolResp json.RawMessage)
 			pattern = ti["query"]
 		}
 		if pattern != "" {
-			pattern = truncateText(pattern, 80)
+			pattern = u.TruncateText(pattern, 80)
 			return "🔍 \"" + pattern + "\""
 		}
 		return "🔍 " + toolName
@@ -544,7 +526,7 @@ func buildCodexToolContent(toolName string, toolInput, toolResp json.RawMessage)
 			q = ti["q"]
 		}
 		if q != "" {
-			q = truncateText(q, 80)
+			q = u.TruncateText(q, 80)
 			return "🌐 \"" + q + "\""
 		}
 		return "🌐 WebSearch"
@@ -554,7 +536,7 @@ func buildCodexToolContent(toolName string, toolInput, toolResp json.RawMessage)
 		label := "🛠 " + toolName
 		for _, key := range []string{"query", "pattern", "file_path", "path", "url"} {
 			if v := ti[key]; v != "" {
-				qv := truncateText(v, 80)
+				qv := u.TruncateText(v, 80)
 				label += " \"" + qv + "\""
 				break
 			}
@@ -905,7 +887,9 @@ func SetupCodexHooks(commandPath string) error {
 
 	cfg := map[string]any{}
 	if data, err := os.ReadFile(hooksPath); err == nil && len(data) > 0 {
-		json.Unmarshal(data, &cfg)
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			return fmt.Errorf("parse existing %s (refusing to overwrite): %w", hooksPath, err)
+		}
 	}
 
 	hooks, _ := cfg["hooks"].(map[string]any)
@@ -995,7 +979,7 @@ func buildCodexPlanContent(sessionID string, toolInput json.RawMessage) string {
 		var lines []string
 		// Title line
 		if current.Explanation != "" {
-			lines = append(lines, "📌 "+truncateText(current.Explanation, 120))
+			lines = append(lines, "📌 "+u.TruncateText(current.Explanation, 120))
 		} else {
 			lines = append(lines, "📌 Plan updated")
 		}

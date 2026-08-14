@@ -56,7 +56,7 @@ func ProcessClaudeHook() {
 		ToolResponse toolResponse `json:"tool_response"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
-		fmt.Fprintf(os.Stderr, "[aipm-claude %s] JSON parse FAILED: %v — raw(first 200): %s\n", now, err, safePrefix(string(data), 200))
+		fmt.Fprintf(os.Stderr, "[aipm-claude %s] JSON parse FAILED: %v — raw(first 200): %s\n", now, err, u.SafePrefix(string(data), 200))
 		u.LogShared("HOOK", "json_parse_err src=claude err=%v", err)
 		os.Exit(0)
 	}
@@ -167,10 +167,7 @@ func ProcessClaudeHook() {
 		case "Bash":
 			if ti.Command != "" {
 				// Truncate long commands for readability
-				cmdPreview := ti.Command
-				if len(cmdPreview) > 150 {
-					cmdPreview = cmdPreview[:150] + "..."
-				}
+				cmdPreview := u.TruncateStr(ti.Command, 150)
 				desc = "🔧 " + cmdPreview
 
 				// Capture stdout/stderr in metadata
@@ -336,7 +333,9 @@ func SetupClaudeHooks(commandPath string) error {
 
 	cfg := map[string]any{}
 	if data, err := os.ReadFile(settingsPath); err == nil && len(data) > 0 {
-		json.Unmarshal(data, &cfg)
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			return fmt.Errorf("parse existing %s (refusing to overwrite): %w", settingsPath, err)
+		}
 	}
 
 	hooks, _ := cfg["hooks"].(map[string]any)

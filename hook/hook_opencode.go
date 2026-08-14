@@ -127,8 +127,8 @@ func ProcessOpencodeHook() {
 	switch raw.Event {
 	case "message.part.updated", "message.updated":
 		// Resolve role and content from multiple possible field locations.
-		role := firstNonEmpty(raw.Role, raw.Message.Role)
-		content := firstNonEmpty(raw.Content, raw.Message.Content, raw.Message.Text)
+		role := u.FirstNonEmpty(raw.Role, raw.Message.Role)
+		content := u.FirstNonEmpty(raw.Content, raw.Message.Content, raw.Message.Text)
 
 		// If top-level role/content are empty, try parsing from _raw nested structure
 		if role == "" || content == "" {
@@ -149,10 +149,10 @@ func ProcessOpencodeHook() {
 				}
 				if json.Unmarshal(raw.RawEvent, &oe) == nil {
 					if role == "" {
-						role = firstNonEmpty(oe.Properties.Part.Role, oe.Properties.Info.Role)
+						role = u.FirstNonEmpty(oe.Properties.Part.Role, oe.Properties.Info.Role)
 					}
 					if content == "" && oe.Properties.Part.Type == "text" {
-						content = firstNonEmpty(oe.Properties.Part.Text, oe.Properties.Part.Content)
+						content = u.FirstNonEmpty(oe.Properties.Part.Text, oe.Properties.Part.Content)
 					}
 				}
 			}
@@ -276,13 +276,13 @@ func buildOpencodeToolContent(toolName string, toolInput, toolResp json.RawMessa
 		if cmd == "" {
 			cmd = string(toolInput)
 		}
-		cmdPreview := truncateText(cmd, 150)
+		cmdPreview := u.TruncateText(cmd, 150)
 		result := "🔧 " + cmdPreview
 
 		// Try to extract output from tool_response
 		output := extractBashOutput(toolResp)
 		if output != "" {
-			result += "\n  → " + strings.TrimSpace(truncateText(output, 120))
+			result += "\n  → " + strings.TrimSpace(u.TruncateText(output, 120))
 		}
 		if ec := extractExitCode(toolResp); ec != 0 {
 			result += fmtExitCode(ec)
@@ -301,7 +301,7 @@ func buildOpencodeToolContent(toolName string, toolInput, toolResp json.RawMessa
 			result := "👁 " + fp
 			lc := extractLinesCount(toolResp)
 			if lc > 0 {
-				result += " (" + uitoa(lc) + " lines)"
+				result += " (" + u.Itoa(lc) + " lines)"
 			}
 			return result
 		}
@@ -337,8 +337,8 @@ func buildOpencodeToolContent(toolName string, toolInput, toolResp json.RawMessa
 		} else {
 			result = "📝 edit"
 		}
-		oldStr := firstNonEmpty(ti["old_string"], ti["oldString"], ti["old_str"])
-		newStr := firstNonEmpty(ti["new_string"], ti["newString"], ti["new_str"])
+		oldStr := u.FirstNonEmpty(ti["old_string"], ti["oldString"], ti["old_str"])
+		newStr := u.FirstNonEmpty(ti["new_string"], ti["newString"], ti["new_str"])
 		if oldStr != "" {
 			result += "\n- " + strings.TrimSpace(oldStr)
 		}
@@ -354,7 +354,7 @@ func buildOpencodeToolContent(toolName string, toolInput, toolResp json.RawMessa
 			pattern = ti["query"]
 		}
 		if pattern != "" {
-			pattern = truncateText(pattern, 80)
+			pattern = u.TruncateText(pattern, 80)
 			return "🔍 \"" + pattern + "\""
 		}
 		if toolName == "glob" || toolName == "Glob" || toolName == "GlobTool" {
@@ -363,7 +363,7 @@ func buildOpencodeToolContent(toolName string, toolInput, toolResp json.RawMessa
 				g = ti["glob"]
 			}
 			if g != "" {
-				return "🔍 glob \"" + truncateText(g, 80) + "\""
+				return "🔍 glob \"" + u.TruncateText(g, 80) + "\""
 			}
 		}
 		return "🔍 " + toolName
@@ -388,11 +388,11 @@ func buildOpencodeToolContent(toolName string, toolInput, toolResp json.RawMessa
 			q = ti["q"]
 		}
 		if q != "" {
-			q = truncateText(q, 80)
+			q = u.TruncateText(q, 80)
 			return "🌐 \"" + q + "\""
 		}
 		if url := ti["url"]; url != "" {
-			return "🌐 " + truncateText(url, 80)
+			return "🌐 " + u.TruncateText(url, 80)
 		}
 		return "🌐 " + toolName
 
@@ -402,7 +402,7 @@ func buildOpencodeToolContent(toolName string, toolInput, toolResp json.RawMessa
 			desc = ti["prompt"]
 		}
 		if desc != "" {
-			return "🤖 Task: " + truncateText(desc, 100)
+			return "🤖 Task: " + u.TruncateText(desc, 100)
 		}
 		return "🤖 Task"
 
@@ -412,7 +412,7 @@ func buildOpencodeToolContent(toolName string, toolInput, toolResp json.RawMessa
 			q = ti["questions"]
 		}
 		if q != "" {
-			return "❓ " + truncateText(q, 100)
+			return "❓ " + u.TruncateText(q, 100)
 		}
 		return "❓ Question"
 
@@ -426,7 +426,7 @@ func buildOpencodeToolContent(toolName string, toolInput, toolResp json.RawMessa
 			q = ti["q"]
 		}
 		if q != "" {
-			q = truncateText(q, 60)
+			q = u.TruncateText(q, 60)
 			result += " \"" + q + "\""
 		}
 		return result
@@ -436,7 +436,7 @@ func buildOpencodeToolContent(toolName string, toolInput, toolResp json.RawMessa
 		label := "🛠 " + toolName
 		for _, key := range []string{"query", "pattern", "file_path", "path", "url"} {
 			if v := ti[key]; v != "" {
-				qv := truncateText(v, 80)
+				qv := u.TruncateText(v, 80)
 				label += " \"" + qv + "\""
 				break
 			}
@@ -532,11 +532,6 @@ func isNewFileFromContent(content string, toolResp json.RawMessage) bool {
 	return false
 }
 
-// uitoa converts int to string without importing strconv (uses fmt).
-func uitoa(n int) string {
-	return fmt.Sprintf("%d", n)
-}
-
 // buildOpencodeToolMeta builds clean diff metadata for OpenCode tool events.
 // Unlike buildFullMeta which stores the entire raw JSON, this extracts only
 // the structured diff hunks (file_path + patch hunks), matching the format
@@ -545,7 +540,7 @@ func buildOpencodeToolMeta(toolName string, toolInput, toolResp, rawData json.Ra
 	ti := parseToolInput(toolInput)
 
 	// Resolve file path — OpenCode uses camelCase
-	fp := firstNonEmpty(ti["file_path"], ti["filePath"], ti["path"])
+	fp := u.FirstNonEmpty(ti["file_path"], ti["filePath"], ti["path"])
 	if fp == "" {
 		// Try from tool_response
 		var tr struct {
@@ -553,7 +548,7 @@ func buildOpencodeToolMeta(toolName string, toolInput, toolResp, rawData json.Ra
 			FilePath string `json:"filePath"`
 		}
 		if json.Unmarshal(toolResp, &tr) == nil {
-			fp = firstNonEmpty(tr.Title, tr.FilePath)
+			fp = u.FirstNonEmpty(tr.Title, tr.FilePath)
 		}
 	}
 
@@ -619,8 +614,8 @@ func buildEditMeta(filePath string, toolResp, toolInput json.RawMessage) string 
 	// Fallback: if no structured diff, use old_string/new_string from tool_input
 	if _, hasHunks := meta["hunks"]; !hasHunks {
 		ti := parseToolInput(toolInput)
-		oldStr := firstNonEmpty(ti["old_string"], ti["oldString"], ti["old_str"])
-		newStr := firstNonEmpty(ti["new_string"], ti["newString"], ti["new_str"])
+		oldStr := u.FirstNonEmpty(ti["old_string"], ti["oldString"], ti["old_str"])
+		newStr := u.FirstNonEmpty(ti["new_string"], ti["newString"], ti["new_str"])
 		if oldStr != "" {
 			meta["old_string"] = oldStr
 		}
@@ -745,7 +740,11 @@ const opencodePluginJS = `// OpenCode Hook Recorder — bridges opencode plugin 
 export const HookRecorder = async ({ $ }) => {
   const sendHook = async (payload) => {
     try {
-      await $` + "`echo ${JSON.stringify(payload)} | aipmc hook-opencode`" + `
+      // Base64 avoids shell injection: LLM-controlled payload may contain
+      // backticks / $() which would otherwise be evaluated by the shell.
+      // AIPMC_CMD is replaced with the resolved aipmc path at setup time.
+      const b64 = Buffer.from(JSON.stringify(payload)).toString("base64");
+      await $` + "`echo ${b64} | base64 -d | AIPMC_CMD hook-opencode`" + `
     } catch (err) {
       // Fail-open: never break the opencode session, but surface the failure
       // so hook execution problems are diagnosable (previously silent).
@@ -910,7 +909,8 @@ func SetupOpencodeHooks(commandPath string) error {
 	// 1. Write the plugin
 	os.MkdirAll(pluginsDir, 0755)
 	pluginPath := filepath.Join(pluginsDir, "hook-recorder.js")
-	if err := os.WriteFile(pluginPath, []byte(opencodePluginJS), 0644); err != nil {
+	pluginJS := strings.ReplaceAll(opencodePluginJS, "AIPMC_CMD", shellQuote(commandPath))
+	if err := os.WriteFile(pluginPath, []byte(pluginJS), 0644); err != nil {
 		return fmt.Errorf("write plugin: %w", err)
 	}
 	fmt.Printf("  ✅ Plugin → %s\n", pluginPath)

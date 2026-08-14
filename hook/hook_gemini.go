@@ -72,7 +72,7 @@ func ProcessGeminiHook() {
 	}
 
 	if err := json.Unmarshal(data, &raw); err != nil {
-		errf("JSON parse FAILED: %v — raw(first 200): %s", err, safePrefix(string(data), 200))
+		errf("JSON parse FAILED: %v — raw(first 200): %s", err, u.SafePrefix(string(data), 200))
 		u.LogShared("HOOK", "json_parse_err src=gemini err=%v", err)
 		os.Exit(0)
 	}
@@ -320,22 +320,6 @@ func escapeJSON(s string) string {
 	return s
 }
 
-// truncateText truncates s to at most maxRunes runes, adding "..." if truncated.
-// Unlike truncateStr (which uses byte length), this is safe for multi-byte UTF-8.
-func truncateText(s string, maxRunes int) string {
-	if utf8.RuneCountInString(s) <= maxRunes {
-		return s
-	}
-	count := 0
-	for i := range s {
-		if count >= maxRunes {
-			return s[:i] + "..."
-		}
-		count++
-	}
-	return s
-}
-
 // buildToolContent builds a concise human-readable description for a tool call.
 func buildToolContent(toolName string, toolInput, toolResp json.RawMessage) string {
 	ti := parseToolInput(toolInput)
@@ -353,10 +337,10 @@ func buildToolContent(toolName string, toolInput, toolResp json.RawMessage) stri
 		if cmd == "" && len(toolInput) > 0 {
 			cmd = string(toolInput)
 		}
-		cmd = truncateText(cmd, 150)
+		cmd = u.TruncateText(cmd, 150)
 		result := "🔧 " + cmd
 		if llmText != "" {
-			result += "\n  → " + strings.TrimSpace(truncateText(llmText, 120))
+			result += "\n  → " + strings.TrimSpace(u.TruncateText(llmText, 120))
 		}
 		if ec := extractExitCode(toolResp); ec != 0 {
 			result += fmtExitCode(ec)
@@ -436,7 +420,7 @@ func buildToolContent(toolName string, toolInput, toolResp json.RawMessage) stri
 			q = ti["q"]
 		}
 		if q != "" {
-			q = truncateText(q, 60)
+			q = u.TruncateText(q, 60)
 			result += " \"" + q + "\""
 		}
 		return result
@@ -452,7 +436,7 @@ func buildToolContent(toolName string, toolInput, toolResp json.RawMessage) stri
 			label = ti["strategic_intent"]
 		}
 		if label != "" {
-			label = truncateText(label, 100)
+			label = u.TruncateText(label, 100)
 			return "📌 " + label
 		}
 		return "📌 update_topic"
@@ -460,7 +444,7 @@ func buildToolContent(toolName string, toolInput, toolResp json.RawMessage) stri
 	case toolName == "grep_search":
 		pattern := ti["pattern"]
 		if pattern != "" {
-			pattern = truncateText(pattern, 80)
+			pattern = u.TruncateText(pattern, 80)
 			return "🔍 \"" + pattern + "\""
 		}
 		return "🔍 grep_search"
@@ -469,7 +453,7 @@ func buildToolContent(toolName string, toolInput, toolResp json.RawMessage) stri
 		label := "🛠 " + toolName
 		for _, key := range []string{"query", "pattern", "file_path", "path", "url"} {
 			if v := ti[key]; v != "" {
-				qv := truncateText(v, 80)
+				qv := u.TruncateText(v, 80)
 				label += " \"" + qv + "\""
 				break
 			}
@@ -661,7 +645,9 @@ func SetupGeminiHooks(commandPath string) error {
 
 	cfg := map[string]any{}
 	if data, err := os.ReadFile(settingsPath); err == nil && len(data) > 0 {
-		json.Unmarshal(data, &cfg)
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			return fmt.Errorf("parse existing %s (refusing to overwrite): %w", settingsPath, err)
+		}
 	}
 
 	hooks, _ := cfg["hooks"].(map[string]any)
