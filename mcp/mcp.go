@@ -2283,29 +2283,43 @@ func (s *mcpServer) Run() error {
 			}
 			return err
 		}
+		s.handleLine(line)
+	}
+}
 
-		var msg jsonrpcMessage
-		if err := json.Unmarshal([]byte(line), &msg); err != nil {
-			s.sendError(nil, -32700, "Parse error: "+err.Error())
-			continue
+// handleLine processes one JSON-RPC line. A panic inside any tool handler must
+// not kill the whole stdio server: recover here and reply with an error.
+func (s *mcpServer) handleLine(line string) {
+	var msgID interface{}
+	defer func() {
+		if r := recover(); r != nil {
+			u.LogShared("MCP", "panic recovered: %v", r)
+			s.sendError(msgID, -32603, "Internal error: "+fmt.Sprint(r))
 		}
+	}()
 
-		if msg.JSONRPC != "2.0" {
-			continue
-		}
+	var msg jsonrpcMessage
+	if err := json.Unmarshal([]byte(line), &msg); err != nil {
+		s.sendError(nil, -32700, "Parse error: "+err.Error())
+		return
+	}
 
-		switch msg.Method {
-		case "initialize":
-			s.handleInitialize(&msg)
-		case "tools/list":
-			s.handleToolsList(&msg)
-		case "tools/call":
-			s.handleToolsCall(&msg)
-		case "notifications/initialized":
-			// Client notification — no response needed
-		default:
-			s.sendError(msg.ID, -32601, fmt.Sprintf("Method not found: %s", msg.Method))
-		}
+	if msg.JSONRPC != "2.0" {
+		return
+	}
+	msgID = msg.ID
+
+	switch msg.Method {
+	case "initialize":
+		s.handleInitialize(&msg)
+	case "tools/list":
+		s.handleToolsList(&msg)
+	case "tools/call":
+		s.handleToolsCall(&msg)
+	case "notifications/initialized":
+		// Client notification — no response needed
+	default:
+		s.sendError(msg.ID, -32601, fmt.Sprintf("Method not found: %s", msg.Method))
 	}
 }
 
@@ -2448,7 +2462,7 @@ func (s *mcpServer) handleToolsCall(msg *jsonrpcMessage) {
 
 	// Log MCP tool usage to discussion_log — MCP tools are invisible to
 	// Claude Code hooks, so we log them here for full traceability.
-	mcpLogDiscussion(call.Name, call.Arguments, result)
+	mcpLogDiscussion(src, call.Name, call.Arguments, result)
 
 	// Also write to shared observability log
 	status := "OK"
@@ -2493,7 +2507,7 @@ func (s *mcpServer) writeMessage(msg jsonrpcMessage) {
 // mcpLogDiscussion logs an MCP tool call to the discussion log.
 // MCP tools are invisible to Claude Code hooks, so we log them here
 // for full traceability in the PM dashboard.
-func mcpLogDiscussion(toolName string, args map[string]interface{}, result mcpToolResult) {
+func mcpLogDiscussion(src, toolName string, args map[string]interface{}, result mcpToolResult) {
 	// Build a concise human-readable summary
 	summary := "📡 " + toolName
 	switch {
@@ -2565,7 +2579,12 @@ func mcpLogDiscussion(toolName string, args map[string]interface{}, result mcpTo
 		}
 	}
 
-	store.LogDiscussion("", "assistant", "claude-code", summary, metaJSON)
+	// Attribute the call to the real MCP client (from initialize clientInfo),
+	// not a hardcoded agent — codex/gemini/cursor calls were all misattributed.
+	if src == "" {
+		src = "unknown"
+	}
+	store.LogDiscussion("", "assistant", src, summary, metaJSON)
 }
 
 // mcpLogSummary extracts a concise identifier from MCP tool arguments for logging.

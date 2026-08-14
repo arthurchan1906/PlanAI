@@ -1,9 +1,14 @@
 package mcp
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	pmdb "aipmc/db"
 )
 
 func TestClassifyMCPErr(t *testing.T) {
@@ -40,5 +45,70 @@ func TestTruncArgRuneSafe(t *testing.T) {
 	}
 	if strings.ContainsRune(got, '\uFFFD') {
 		t.Errorf("truncArg output contains replacement char: %q", got)
+	}
+}
+
+func TestHandleLinePanicIncludesRequestID(t *testing.T) {
+	var buf bytes.Buffer
+	s := &mcpServer{
+		writer: &buf,
+		handlers: map[string]mcpToolHandler{
+			"panic_tool": func(args map[string]interface{}) mcpToolResult {
+				panic("boom")
+			},
+		},
+	}
+	s.handleLine(`{"jsonrpc":"2.0","id":"req-123","method":"tools/call","params":{"name":"panic_tool","arguments":{}}}`)
+
+	out := buf.String()
+	if !strings.Contains(out, `"id":"req-123"`) {
+		t.Errorf("panic response must echo the request id, got: %s", out)
+	}
+	if !strings.Contains(out, "Internal error") {
+		t.Errorf("panic response must be an error, got: %s", out)
+	}
+}
+
+// Regression: MCP tool calls used to be logged with a hardcoded source
+// "claude-code", so codex/gemini/cursor calls were misattributed. The source
+// must come from the initialize clientInfo (normalized by mcpClientName).
+func TestMCPSourceAttribution(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, "data"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "data", "pmai.db"), nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PMAI_HOME", home)
+	d, err := pmdb.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Close()
+
+	var buf bytes.Buffer
+	s := &mcpServer{
+		writer: &buf,
+		handlers: map[string]mcpToolHandler{
+			"test_tool": func(args map[string]interface{}) mcpToolResult {
+				return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "ok"}}}
+			},
+		},
+	}
+	s.handleLine(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","clientInfo":{"name":"codex","version":"1.0"}}}`)
+	s.handleLine(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"test_tool","arguments":{}}}`)
+
+	d, err = pmdb.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	var source string
+	if err := d.QueryRow("SELECT source FROM discussion_log WHERE role='assistant' ORDER BY created_at DESC LIMIT 1").Scan(&source); err != nil {
+		t.Fatalf("read discussion_log: %v", err)
+	}
+	if source != "codex-cli" {
+		t.Errorf("MCP tool call source = %q, want %q (must not be hardcoded claude-code)", source, "codex-cli")
 	}
 }
