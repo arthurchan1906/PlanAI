@@ -30,6 +30,26 @@ type DriftResult struct {
 	Severity     string   `json:"severity"` // "warn" | "info"
 }
 
+// scopeDriftCommitLimit bounds how many recent commits AnalyzeScopeDrift
+// examines. The full history can be thousands of commits; drift checking is a
+// briefing aid, not an audit, and unbounded scans previously ballooned the
+// briefing (EncryptDrive: 734 entries, ~180KB).
+const scopeDriftCommitLimit = 50
+
+// minOutOfScopeRatio controls false positives from scope-keyword mismatch:
+// a commit is flagged only when a strict majority of its files fall outside
+// the plan scope.
+const minOutOfScopeRatio = 0.5
+
+// Briefing rendering caps. A briefing is injected into every agent's context;
+// unbounded lists made it unusable (EncryptDrive was ~180KB from scope drift
+// alone). Cap items shown and summarize the remainder.
+const (
+	briefingDriftCap = 15
+	briefingFileCap  = 5
+	briefingListCap  = 15
+)
+
 // OrphanResult indicates a task that's in_progress but has no commits.
 type OrphanResult struct {
 	TaskID          string `json:"task_id"`
@@ -113,7 +133,7 @@ type AnalyzeReport struct {
 
 // analyzeScopeDrift checks all commits for files that may fall outside their plan's scope.
 func AnalyzeScopeDrift() []DriftResult {
-	commits, err := store.ListCommits("", "", "", "", 0)
+	commits, err := store.ListCommits("", "", "", "", scopeDriftCommitLimit)
 	if err != nil {
 		return nil
 	}
@@ -184,7 +204,9 @@ func AnalyzeScopeDrift() []DriftResult {
 			}
 		}
 
-		if len(outOfScope) > 0 {
+		// Only a strict majority of changed files out of scope counts as
+		// drift — one unmatched path is usually a scope-keyword mismatch.
+		if len(outOfScope) > 0 && float64(len(outOfScope))/float64(len(filesList)) > minOutOfScopeRatio {
 			changedFiles := make([]string, 0, len(filesList))
 			for _, f := range filesList {
 				if s, ok := f.(string); ok {
@@ -1236,16 +1258,36 @@ func BuildBriefing(aiClient *ai.Client, graphSection string) (string, []string) 
 
 	if len(report.Drifts) > 0 {
 		b.WriteString("### Scope 漂移\n")
-		for _, d := range report.Drifts {
-			b.WriteString(fmt.Sprintf("- Commit **%s**: 文件 %v 超出 plan scope\n", d.CommitTitle, d.OutOfScope))
+		shown := report.Drifts
+		if len(shown) > briefingDriftCap {
+			shown = shown[:briefingDriftCap]
+		}
+		for _, d := range shown {
+			files := d.OutOfScope
+			extra := ""
+			if len(files) > briefingFileCap {
+				extra = fmt.Sprintf(" 等 %d 个文件", len(files)-briefingFileCap)
+				files = files[:briefingFileCap]
+			}
+			b.WriteString(fmt.Sprintf("- Commit **%s**: 文件 %v%s 超出 plan scope\n", d.CommitTitle, files, extra))
+		}
+		if len(report.Drifts) > briefingDriftCap {
+			b.WriteString(fmt.Sprintf("  → 共 %d 条，已省略 %d 条\n", len(report.Drifts), len(report.Drifts)-briefingDriftCap))
 		}
 		b.WriteString(fmt.Sprintf("  → 建议: 确认这些文件是否应属于当前 task\n\n"))
 	}
 
 	if len(report.Duplicates) > 0 {
 		b.WriteString("### 检测到重复\n")
-		for _, d := range report.Duplicates {
+		shown := report.Duplicates
+		if len(shown) > briefingListCap {
+			shown = shown[:briefingListCap]
+		}
+		for _, d := range shown {
 			b.WriteString(fmt.Sprintf("- **%s** ≈ **%s** (%.0f%%)\n", d.Title1, d.Title2, d.Similarity*100))
+		}
+		if len(report.Duplicates) > briefingListCap {
+			b.WriteString(fmt.Sprintf("  → 共 %d 条，已省略 %d 条\n", len(report.Duplicates), len(report.Duplicates)-briefingListCap))
 		}
 		b.WriteString(fmt.Sprintf("  → 建议: 检查是否为重复工作，避免并行开发冲突\n\n"))
 	}
@@ -1267,9 +1309,16 @@ func BuildBriefing(aiClient *ai.Client, graphSection string) (string, []string) 
 
 	if len(report.Impacts) > 0 {
 		b.WriteString(fmt.Sprintf("### %d 个决策影响待评估\n", len(report.Impacts)))
-		for _, imp := range report.Impacts {
+		shown := report.Impacts
+		if len(shown) > briefingListCap {
+			shown = shown[:briefingListCap]
+		}
+		for _, imp := range shown {
 			b.WriteString(fmt.Sprintf("- Decision **%s** 影响 %d plans, %d tasks\n",
 				imp.DecisionTitle, len(imp.AffectedPlans), len(imp.AffectedTasks)))
+		}
+		if len(report.Impacts) > briefingListCap {
+			b.WriteString(fmt.Sprintf("  → 已省略 %d 条\n", len(report.Impacts)-briefingListCap))
 		}
 		b.WriteString(fmt.Sprintf("  → 建议: 检查受影响的 task 是否需要重新评估\n\n"))
 	}
