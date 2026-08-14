@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -1681,10 +1682,19 @@ func GetDailyNote(date string) (map[string]any, error) {
 	if date == "" {
 		date = u.Today()
 	}
-	row := db.QueryRow("SELECT * FROM daily_notes WHERE note_date = ?", date)
+	return scanDailyNote(db.QueryRow("SELECT * FROM daily_notes WHERE note_date = ?", date), date)
+}
+
+// scanDailyNote decodes one daily_notes row. A missing row yields the empty
+// note; any other read failure is propagated so callers never silently treat
+// a broken read as "no data" and overwrite it.
+func scanDailyNote(row *sql.Row, date string) (map[string]any, error) {
 	var noteDate, completedJSON, problemsJSON, risksJSON, nextJSON, updatedAt string
 	if err := row.Scan(&noteDate, &completedJSON, &problemsJSON, &risksJSON, &nextJSON, &updatedAt); err != nil {
-		return map[string]any{"note_date": date, "completed": []any{}, "problems": []any{}, "risks": []any{}, "next": []any{}}, nil
+		if errors.Is(err, sql.ErrNoRows) {
+			return map[string]any{"note_date": date, "completed": []any{}, "problems": []any{}, "risks": []any{}, "next": []any{}}, nil
+		}
+		return nil, fmt.Errorf("daily note read: %w", err)
 	}
 	return map[string]any{"note_date": noteDate, "completed": u.ParseJSONList(completedJSON), "problems": u.ParseJSONList(problemsJSON), "risks": u.ParseJSONList(risksJSON), "next": u.ParseJSONList(nextJSON), "updated_at": updatedAt}, nil
 }
@@ -1697,30 +1707,73 @@ func ReplaceDailyNote(date string, payload map[string][]string) (map[string]any,
 }
 
 func UpsertDaily(date string, payload map[string][]string, append_ bool) (map[string]any, error) {
-	db, err := pmdb.Open()
-	if err != nil {
-		return nil, err
-	}
-	defer db.Close()
 	if date == "" {
 		date = u.Today()
 	}
-	existing, _ := GetDailyNote(date)
-	merge := func(key string, newItems []string) []any {
-		var base []any
-		if append_ {
-			if arr, ok := existing[key].([]any); ok {
-				base = arr
-			}
-		}
-		for _, s := range newItems {
-			base = append(base, s)
-		}
-		return base
-	}
 	now := u.NowISO()
-	db.Exec("INSERT OR REPLACE INTO daily_notes (note_date, completed_json, problems_json, risks_json, next_json, updated_at) VALUES (?, ?, ?, ?, ?, ?)", date, u.JsonStr(merge("completed", payload["completed"])), u.JsonStr(merge("problems", payload["problems"])), u.JsonStr(merge("risks", payload["risks"])), u.JsonStr(merge("next", payload["next"])), now)
-	return GetDailyNote(date)
+	var result map[string]any
+	// Read-modify-write must be atomic: the read and the write run on one
+	// dedicated connection inside a BEGIN IMMEDIATE transaction, so concurrent
+	// append calls cannot overwrite each other with stale reads. Open + Conn are
+	// inside the retry loop too: a fresh open can transiently hit SQLITE_BUSY
+	// while another writer is acquiring its lock.
+	err := retryOnBusy(func() error {
+		db, err := pmdb.Open()
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		conn, err := db.Conn(context.Background())
+		if err != nil {
+			return err
+		}
+		defer conn.Close()
+		if _, err := conn.ExecContext(context.Background(), "BEGIN IMMEDIATE"); err != nil {
+			return fmt.Errorf("begin tx: %w", err)
+		}
+		rollback := true
+		defer func() {
+			if rollback {
+				conn.ExecContext(context.Background(), "ROLLBACK")
+			}
+		}()
+
+		existing, err := scanDailyNote(conn.QueryRowContext(context.Background(), "SELECT * FROM daily_notes WHERE note_date = ?", date), date)
+		if err != nil {
+			return err
+		}
+		merge := func(key string, newItems []string) []any {
+			var base []any
+			if append_ {
+				if arr, ok := existing[key].([]any); ok {
+					base = arr
+				}
+			}
+			for _, s := range newItems {
+				base = append(base, s)
+			}
+			return base
+		}
+		merged := map[string][]any{
+			"completed": merge("completed", payload["completed"]),
+			"problems":  merge("problems", payload["problems"]),
+			"risks":     merge("risks", payload["risks"]),
+			"next":      merge("next", payload["next"]),
+		}
+		if _, err := conn.ExecContext(context.Background(), "INSERT OR REPLACE INTO daily_notes (note_date, completed_json, problems_json, risks_json, next_json, updated_at) VALUES (?, ?, ?, ?, ?, ?)", date, u.JsonStr(merged["completed"]), u.JsonStr(merged["problems"]), u.JsonStr(merged["risks"]), u.JsonStr(merged["next"]), now); err != nil {
+			return fmt.Errorf("daily upsert: %w", err)
+		}
+		if _, err := conn.ExecContext(context.Background(), "COMMIT"); err != nil {
+			return fmt.Errorf("commit tx: %w", err)
+		}
+		rollback = false
+		result = map[string]any{"note_date": date, "completed": merged["completed"], "problems": merged["problems"], "risks": merged["risks"], "next": merged["next"], "updated_at": now}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func ListDailyNotes() ([]map[string]any, error) {
