@@ -746,7 +746,11 @@ export const HookRecorder = async ({ $ }) => {
   const sendHook = async (payload) => {
     try {
       await $` + "`echo ${JSON.stringify(payload)} | aipmc hook-opencode`" + `
-    } catch (_) {}
+    } catch (err) {
+      // Fail-open: never break the opencode session, but surface the failure
+      // so hook execution problems are diagnosable (previously silent).
+      console.error("[aipmc] hook-opencode send failed:", err);
+    }
   }
 
   // Pending text parts buffered by session and message ID.
