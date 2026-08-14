@@ -1,43 +1,30 @@
 package agent
 
-
-
 import (
-
 	"encoding/json"
 
 	"fmt"
 
 	"strings"
 
-
-
 	"aipmc/ai"
 	"aipmc/u"
-
 )
-
-
 
 // Agent is a minimal coding agent with a tool-using LLM loop.
 
 type Agent struct {
+	llm *ai.Client
 
-	llm     *ai.Client
-
-	tools   []Tool
+	tools []Tool
 
 	maxIter int
 
 	workDir string
 
-
-
 	// Source identifier for hook logging (e.g. "aipmc-chat", "aipmc-web").
 
 	Source string
-
-
 
 	// OnEvent is called after each event is appended to the session.
 
@@ -45,15 +32,10 @@ type Agent struct {
 
 	OnEvent func(sessionID, role, source, content, metadataJSON string)
 
-
-
 	// CaptureTraces enables recording raw LLM request/response per turn.
 
 	CaptureTraces bool
-
 }
-
-
 
 // New creates a new Agent.
 
@@ -65,21 +47,18 @@ func New(llm *ai.Client, workDir string) *Agent {
 
 	return &Agent{
 
-		llm:     llm,
+		llm: llm,
 
-		tools:   DefaultTools(),
+		tools: DefaultTools(),
 
 		maxIter: 30,
 
 		workDir: workDir,
 
-		Source:  "aipmc",
-
+		Source: "aipmc",
 	}
 
 }
-
-
 
 // Run processes one user input against the session and returns the agent's text response.
 
@@ -89,8 +68,6 @@ func (a *Agent) Run(s *Session, userInput string) (string, error) {
 
 }
 
-
-
 func (a *Agent) runSession(s *Session, userInput string, cb *StreamCallbacks) (string, error) {
 
 	if a.llm == nil || !a.llm.Enabled() {
@@ -99,23 +76,17 @@ func (a *Agent) runSession(s *Session, userInput string, cb *StreamCallbacks) (s
 
 	}
 
-
-
 	evt := Event{Role: "user", Content: userInput}
 
 	s.Append(evt)
 
 	a.emitEvent(s.ID, evt)
 
-
-
 	for i := 0; i < a.maxIter; i++ {
 
 		messages := BuildMessages(s)
 
 		toolDefs := BuildToolDefs(a.tools)
-
-
 
 		var resp *ai.ChatResponse
 
@@ -137,8 +108,6 @@ func (a *Agent) runSession(s *Session, userInput string, cb *StreamCallbacks) (s
 
 		}
 
-
-
 		if a.CaptureTraces {
 
 			reqJSON, _ := json.Marshal(messages)
@@ -147,17 +116,14 @@ func (a *Agent) runSession(s *Session, userInput string, cb *StreamCallbacks) (s
 
 			s.AddTrace(TraceTurn{
 
-				Turn:     i,
+				Turn: i,
 
-				Request:  string(reqJSON),
+				Request: string(reqJSON),
 
 				Response: string(respJSON),
-
 			})
 
 		}
-
-
 
 		if len(resp.ToolCalls) > 0 {
 
@@ -166,8 +132,6 @@ func (a *Agent) runSession(s *Session, userInput string, cb *StreamCallbacks) (s
 			continue
 
 		}
-
-
 
 		if resp.Content != "" {
 
@@ -181,19 +145,13 @@ func (a *Agent) runSession(s *Session, userInput string, cb *StreamCallbacks) (s
 
 		}
 
-
-
 		return "", fmt.Errorf("LLM 返回了空响应（既无文本也无工具调用）")
 
 	}
 
-
-
 	return "", fmt.Errorf("超出最大迭代次数 (%d)。agent 可能陷入了循环。", a.maxIter)
 
 }
-
-
 
 func (a *Agent) executeToolCalls(s *Session, calls []ai.ToolCall, cb *StreamCallbacks) {
 
@@ -203,12 +161,11 @@ func (a *Agent) executeToolCalls(s *Session, calls []ai.ToolCall, cb *StreamCall
 
 		agentCalls[i] = ToolCall{
 
-			ID:   c.ID,
+			ID: c.ID,
 
 			Name: c.Name,
 
 			Args: c.Args,
-
 		}
 
 		if cb != nil && cb.OnToolStart != nil {
@@ -225,8 +182,6 @@ func (a *Agent) executeToolCalls(s *Session, calls []ai.ToolCall, cb *StreamCall
 
 	a.emitEvent(s.ID, evt)
 
-
-
 	for _, c := range calls {
 
 		result := a.execTool(c.Name, c.Args)
@@ -239,14 +194,13 @@ func (a *Agent) executeToolCalls(s *Session, calls []ai.ToolCall, cb *StreamCall
 
 		tev := Event{
 
-			Role:       "tool",
+			Role: "tool",
 
 			ToolCallID: c.ID,
 
-			ToolName:   c.Name,
+			ToolName: c.Name,
 
 			ToolResult: result,
-
 		}
 
 		s.Append(tev)
@@ -256,8 +210,6 @@ func (a *Agent) executeToolCalls(s *Session, calls []ai.ToolCall, cb *StreamCall
 	}
 
 }
-
-
 
 func (a *Agent) execTool(name string, args map[string]any) string {
 
@@ -293,8 +245,6 @@ func (a *Agent) execTool(name string, args map[string]any) string {
 
 }
 
-
-
 func (a *Agent) emitEvent(sessionID string, e Event) {
 
 	if a.OnEvent == nil {
@@ -303,23 +253,17 @@ func (a *Agent) emitEvent(sessionID string, e Event) {
 
 	}
 
-
-
 	role := e.Role
 
 	content := ""
 
 	meta := map[string]any{"type": e.Role}
 
-
-
 	switch e.Role {
 
 	case "user":
 
 		content = e.Content
-
-
 
 	case "assistant":
 
@@ -343,8 +287,6 @@ func (a *Agent) emitEvent(sessionID string, e Event) {
 
 		}
 
-
-
 	case "tool":
 
 		content = e.ToolResult
@@ -361,23 +303,17 @@ func (a *Agent) emitEvent(sessionID string, e Event) {
 
 	}
 
-
-
 	if content == "" {
 
 		return
 
 	}
 
-
-
 	metaJSON, _ := json.Marshal(meta)
 
 	a.OnEvent(sessionID, role, a.Source, content, string(metaJSON))
 
 }
-
-
 
 func formatToolCall(tc ToolCall) string {
 
@@ -448,4 +384,3 @@ func formatToolCall(tc ToolCall) string {
 	return "🛠 " + tc.Name
 
 }
-
