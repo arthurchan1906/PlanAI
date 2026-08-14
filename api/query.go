@@ -119,10 +119,18 @@ func (s *Server) handleMutateRoutes(w http.ResponseWriter, method, path string, 
 		evt, _ := store.CreateEvent(u.Str(body["type"]), u.Str(body["entity_type"]), u.Str(body["entity_id"]), u.Str(body["summary"]))
 		web.SendJSON(w, evt)
 	case method == "POST" && path == "daily":
-		d, _ := store.AppendDailyNote(q.Get("date"), map[string][]string{})
+		d, err := store.AppendDailyNote(q.Get("date"), dailyPayload(body))
+		if err != nil {
+			web.SendError(w, 500, err.Error())
+			return true
+		}
 		web.SendJSON(w, d)
 	case method == "PUT" && path == "daily":
-		d, _ := store.ReplaceDailyNote(q.Get("date"), map[string][]string{})
+		d, err := store.ReplaceDailyNote(q.Get("date"), dailyPayload(body))
+		if err != nil {
+			web.SendError(w, 500, err.Error())
+			return true
+		}
 		web.SendJSON(w, d)
 	case method == "POST" && path == "discussions":
 		d, err := store.LogDiscussion(u.Str(body["session_id"]), u.Str(body["role"]), u.Str(body["source"]), u.Str(body["content"]), "")
@@ -215,3 +223,21 @@ func proxyForwardDelete(w http.ResponseWriter, endpoint string) {
 	w.Write(body)
 }
 
+// dailyPayload converts a decoded JSON body into the payload shape
+// AppendDailyNote/ReplaceDailyNote expect. The frontend posts
+// {completed:[], problems:[], risks:[], next:[]}.
+func dailyPayload(body map[string]any) map[string][]string {
+	out := map[string][]string{}
+	for _, key := range []string{"completed", "problems", "risks", "next"} {
+		var items []string
+		if raw, ok := body[key].([]any); ok {
+			for _, v := range raw {
+				if s := u.Str(v); s != "" {
+					items = append(items, s)
+				}
+			}
+		}
+		out[key] = items
+	}
+	return out
+}
