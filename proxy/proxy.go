@@ -1,11 +1,11 @@
-﻿// Package proxy translates between AI agent API protocols and OpenAI Chat Completions.
+// Package proxy translates between AI agent API protocols and OpenAI Chat Completions.
 // Supported agents: Claude Code (Anthropic Messages), Gemini CLI (Google Gemini),
 // Codex CLI (OpenAI Responses), Cursor (OpenAI passthrough).
 package proxy
 
 import (
-	"bytes"
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
@@ -106,11 +106,11 @@ type trafficEntry struct {
 }
 
 var (
-	mu          sync.Mutex
-	reqCount    int
-	errCount    int
-	trafficLog  []trafficEntry
-	maxTraffic  = 500
+	mu         sync.Mutex
+	reqCount   int
+	errCount   int
+	trafficLog []trafficEntry
+	maxTraffic = 500
 )
 
 // NewHandler creates an http.Handler for the proxy without starting a listener.
@@ -122,12 +122,12 @@ func NewHandler(opts Options) http.Handler {
 		u = "http://localhost:8080/v1"
 	}
 	storeCfg(&proxyCfg{
-		upstreamURL:          u,
-		
+		upstreamURL: u,
+
 		proxyModel:           opts.Model,
 		upstreamAnthropicURL: strings.TrimRight(opts.AnthropicURL, "/"),
 		startTime:            time.Now(),
-			router:               NewModelRouter(),
+		router:               NewModelRouter(),
 	})
 
 	mux := http.NewServeMux()
@@ -137,7 +137,7 @@ func NewHandler(opts Options) http.Handler {
 	mux.HandleFunc("/__proxy/capture/clear", requireProxyToken(handleCaptureClear))
 	mux.HandleFunc("/__proxy/inspect", handleInspectPage)
 	mux.HandleFunc("/__proxy/reload", requireProxyToken(handleProxyReload))
-		mux.HandleFunc("/__proxy/models/reload", requireProxyToken(handleModelsReload))
+	mux.HandleFunc("/__proxy/models/reload", requireProxyToken(handleModelsReload))
 	mux.HandleFunc("/__proxy/tokens", handleTokenUsage)
 	mux.HandleFunc("/", handler)
 	return mux
@@ -231,12 +231,12 @@ func handleProxyStatus(w http.ResponseWriter, r *http.Request) {
 	errs := errCount
 	mu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"running":      true,
-		"uptime":       time.Since(loadCfg().startTime).String(),
-		"requests":     count,
-		"errors":       errs,
-		"upstream":     loadCfg().upstreamURL,
-		"port":         strings.TrimPrefix(r.Host, ":"),
+		"running":        true,
+		"uptime":         time.Since(loadCfg().startTime).String(),
+		"requests":       count,
+		"errors":         errs,
+		"upstream":       loadCfg().upstreamURL,
+		"port":           strings.TrimPrefix(r.Host, ":"),
 		"model_override": loadCfg().proxyModel,
 	})
 }
@@ -270,12 +270,12 @@ func handleProxyReload(w http.ResponseWriter, r *http.Request) {
 		u = "http://localhost:8080/v1"
 	}
 	storeCfg(&proxyCfg{
-		upstreamURL:          u,
-		
+		upstreamURL: u,
+
 		proxyModel:           gcfg.ProxyModel,
 		upstreamAnthropicURL: strings.TrimRight(gcfg.AnthropicURL, "/"),
-		startTime:            loadCfg().startTime, 
-			router:               NewModelRouter(),
+		startTime:            loadCfg().startTime,
+		router:               NewModelRouter(),
 	})
 	log.Printf("[PROXY] config reloaded upstream=%s", loadCfg().upstreamURL)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -345,7 +345,6 @@ func handler(w http.ResponseWriter, r *http.Request) {
 
 	rw := &responseWrapper{ResponseWriter: w, status: 200}
 
-
 	// Model command interception (&aipmc-model switch/auto/current/list)
 	body, _ := io.ReadAll(r.Body)
 	r.Body = io.NopCloser(bytes.NewReader(body))
@@ -362,64 +361,64 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
 
-	switch {
-	case strings.Contains(path, ":generateContent") && !strings.Contains(path, "stream"):
-		handleUnifiedNonStream(rw, r, &GeminiAdapter{})
-	case strings.Contains(path, ":streamGenerateContent"):
-		handleUnifiedStream(rw, r, &GeminiAdapter{})
-	case strings.Contains(path, ":countTokens"):
-		handleCountTokens(rw, r)
-	case path == "/v1/messages":
-		router := loadCfg().router
-		if router != nil && router.IsActive() {
-			body, err := io.ReadAll(r.Body)
-			if err != nil {
-				log.Printf("[PROXY] ERROR reading /v1/messages body: %v", err)
-				http.Error(rw, "failed to read request body", http.StatusBadRequest)
-				return
-			}
-			r.Body = io.NopCloser(bytes.NewReader(body))
-			model := peekModel(body)
-			if model != "" && router.ShouldPassthrough(model) {
+		switch {
+		case strings.Contains(path, ":generateContent") && !strings.Contains(path, "stream"):
+			handleUnifiedNonStream(rw, r, &GeminiAdapter{})
+		case strings.Contains(path, ":streamGenerateContent"):
+			handleUnifiedStream(rw, r, &GeminiAdapter{})
+		case strings.Contains(path, ":countTokens"):
+			handleCountTokens(rw, r)
+		case path == "/v1/messages":
+			router := loadCfg().router
+			if router != nil && router.IsActive() {
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					log.Printf("[PROXY] ERROR reading /v1/messages body: %v", err)
+					http.Error(rw, "failed to read request body", http.StatusBadRequest)
+					return
+				}
+				r.Body = io.NopCloser(bytes.NewReader(body))
+				model := peekModel(body)
+				if model != "" && router.ShouldPassthrough(model) {
+					handleAnthropicPassthrough(rw, r)
+				} else {
+					handleClaudeUnified(rw, r)
+				}
+			} else if loadCfg().upstreamAnthropicURL != "" {
 				handleAnthropicPassthrough(rw, r)
 			} else {
 				handleClaudeUnified(rw, r)
 			}
-		} else if loadCfg().upstreamAnthropicURL != "" {
-			handleAnthropicPassthrough(rw, r)
-		} else {
-			handleClaudeUnified(rw, r)
-		}
-	case path == "/v1/responses" || path == "/responses":
-		if r.Method == "GET" {
-			if strings.ToLower(r.Header.Get("Upgrade")) == "websocket" {
-				http.Error(rw, "websocket not supported", http.StatusBadRequest)
+		case path == "/v1/responses" || path == "/responses":
+			if r.Method == "GET" {
+				if strings.ToLower(r.Header.Get("Upgrade")) == "websocket" {
+					http.Error(rw, "websocket not supported", http.StatusBadRequest)
+					return
+				}
+				writeJSON(rw, http.StatusOK, map[string]any{"object": "list", "data": []any{}})
 				return
 			}
-			writeJSON(rw, http.StatusOK, map[string]any{"object": "list", "data": []any{}})
-			return
+			router := loadCfg().router
+			model := peekModel(body)
+			// currentModel override governs passthrough selection: when the user has
+			// selected a model via Web UI / &aipmc-model, honor it over the body's
+			// model so switching to a responses-capable model actually takes effect
+			// even if the codex client still sends the default model in the body.
+			if cm := loadCurrentModel("codex"); cm != "" {
+				model = cm
+			}
+			if model != "" && router.ShouldPassthroughResponses(model) {
+				handleResponsesPassthrough(rw, r)
+			} else {
+				handleCodexUnified(rw, r)
+			}
+		case path == "/v1/chat/completions":
+			handleOpenAIChatPassthrough(rw, r)
+		case path == "/v1/models" || path == "/models" || strings.HasPrefix(path, "/v1/"):
+			handlePassthrough(rw, r)
+		default:
+			http.Error(rw, "not found", http.StatusNotFound)
 		}
-		router := loadCfg().router
-		model := peekModel(body)
-		// currentModel override governs passthrough selection: when the user has
-		// selected a model via Web UI / &aipmc-model, honor it over the body's
-		// model so switching to a responses-capable model actually takes effect
-		// even if the codex client still sends the default model in the body.
-		if cm := loadCurrentModel("codex"); cm != "" {
-			model = cm
-		}
-		if model != "" && router.ShouldPassthroughResponses(model) {
-			handleResponsesPassthrough(rw, r)
-		} else {
-			handleCodexUnified(rw, r)
-		}
-	case path == "/v1/chat/completions":
-		handleOpenAIChatPassthrough(rw, r)
-	case path == "/v1/models" || path == "/models" || strings.HasPrefix(path, "/v1/"):
-		handlePassthrough(rw, r)
-	default:
-		http.Error(rw, "not found", http.StatusNotFound)
-	}
 
 	} // end if !intercepted
 
@@ -532,8 +531,8 @@ type OpenAIMessage struct {
 }
 
 type OpenAIToolCall struct {
-	ID       string                `json:"id"`
-	Type     string                `json:"type"`
+	ID       string                 `json:"id"`
+	Type     string                 `json:"type"`
 	Function OpenAIToolCallFunction `json:"function"`
 }
 
@@ -672,7 +671,7 @@ func handleCountTokens(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := map[string]any{
-		"totalTokens":           tokenCount,
+		"totalTokens":             tokenCount,
 		"cachedContentTokenCount": 0,
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -771,20 +770,20 @@ func handleModelsList(w http.ResponseWriter, r *http.Request) {
 		Description string `json:"description"`
 	}
 	type codexModel struct {
-		Slug                      string           `json:"slug"`
-		DisplayName               string           `json:"display_name"`
-		Description               string           `json:"description"`
-		ShellType                 string           `json:"shell_type"`
-		Visibility                string           `json:"visibility"`
-		SupportedInAPI            bool             `json:"supported_in_api"`
-		Priority                  int              `json:"priority"`
-		BaseInstructions          string           `json:"base_instructions"`
-		SupportsReasoningSummary  bool             `json:"supports_reasoning_summaries"`
-		DefaultReasoningSummary   string           `json:"default_reasoning_summary"`
-		DefaultReasoningLevel     *string          `json:"default_reasoning_level"`
-		SupportedReasoningLevels  []reasoningLevel `json:"supported_reasoning_levels"`
-		SupportVerbosity          bool             `json:"support_verbosity"`
-		TruncationPolicy          struct {
+		Slug                     string           `json:"slug"`
+		DisplayName              string           `json:"display_name"`
+		Description              string           `json:"description"`
+		ShellType                string           `json:"shell_type"`
+		Visibility               string           `json:"visibility"`
+		SupportedInAPI           bool             `json:"supported_in_api"`
+		Priority                 int              `json:"priority"`
+		BaseInstructions         string           `json:"base_instructions"`
+		SupportsReasoningSummary bool             `json:"supports_reasoning_summaries"`
+		DefaultReasoningSummary  string           `json:"default_reasoning_summary"`
+		DefaultReasoningLevel    *string          `json:"default_reasoning_level"`
+		SupportedReasoningLevels []reasoningLevel `json:"supported_reasoning_levels"`
+		SupportVerbosity         bool             `json:"support_verbosity"`
+		TruncationPolicy         struct {
 			Mode  string `json:"mode"`
 			Limit int    `json:"limit"`
 		} `json:"truncation_policy"`
@@ -999,6 +998,7 @@ func handleUnifiedNonStream(w http.ResponseWriter, r *http.Request, adapter Prot
 	u.LogShared("LLM", "agent=%s model=%s in_tok=%d out_tok=%d injected=%s lat=%.1fs", agent, model, inTok, outTok, injectedFlag(r), time.Since(startTime).Seconds())
 
 }
+
 // handleUnifiedStream handles a streaming request using the unified pipeline:
 //
 //	Adapter.ParseRequest → unifiedToOpenAI → forwardToUpstreamStream →
@@ -1073,7 +1073,6 @@ func handleUnifiedStream(w http.ResponseWriter, r *http.Request, adapter Protoco
 	if cm := loadCurrentModel(agent); cm != "" {
 		model = cm
 	}
-
 
 	openaiReq := unifiedToOpenAI(req)
 
@@ -1150,11 +1149,11 @@ func handleUnifiedStream(w http.ResponseWriter, r *http.Request, adapter Protoco
 	// Record token usage on both ring buffer and capture entry
 	if streamPromptTokens > 0 || streamCompletionTokens > 0 {
 		RecordTokenUsage(TokenUsageRecord{
-			Agent:              agent,
-			Model:              model,
-			PromptTokens:       streamPromptTokens,
-			CompletionTokens:   streamCompletionTokens,
-			CacheHitTokens:     streamCacheHitTokens,
+			Agent:               agent,
+			Model:               model,
+			PromptTokens:        streamPromptTokens,
+			CompletionTokens:    streamCompletionTokens,
+			CacheHitTokens:      streamCacheHitTokens,
 			CacheCreationTokens: streamCacheCreationTokens,
 		})
 		SetCaptureTokens(capID, streamPromptTokens, streamCompletionTokens)
@@ -1190,7 +1189,8 @@ func writeJSON(w http.ResponseWriter, status int, data any) {
 //
 // Non-streaming:  forwardToUpstream → parse usage → write response
 // Streaming:      forwardToUpstreamStream → scan SSE lines → extract usage from
-//                 the last data chunk before [DONE] → record after stream ends
+//
+//	the last data chunk before [DONE] → record after stream ends
 func handleOpenAIChatPassthrough(w http.ResponseWriter, r *http.Request) {
 	rawBody, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -1293,22 +1293,22 @@ func handleOpenAIChatPassthrough(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[OPENAICHAT] SSE scan error: %v", err)
 	}
 
-		inTok, outTok := 0, 0
-		if lastUsage != nil {
-			inTok = lastUsage.PromptTokens
-			outTok = lastUsage.CompletionTokens
-			RecordTokenUsage(TokenUsageRecord{
-				Agent:            agent,
-				Model:            model,
-				PromptTokens:     lastUsage.PromptTokens,
-				CompletionTokens: lastUsage.CompletionTokens,
-				CacheHitTokens:   lastUsage.CacheHitTokens,
-			})
-			SetCaptureTokens(capID, lastUsage.PromptTokens, lastUsage.CompletionTokens)
-			SetCaptureCacheTokens(capID, lastUsage.CacheHitTokens, 0)
-		}
-		// Log LLM request/response to shared log (always, 0 when usage is nil)
-		u.LogShared("LLM", "agent=%s model=%s in_tok=%d out_tok=%d injected=%s lat=%.1fs", agent, model, inTok, outTok, injectedFlag(r), time.Since(startTime).Seconds())
+	inTok, outTok := 0, 0
+	if lastUsage != nil {
+		inTok = lastUsage.PromptTokens
+		outTok = lastUsage.CompletionTokens
+		RecordTokenUsage(TokenUsageRecord{
+			Agent:            agent,
+			Model:            model,
+			PromptTokens:     lastUsage.PromptTokens,
+			CompletionTokens: lastUsage.CompletionTokens,
+			CacheHitTokens:   lastUsage.CacheHitTokens,
+		})
+		SetCaptureTokens(capID, lastUsage.PromptTokens, lastUsage.CompletionTokens)
+		SetCaptureCacheTokens(capID, lastUsage.CacheHitTokens, 0)
+	}
+	// Log LLM request/response to shared log (always, 0 when usage is nil)
+	u.LogShared("LLM", "agent=%s model=%s in_tok=%d out_tok=%d injected=%s lat=%.1fs", agent, model, inTok, outTok, injectedFlag(r), time.Since(startTime).Seconds())
 
 	finishCapture(capID, http.StatusOK, time.Since(startTime), nil, sseBuf.String(), sseBuf.String())
 }

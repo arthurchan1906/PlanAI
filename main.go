@@ -16,10 +16,10 @@ import (
 	"strings"
 	"time"
 
-	apipkg "aipmc/api"
 	"aipmc/ai"
-	"aipmc/app"
 	"aipmc/analyze"
+	apipkg "aipmc/api"
+	"aipmc/app"
 	"aipmc/chatcli"
 	"aipmc/cli"
 	pmdb "aipmc/db"
@@ -109,11 +109,28 @@ func main() {
 		args := os.Args[2:]
 		for i := 0; i < len(args); i++ {
 			switch args[i] {
-			case "--role": if i+1 < len(args) { role = args[i+1]; i++ }
-			case "--source": if i+1 < len(args) { source = args[i+1]; i++ }
-			case "--content": if i+1 < len(args) { content = args[i+1]; i++ }
-			case "--session": if i+1 < len(args) { sid = args[i+1]; i++ }
-			case "--stdin": fromStdin = true
+			case "--role":
+				if i+1 < len(args) {
+					role = args[i+1]
+					i++
+				}
+			case "--source":
+				if i+1 < len(args) {
+					source = args[i+1]
+					i++
+				}
+			case "--content":
+				if i+1 < len(args) {
+					content = args[i+1]
+					i++
+				}
+			case "--session":
+				if i+1 < len(args) {
+					sid = args[i+1]
+					i++
+				}
+			case "--stdin":
+				fromStdin = true
 			}
 		}
 		if fromStdin {
@@ -150,9 +167,14 @@ func main() {
 		return
 	case "embed":
 		n := 0
-		if len(os.Args) > 2 { fmt.Sscanf(os.Args[2], "%d", &n) }
+		if len(os.Args) > 2 {
+			fmt.Sscanf(os.Args[2], "%d", &n)
+		}
 		count, err := application.EmbedDiscussions(n)
-		if err != nil { fmt.Fprintf(os.Stderr, "embed error: %v\n", err); os.Exit(1) }
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "embed error: %v\n", err)
+			os.Exit(1)
+		}
 		fmt.Printf("embedded %d discussions\n", count)
 		return
 	case "hook-process":
@@ -235,7 +257,10 @@ func main() {
 	case "models":
 		subcmd := ""
 		var rawArgs []string
-		if len(os.Args) > 2 { subcmd = os.Args[2]; rawArgs = os.Args[3:] }
+		if len(os.Args) > 2 {
+			subcmd = os.Args[2]
+			rawArgs = os.Args[3:]
+		}
 		dispatchModels(subcmd, cli.ParseArgs(rawArgs))
 		return
 	case "key":
@@ -683,7 +708,10 @@ func runAgent(name string) {
 	proxyURL := fmt.Sprintf("http://localhost:%d", port)
 
 	rt, err := pmdb.ResolveAgentConfig(name, gcfg, cfg)
-	if err != nil { fmt.Fprintf(os.Stderr, "agent config: %v\n", err); os.Exit(1) }
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "agent config: %v\n", err)
+		os.Exit(1)
+	}
 
 	var cmd *exec.Cmd
 	switch strings.ToLower(name) {
@@ -737,28 +765,50 @@ func runAgent(name string) {
 }
 
 func loadCredentialsOnStartup(profile string) {
-	if !pmdb.CredentialsExist() { return }
+	if !pmdb.CredentialsExist() {
+		return
+	}
 	// Check env var first — set by web UI when spawning proxy subprocess
 	if pass := os.Getenv("AIPMC_MASTER_PASSWORD"); pass != "" {
 		store, err := pmdb.LoadCredentialsProfile([]byte(pass), profile)
-		if err != nil { fmt.Fprintf(os.Stderr, "credentials: %v\n", err); os.Exit(1) }
-		if store != nil { pmdb.SetCredentialStore(store); fmt.Println("✓ credentials unlocked") }
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "credentials: %v\n", err)
+			os.Exit(1)
+		}
+		if store != nil {
+			pmdb.SetCredentialStore(store)
+			fmt.Println("✓ credentials unlocked")
+		}
 		return
 	}
 	fmt.Print("Master password for credentials: ")
 	pw, err := pmdb.PromptPassword()
-	if err != nil { fmt.Fprintf(os.Stderr, "failed to read password: %v\n", err); os.Exit(1) }
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to read password: %v\n", err)
+		os.Exit(1)
+	}
 	fmt.Println()
 	store, err := pmdb.LoadCredentialsProfile(pw, profile)
-	for i := range pw { pw[i] = 0 }
-	if err != nil { fmt.Fprintf(os.Stderr, "credentials: %v\n", err); os.Exit(1) }
-	if store != nil { pmdb.SetCredentialStore(store); fmt.Println("✓ credentials unlocked") }
+	for i := range pw {
+		pw[i] = 0
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "credentials: %v\n", err)
+		os.Exit(1)
+	}
+	if store != nil {
+		pmdb.SetCredentialStore(store)
+		fmt.Println("✓ credentials unlocked")
+	}
 }
 
 func getPassword(prompt string) []byte {
 	fmt.Print(prompt)
 	pw, err := pmdb.PromptPassword()
-	if err != nil { fmt.Fprintf(os.Stderr, "read password: %v\n", err); os.Exit(1) }
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "read password: %v\n", err)
+		os.Exit(1)
+	}
 	fmt.Println()
 	return pw
 }
@@ -790,79 +840,149 @@ func dispatchKey(argv []string) {
 		}
 		fmt.Print("Set master password: ")
 		p1, err := pmdb.PromptPassword()
-		if err != nil { fmt.Fprintf(os.Stderr, "read password: %v\n", err); os.Exit(1) }
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "read password: %v\n", err)
+			os.Exit(1)
+		}
 		fmt.Println()
 		fmt.Print("Confirm master password: ")
 		p2, err := pmdb.PromptPassword()
-		if err != nil { fmt.Fprintf(os.Stderr, "read password: %v\n", err); os.Exit(1) }
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "read password: %v\n", err)
+			os.Exit(1)
+		}
 		fmt.Println()
-		if string(p1) != string(p2) { fmt.Fprintln(os.Stderr, "passwords do not match"); os.Exit(1) }
-		if err := pmdb.CreateProfile(profile, string(p1)); err != nil { fmt.Fprintf(os.Stderr, "init failed: %v\n", err); os.Exit(1) }
+		if string(p1) != string(p2) {
+			fmt.Fprintln(os.Stderr, "passwords do not match")
+			os.Exit(1)
+		}
+		if err := pmdb.CreateProfile(profile, string(p1)); err != nil {
+			fmt.Fprintf(os.Stderr, "init failed: %v\n", err)
+			os.Exit(1)
+		}
 		fmt.Printf("? credentials initialized for profile %q\n", profile)
 
 	case "set":
-		if len(args) < 2 { fmt.Fprintln(os.Stderr, "Usage: aipmc key set <name> <value> [--profile <name>]"); os.Exit(1) }
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: aipmc key set <name> <value> [--profile <name>]")
+			os.Exit(1)
+		}
 		name, value := args[0], args[1]
 		pass := getPassword("Master password: ")
 		store, err := pmdb.LoadCredentialsProfile(pass, profile)
-		if err != nil || store == nil { fmt.Fprintln(os.Stderr, "wrong password or no credentials file"); os.Exit(1) }
+		if err != nil || store == nil {
+			fmt.Fprintln(os.Stderr, "wrong password or no credentials file")
+			os.Exit(1)
+		}
 		store.Set(name, value)
-		if err := pmdb.SaveCredentialsToProfile(store, pass, profile); err != nil { fmt.Fprintf(os.Stderr, "save failed: %v\n", err); os.Exit(1) }
+		if err := pmdb.SaveCredentialsToProfile(store, pass, profile); err != nil {
+			fmt.Fprintf(os.Stderr, "save failed: %v\n", err)
+			os.Exit(1)
+		}
 		fmt.Printf("? key for %q saved (profile %s)\n", name, profile)
 
 	case "rm":
-		if len(args) < 1 { fmt.Fprintln(os.Stderr, "Usage: aipmc key rm <name> [--profile <name>]"); os.Exit(1) }
+		if len(args) < 1 {
+			fmt.Fprintln(os.Stderr, "Usage: aipmc key rm <name> [--profile <name>]")
+			os.Exit(1)
+		}
 		name := args[0]
 		pass := getPassword("Master password: ")
 		store, err := pmdb.LoadCredentialsProfile(pass, profile)
-		if err != nil || store == nil { fmt.Fprintln(os.Stderr, "wrong password or no credentials file"); os.Exit(1) }
-		if !store.Remove(name) { fmt.Fprintf(os.Stderr, "key %q not found\n", name); os.Exit(1) }
-		if err := pmdb.SaveCredentialsToProfile(store, pass, profile); err != nil { fmt.Fprintf(os.Stderr, "save failed: %v\n", err); os.Exit(1) }
+		if err != nil || store == nil {
+			fmt.Fprintln(os.Stderr, "wrong password or no credentials file")
+			os.Exit(1)
+		}
+		if !store.Remove(name) {
+			fmt.Fprintf(os.Stderr, "key %q not found\n", name)
+			os.Exit(1)
+		}
+		if err := pmdb.SaveCredentialsToProfile(store, pass, profile); err != nil {
+			fmt.Fprintf(os.Stderr, "save failed: %v\n", err)
+			os.Exit(1)
+		}
 		fmt.Printf("? key %q removed (profile %s)\n", name, profile)
 
 	case "list":
 		pass := getPassword("Master password: ")
 		store, err := pmdb.LoadCredentialsProfile(pass, profile)
-		if err != nil || store == nil { fmt.Fprintln(os.Stderr, "wrong password or no credentials file"); os.Exit(1) }
+		if err != nil || store == nil {
+			fmt.Fprintln(os.Stderr, "wrong password or no credentials file")
+			os.Exit(1)
+		}
 		fmt.Printf("Profile: %s\n", profile)
 		for _, n := range store.List() {
-			k := store.Get(n); m := k
-			if len(k) > 10 { m = k[:6] + "..." + k[len(k)-4:] }
+			k := store.Get(n)
+			m := k
+			if len(k) > 10 {
+				m = k[:6] + "..." + k[len(k)-4:]
+			}
 			fmt.Printf("  %-15s %s\n", n, m)
 		}
 
 	case "show":
-		if len(args) < 1 { fmt.Fprintln(os.Stderr, "Usage: aipmc key show <name> [--profile <name>]"); os.Exit(1) }
+		if len(args) < 1 {
+			fmt.Fprintln(os.Stderr, "Usage: aipmc key show <name> [--profile <name>]")
+			os.Exit(1)
+		}
 		name := args[0]
 		pass := getPassword("Master password: ")
 		store, err := pmdb.LoadCredentialsProfile(pass, profile)
-		if err != nil || store == nil { fmt.Fprintln(os.Stderr, "wrong password or no credentials file"); os.Exit(1) }
-		if k := store.Get(name); k != "" { fmt.Println(k) } else { fmt.Fprintln(os.Stderr, "not found"); os.Exit(1) }
+		if err != nil || store == nil {
+			fmt.Fprintln(os.Stderr, "wrong password or no credentials file")
+			os.Exit(1)
+		}
+		if k := store.Get(name); k != "" {
+			fmt.Println(k)
+		} else {
+			fmt.Fprintln(os.Stderr, "not found")
+			os.Exit(1)
+		}
 
 	case "passwd":
 		fmt.Print("Old password: ")
 		oldP, err := pmdb.PromptPassword()
-		if err != nil { fmt.Fprintf(os.Stderr, "read password: %v\n", err); os.Exit(1) }
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "read password: %v\n", err)
+			os.Exit(1)
+		}
 		fmt.Println()
 		fmt.Print("New password: ")
 		newP, err := pmdb.PromptPassword()
-		if err != nil { fmt.Fprintf(os.Stderr, "read password: %v\n", err); os.Exit(1) }
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "read password: %v\n", err)
+			os.Exit(1)
+		}
 		fmt.Println()
 		fmt.Print("Confirm new password: ")
 		confirmP, err := pmdb.PromptPassword()
-		if err != nil { fmt.Fprintf(os.Stderr, "read password: %v\n", err); os.Exit(1) }
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "read password: %v\n", err)
+			os.Exit(1)
+		}
 		fmt.Println()
-		if string(newP) != string(confirmP) { fmt.Fprintln(os.Stderr, "passwords do not match"); os.Exit(1) }
+		if string(newP) != string(confirmP) {
+			fmt.Fprintln(os.Stderr, "passwords do not match")
+			os.Exit(1)
+		}
 		store, err := pmdb.LoadCredentialsProfile(oldP, profile)
-		if err != nil || store == nil { fmt.Fprintln(os.Stderr, "wrong password or no credentials file"); os.Exit(1) }
-		if err := pmdb.SaveCredentialsToProfile(store, newP, profile); err != nil { fmt.Fprintf(os.Stderr, "change failed: %v\n", err); os.Exit(1) }
+		if err != nil || store == nil {
+			fmt.Fprintln(os.Stderr, "wrong password or no credentials file")
+			os.Exit(1)
+		}
+		if err := pmdb.SaveCredentialsToProfile(store, newP, profile); err != nil {
+			fmt.Fprintf(os.Stderr, "change failed: %v\n", err)
+			os.Exit(1)
+		}
 		fmt.Printf("? password changed (profile %s)\n", profile)
 
 	case "status":
 		if pmdb.CredentialsExistForProfile(profile) {
 			if s := pmdb.GetCredentialStore(); s != nil && s.Profile == profile {
 				fmt.Printf("? profile %s unlocked ? %d provider(s)\n", profile, len(s.Keys))
-				for _, n := range s.List() { fmt.Printf("  %s\n", n) }
+				for _, n := range s.List() {
+					fmt.Printf("  %s\n", n)
+				}
 			} else {
 				fmt.Printf("profile %s exists (locked ? run aipmc serve or aipmc proxy --profile %s)\n", profile, profile)
 			}
@@ -873,11 +993,14 @@ func dispatchKey(argv []string) {
 			} else {
 				fmt.Printf("no credentials file for profile %q\n", profile)
 				fmt.Println("Known profiles:")
-				for _, p := range allProfiles { fmt.Printf("  %s\n", p) }
+				for _, p := range allProfiles {
+					fmt.Printf("  %s\n", p)
+				}
 			}
 		}
 
 	default:
-		fmt.Fprintf(os.Stderr, "unknown key subcommand: %s\n", subcmd); os.Exit(1)
+		fmt.Fprintf(os.Stderr, "unknown key subcommand: %s\n", subcmd)
+		os.Exit(1)
 	}
 }
