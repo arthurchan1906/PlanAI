@@ -19,7 +19,8 @@ import (
 // v1 is just "how do we stand right now against the documented targets".
 // DB-class metrics reflect the current project (cwd .pmai); log-class metrics
 // cover the global proxy log (~/.aipmc/logs/aipmc.log) which has no project
-// field yet (documented limitation, v2 adds it).
+// field yet (documented limitation, v2 adds it). 8/14 起日志按 20MB 自动归档
+// （保留 7 份），log-class 指标只扫当前文件；历史窗口请用 aipmc.log.* 归档复核。
 func dispatchMetrics(args *cli.Args) {
 	window := args.Str("window", "") // optional: "24h" for log-class metrics only
 	// commit 三件套窗口：默认只看修复后数据（StoreGitCommit 97ce814 起），
@@ -48,7 +49,7 @@ func dispatchMetrics(args *cli.Args) {
 		}
 	}
 	fmt.Println("AIPM 评估指标 — 目标值来自 docs/EVALUATION.md")
-	fmt.Println("DB 类指标: 当前项目 point-in-time；日志类指标: ~/.aipmc/logs/aipmc.log 全局（无 project 字段）")
+	fmt.Println("DB 类指标: 当前项目 point-in-time；日志类指标: ~/.aipmc/logs/aipmc.log（serve 行带 project= 标签，proxy/hook 行无；已按 20MB 归档，只扫当前文件）")
 	fmt.Printf("窗口: since=%s（--since all 看全表；F1/F4 验收诊断行随窗口，其余 DB 行保持全表=机制健康现状）\n", since)
 	if hasCutoff {
 		fmt.Printf("日志窗口: %s（截止 %s）\n", window, cutoff.Format("2006-01-02 15:04:05"))
@@ -108,8 +109,8 @@ func dispatchMetrics(args *cli.Args) {
 		// bash = 高置信模式才写 rel_path（git add/cat/wc/find...），锚点=参考
 		// （决策 19 接受漏检）。分母若含 bash 则 90% 物理不可达（ED bash 48%）。
 		var (
-			ftClaudeTotal, ftClaudeHit, ftCodexTotal, ftCodexHit   int
-			bsClaudeTotal, bsClaudeHit, bsCodexTotal, bsCodexHit   int
+			ftClaudeTotal, ftClaudeHit, ftCodexTotal, ftCodexHit int
+			bsClaudeTotal, bsClaudeHit, bsCodexTotal, bsCodexHit int
 		)
 		// H2 窗口（W3）：rel_path 验收随 --since（部署后数据），避免存量稀释假象。
 		// F4 口径（W3 配套，8/13）：filetools 分母只计「项目内文件操作」——项目外路径

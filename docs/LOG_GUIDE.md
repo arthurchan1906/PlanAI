@@ -1,7 +1,15 @@
 # 日志查询指南（E1 观测基线）
 
 > 目的：沉淀日志 tag 清单与查询命令，让每次修复都能用日志复测 `docs/EVALUATION.md` 中的指标。
-> 版本：2026-08-12（日志行加日期 + B1 口径修正 + BSD grep 工具链规范）
+> 版本：2026-08-14（20MB 自动归档 + project 标签 + BOOT 版本标记 + sanitize）
+
+## 0. 日志生命周期（8/14 起）
+
+- **归档**：`~/.aipmc/logs/aipmc.log` 超过 20MB 自动归档为 `aipmc.log.<YYYYMMDD_HHMMSS>`，保留最近 7 份；写入口 `u.LogShared` 持锁旋转，多进程安全（输掉 rename 竞态的进程跳过本轮）。
+- **版本锚点**：serve/proxy 每次启动写一行 `[BOOT] version=<git sha> project=<name> pid=<pid>`——任何日志段都能映射回具体提交与项目。版本由 `build.sh` 经 `-X aipmc/u.BuildVersion` 注入。
+- **project 标签**：serve 进程的行尾带 `project=<项目名>`（`SetLogProject` 注入）；proxy/hook 的行无此标签（跨项目，按请求归属是 v2 范围）。
+- **清洗**：写入口把非法 UTF-8 与 C0/C1 控制字节（含 NEL 0x85）替换为 `?`，根治 BSD grep 把日志当二进制的问题。
+- **指标口径**：`aipmc metrics` 的日志类指标只扫当前文件；归档前的历史窗口用 `aipmc.log.*` 复核。
 
 ## 1. 日志位置
 

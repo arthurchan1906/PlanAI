@@ -28,6 +28,7 @@ import (
 	"aipmc/search"
 	"aipmc/session"
 	"aipmc/store"
+	"aipmc/u"
 	"aipmc/web"
 )
 
@@ -386,6 +387,11 @@ func serveCommand() int {
 	}
 	os.Chdir(projectPath)
 	projectName := filepath.Base(projectPath)
+
+	// Logging attribution: tag this process's log lines with the project and
+	// write a BOOT banner so each log segment maps to a binary version+project.
+	u.SetLogProject(projectName)
+	u.LogShared("BOOT", "version=%s pid=%d go=%s", u.BuildVersion, os.Getpid(), runtime.Version())
 
 	// Auto-initialize if project has no .pmai/ directory
 	if _, err := os.Stat(filepath.Join(projectPath, ".pmai")); os.IsNotExist(err) {
