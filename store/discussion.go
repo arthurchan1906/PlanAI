@@ -616,6 +616,23 @@ type AgentStatusRow struct {
 	UserPrompts      []string
 }
 
+// CountExplicitStatuses returns (explicit, total) counts of agent_status
+// rows. explicit counts sessions whose status was declared via aipm_update_status
+// (never auto-overwritten); total counts all registered sessions, auto or
+// explicit. Used by `aipm metrics` to track L1 "agent declares what it is
+// doing" adoption. An empty projectPath resolves to the cwd project.
+func CountExplicitStatuses(projectPath string) (explicit, total int, err error) {
+	db, err := openOrCurrentDB(projectPath)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer db.Close()
+	if err := db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(explicit), 0) FROM agent_status`).Scan(&total, &explicit); err != nil {
+		return 0, 0, err
+	}
+	return explicit, total, nil
+}
+
 // ListActiveSessions returns sessions with activity since the cutoff, joined
 // with their registered current status (agent_status). This is the public
 // "who is doing what right now" query that lets an agent tell apart

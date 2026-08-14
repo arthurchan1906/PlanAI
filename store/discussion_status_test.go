@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -145,5 +146,35 @@ func TestListActiveSessionsCrossProjectPrompts(t *testing.T) {
 	}
 	if len(sessions[0].UserPrompts) != 1 || sessions[0].UserPrompts[0] != "在 EncryptDrive 修同步 bug" {
 		t.Errorf("cross-project prompt read failed: %+v", sessions[0].UserPrompts)
+	}
+}
+
+// CountExplicitStatuses must report how many registered sessions declared
+// their status via aipm_update_status vs auto-registered user prompts.
+func TestCountExplicitStatuses(t *testing.T) {
+	setupDailyDB(t)
+	if _, err := ReadDiscussions(ReadDiscussionsOpts{LastN: 5}); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+
+	// Two auto-registered sessions (explicit=0), one explicit declaration.
+	for i, sid := range []string{"auto-1", "auto-2"} {
+		if _, err := LogDiscussion(sid, "user", "codex-cli", fmt.Sprintf("处理任务 %d", i), ""); err != nil {
+			t.Fatalf("log user %s: %v", sid, err)
+		}
+	}
+	if err := UpdateAgentStatus("claude-code", "explicit-1", "审核 L0/L1 代码", ""); err != nil {
+		t.Fatalf("UpdateAgentStatus: %v", err)
+	}
+
+	exp, total, err := CountExplicitStatuses("")
+	if err != nil {
+		t.Fatalf("CountExplicitStatuses: %v", err)
+	}
+	if total != 3 {
+		t.Errorf("total = %d, want 3", total)
+	}
+	if exp != 1 {
+		t.Errorf("explicit = %d, want 1", exp)
 	}
 }

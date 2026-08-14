@@ -12,6 +12,7 @@ import (
 
 	"aipmc/cli"
 	pmdb "aipmc/db"
+	"aipmc/store"
 )
 
 // dispatchMetrics implements `aipmc metrics` — a read-only, point-in-time
@@ -574,6 +575,17 @@ func dispatchMetrics(args *cli.Args) {
 			fmt.Printf(" %s=%d", a, mcpByAgent[a])
 		}
 		fmt.Println()
+	}
+	// 协作感知（L1）：agent_status 显式声明采纳率 — explicit=1 的行占比。
+	// 今天 0 次显式声明=行为尚未养成，指标用于盯采纳进度（数据源是 store 不是日志）。
+	if exp, total, err := store.CountExplicitStatuses(""); err == nil {
+		rate := "—"
+		if total > 0 {
+			rate = fmt.Sprintf("%d/%d (%.0f%%)", exp, total, float64(exp)/float64(total)*100)
+		}
+		printRow("E5  update_status 显式率", rate, "参考", true)
+	} else {
+		printRow("E5  update_status 显式率", "无数据", "参考", true)
 	}
 	// E8 pipeline 健康度：L3 session 处理量 = 运行频率参考；reconcile 成功率为健康主指标。
 	reconTotal := pipeReconDone + pipeReconErr
