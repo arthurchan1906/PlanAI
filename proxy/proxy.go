@@ -924,6 +924,7 @@ func handleClaudeUnified(w http.ResponseWriter, r *http.Request) {
 func handleUnifiedNonStream(w http.ResponseWriter, r *http.Request, adapter ProtocolAdapter) {
 	rawBody, _ := io.ReadAll(r.Body)
 	r.Body.Close()
+	rawBody = dedupeRequestBody(rawBody, detectAgent(r.URL.Path))
 	r.Body = io.NopCloser(strings.NewReader(string(rawBody)))
 	sessionID := extractSessionID(rawBody)
 
@@ -1057,6 +1058,7 @@ func extractMessageText(msg *OpenAIMessage) string {
 func handleUnifiedStream(w http.ResponseWriter, r *http.Request, adapter ProtocolAdapter) {
 	rawBody, _ := io.ReadAll(r.Body)
 	r.Body.Close()
+	rawBody = dedupeRequestBody(rawBody, detectAgent(r.URL.Path))
 	r.Body = io.NopCloser(strings.NewReader(string(rawBody)))
 	sessionID := extractSessionID(rawBody)
 
@@ -1211,6 +1213,7 @@ func handleOpenAIChatPassthrough(w http.ResponseWriter, r *http.Request) {
 	model, _ := reqBody["model"].(string)
 	stream, _ := reqBody["stream"].(bool)
 	agent := detectAgent(r.URL.Path)
+	rawBody = dedupeRequestBody(rawBody, agent)
 	sessionID := extractSessionID(rawBody)
 
 	// ── Capture (for Proxy Inspector) ──

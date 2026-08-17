@@ -54,6 +54,7 @@ func handleAnthropicPassthrough(w http.ResponseWriter, r *http.Request) {
 
 	// 5. Start capture recording
 	agent := "claude"
+	body = dedupeRequestBody(body, agent)
 	sessionID := extractSessionID(body)
 	capID := startCapture(agent, r.Method, r.URL.Path, effectiveModelName, body, copyHeaders(r), nil)
 	startTime := time.Now()
