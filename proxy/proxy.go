@@ -164,7 +164,7 @@ func Run(opts Options) error {
 	os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0644)
 	defer os.Remove(pidPath)
 
-	u.LogShared("BOOT", "component=proxy version=%s pid=%d upstream=%s", u.BuildVersion, os.Getpid(), loadCfg().upstreamURL)
+	u.LogShared("BOOT", "component=proxy version=%s pid=%d upstream=%s dedup=%s inject=%s", u.BuildVersion, os.Getpid(), loadCfg().upstreamURL, dedupSwitchState(), injectSwitchState())
 	log.Printf("[PROXY] listening on %s, upstream=%s", addr, loadCfg().upstreamURL)
 	return http.Serve(ln, h)
 }

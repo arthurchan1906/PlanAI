@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -253,5 +254,37 @@ func TestDedupeCodexMCPWrapper(t *testing.T) {
 	}
 	if _, blocks2, _ := DedupeDiscussionContent(out, "codex"); blocks2 != 0 {
 		t.Fatal("codex wrapper second pass must be no-op")
+	}
+}
+
+func TestDedupeRequestBodySwitch(t *testing.T) {
+	// A/B 开关：AIPMC_DEDUP != "1" 时必须原样透传（生产回退默认关闭）。
+	wrapped := func() string {
+		mcpJSON, _ := json.Marshal([]map[string]string{{"type": "text", "text": "讨论记录: 2 条\n\n" + blockA + blockB}})
+		return "Wall time: 0.0039 seconds\nOutput:\n" + string(mcpJSON)
+	}
+	payload := map[string]any{
+		"model": "deepseek-v4-flash",
+		"input": []any{
+			map[string]any{"type": "function_call_output", "call_id": "c1", "output": wrapped()},
+			map[string]any{"type": "function_call_output", "call_id": "c2", "output": wrapped()},
+		},
+	}
+	body, _ := json.Marshal(payload)
+
+	t.Setenv("AIPMC_DEDUP", "0")
+	if out := dedupeRequestBody(body, "codex"); !bytes.Equal(out, body) {
+		t.Fatal("AIPMC_DEDUP=0: body must pass through unchanged")
+	}
+	t.Setenv("AIPMC_DEDUP", "")
+	if out := dedupeRequestBody(body, "codex"); !bytes.Equal(out, body) {
+		t.Fatal("AIPMC_DEDUP unset: body must pass through unchanged (default off)")
+	}
+	t.Setenv("AIPMC_DEDUP", "1")
+	if out := dedupeRequestBody(body, "codex"); bytes.Equal(out, body) {
+		t.Fatal("AIPMC_DEDUP=1: dedup must run and rewrite the body")
+	}
+	if dedupSwitchState() != "on" {
+		t.Fatalf("dedupSwitchState with AIPMC_DEDUP=1 = %q, want on", dedupSwitchState())
 	}
 }

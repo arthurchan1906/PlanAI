@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 
@@ -111,7 +112,9 @@ func DedupeDiscussionContent(body []byte, agent string) ([]byte, int, int) {
 }
 
 // unwrapMCPText recognizes the codex MCP result wrapper
-//   "Wall time: 0.0039 seconds\nOutput:\n[{\"type\":\"text\",\"text\":\"...\"}]"
+//
+//	"Wall time: 0.0039 seconds\nOutput:\n[{\"type\":\"text\",\"text\":\"...\"}]"
+//
 // and returns the decoded inner text. ok=false when the wrapper is absent,
 // in which case callers should treat val itself as the plain text.
 func unwrapMCPText(val string) (text string, ok bool) {
@@ -339,8 +342,10 @@ func decodeHex4(b []byte) (rune, bool) {
 // jsonMarshalMid returns s encoded as a JSON string with the surrounding
 // quotes stripped, with one extra escaping round applied — matching how
 // codex embeds MCP text inside a request body:
-//   json.Marshal(s)          → "A\nB"   (quoted, single-escaped)
-//   json.Marshal(string(once)) → "A\\nB" (quoted, double-escaped)
+//
+//	json.Marshal(s)          → "A\nB"   (quoted, single-escaped)
+//	json.Marshal(string(once)) → "A\\nB" (quoted, double-escaped)
+//
 // jsonMarshalMid returns the double-escaped body WITHOUT quotes, so callers
 // can wrap it in escaped quotes (\" ... \") to match the wire bytes.
 func jsonMarshalMid(s string) string {
@@ -428,6 +433,11 @@ func dedupeTextWithSeen(text string, seen map[string]bool) (string, int, int) {
 // forwarding, logging [DEDUP] only when duplicates were actually collapsed
 // (keeps steady-state logs quiet). Returns the (possibly rewritten) body.
 func dedupeRequestBody(rawBody []byte, agent string) []byte {
+	// A/B 开关（8/17 实验）：AIPMC_DEDUP=1 启用，默认关闭（生产回退）。
+	// 回退背景：去重改写变更与 cache 命中率波动共变，先用受控实验裁决后决定是否恢复。
+	if os.Getenv("AIPMC_DEDUP") != "1" {
+		return rawBody
+	}
 	db, blocks, saved := DedupeDiscussionContent(rawBody, agent)
 	if blocks == 0 {
 		return rawBody
@@ -439,4 +449,12 @@ func dedupeRequestBody(rawBody []byte, agent string) []byte {
 // dedupSummary formats the [DEDUP] observability log line.
 func dedupSummary(agent string, blocks, saved int) string {
 	return fmt.Sprintf("agent=%s blocks=%d saved_chars=%d", agent, blocks, saved)
+}
+
+// dedupSwitchState 返回 AIPMC_DEDUP 开关状态，用于 BOOT 日志核验。
+func dedupSwitchState() string {
+	if os.Getenv("AIPMC_DEDUP") == "1" {
+		return "on"
+	}
+	return "off"
 }

@@ -112,6 +112,11 @@ func init() {
 // associations are added to help the agent understand which PM entities
 // are related to the files it's working on.
 func InjectSessionContext(body []byte, agent string) []byte {
+	// A/B 开关（8/17 实验）：AIPMC_INJECT=0 关闭注入，默认开启（生产不变）。
+	// 关闭用于隔离「注入 SP 抖动」对 deepseek prefix cache 的独立影响。
+	if os.Getenv("AIPMC_INJECT") == "0" {
+		return body
+	}
 	goals, warnings, actionItems, blockHash := getCachedContext()
 	guidelines := loadGuidelines()
 
@@ -937,4 +942,12 @@ func injectOpenAI(body []byte, block string) []byte {
 	raw["messages"] = messages
 	b, _ := json.Marshal(raw)
 	return b
+}
+
+// injectSwitchState 返回 AIPMC_INJECT 开关状态，用于 BOOT 日志核验。
+func injectSwitchState() string {
+	if os.Getenv("AIPMC_INJECT") == "0" {
+		return "off"
+	}
+	return "on"
 }

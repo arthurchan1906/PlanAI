@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bytes"
 	"sort"
 	"strings"
 	"testing"
@@ -162,5 +163,21 @@ func TestBuildContextBlockFileAssocSubBudget(t *testing.T) {
 	}
 	if len(block) > maxInjectChars {
 		t.Fatalf("block %d exceeds cap %d", len(block), maxInjectChars)
+	}
+}
+
+func TestInjectSwitchDisabled(t *testing.T) {
+	// A/B 开关：AIPMC_INJECT=0 时必须原样透传，不触碰 DB。
+	body := []byte(`{"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"看下 proxy/discussion_dedup.go"}]}],"instructions":"You are a coding agent"}`)
+	t.Setenv("AIPMC_INJECT", "0")
+	if out := InjectSessionContext(body, "codex"); !bytes.Equal(out, body) {
+		t.Fatal("AIPMC_INJECT=0: body must pass through unchanged")
+	}
+	if injectSwitchState() != "off" {
+		t.Fatalf("injectSwitchState with AIPMC_INJECT=0 = %q, want off", injectSwitchState())
+	}
+	t.Setenv("AIPMC_INJECT", "1")
+	if injectSwitchState() != "on" {
+		t.Fatalf("injectSwitchState with AIPMC_INJECT=1 = %q, want on", injectSwitchState())
 	}
 }
