@@ -136,8 +136,8 @@ func (a *App) RunMCP() error {
 			}
 			return nil
 		},
-		func(query, source, sessionID, typeFilter, projectPath string, page, pageSize int) ([]map[string]any, int, error) {
-			return discussion.Search(a.AI(), query, source, sessionID, typeFilter, projectPath, page, pageSize)
+		func(query, source, sessionID, typeFilter, projectPath, since string, page, pageSize int) ([]map[string]any, int, error) {
+			return discussion.Search(a.AI(), query, source, sessionID, typeFilter, projectPath, since, page, pageSize)
 		},
 	).Run()
 }
@@ -147,7 +147,7 @@ func (a *App) SearchProjectContext(query string, limit int) map[string]any {
 }
 
 func (a *App) SearchDiscussions(query, source, sessionID, typeFilter, projectPath string, page, pageSize int) ([]map[string]any, int, error) {
-	return discussion.Search(a.AI(), query, source, sessionID, typeFilter, projectPath, page, pageSize)
+	return discussion.Search(a.AI(), query, source, sessionID, typeFilter, projectPath, "", page, pageSize)
 }
 
 func (a *App) EmbedDiscussions(batchSize int) (int, error) {

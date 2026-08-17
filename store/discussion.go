@@ -239,7 +239,8 @@ func RecentUserPrompts(sessionID, source string, limit int) ([]string, error) {
 }
 
 // ListRecentDiscussions returns the most recent N discussion entries, optionally filtered.
-func ListRecentDiscussions(source, typeFilter, sessionID, projectPath string, lastN int, cursor string) ([]map[string]any, error) {
+// since (ISO8601) restricts results to created_at >= since.
+func ListRecentDiscussions(source, typeFilter, sessionID, projectPath, since string, lastN int, cursor string) ([]map[string]any, error) {
 	if lastN <= 0 {
 		lastN = 10
 	}
@@ -258,6 +259,10 @@ func ListRecentDiscussions(source, typeFilter, sessionID, projectPath string, la
 	if sessionID != "" {
 		where += " AND session_id = ?"
 		args = append(args, sessionID)
+	}
+	if since != "" {
+		where += " AND created_at >= ?"
+		args = append(args, since)
 	}
 	if typeFilter != "" {
 		switch typeFilter {

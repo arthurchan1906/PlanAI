@@ -21,7 +21,7 @@ import (
 // SQLite's PRAGMA user_version. Every time the schema or migrations
 // change, bump this — connections with user_version >= this skip the
 // (expensive, write-lock-acquiring) EnsureSchema DDL entirely.
-const SCHEMA_VERSION = 2
+const SCHEMA_VERSION = 3
 
 // schemaUpToDate reports whether the database at d already has the
 // current schema version, so we can skip the DDL pass on hot paths.
@@ -357,6 +357,15 @@ func migrate(d *sql.DB) error {
 		if _, err := d.Exec("ALTER TABLE discussion_log ADD COLUMN source TEXT NOT NULL DEFAULT ''"); err != nil {
 			return fmt.Errorf("migration discussion_log.source: %w", err)
 		}
+	}
+	// B3 (2026-08-17): 时间窗/会话过滤索引 — created_at 排序与 session_id 过滤
+	// 是 read_discussions/search_discussions 的常用路径，无索引时按 created_at
+	// DESC 全表排序（#24 大表慢查询同源）。建表之后创建（migrate 内）。
+	if _, err := d.Exec("CREATE INDEX IF NOT EXISTS idx_discussion_log_created_at ON discussion_log(created_at)"); err != nil {
+		return fmt.Errorf("migration discussion_log.created_at index: %w", err)
+	}
+	if _, err := d.Exec("CREATE INDEX IF NOT EXISTS idx_discussion_log_session ON discussion_log(session_id)"); err != nil {
+		return fmt.Errorf("migration discussion_log.session_id index: %w", err)
 	}
 	if !ColumnExists(d, "meeting_rooms", "pm_typing") {
 		if _, err := d.Exec("ALTER TABLE meeting_rooms ADD COLUMN pm_typing INTEGER DEFAULT 0"); err != nil {

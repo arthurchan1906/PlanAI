@@ -95,7 +95,7 @@ func Embed(client *ai.Client, batchSize int) (int, error) {
 }
 
 // Search queries discussion_log with source/session/type filters, pagination, and optional keyword LIKE match.
-func Search(client *ai.Client, query, source, sessionID, typeFilter, projectPath string, page, pageSize int) ([]map[string]any, int, error) {
+func Search(client *ai.Client, query, source, sessionID, typeFilter, projectPath, since string, page, pageSize int) ([]map[string]any, int, error) {
 	start := time.Now()
 	db, err := openProjectDB(projectPath)
 	if err != nil {
@@ -135,6 +135,10 @@ func Search(client *ai.Client, query, source, sessionID, typeFilter, projectPath
 	if sessionID != "" {
 		where += " AND session_id = ?"
 		args = append(args, sessionID)
+	}
+	if since != "" {
+		where += " AND created_at >= ?"
+		args = append(args, since)
 	}
 	if query != "" {
 		terms := splitSearchTerms(query)

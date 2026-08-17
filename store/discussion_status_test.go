@@ -101,6 +101,36 @@ func TestReadDiscussionsSessionFilter(t *testing.T) {
 	}
 }
 
+// B3: search_discussions last_n 模式的 since 时间窗过滤必须生效。
+func TestListRecentDiscussionsSinceFilter(t *testing.T) {
+	setupDailyDB(t)
+	if _, err := ReadDiscussions(ReadDiscussionsOpts{LastN: 5}); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+
+	if _, err := LogDiscussion("sess-1", "user", "codex-cli", "时间窗测试消息", ""); err != nil {
+		t.Fatalf("log: %v", err)
+	}
+
+	// Future since → nothing qualifies.
+	rows, err := ListRecentDiscussions("", "", "", "", "2999-01-01T00:00:00", 10, "")
+	if err != nil {
+		t.Fatalf("ListRecentDiscussions(future since): %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("future since should return 0 rows, got %d", len(rows))
+	}
+
+	// Past since → the row qualifies.
+	rows, err = ListRecentDiscussions("", "", "", "", "2000-01-01T00:00:00", 10, "")
+	if err != nil {
+		t.Fatalf("ListRecentDiscussions(past since): %v", err)
+	}
+	if len(rows) == 0 {
+		t.Fatal("past since should return rows")
+	}
+}
+
 // Cross-project regression (审核 #1): ListActiveSessions(project_path=...) must
 // read "recent prompts" from the target project's DB, not the cwd project's.
 func TestListActiveSessionsCrossProjectPrompts(t *testing.T) {

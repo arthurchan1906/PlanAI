@@ -61,7 +61,7 @@ func TestSearchCJKRecall(t *testing.T) {
 
 	// "行为分析" must recall the non-contiguous row r1 ("行为测量分析")
 	// via 2-gram hits, and rank the exact-match row r2 first.
-	results, total, err := Search(nil, "行为分析", "", "", "", dir, 1, 10)
+	results, total, err := Search(nil, "行为分析", "", "", "", dir, "", 1, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestSearchCJKRecall(t *testing.T) {
 	}
 
 	// Plain 2-char query stays on the exact-substring path and still works.
-	results2, total2, err := Search(nil, "索引", "", "", "", dir, 1, 10)
+	results2, total2, err := Search(nil, "索引", "", "", "", dir, "", 1, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,11 +94,20 @@ func TestSearchCJKRecall(t *testing.T) {
 	}
 
 	// Non-existent query returns zero.
-	_, total3, err := Search(nil, "完全不存在的话题", "", "", "", dir, 1, 10)
+	_, total3, err := Search(nil, "完全不存在的话题", "", "", "", dir, "", 1, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if total3 != 0 {
 		t.Errorf("no-match query: total = %d, want 0", total3)
+	}
+
+	// since filter: only rows with created_at >= since qualify.
+	results4, total4, err := Search(nil, "行为分析", "", "", "", dir, "2026-08-14T10:01:00", 1, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total4 != 1 || results4[0]["id"] != "r2" {
+		t.Errorf("since filter: total=%d first=%v, want 1 / r2 (r1 is before the window)", total4, results4[0]["id"])
 	}
 }

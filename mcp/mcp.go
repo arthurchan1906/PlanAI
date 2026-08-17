@@ -112,7 +112,7 @@ type mcpServer struct {
 	searchFTS5        func(string, int) interface{}
 	searchLinear      func(string) interface{}
 	aiRerank          func(string, int, interface{}) interface{}
-	searchDiscussions func(string, string, string, string, string, int, int) ([]map[string]any, int, error)
+	searchDiscussions func(string, string, string, string, string, string, int, int) ([]map[string]any, int, error)
 }
 
 func NewServer(aiClient *ai.Client,
@@ -120,7 +120,7 @@ func NewServer(aiClient *ai.Client,
 	searchFTS5 func(string, int) interface{},
 	searchLinear func(string) interface{},
 	aiRerank func(string, int, interface{}) interface{},
-	searchDiscussions func(string, string, string, string, string, int, int) ([]map[string]any, int, error),
+	searchDiscussions func(string, string, string, string, string, string, int, int) ([]map[string]any, int, error),
 ) *mcpServer {
 	s := &mcpServer{
 		tools:             make(map[string]MCPTool),
@@ -2022,6 +2022,7 @@ func (s *mcpServer) handleSearchDiscussions(args map[string]interface{}) mcpTool
 	typeFilter := getStr(args, "type", "")
 	projectPath := getStr(args, "project_path", "")
 	mode := getStr(args, "mode", "matches")
+	since := getStr(args, "since", "")
 	limit := getInt(args, "limit", 10)
 	lastN := getInt(args, "last_n", 0)
 	cursor := getStr(args, "cursor", "")
@@ -2039,7 +2040,7 @@ func (s *mcpServer) handleSearchDiscussions(args map[string]interface{}) mcpTool
 	if lastN > 0 {
 		// Recent-N mode: fetch most recent N records
 		var err error
-		results, err = store.ListRecentDiscussions(source, typeFilter, sessionID, projectPath, lastN, cursor)
+		results, err = store.ListRecentDiscussions(source, typeFilter, sessionID, projectPath, since, lastN, cursor)
 		if err != nil {
 			return mcpToolResult{
 				Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("获取最近讨论失败: %v", err)}},
@@ -2050,7 +2051,7 @@ func (s *mcpServer) handleSearchDiscussions(args map[string]interface{}) mcpTool
 	} else {
 		// Keyword search mode (existing behavior)
 		var err error
-		results, total, err = s.searchDiscussions(query, source, sessionID, typeFilter, projectPath, 1, limit)
+		results, total, err = s.searchDiscussions(query, source, sessionID, typeFilter, projectPath, since, 1, limit)
 		if err != nil {
 			return mcpToolResult{
 				Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("搜索讨论失败: %v", err)}},
