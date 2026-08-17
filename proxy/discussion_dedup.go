@@ -25,7 +25,8 @@ import (
 //     HTML 转义、数字格式）原样保留 → 去重请求的 prefix cache 在替换点之前
 //     全部命中，不会从第一个 token 全 miss。
 //  3. 识别边界（漏洞 B）：值必须同时含 disc- 行首块与 AIPM 讨论工具专属
-//     header（"讨论记录:" / "搜索讨论历史"）才处理，sqlite3/grep 等输出
+//     header（"讨论记录" / "搜索讨论历史"，覆盖 read 与 search 三种形态）才处理，
+//     sqlite3/grep 等输出
 //     即使恰好含 disc- 行首格式也不误伤。
 //  4. 数据边界：只在转发层改写，绝不写回 discussion_log（保护 M0 对账）。
 
@@ -94,7 +95,7 @@ func isDiscussionResult(path []string, val string) bool {
 	if !strings.Contains(val, "disc-") {
 		return false
 	}
-	if !strings.Contains(val, "讨论记录:") && !strings.Contains(val, "搜索讨论历史") {
+	if !strings.Contains(val, "讨论记录") && !strings.Contains(val, "搜索讨论历史") {
 		return false
 	}
 	switch path[len(path)-1] {

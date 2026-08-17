@@ -193,3 +193,30 @@ func TestDedupeOpenAIChat(t *testing.T) {
 		t.Fatal("openai second pass must be no-op")
 	}
 }
+
+// 漏洞 C（Claude review 8/17）：search last_n 模式 header 是「最近 N 条讨论记录」
+// （无冒号），与 read 的「讨论记录: N 条」形态不同——去重必须覆盖全部三种形态。
+func TestDedupeSearchLastNHeader(t *testing.T) {
+	payload := map[string]any{
+		"model": "deepseek-v4-flash",
+		"messages": []any{
+			map[string]any{"role": "user", "content": "hi"},
+			map[string]any{"role": "tool", "tool_call_id": "tc_1", "content": "最近 2 条讨论记录\n\n" + blockA + blockB},
+			map[string]any{"role": "tool", "tool_call_id": "tc_2", "content": "最近 2 条讨论记录\n\n" + blockA + blockB},
+		},
+	}
+	body, _ := json.Marshal(payload)
+	out, blocks, _ := DedupeDiscussionContent(body, "opencode")
+	if blocks != 2 {
+		t.Fatalf("search last_n header form: blocks=%d, want 2", blocks)
+	}
+	var raw map[string]any
+	json.Unmarshal(out, &raw)
+	messages := raw["messages"].([]any)
+	if !strings.Contains(messages[2].(map[string]any)["content"].(string), "已在上文出现") {
+		t.Errorf("second tool content must be placeholder:\n%v", messages[2])
+	}
+	if _, blocks2, _ := DedupeDiscussionContent(out, "opencode"); blocks2 != 0 {
+		t.Fatal("second pass must be no-op")
+	}
+}
