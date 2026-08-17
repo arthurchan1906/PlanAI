@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -179,5 +180,36 @@ func TestBackfillCommitTask(t *testing.T) {
 	// Rebinding to a different task is rejected.
 	if _, err := BackfillCommitTask(dir, "commit-hook-1", "task-other", "hook title", nil); err != ErrCommitTaskConflict {
 		t.Fatalf("conflicting task must return ErrCommitTaskConflict, got %v", err)
+	}
+}
+
+// #24: ListBugs pagination — limit/offset 翻页必须生效（大结果集不再一次性全量）。
+func TestListBugsPagination(t *testing.T) {
+	setupDailyDB(t)
+	if _, err := ListBugs("", "", "", 5, 0); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		title := fmt.Sprintf("分页测试 bug %d", i)
+		if _, err := CreateBug("", title, "desc", "major", "open", "", "", "", "", "", ""); err != nil {
+			t.Fatalf("create bug %d: %v", i, err)
+		}
+	}
+	page1, err := ListBugs("", "", "", 2, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page1) != 2 {
+		t.Fatalf("page1 len = %d, want 2", len(page1))
+	}
+	page2, err := ListBugs("", "", "", 2, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page2) != 1 {
+		t.Fatalf("page2 len = %d, want 1", len(page2))
+	}
+	if page1[1]["id"] == page2[0]["id"] {
+		t.Error("offset page must not overlap page1")
 	}
 }

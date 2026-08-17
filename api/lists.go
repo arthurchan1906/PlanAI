@@ -24,7 +24,7 @@ func (s *Server) handleListRoutes(w http.ResponseWriter, method, path string, q 
 		plans, _ := store.ListPlans(q.Get("roadmap_id"), q.Get("status"))
 		web.SendJSON(w, map[string]any{"plans": plans})
 	case "bugs":
-		bugs, _ := store.ListBugs(q.Get("status"), q.Get("severity"), q.Get("commit_id"), 0)
+		bugs, _ := store.ListBugs(q.Get("status"), q.Get("severity"), q.Get("commit_id"), 0, 0)
 		web.SendJSON(w, map[string]any{"bugs": bugs})
 	case "decisions":
 		decs, _ := store.ListDecisions()

@@ -86,7 +86,7 @@ func (b *Bundle) loadBugs() {
 	if b.flags.bugs {
 		return
 	}
-	b.bugs, _ = store.ListBugs("", "", "", 0)
+	b.bugs, _ = store.ListBugs("", "", "", 0, 0)
 	b.flags.bugs = true
 }
 

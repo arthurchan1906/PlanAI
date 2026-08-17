@@ -242,7 +242,7 @@ func listCommits() listFn {
 	return func() ([]map[string]any, error) { return store.ListCommits("", "", "", "", 0) }
 }
 func listBugs() listFn {
-	return func() ([]map[string]any, error) { return store.ListBugs("", "", "", 0) }
+	return func() ([]map[string]any, error) { return store.ListBugs("", "", "", 0, 0) }
 }
 func listDecisions() listFn {
 	return func() ([]map[string]any, error) { return store.ListDecisions() }

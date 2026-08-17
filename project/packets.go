@@ -20,7 +20,7 @@ func minInt(a, b int) int {
 // StatusSnapshot returns high-level project counts for dashboard/API.
 func StatusSnapshot() map[string]any {
 	tasks, _ := store.ListTasks("", "")
-	bugs, _ := store.ListBugs("open", "", "", 0)
+	bugs, _ := store.ListBugs("open", "", "", 0, 0)
 	inProgress := 0
 	for _, t := range tasks {
 		if t.Status == "in_progress" {

@@ -934,7 +934,7 @@ func UpdatePlan(id string, payload map[string]any) (map[string]any, error) {
 // Bugs
 // ============================================================
 
-func ListBugs(status, severity, commitID string, limit int) ([]map[string]any, error) {
+func ListBugs(status, severity, commitID string, limit, offset int) ([]map[string]any, error) {
 	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
@@ -962,6 +962,10 @@ func ListBugs(status, severity, commitID string, limit int) ([]map[string]any, e
 	if limit > 0 {
 		q += " LIMIT ?"
 		args = append(args, limit)
+		if offset > 0 {
+			q += " OFFSET ?"
+			args = append(args, offset)
+		}
 	}
 	rows, err := db.Query(q, args...)
 	if err != nil {

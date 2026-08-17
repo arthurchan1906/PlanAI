@@ -263,6 +263,7 @@ func (s *mcpServer) registerTools() {
 				"status":   map[string]string{"type": "string", "description": "按状态过滤。可选值: open / in_progress / resolved / closed。推荐用 open 查看未解决的 bug"},
 				"severity": map[string]string{"type": "string", "description": "按严重级别过滤。可选值: critical / major / minor"},
 				"limit":    map[string]string{"type": "integer", "description": "返回数量上限，默认 20"},
+				"offset":   map[string]string{"type": "integer", "description": "分页偏移量，配合 limit 实现翻页。默认 0"},
 			},
 		},
 	}, s.handleListBugs)
@@ -1010,10 +1011,11 @@ func (s *mcpServer) handleListBugs(args map[string]interface{}) mcpToolResult {
 	status := getStr(args, "status", "")
 	severity := getStr(args, "severity", "")
 	limit := getInt(args, "limit", 20)
+	offset := getInt(args, "offset", 0)
 	if limit <= 0 {
 		limit = 20
 	}
-	bugs, err := store.ListBugs(status, severity, "", limit)
+	bugs, err := store.ListBugs(status, severity, "", limit, offset)
 	if err != nil {
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("查询 bugs 失败: %v", err)}}, IsError: true}
 	}

@@ -163,7 +163,7 @@ func dispatchPlan(subcmd string, args *cli.Args) {
 func dispatchBug(subcmd string, args *cli.Args) {
 	switch subcmd {
 	case "list":
-		b, _ := store.ListBugs(args.Str("status", ""), args.Str("severity", ""), args.Str("commit_id", ""), args.Int("limit", 0))
+		b, _ := store.ListBugs(args.Str("status", ""), args.Str("severity", ""), args.Str("commit_id", ""), args.Int("limit", 0), 0)
 		cli.PrintJSON(map[string]any{"bugs": b})
 	case "show":
 		b, _ := store.GetBug(args.Get("id"))
