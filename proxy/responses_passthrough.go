@@ -49,6 +49,7 @@ func handleResponsesPassthrough(w http.ResponseWriter, r *http.Request) {
 	}
 
 	agent := "codex"
+	sessionID := extractSessionID(body)
 	capID := startCapture(agent, r.Method, r.URL.Path, effectiveModelName, body, copyHeaders(r), nil)
 	startTime := time.Now()
 
@@ -114,7 +115,7 @@ func handleResponsesPassthrough(w http.ResponseWriter, r *http.Request) {
 		})
 		SetCaptureTokens(capID, in, out)
 		SetCaptureCacheTokens(capID, cacheHit, cacheCreate)
-		u.LogShared("LLM", "agent=codex model=%s in_tok=%d out_tok=%d cache_hit=%d cache_create=%d injected=%s lat=%.1fs", effectiveModelName, in, out, cacheHit, cacheCreate, injectedFlag(r), time.Since(startTime).Seconds())
+		u.LogShared("LLM", "agent=codex session=%s model=%s in_tok=%d out_tok=%d cache_hit=%d cache_create=%d injected=%s lat=%.1fs", sessionID, effectiveModelName, in, out, cacheHit, cacheCreate, injectedFlag(r), time.Since(startTime).Seconds())
 	}
 }
 
@@ -131,6 +132,7 @@ func isStreamingResponses(body []byte) bool {
 
 // handleResponsesPassthroughStream 字节级 SSE 透传 streaming 响应。
 func handleResponsesPassthroughStream(w http.ResponseWriter, r *http.Request, body []byte, targetURL, apiKey, capID string, model string, startTime time.Time, agent string) {
+	sessionID := extractSessionID(body)
 	proxyReq, err := http.NewRequest(r.Method, targetURL, bytes.NewReader(body))
 	if err != nil {
 		finishCapture(capID, http.StatusInternalServerError, time.Since(startTime), nil, err.Error(), "")
@@ -188,6 +190,6 @@ func handleResponsesPassthroughStream(w http.ResponseWriter, r *http.Request, bo
 		})
 		SetCaptureTokens(capID, in, out)
 		SetCaptureCacheTokens(capID, cacheHit, cacheCreate)
-		u.LogShared("LLM", "agent=codex model=%s in_tok=%d out_tok=%d cache_hit=%d cache_create=%d injected=%s lat=%.1fs", model, in, out, cacheHit, cacheCreate, injectedFlag(r), time.Since(startTime).Seconds())
+		u.LogShared("LLM", "agent=codex session=%s model=%s in_tok=%d out_tok=%d cache_hit=%d cache_create=%d injected=%s lat=%.1fs", sessionID, model, in, out, cacheHit, cacheCreate, injectedFlag(r), time.Since(startTime).Seconds())
 	}
 }

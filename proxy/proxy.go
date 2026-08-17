@@ -925,6 +925,7 @@ func handleUnifiedNonStream(w http.ResponseWriter, r *http.Request, adapter Prot
 	rawBody, _ := io.ReadAll(r.Body)
 	r.Body.Close()
 	r.Body = io.NopCloser(strings.NewReader(string(rawBody)))
+	sessionID := extractSessionID(rawBody)
 
 	req, err := adapter.ParseRequest(r)
 	if err != nil {
@@ -995,7 +996,7 @@ func handleUnifiedNonStream(w http.ResponseWriter, r *http.Request, adapter Prot
 		SetCaptureCacheTokens(capID, openaiResp.Usage.CacheHitTokens, 0)
 	}
 	// Log LLM request/response to shared log (always, 0 when usage is nil)
-	u.LogShared("LLM", "agent=%s model=%s in_tok=%d out_tok=%d injected=%s lat=%.1fs", agent, model, inTok, outTok, injectedFlag(r), time.Since(startTime).Seconds())
+	u.LogShared("LLM", "agent=%s session=%s model=%s in_tok=%d out_tok=%d injected=%s lat=%.1fs", agent, sessionID, model, inTok, outTok, injectedFlag(r), time.Since(startTime).Seconds())
 
 }
 
@@ -1057,6 +1058,7 @@ func handleUnifiedStream(w http.ResponseWriter, r *http.Request, adapter Protoco
 	rawBody, _ := io.ReadAll(r.Body)
 	r.Body.Close()
 	r.Body = io.NopCloser(strings.NewReader(string(rawBody)))
+	sessionID := extractSessionID(rawBody)
 
 	req, err := adapter.ParseRequest(r)
 	if err != nil {
@@ -1160,7 +1162,7 @@ func handleUnifiedStream(w http.ResponseWriter, r *http.Request, adapter Protoco
 		SetCaptureCacheTokens(capID, streamCacheHitTokens, streamCacheCreationTokens)
 	}
 	// Log LLM request/response to shared log
-	u.LogShared("LLM", "agent=%s model=%s in_tok=%d out_tok=%d cache_hit=%d injected=%s lat=%.1fs", agent, model, streamPromptTokens, streamCompletionTokens, streamCacheHitTokens, injectedFlag(r), time.Since(startTime).Seconds())
+	u.LogShared("LLM", "agent=%s session=%s model=%s in_tok=%d out_tok=%d cache_hit=%d injected=%s lat=%.1fs", agent, sessionID, model, streamPromptTokens, streamCompletionTokens, streamCacheHitTokens, injectedFlag(r), time.Since(startTime).Seconds())
 
 }
 
@@ -1209,6 +1211,7 @@ func handleOpenAIChatPassthrough(w http.ResponseWriter, r *http.Request) {
 	model, _ := reqBody["model"].(string)
 	stream, _ := reqBody["stream"].(bool)
 	agent := detectAgent(r.URL.Path)
+	sessionID := extractSessionID(rawBody)
 
 	// ── Capture (for Proxy Inspector) ──
 	capID := startCapture(agent, r.Method, r.URL.Path, model, rawBody, copyHeaders(r), nil)
@@ -1240,7 +1243,7 @@ func handleOpenAIChatPassthrough(w http.ResponseWriter, r *http.Request) {
 			SetCaptureTokens(capID, oai.Usage.PromptTokens, oai.Usage.CompletionTokens)
 			SetCaptureCacheTokens(capID, oai.Usage.CacheHitTokens, 0)
 		}
-		u.LogShared("LLM", "agent=%s model=%s in_tok=%d out_tok=%d injected=%s lat=%.1fs", agent, model, oaiInTok, oaiOutTok, injectedFlag(r), time.Since(startTime).Seconds())
+		u.LogShared("LLM", "agent=%s session=%s model=%s in_tok=%d out_tok=%d injected=%s lat=%.1fs", agent, sessionID, model, oaiInTok, oaiOutTok, injectedFlag(r), time.Since(startTime).Seconds())
 
 		finishCapture(capID, http.StatusOK, time.Since(startTime), nil, string(respBytes), "")
 
@@ -1308,7 +1311,7 @@ func handleOpenAIChatPassthrough(w http.ResponseWriter, r *http.Request) {
 		SetCaptureCacheTokens(capID, lastUsage.CacheHitTokens, 0)
 	}
 	// Log LLM request/response to shared log (always, 0 when usage is nil)
-	u.LogShared("LLM", "agent=%s model=%s in_tok=%d out_tok=%d injected=%s lat=%.1fs", agent, model, inTok, outTok, injectedFlag(r), time.Since(startTime).Seconds())
+	u.LogShared("LLM", "agent=%s session=%s model=%s in_tok=%d out_tok=%d injected=%s lat=%.1fs", agent, sessionID, model, inTok, outTok, injectedFlag(r), time.Since(startTime).Seconds())
 
 	finishCapture(capID, http.StatusOK, time.Since(startTime), nil, sseBuf.String(), sseBuf.String())
 }

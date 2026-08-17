@@ -125,10 +125,10 @@ func InjectSessionContext(body []byte, agent string) []byte {
 	reqID := fmt.Sprintf("r%d-%d", os.Getpid(), atomic.AddUint64(&injectReqSeq, 1))
 
 	if len(goals) == 0 && len(fileAssoc) == 0 && len(guidelines) > 0 {
-		u.LogShared("INJECT", "inject agent=%s source=guidelines_only", agent)
+		u.LogShared("INJECT", "inject agent=%s session=%s req=%s source=guidelines_only", agent, sessionID, reqID)
 	}
 	if len(goals) == 0 && len(fileAssoc) == 0 && len(guidelines) == 0 {
-		u.LogShared("INJECT", "skip agent=%s reason=no_summary_data", agent)
+		u.LogShared("INJECT", "skip agent=%s session=%s req=%s reason=no_summary_data", agent, sessionID, reqID)
 		return body
 	}
 
@@ -139,7 +139,7 @@ func InjectSessionContext(body []byte, agent string) []byte {
 	block, sc := buildContextBlock(goals, warnings, actionItems, fileAssoc, guidelines)
 
 	// Content-hash based dedup: only inject if content changed since last injection
-	if !shouldInject(agent, fullHash) {
+	if !shouldInject(agent, sessionID, reqID, fullHash) {
 		return body
 	}
 
@@ -156,14 +156,14 @@ func InjectSessionContext(body []byte, agent string) []byte {
 	return result
 }
 
-func shouldInject(agent, contentHash string) bool {
+func shouldInject(agent, sessionID, reqID, contentHash string) bool {
 	v, ok := injectTracker.Load(agent)
 	if !ok {
 		return true
 	}
 	st := v.(injectState)
 	if st.contentHash == contentHash {
-		u.LogShared("INJECT", "skip agent=%s reason=same_content hash=%s", agent, contentHash[:8])
+		u.LogShared("INJECT", "skip agent=%s session=%s req=%s reason=same_content hash=%s", agent, sessionID, reqID, contentHash[:8])
 		return false
 	}
 	return true

@@ -54,6 +54,7 @@ func handleAnthropicPassthrough(w http.ResponseWriter, r *http.Request) {
 
 	// 5. Start capture recording
 	agent := "claude"
+	sessionID := extractSessionID(body)
 	capID := startCapture(agent, r.Method, r.URL.Path, effectiveModelName, body, copyHeaders(r), nil)
 	startTime := time.Now()
 
@@ -140,6 +141,6 @@ func handleAnthropicPassthrough(w http.ResponseWriter, r *http.Request) {
 		SetCaptureTokens(capID, totalPrompt, outputT)
 		SetCaptureCacheTokens(capID, cacheHit, cacheCreate)
 		// Log LLM request/response to shared log
-		u.LogShared("LLM", "agent=claude model=%s in_tok=%d out_tok=%d cache_hit=%d cache_create=%d injected=%s lat=%.1fs", effectiveModelName, inputT+cacheHit, outputT, cacheHit, cacheCreate, injectedFlag(r), time.Since(startTime).Seconds())
+		u.LogShared("LLM", "agent=claude session=%s model=%s in_tok=%d out_tok=%d cache_hit=%d cache_create=%d injected=%s lat=%.1fs", sessionID, effectiveModelName, inputT+cacheHit, outputT, cacheHit, cacheCreate, injectedFlag(r), time.Since(startTime).Seconds())
 	}
 }
