@@ -162,7 +162,11 @@ func Search(client *ai.Client, query, source, sessionID, typeFilter, projectPath
 				// placeholders are not duplicated in WHERE/ORDER BY.
 				fromClause = "FROM (SELECT *, rowid AS _rid, (" + score + ") AS _score FROM discussion_log) AS _t"
 				where += " AND _score >= 2"
-				args = append(args, likeArgs...)
+				// The LIKE placeholders live in the FROM clause (inside the
+				// CTE), which precedes the WHERE clause in the SQL text, so
+				// they must bind first — prepend them to args, before the
+				// source/session/since parameters appended earlier.
+				args = append(append([]any{}, likeArgs...), args...)
 				orderBy = "ORDER BY _score DESC, created_at DESC, _rid DESC"
 			} else {
 				where += " AND content LIKE ?"

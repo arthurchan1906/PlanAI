@@ -146,3 +146,70 @@ func TestSearchCJKRecall(t *testing.T) {
 		t.Errorf("since filter: total=%d first=%v, want 1 / r2 (r1 is before the window)", total4, results4[0]["id"])
 	}
 }
+
+// TestSearchCJKWithFilters guards the parameter binding order of the CJK
+// branch: its LIKE placeholders live inside the FROM-clause CTE, which
+// precedes the WHERE clause (source/session/since) in the SQL text. If the
+// args order does not match, filters bind to LIKE values and queries
+// return wrong (often empty) results. Regression for the mismatch found
+// while reviewing B3.
+func TestSearchCJKWithFilters(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, ".pmai", "data", "pmai.db")
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dbPath, nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	db, err := pmdb.OpenProject(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	insert := func(id, sid, source, content string) {
+		t.Helper()
+		if _, err := db.Exec(`INSERT INTO discussion_log (id, session_id, role, source, content, created_at) VALUES (?, ?, 'user', ?, ?, ?)`,
+			id, sid, source, content, "2026-08-14T10:00:00"); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+	}
+	insert("r1", "s1", "codex-cli", "讨论 agent 行为测量分析工具体系")
+	insert("r2", "s1", "claude-code", "行为分析方案收敛")
+
+	// source filter + CJK query: only codex-cli row r1.
+	results, total, err := Search(nil, "行为分析", "codex-cli", "", "", dir, "", 1, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || results[0]["id"] != "r1" {
+		t.Errorf("source filter + CJK: total=%d first=%v, want 1 / r1", total, results[0]["id"])
+	}
+
+	// session filter + CJK query: both rows.
+	_, total2, err := Search(nil, "行为分析", "", "s1", "", dir, "", 1, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total2 != 2 {
+		t.Errorf("session filter + CJK: total=%d, want 2", total2)
+	}
+
+	// since + source together: r1 is at 10:00, window opens 10:00:00.
+	results4, total4, err := Search(nil, "行为分析", "codex-cli", "", "", dir, "2026-08-14T10:00:00", 1, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total4 != 1 || results4[0]["id"] != "r1" {
+		t.Errorf("since+source + CJK: total=%d first=%v, want 1 / r1", total4, results4[0]["id"])
+	}
+
+	// since excluding everything: r2 at 10:00 is >= 10:01? No — empty.
+	_, total5, err := Search(nil, "行为分析", "", "", "", dir, "2026-08-14T10:01:00", 1, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total5 != 0 {
+		t.Errorf("since-excluding + CJK: total=%d, want 0 (both rows before 10:01)", total5)
+	}
+}
