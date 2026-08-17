@@ -109,6 +109,8 @@ func Search(client *ai.Client, query, source, sessionID, typeFilter, projectPath
 	}
 	var total int
 	var out []map[string]any
+	fromClause := "FROM discussion_log"
+	orderBy := "ORDER BY created_at DESC, rowid DESC"
 
 	where := "WHERE 1=1"
 	var args []any
@@ -123,8 +125,29 @@ func Search(client *ai.Client, query, source, sessionID, typeFilter, projectPath
 	if query != "" {
 		terms := splitSearchTerms(query)
 		if len(terms) <= 1 {
-			where += " AND content LIKE ?"
-			args = append(args, "%"+query+"%")
+			term := terms[0]
+			grams := cjkBigrams(term)
+			if len(grams) >= 2 {
+				// CJK recall boost: exact substring match scores 2, each
+				// overlapping 2-gram hit scores 1. Rows with score >= 2
+				// qualify (exact match, or >=2 of the query's 2-grams),
+				// ranked by score so exact matches lead.
+				score := "CASE WHEN content LIKE ? THEN 2 ELSE 0 END"
+				likeArgs := []any{"%" + term + "%"}
+				for _, g := range grams {
+					score += " + CASE WHEN content LIKE ? THEN 1 ELSE 0 END"
+					likeArgs = append(likeArgs, "%"+g+"%")
+				}
+				// Evaluate score exactly once via a CTE so the parameter
+				// placeholders are not duplicated in WHERE/ORDER BY.
+				fromClause = "FROM (SELECT *, rowid AS _rid, (" + score + ") AS _score FROM discussion_log) AS _t"
+				where += " AND _score >= 2"
+				args = append(args, likeArgs...)
+				orderBy = "ORDER BY _score DESC, created_at DESC, _rid DESC"
+			} else {
+				where += " AND content LIKE ?"
+				args = append(args, "%"+term+"%")
+			}
 		} else {
 			var clauses []string
 			for _, t := range terms {
@@ -142,10 +165,10 @@ func Search(client *ai.Client, query, source, sessionID, typeFilter, projectPath
 	if typeFilter != "" {
 		where += " AND (" + typeFilterSQL(typeFilter) + ")"
 	}
-	db.QueryRow("SELECT COUNT(*) FROM discussion_log "+where, args...).Scan(&total)
+	db.QueryRow("SELECT COUNT(*) "+fromClause+" "+where, args...).Scan(&total)
 	offset := (page - 1) * pageSize
 	selectArgs := append(args, pageSize, offset)
-	rows, err := db.Query("SELECT id, session_id, role, source, content, metadata, created_at FROM discussion_log "+where+" ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?", selectArgs...)
+	rows, err := db.Query("SELECT id, session_id, role, source, content, metadata, created_at "+fromClause+" "+where+" "+orderBy+" LIMIT ? OFFSET ?", selectArgs...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -165,6 +188,35 @@ func Search(client *ai.Client, query, source, sessionID, typeFilter, projectPath
 // Uses whitespace as delimiter; supports both CJK and ASCII text.
 func splitSearchTerms(query string) []string {
 	return strings.Fields(query)
+}
+
+// cjkBigrams extracts overlapping 2-character runs from consecutive CJK
+// runs in s. For "行为分析" it returns [行为 为分 分析], enabling recall of
+// non-contiguous matches like "行为测量分析" (hits 行为 + 分析) that a plain
+// LIKE '%行为分析%' would miss.
+func cjkBigrams(s string) []string {
+	runes := []rune(s)
+	var grams []string
+	i := 0
+	for i < len(runes) {
+		if isCJK(runes[i]) {
+			j := i
+			for j < len(runes) && isCJK(runes[j]) {
+				j++
+			}
+			for k := i; k+1 < j; k++ {
+				grams = append(grams, string(runes[k:k+2]))
+			}
+			i = j
+		} else {
+			i++
+		}
+	}
+	return grams
+}
+
+func isCJK(r rune) bool {
+	return (r >= 0x4E00 && r <= 0x9FFF) || (r >= 0x3400 && r <= 0x4DBF)
 }
 
 func typeFilterSQL(typeFilter string) string {
