@@ -1994,6 +1994,11 @@ func (s *mcpServer) handleReadDiscussions(args map[string]interface{}) mcpToolRe
 	since := getStr(args, "since", "")
 	lastN := getInt(args, "last_n", 0)
 	cursor := getStr(args, "cursor", "")
+	if lastN <= 0 {
+		// store 层默认 15；此处规范化让日志显示实际生效值（8/17 补录）。
+		lastN = 15
+		args["last_n"] = lastN
+	}
 	projectPath := getStr(args, "project_path", "")
 	full := false
 	if v, ok := args["full"].(bool); ok {
@@ -2094,6 +2099,8 @@ func (s *mcpServer) handleSearchDiscussions(args map[string]interface{}) mcpTool
 			// agent 仍会扫全历史，「无时间窗盲区」没有真正消失。与
 			// list_sessions 的默认窗口哲学对齐，keyword 搜索默认近 30 天。
 			since = defaultSearchWindow(time.Now())
+			// 写回 args，让 mcpLogSummary 记录生效窗口（8/17 补录）。
+			args["since"] = since
 		}
 		var err error
 		results, total, err = s.searchDiscussions(query, source, sessionID, typeFilter, projectPath, since, 1, limit)
@@ -2683,7 +2690,18 @@ func (s *mcpServer) handleToolsCall(msg *jsonrpcMessage) {
 		// P3: record MCP error as event for next INJECT correction hint
 		recordMCPError(call.Name, src, call.Arguments, result)
 	}
-	u.LogShared("MCP", "tool=%s status=%s src=%s name=%s | %s", call.Name, status, src, name, mcpLogSummary(call.Name, call.Arguments))
+	summary := mcpLogSummary(call.Name, call.Arguments)
+	if rc, ok := result.RelatedContext.(map[string]interface{}); ok {
+		if n, ok := rc["count"]; ok {
+			switch v := n.(type) {
+			case int:
+				summary += fmt.Sprintf(" n=%d", v)
+			case float64:
+				summary += fmt.Sprintf(" n=%d", int(v))
+			}
+		}
+	}
+	u.LogShared("MCP", "tool=%s status=%s src=%s name=%s | %s", call.Name, status, src, name, summary)
 
 	s.sendResult(msg.ID, result)
 }
@@ -2811,9 +2829,20 @@ func mcpLogSummary(tool string, args map[string]interface{}) string {
 	case "aipm_update_task_status":
 		return fmt.Sprintf("task=%s status=%s", strArg(args, "task_id"), strArg(args, "status"))
 	case "aipm_search_context", "aipm_smart_search", "aipm_search_discussions":
-		return fmt.Sprintf("q=%s", truncArg(args, "query", 50))
+		s := "q=" + truncArg(args, "query", 50)
+		if tool == "aipm_search_discussions" {
+			// 8/17 补录：keyword 模式显示生效 since（handler 已写回默认窗），
+			// last_n 模式显示 last_n。
+			s += fmt.Sprintf(" since=%s last_n=%d", strArg(args, "since"), intArg(args, "last_n", 0))
+		}
+		return s
 	case "aipm_read_discussions":
-		return fmt.Sprintf("src=%s last_n=%s", strArg(args, "source"), strArg(args, "last_n"))
+		// 8/17 补录：cursor 增量模式是否被使用（去重方案的可观测性前提）。
+		c := strArg(args, "cursor")
+		if len(c) > 12 {
+			c = c[:12] + "..."
+		}
+		return fmt.Sprintf("src=%s last_n=%d since=%s cursor=%s", strArg(args, "source"), intArg(args, "last_n", 15), strArg(args, "since"), c)
 	case "aipm_link_entities":
 		return fmt.Sprintf("%s.%s -> %s.%s", strArg(args, "source_type"), strArg(args, "source_id"), strArg(args, "target_type"), strArg(args, "target_id"))
 	case "aipm_record_decision":
@@ -2833,6 +2862,16 @@ func strArg(args map[string]interface{}, key string) string {
 		return "-"
 	}
 	return v
+}
+
+func intArg(args map[string]interface{}, key string, def int) int {
+	switch v := args[key].(type) {
+	case int:
+		return v
+	case float64:
+		return int(v)
+	}
+	return def
 }
 
 func truncArg(args map[string]interface{}, key string, max int) string {

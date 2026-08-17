@@ -191,3 +191,27 @@ func TestDefaultSearchWindow(t *testing.T) {
 		t.Errorf("defaultSearchWindow output must be ISO parseable: %v", err)
 	}
 }
+
+// 8/17 补录：read/search 日志需包含 cursor/last_n/since，供去重方案
+// 观测真实重复率（Claude 讨论共识第一步）。
+func TestMCPLogSummaryDiscussionFields(t *testing.T) {
+	// read: 未传 cursor → cursor=-；last_n 生效值由 handler 写回 args。
+	readArgs := map[string]interface{}{"source": "claude-code", "last_n": 15, "since": ""}
+	got := mcpLogSummary("aipm_read_discussions", readArgs)
+	for _, want := range []string{"src=claude-code", "last_n=15", "cursor=-"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("read summary %q must contain %q", got, want)
+		}
+	}
+	// read: 传 cursor → 显示截断后的 cursor。
+	got2 := mcpLogSummary("aipm_read_discussions", map[string]interface{}{"cursor": "disc-20260817-130000-abcdef"})
+	if !strings.Contains(got2, "cursor=disc-2026081...") {
+		t.Errorf("cursor must be shown truncated, got %q", got2)
+	}
+	// search: 默认窗口由 handler 写回 args → since 显示生效值。
+	searchArgs := map[string]interface{}{"query": "行为分析", "since": "2026-07-18T12:00:00"}
+	got3 := mcpLogSummary("aipm_search_discussions", searchArgs)
+	if !strings.Contains(got3, "since=2026-07-18T12:00:00") {
+		t.Errorf("search summary must show effective since, got %q", got3)
+	}
+}
