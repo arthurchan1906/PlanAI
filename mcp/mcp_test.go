@@ -214,4 +214,12 @@ func TestMCPLogSummaryDiscussionFields(t *testing.T) {
 	if !strings.Contains(got3, "since=2026-07-18T12:00:00") {
 		t.Errorf("search summary must show effective since, got %q", got3)
 	}
+	// search: query 模式显示 limit，last_n 模式显示 last_n（Claude review 8/17）。
+	if !strings.Contains(got3, "limit=10") {
+		t.Errorf("query-mode search summary must show limit, got %q", got3)
+	}
+	got4 := mcpLogSummary("aipm_search_discussions", map[string]interface{}{"last_n": 5})
+	if !strings.Contains(got4, "last_n=5") {
+		t.Errorf("last_n-mode search summary must show last_n, got %q", got4)
+	}
 }

@@ -2177,8 +2177,10 @@ func (s *mcpServer) handleSearchDiscussions(args map[string]interface{}) mcpTool
 	}
 
 	return mcpToolResult{
-		Content:        []mcpContent{{Type: "text", Text: b.String()}},
-		RelatedContext: map[string]interface{}{"results": results, "total": total, "mode": mode},
+		Content: []mcpContent{{Type: "text", Text: b.String()}},
+		// count=实际返回条数：让 [MCP] 日志 n= 提取生效（Claude review 8/17，
+		// read 已有 count，search 原本只有 total 导致 n= 永不出现）。
+		RelatedContext: map[string]interface{}{"results": results, "total": total, "count": len(results), "mode": mode},
 		Reflection:     reflection,
 	}
 }
@@ -2832,8 +2834,14 @@ func mcpLogSummary(tool string, args map[string]interface{}) string {
 		s := "q=" + truncArg(args, "query", 50)
 		if tool == "aipm_search_discussions" {
 			// 8/17 补录：keyword 模式显示生效 since（handler 已写回默认窗），
-			// last_n 模式显示 last_n。
-			s += fmt.Sprintf(" since=%s last_n=%d", strArg(args, "since"), intArg(args, "last_n", 0))
+			// last_n 模式显示 last_n，query 模式显示 limit（Claude review 8/17
+			// 小瑕疵：query 模式恒显示 last_n=0 有误导）。
+			s += fmt.Sprintf(" since=%s", strArg(args, "since"))
+			if ln := intArg(args, "last_n", 0); ln > 0 {
+				s += fmt.Sprintf(" last_n=%d", ln)
+			} else {
+				s += fmt.Sprintf(" limit=%d", intArg(args, "limit", 10))
+			}
 		}
 		return s
 	case "aipm_read_discussions":
