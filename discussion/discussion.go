@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"aipmc/ai"
 	pmdb "aipmc/db"
@@ -95,6 +96,7 @@ func Embed(client *ai.Client, batchSize int) (int, error) {
 
 // Search queries discussion_log with source/session/type filters, pagination, and optional keyword LIKE match.
 func Search(client *ai.Client, query, source, sessionID, typeFilter, projectPath string, page, pageSize int) ([]map[string]any, int, error) {
+	start := time.Now()
 	db, err := openProjectDB(projectPath)
 	if err != nil {
 		return nil, 0, err
@@ -109,6 +111,18 @@ func Search(client *ai.Client, query, source, sessionID, typeFilter, projectPath
 	}
 	var total int
 	var out []map[string]any
+	mode := "plain_like"
+	gramCount := 0
+	defer func() {
+		// Key log for later verification of recall behaviour: which search
+		// mode ran, how many CJK 2-grams were used, and how many rows matched.
+		q := []rune(query)
+		if len(q) > 80 {
+			q = q[:80]
+		}
+		u.LogShared("DISC", "search query=%q mode=%s terms=%d grams=%d total=%d took=%s",
+			string(q), mode, len(strings.Fields(query)), gramCount, total, time.Since(start).Round(time.Millisecond))
+	}()
 	fromClause := "FROM discussion_log"
 	orderBy := "ORDER BY created_at DESC, rowid DESC"
 
@@ -128,6 +142,8 @@ func Search(client *ai.Client, query, source, sessionID, typeFilter, projectPath
 			term := terms[0]
 			grams := cjkBigrams(term)
 			if len(grams) >= 2 {
+				mode = "cjk_boost"
+				gramCount = len(grams)
 				// CJK recall boost: exact substring match scores 2, each
 				// overlapping 2-gram hit scores 1. Rows with score >= 2
 				// qualify (exact match, or >=2 of the query's 2-grams),
@@ -149,6 +165,7 @@ func Search(client *ai.Client, query, source, sessionID, typeFilter, projectPath
 				args = append(args, "%"+term+"%")
 			}
 		} else {
+			mode = "multi_term"
 			var clauses []string
 			for _, t := range terms {
 				if t == "" {
