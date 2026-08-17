@@ -213,3 +213,42 @@ func TestSearchCJKWithFilters(t *testing.T) {
 		t.Errorf("since-excluding + CJK: total=%d, want 0 (both rows before 10:01)", total5)
 	}
 }
+
+// Precision guard: exact-substring rows must rank ahead of bigram-only noise
+// rows (e.g. "行为" and "分析" appearing apart). Regression from Claude review.
+func TestSearchCJKExactRanksFirst(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, ".pmai", "data", "pmai.db")
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dbPath, nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	db, err := pmdb.OpenProject(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	insert := func(id, content string) {
+		t.Helper()
+		if _, err := db.Exec(`INSERT INTO discussion_log (id, session_id, role, source, content, created_at) VALUES (?, 's1', 'user', 'codex-cli', ?, ?)`,
+			id, content, "2026-08-14T10:00:00"); err != nil {
+			t.Fatalf("insert %s: %v", id, err)
+		}
+	}
+	insert("r_exact", "行为分析方案收敛")
+	insert("r_noise", "行为特征在别处描述，这里单独分析数据趋势")
+
+	results, total, err := Search(nil, "行为分析", "", "", "", dir, "", 1, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 2 {
+		t.Fatalf("total = %d, want 2 (recall kept)", total)
+	}
+	if len(results) < 2 || results[0]["id"] != "r_exact" {
+		t.Errorf("exact row must rank first, got %v (ids: %v, %v)", results[0]["id"],
+			results[0]["id"], results[1]["id"])
+	}
+}

@@ -167,7 +167,15 @@ func Search(client *ai.Client, query, source, sessionID, typeFilter, projectPath
 				// they must bind first — prepend them to args, before the
 				// source/session/since parameters appended earlier.
 				args = append(append([]any{}, likeArgs...), args...)
-				orderBy = "ORDER BY _score DESC, created_at DESC, _rid DESC"
+				// Precision guard (Claude review, 8/17): bigram-only rows
+				// (e.g. "行为" and "分析" appearing apart) are noise — put
+				// exact-substring rows first via a boolean sort key, so the
+				// default limit shows precise hits while recall is kept.
+				exactFlag := "(CASE WHEN content LIKE ? THEN 1 ELSE 0 END)"
+				// The exact-flag placeholder sits in ORDER BY, after the
+				// WHERE-clause filters and before LIMIT/OFFSET.
+				args = append(args, "%"+term+"%")
+				orderBy = "ORDER BY " + exactFlag + " DESC, _score DESC, created_at DESC, _rid DESC"
 			} else {
 				where += " AND content LIKE ?"
 				args = append(args, "%"+term+"%")
