@@ -913,6 +913,9 @@ func (s *mcpServer) handleGetCommit(args map[string]interface{}) mcpToolResult {
 	}
 	commit, err := store.GetCommit(id)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("未找到该 commit（commit_id=%s）。", id)}}, IsError: true}
+		}
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("查询 commit 失败: %v", err)}}, IsError: true}
 	}
 	text := fmt.Sprintf("Commit: %s\n标题: %s\n状态: %s | review: %s | test: %s\nTask: %s\n文件: %s",
@@ -1031,11 +1034,25 @@ func (s *mcpServer) handleGetDecision(args map[string]interface{}) mcpToolResult
 	}
 	decision, err := store.GetDecision(id)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("未找到该 decision（decision_id=%s）。", id)}}, IsError: true}
+		}
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("查询 decision 失败: %v", err)}}, IsError: true}
 	}
-	text := fmt.Sprintf("Decision: %s\n状态: %s | 日期: %s\n背景: %s\n决策: %s",
-		decision["title"], decision["status"], decision["date"], decision["background"], decision["decision_text"])
+	text := formatDecisionText(decision)
 	return mcpToolResult{Content: []mcpContent{{Type: "text", Text: text}}, RelatedContext: decision}
+}
+
+// formatDecisionText renders a decision row for MCP output. ScanDecisionRow
+// maps the decision_text column to the "decision" key; use a safe string
+// getter so a missing key renders "" instead of Go's %!s(<nil>).
+func formatDecisionText(d map[string]any) string {
+	return fmt.Sprintf("Decision: %s\n状态: %s | 日期: %s\n背景: %s\n决策: %s",
+		getStr(d, "title", ""),
+		getStr(d, "status", ""),
+		getStr(d, "date", ""),
+		getStr(d, "background", ""),
+		getStr(d, "decision", ""))
 }
 
 func (s *mcpServer) handleListDecisions(args map[string]interface{}) mcpToolResult {

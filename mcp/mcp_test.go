@@ -30,6 +30,50 @@ func TestClassifyMCPErr(t *testing.T) {
 	}
 }
 
+func TestFormatDecisionText(t *testing.T) {
+	cases := []struct {
+		name string
+		d    map[string]any
+		want string
+	}{
+		{
+			name: "scan style keys (decision_text mapped to decision)",
+			d: map[string]any{
+				"title":      "Agent 行为分析以数据反馈闭环为准绳",
+				"status":     "accepted",
+				"date":       "2026-08-14",
+				"background": "8/14 三方讨论实证",
+				"decision":   "每个改动绑定观测指标",
+			},
+			want: "Decision: Agent 行为分析以数据反馈闭环为准绳\n状态: accepted | 日期: 2026-08-14\n背景: 8/14 三方讨论实证\n决策: 每个改动绑定观测指标",
+		},
+		{
+			name: "missing decision key must not render %!s(<nil>)",
+			d: map[string]any{
+				"title":      "t",
+				"status":     "proposed",
+				"date":       "2026-06-24",
+				"background": "b",
+			},
+			want: "Decision: t\n状态: proposed | 日期: 2026-06-24\n背景: b\n决策: ",
+		},
+		{
+			name: "empty map",
+			d:    map[string]any{},
+			want: "Decision: \n状态:  | 日期: \n背景: \n决策: ",
+		},
+	}
+	for _, c := range cases {
+		got := formatDecisionText(c.d)
+		if got != c.want {
+			t.Errorf("%s: formatDecisionText = %q, want %q", c.name, got, c.want)
+		}
+		if strings.Contains(got, "%!s") {
+			t.Errorf("%s: output contains Go fmt placeholder %q", c.name, got)
+		}
+	}
+}
+
 func TestTruncArgRuneSafe(t *testing.T) {
 	args := map[string]interface{}{"title": "iOS UI 对齐 Android 策略：视觉差异优先、改动最小"}
 	got := truncArg(args, "title", 30)
