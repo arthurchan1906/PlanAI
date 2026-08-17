@@ -56,6 +56,31 @@ func DedupeDiscussionContent(body []byte, agent string) ([]byte, int, int) {
 		if !isDiscussionResult(sv.path, sv.val) {
 			continue
 		}
+		// codex 会把 MCP 结果双重编码为
+		//   "Wall time: ...\nOutput:\n[{\"type\":\"text\",\"text\":\"...\"}]"
+		// （内部换行是字面量 \n）。先解出真实文本再做行级去重；替换位置
+		// 直接在原始 body 字节里定位 text 值编码，避免解码后偏移错位。
+		if text, ok := unwrapMCPText(sv.val); ok {
+			deduped, blocks, saved := dedupeTextWithSeen(text, seen)
+			if blocks == 0 {
+				continue
+			}
+			// codex（Rust）对 MCP content 数组序列化一次（换行 → 单反斜杠 \n），
+			// 整体再作为 output 值编码进请求体（→ 双反斜杠 \\n、引号转义 \"）。
+			// 只匹配 text 值本身（不依赖 content 数组的 key 顺序），失败保守跳过。
+			inner := body[sv.start:sv.end]
+			origMid := jsonMarshalMid(text)
+			match := []byte(`\"` + origMid + `\"`)
+			idx := bytes.Index(inner, match)
+			if idx < 0 {
+				continue
+			}
+			repl := []byte(`\"` + jsonMarshalMid(deduped) + `\"`)
+			edits = append(edits, edit{sv.start + idx, sv.start + idx + len(match), repl})
+			totalBlocks += blocks
+			totalSaved += saved
+			continue
+		}
 		deduped, blocks, saved := dedupeTextWithSeen(sv.val, seen)
 		if blocks == 0 {
 			continue
@@ -83,6 +108,29 @@ func DedupeDiscussionContent(body []byte, agent string) ([]byte, int, int) {
 		out = b.Bytes()
 	}
 	return out, totalBlocks, totalSaved
+}
+
+// unwrapMCPText recognizes the codex MCP result wrapper
+//   "Wall time: 0.0039 seconds\nOutput:\n[{\"type\":\"text\",\"text\":\"...\"}]"
+// and returns the decoded inner text. ok=false when the wrapper is absent,
+// in which case callers should treat val itself as the plain text.
+func unwrapMCPText(val string) (text string, ok bool) {
+	marker := "\nOutput:\n"
+	idx := strings.Index(val, marker)
+	if idx < 0 {
+		return "", false
+	}
+	jsonPart := val[idx+len(marker):]
+	if !json.Valid([]byte(jsonPart)) {
+		return "", false
+	}
+	for _, sv := range scanJSONStringValues([]byte(jsonPart)) {
+		if len(sv.path) == 0 || sv.path[len(sv.path)-1] != "text" {
+			continue
+		}
+		return sv.val, true
+	}
+	return "", false
 }
 
 // isDiscussionResult narrows candidates to AIPM discussion tool results:
@@ -134,6 +182,9 @@ func scanJSONStringValues(raw []byte) []strVal {
 		pendingKeys = append(pendingKeys, "")
 	}
 	pop := func() {
+		if len(containers) == 0 {
+			return
+		}
 		containers = containers[:len(containers)-1]
 		pendingKeys = pendingKeys[:len(pendingKeys)-1]
 	}
@@ -283,6 +334,25 @@ func decodeHex4(b []byte) (rune, bool) {
 		v = v*16 + h
 	}
 	return rune(v), true
+}
+
+// jsonMarshalMid returns s encoded as a JSON string with the surrounding
+// quotes stripped, with one extra escaping round applied — matching how
+// codex embeds MCP text inside a request body:
+//   json.Marshal(s)          → "A\nB"   (quoted, single-escaped)
+//   json.Marshal(string(once)) → "A\\nB" (quoted, double-escaped)
+// jsonMarshalMid returns the double-escaped body WITHOUT quotes, so callers
+// can wrap it in escaped quotes (\" ... \") to match the wire bytes.
+func jsonMarshalMid(s string) string {
+	once, _ := json.Marshal(s)
+	if len(once) < 2 {
+		return ""
+	}
+	twice, _ := json.Marshal(string(once[1 : len(once)-1]))
+	if len(twice) < 2 {
+		return ""
+	}
+	return string(twice[1 : len(twice)-1])
 }
 
 // dedupeText collapses repeated disc-* blocks in a tool-result text.

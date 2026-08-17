@@ -220,3 +220,38 @@ func TestDedupeSearchLastNHeader(t *testing.T) {
 		t.Fatal("second pass must be no-op")
 	}
 }
+
+// codex 会把 MCP 结果双重编码成 "Wall time: ...\nOutput:\n[{"type":"text","text":"..."}]"
+// （内部换行是字面量 \n）。去重必须解出真实文本后才能按行匹配 disc 块。
+func TestDedupeCodexMCPWrapper(t *testing.T) {
+	// 复现 codex 双重编码：MCP content 数组先 json.Marshal（换行变字面量 \n），
+	// 再作为 output 值整体编码进请求体。
+	wrapped := func() string {
+		mcpJSON, _ := json.Marshal([]map[string]string{{"type": "text", "text": "讨论记录: 2 条\n\n" + blockA + blockB}})
+		return "Wall time: 0.0039 seconds\nOutput:\n" + string(mcpJSON)
+	}
+	payload := map[string]any{
+		"model": "deepseek-v4-flash",
+		"input": []any{
+			map[string]any{"type": "function_call_output", "call_id": "c1", "output": wrapped()},
+			map[string]any{"type": "function_call_output", "call_id": "c2", "output": wrapped()},
+		},
+	}
+	body, _ := json.Marshal(payload)
+	out, blocks, saved := DedupeDiscussionContent(body, "codex")
+	if blocks != 2 || saved <= 0 {
+		t.Fatalf("codex wrapper: blocks=%d saved=%d, want 2 / >0", blocks, saved)
+	}
+	var raw map[string]any
+	json.Unmarshal(out, &raw)
+	second := raw["input"].([]any)[1].(map[string]any)["output"].(string)
+	if !strings.Contains(second, "已在上文出现") {
+		t.Errorf("second output must contain placeholder, got:\n%s", second)
+	}
+	if !strings.Contains(second, "Wall time: 0.0039 seconds\nOutput:\n") {
+		t.Errorf("wrapper prefix must be preserved:\n%s", second)
+	}
+	if _, blocks2, _ := DedupeDiscussionContent(out, "codex"); blocks2 != 0 {
+		t.Fatal("codex wrapper second pass must be no-op")
+	}
+}
