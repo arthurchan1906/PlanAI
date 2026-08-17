@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	pmdb "aipmc/db"
@@ -174,5 +175,19 @@ func TestMCPSourceAttribution(t *testing.T) {
 	}
 	if source != "codex-cli" {
 		t.Errorf("MCP tool call source = %q, want %q (must not be hardcoded claude-code)", source, "codex-cli")
+	}
+}
+
+// B3 default window (Claude review 8/17): keyword discussion search must get
+// a bounded default so agents don't silently scan full history.
+func TestDefaultSearchWindow(t *testing.T) {
+	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.Local)
+	got := defaultSearchWindow(now)
+	want := "2026-07-18T12:00:00"
+	if got != want {
+		t.Errorf("defaultSearchWindow(%v) = %q, want %q", now, got, want)
+	}
+	if _, err := time.Parse("2006-01-02T15:04:05", got); err != nil {
+		t.Errorf("defaultSearchWindow output must be ISO parseable: %v", err)
 	}
 }

@@ -675,6 +675,7 @@ func (s *mcpServer) registerTools() {
 				"last_n":       map[string]string{"type": "integer", "description": "可选: 返回最近 N 条记录（与 query 二选一，优先使用 last_n）"},
 				"cursor":       map[string]string{"type": "string", "description": "可选: 从上次返回的 cursor 之后继续读取（仅 last_n 模式生效）"},
 				"mode":         map[string]string{"type": "string", "description": "可选: 'matches' (默认，匹配消息预览约200字)；'full_session' (展开 session 全部消息且全文不截断)"},
+				"since":        map[string]string{"type": "string", "description": "可选: ISO 时间下限 (例 2026-07-01T00:00:00)。keyword 搜索默认近 30 天窗口（M4 时间窗原则，Claude review 8/17）；要搜更早内容请显式传 since（如 2026-01-01T00:00:00 表示全历史）。"},
 				"limit":        map[string]string{"type": "integer", "description": "结果数量，默认 10。full_session 模式下为 session 数量上限（≤5）"},
 				"project_path": map[string]string{"type": "string", "description": "可选: 目标项目路径，不传则搜索当前项目"},
 			},
@@ -2088,6 +2089,12 @@ func (s *mcpServer) handleSearchDiscussions(args map[string]interface{}) mcpTool
 		total = len(results)
 	} else {
 		// Keyword search mode (existing behavior)
+		if since == "" {
+			// B3 默认窗口（Claude review 8/17）：不传 since 时若不设默认，
+			// agent 仍会扫全历史，「无时间窗盲区」没有真正消失。与
+			// list_sessions 的默认窗口哲学对齐，keyword 搜索默认近 30 天。
+			since = defaultSearchWindow(time.Now())
+		}
 		var err error
 		results, total, err = s.searchDiscussions(query, source, sessionID, typeFilter, projectPath, since, 1, limit)
 		if err != nil {
@@ -2167,6 +2174,13 @@ func (s *mcpServer) handleSearchDiscussions(args map[string]interface{}) mcpTool
 		RelatedContext: map[string]interface{}{"results": results, "total": total, "mode": mode},
 		Reflection:     reflection,
 	}
+}
+
+// defaultSearchWindow returns the default since lower bound for keyword
+// discussion search: 30 days back (Claude review 8/17 — bounded window per
+// the M4 time-window principle, instead of unbounded full-history scans).
+func defaultSearchWindow(now time.Time) string {
+	return now.AddDate(0, 0, -30).Format("2006-01-02T15:04:05")
 }
 
 // handleListSessions serves aipm_list_sessions: the public "who is doing what"

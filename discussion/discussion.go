@@ -120,8 +120,8 @@ func Search(client *ai.Client, query, source, sessionID, typeFilter, projectPath
 		if len(q) > 80 {
 			q = q[:80]
 		}
-		u.LogShared("DISC", "search query=%q mode=%s terms=%d grams=%d total=%d took=%s",
-			string(q), mode, len(strings.Fields(query)), gramCount, total, time.Since(start).Round(time.Millisecond))
+		u.LogShared("DISC", "search query=%q mode=%s terms=%d grams=%d since=%s total=%d took=%s",
+			string(q), mode, len(strings.Fields(query)), gramCount, since, total, time.Since(start).Round(time.Millisecond))
 	}()
 	fromClause := "FROM discussion_log"
 	orderBy := "ORDER BY created_at DESC, rowid DESC"
