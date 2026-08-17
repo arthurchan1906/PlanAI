@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"aipmc/ai"
 	pmdb "aipmc/db"
@@ -122,7 +123,73 @@ func FTS5WithDB(db *sql.DB, query string, limit int) []Hit {
 	if results == nil {
 		results = []Hit{}
 	}
+	// CJK supplement: unicode61 keeps a full CJK run as one token, so
+	// mid-string substring queries (e.g. "行为分析" vs "行为测量分析") miss
+	// FTS5 entirely. Scan all rows with CJK-aware 2-gram scoring and merge
+	// (mirrors B6's CJK branch in discussion.Search).
+	if hasCJK(query) {
+		start := time.Now()
+		merged := cjkSupplement(db, terms, results, limit)
+		u.LogShared("SRCH", "search query=%q mode=fts5+cjk fts=%d total=%d took=%s",
+			query, len(results), len(merged), time.Since(start).Round(time.Millisecond))
+		return merged
+	}
 	return results
+}
+
+// cjkSupplement scans fts5_index rows with the CJK-aware matchScore and merges
+// them with the FTS5 hits: deduped by (type, id), ranked by score desc.
+func cjkSupplement(db *sql.DB, terms []string, base []Hit, limit int) []Hit {
+	type cand struct {
+		typ, id, title string
+		score          int
+	}
+	byKey := map[string]cand{}
+	key := func(typ, id string) string { return typ + "\x00" + id }
+	// Base FTS5 hits stay in the pool even when naive scoring gives 0
+	// (FTS5 tokenizer semantics can match where contains does not).
+	for _, h := range base {
+		if _, ok := byKey[key(h.Type, h.ID)]; !ok {
+			byKey[key(h.Type, h.ID)] = cand{h.Type, h.ID, h.Title, 1}
+		}
+	}
+	rows, err := db.Query(`SELECT entity_type, entity_id, title, content FROM fts5_index`)
+	if err != nil {
+		return base
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var typ, id, title, content string
+		if err := rows.Scan(&typ, &id, &title, &content); err != nil {
+			continue
+		}
+		score := matchScore(strings.ToLower(title+" "+content), terms)
+		if score <= 0 {
+			continue
+		}
+		k := key(typ, id)
+		if c, ok := byKey[k]; !ok || score > c.score {
+			byKey[k] = cand{typ, id, title, score}
+		}
+	}
+	out := make([]Hit, 0, len(byKey))
+	for _, c := range byKey {
+		out = append(out, Hit{Type: c.typ, ID: c.id, Title: c.title, Score: c.score,
+			Command: fmt.Sprintf("aipmc %s show --id %s", c.typ, c.id)})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Score != out[j].Score {
+			return out[i].Score > out[j].Score
+		}
+		if out[i].Type != out[j].Type {
+			return out[i].Type < out[j].Type
+		}
+		return out[i].Title < out[j].Title
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
 }
 
 // FTS5 queries the FTS5 index with BM25 ranking for the current project DB.
@@ -310,11 +377,66 @@ func terms(query string) []string {
 func matchScore(haystack string, terms []string) int {
 	score := 0
 	for _, t := range terms {
+		if t == "" {
+			continue
+		}
 		if strings.Contains(haystack, t) {
-			score++
+			// Exact contiguous match ranks far above 2-gram-only hits.
+			score += 10 + len([]rune(t))
+			continue
+		}
+		if hasCJK(t) {
+			// CJK recall: >=2 overlapping 2-grams of the term must co-occur
+			// in the haystack (mirrors B6's CJK branch).
+			grams := cjkBigrams(t)
+			if len(grams) >= 2 {
+				hit := 0
+				for _, g := range grams {
+					if strings.Contains(haystack, g) {
+						hit++
+					}
+				}
+				if hit >= 2 {
+					score += hit
+				}
+			}
 		}
 	}
 	return score
+}
+
+func hasCJK(s string) bool {
+	for _, r := range s {
+		if isCJK(r) {
+			return true
+		}
+	}
+	return false
+}
+
+func isCJK(r rune) bool {
+	return (r >= 0x4E00 && r <= 0x9FFF) || (r >= 0x3400 && r <= 0x4DBF)
+}
+
+func cjkBigrams(s string) []string {
+	runes := []rune(s)
+	var grams []string
+	i := 0
+	for i < len(runes) {
+		if isCJK(runes[i]) {
+			j := i
+			for j < len(runes) && isCJK(runes[j]) {
+				j++
+			}
+			for k := i; k+1 < j; k++ {
+				grams = append(grams, string(runes[k:k+2]))
+			}
+			i = j
+		} else {
+			i++
+		}
+	}
+	return grams
 }
 
 func mustListTasks() []store.Task {
