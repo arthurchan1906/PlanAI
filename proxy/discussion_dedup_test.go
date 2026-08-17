@@ -46,6 +46,43 @@ func TestDedupeTextLeavesNonDiscussionAlone(t *testing.T) {
 	}
 }
 
+// 漏洞 A 修复验证（Claude review 8/17）：最小编辑——手工构造原始 body，
+// 去重后非替换点字节必须完全一致（顶层 key 顺序、数字 1.0、原始 <测试> 不转义）。
+func TestDedupeMinimalEditFidelity(t *testing.T) {
+	body := []byte(`{"model":"deepseek-v4-flash","stream":true,"input":[` +
+		`{"type":"function_call_output","call_id":"c1","output":"讨论记录: 2 条\n\ndisc-20260817-130000-abcdef 2026-08-17T13:00:00 [assistant][claude-code][sid=s1]\n第一段讨论内容\n\n"},` +
+		`{"type":"function_call_output","call_id":"c2","output":"讨论记录: 2 条\n\ndisc-20260817-130000-abcdef 2026-08-17T13:00:00 [assistant][claude-code][sid=s1]\n第一段讨论内容\n\n"}],` +
+		`"meta":{"count":1.0,"tags":["<测试> 1.0"]}}`)
+	out, blocks, saved := DedupeDiscussionContent(body, "codex")
+	if blocks != 1 || saved <= 0 {
+		t.Fatalf("blocks=%d saved=%d, want 1 / >0", blocks, saved)
+	}
+	s := string(out)
+	for _, prefix := range []string{
+		`{"model":"deepseek-v4-flash","stream":true,"input":[`,
+		`{"type":"function_call_output","call_id":"c1","output":"讨论记录: 2 条`,
+		`{"type":"function_call_output","call_id":"c2","output":"讨论记录: 2 条`,
+		`"meta":{"count":1.0,"tags":["<测试> 1.0"]}}`,
+	} {
+		if !strings.Contains(s, prefix) {
+			t.Errorf("byte fidelity broken, missing %q\n%s", prefix, s)
+		}
+	}
+	if strings.Contains(s, `\u003c`) {
+		t.Errorf("HTML escaping introduced (<测试> must stay raw):\n%s", s)
+	}
+	if strings.Count(s, "第一段讨论内容") != 1 {
+		t.Errorf("content must appear exactly once:\n%s", s)
+	}
+	if !strings.Contains(s, "[disc-20260817-130000-abcdef 已在上文出现") {
+		t.Errorf("duplicate must become placeholder:\n%s", s)
+	}
+	out2, blocks2, _ := DedupeDiscussionContent(out, "codex")
+	if blocks2 != 0 || string(out2) != string(out) {
+		t.Fatalf("second pass must be no-op: blocks=%d", blocks2)
+	}
+}
+
 // codex Responses 格式：input 数组里的 function_call_output。
 func TestDedupeCodexResponses(t *testing.T) {
 	payload := map[string]any{

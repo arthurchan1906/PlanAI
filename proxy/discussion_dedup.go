@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -14,16 +15,19 @@ import (
 // 问题：agent 多次调用 aipm_read_discussions（最近 N 条/无 cursor 增量）时，
 // 返回的 disc-* 内容在对话历史里反复出现，重复占用上下文窗口。
 //
-// 方案：转发前扫描请求体里的 tool result 文本，按行首 disc-* id 去重——
+// 方案：转发前扫描请求体里的 tool result 字符串值，按行首 disc-* id 去重——
 // 同一 id 二次出现时替换为一行占位符（保留 id 锚点，agent 仍可引用）。
 //
-// 三条硬约束（Claude review 8/17 对齐）：
+// 约束（Claude review 8/17 对齐）：
 //  1. 幂等性：占位符以 '[' 开头，不匹配 disc-* 块起始模式 → 二次处理不再
 //     改写 → body 稳定 → deepseek prefix cache 不被去重反复打断。
-//  2. 识别边界：只处理 tool result（function_call_output / tool_result /
-//     role=tool）的 output 文本，不动 call_id/消息结构，不误伤普通消息里
-//     引用的 disc-* id。
-//  3. 数据边界：只在转发层改写，绝不写回 discussion_log（保护 M0 对账）。
+//  2. 最小编辑（漏洞 A）：只替换字符串值本身，其余字节（顶层 key 顺序、
+//     HTML 转义、数字格式）原样保留 → 去重请求的 prefix cache 在替换点之前
+//     全部命中，不会从第一个 token 全 miss。
+//  3. 识别边界（漏洞 B）：值必须同时含 disc- 行首块与 AIPM 讨论工具专属
+//     header（"讨论记录:" / "搜索讨论历史"）才处理，sqlite3/grep 等输出
+//     即使恰好含 disc- 行首格式也不误伤。
+//  4. 数据边界：只在转发层改写，绝不写回 discussion_log（保护 M0 对账）。
 
 var discIDRe = regexp.MustCompile(`^disc-\d{8}-\d{6}-[0-9a-f]{6} `)
 
@@ -31,7 +35,7 @@ const dedupPlaceholder = "已在上文出现，内容省略（如需内容可单
 
 // placeholderRe recognizes our own placeholder lines so a second pass keeps
 // them as standalone lines instead of folding them into a neighbouring block
-// (byte-level idempotency — Claude review 8/17 constraint #1).
+// (byte-level idempotency — constraint #1).
 var placeholderRe = regexp.MustCompile(`^\[disc-\d{8}-\d{6}-[0-9a-f]{6} 已在上文出现`)
 
 // DedupeDiscussionContent rewrites tool-result discussion blocks so each
@@ -39,191 +43,245 @@ var placeholderRe = regexp.MustCompile(`^\[disc-\d{8}-\d{6}-[0-9a-f]{6} 已在�
 // the number of duplicated blocks collapsed, and the saved rune count.
 // Idempotent: running it again on its own output is a no-op.
 func DedupeDiscussionContent(body []byte, agent string) ([]byte, int, int) {
-	switch agent {
-	case "claude":
-		return dedupeAnthropic(body)
-	case "codex":
-		return dedupeCodex(body)
-	default:
-		// OpenAI chat completions (role=tool) fallback.
-		return dedupeOpenAI(body)
-	}
-}
-
-func dedupeCodex(body []byte) ([]byte, int, int) {
-	var raw map[string]any
-	if json.Unmarshal(body, &raw) != nil {
-		return body, 0, 0
-	}
-	input, ok := raw["input"].([]any)
-	if !ok {
-		return body, 0, 0
-	}
-	// seen 跨所有 tool result 共享：同一 disc id 在多个消息里出现也要去重
-	// （agent 多次 read_discussions 的典型形态是多个 function_call_output）。
 	seen := make(map[string]bool)
+	type edit struct {
+		start, end int
+		repl       []byte
+	}
+	var edits []edit
 	totalBlocks, totalSaved := 0, 0
-	changed := false
-	for i, item := range input {
-		im, ok := item.(map[string]any)
-		if !ok {
+
+	for _, sv := range scanJSONStringValues(body) {
+		if !isDiscussionResult(sv.path, sv.val) {
 			continue
 		}
-		if im["type"] != "function_call_output" {
-			continue
-		}
-		out, ok := im["output"].(string)
-		if !ok || !strings.Contains(out, "disc-") {
-			continue
-		}
-		deduped, blocks, saved := dedupeTextWithSeen(out, seen)
+		deduped, blocks, saved := dedupeTextWithSeen(sv.val, seen)
 		if blocks == 0 {
 			continue
 		}
-		im["output"] = deduped
-		input[i] = im
-		changed = true
+		enc, _ := json.Marshal(deduped)
+		edits = append(edits, edit{sv.start, sv.end, enc})
 		totalBlocks += blocks
 		totalSaved += saved
 	}
-	if !changed {
+	if len(edits) == 0 {
 		return body, 0, 0
 	}
-	raw["input"] = input
-	b, err := json.Marshal(raw)
-	if err != nil {
-		return body, 0, 0
+
+	// Apply edits back-to-front; replacing a later span never shifts an
+	// earlier one, so the recorded offsets stay valid. Only string-value
+	// spans change; every other byte (key order, numbers, escaping) is
+	// preserved verbatim (constraint #2 — minimal edit).
+	out := body
+	for i := len(edits) - 1; i >= 0; i-- {
+		e := edits[i]
+		var b bytes.Buffer
+		b.Write(out[:e.start])
+		b.Write(e.repl)
+		b.Write(out[e.end:])
+		out = b.Bytes()
 	}
-	return b, totalBlocks, totalSaved
+	return out, totalBlocks, totalSaved
 }
 
-func dedupeAnthropic(body []byte) ([]byte, int, int) {
-	var raw map[string]any
-	if json.Unmarshal(body, &raw) != nil {
-		return body, 0, 0
+// isDiscussionResult narrows candidates to AIPM discussion tool results:
+// the value must carry the tool's专属 header plus a disc- marker, and sit at
+// a tool-result-ish JSON path (output / content / text).
+func isDiscussionResult(path []string, val string) bool {
+	if len(path) == 0 {
+		return false
 	}
-	messages, ok := raw["messages"].([]any)
-	if !ok {
-		return body, 0, 0
+	if !strings.Contains(val, "disc-") {
+		return false
 	}
-	seen := make(map[string]bool)
-	totalBlocks, totalSaved := 0, 0
-	changed := false
-	for i, m := range messages {
-		msg, ok := m.(map[string]any)
-		if !ok {
-			continue
+	if !strings.Contains(val, "讨论记录:") && !strings.Contains(val, "搜索讨论历史") {
+		return false
+	}
+	switch path[len(path)-1] {
+	case "output", "content", "text":
+		return true
+	}
+	return false
+}
+
+// strVal is one scanned JSON string value plus its object-key path and raw
+// byte span (start = opening quote index, end = closing quote index + 1).
+// Array indices are not tracked — callers only need the trailing key.
+type strVal struct {
+	path       []string
+	start, end int
+	val        string
+}
+
+// scanJSONStringValues walks raw JSON bytes and returns every string VALUE
+// (not object key) with its key path and byte span. A lightweight byte state
+// machine tracks string/escape state, container nesting, and key→value
+// transitions. JSON escapes (\n, \uXXXX, ...) are decoded, so val is the
+// real string content; offsets let callers rewrite a span in place without
+// re-encoding any other part of the document.
+func scanJSONStringValues(raw []byte) []strVal {
+	var out []strVal
+	var containers []byte
+	var pendingKeys []string
+	expectingValue := false
+	inString, escaped := false, false
+	var sb strings.Builder
+	start := 0
+
+	push := func(c byte) {
+		containers = append(containers, c)
+		pendingKeys = append(pendingKeys, "")
+	}
+	pop := func() {
+		containers = containers[:len(containers)-1]
+		pendingKeys = pendingKeys[:len(pendingKeys)-1]
+	}
+	top := func() byte {
+		if len(containers) > 0 {
+			return containers[len(containers)-1]
 		}
-		content, ok := msg["content"].([]any)
-		if !ok {
-			continue
+		return 0
+	}
+	path := func() []string {
+		var p []string
+		for _, k := range pendingKeys {
+			if k != "" {
+				p = append(p, k)
+			}
 		}
-		for j, block := range content {
-			cb, ok := block.(map[string]any)
-			if !ok || cb["type"] != "tool_result" {
+		return p
+	}
+	clearTopKey := func() {
+		if top() == '{' {
+			pendingKeys[len(pendingKeys)-1] = ""
+		}
+	}
+	isValueStart := func(c byte) bool {
+		return c >= '0' && c <= '9' || c == '-' || c == '+' || c == '.' || c == 't' || c == 'f' || c == 'n'
+	}
+	isDelim := func(c byte) bool {
+		return c == ',' || c == ']' || c == '}' || c == ':' || c == ' ' || c == '\t' || c == '\n' || c == '\r'
+	}
+
+	i := 0
+	for i < len(raw) {
+		c := raw[i]
+		if inString {
+			if escaped {
+				if c == 'u' && i+5 <= len(raw) {
+					if r, ok := decodeHex4(raw[i+1 : i+5]); ok {
+						rn := r
+						skip := 4
+						if r >= 0xD800 && r <= 0xDBFF && i+11 <= len(raw) && raw[i+5] == '\\' && raw[i+6] == 'u' {
+							if r2, ok2 := decodeHex4(raw[i+7 : i+11]); ok2 && r2 >= 0xDC00 && r2 <= 0xDFFF {
+								rn = 0x10000 + (r-0xD800)<<10 + (r2 - 0xDC00)
+								skip = 10
+							}
+						}
+						sb.WriteRune(rn)
+						i += 1 + skip
+						escaped = false
+						continue
+					}
+				}
+				switch c {
+				case 'n':
+					sb.WriteByte('\n')
+				case 't':
+					sb.WriteByte('\t')
+				case 'r':
+					sb.WriteByte('\r')
+				case 'b':
+					sb.WriteByte('\b')
+				case 'f':
+					sb.WriteByte('\f')
+				default:
+					sb.WriteByte(c) // \", \\, \/, or invalid — keep byte
+				}
+				escaped = false
+				i++
 				continue
 			}
-			switch c := cb["content"].(type) {
-			case string:
-				if !strings.Contains(c, "disc-") {
-					continue
+			switch c {
+			case '\\':
+				escaped = true
+				i++
+				continue
+			case '"':
+				val := sb.String()
+				sb.Reset()
+				if top() == '{' && !expectingValue {
+					pendingKeys[len(pendingKeys)-1] = val
+				} else {
+					out = append(out, strVal{path: path(), start: start, end: i + 1, val: val})
+					clearTopKey()
 				}
-				deduped, blocks, saved := dedupeTextWithSeen(c, seen)
-				if blocks == 0 {
-					continue
-				}
-				cb["content"] = deduped
-				content[j] = cb
-				changed = true
-				totalBlocks += blocks
-				totalSaved += saved
-			case []any:
-				// tool_result content may be a list of text blocks.
-				subChanged := false
-				for k, sub := range c {
-					sb, ok := sub.(map[string]any)
-					if !ok || sb["type"] != "text" {
-						continue
-					}
-					txt, ok := sb["text"].(string)
-					if !ok || !strings.Contains(txt, "disc-") {
-						continue
-					}
-					deduped, blocks, saved := dedupeTextWithSeen(txt, seen)
-					if blocks == 0 {
-						continue
-					}
-					sb["text"] = deduped
-					c[k] = sb
-					subChanged = true
-					totalBlocks += blocks
-					totalSaved += saved
-				}
-				if subChanged {
-					cb["content"] = c
-					content[j] = cb
-					changed = true
-				}
+				expectingValue = false
+				inString = false
+				i++
+				continue
 			}
+			sb.WriteByte(c)
+			i++
+			continue
 		}
-		if changed {
-			messages[i] = msg
+		switch {
+		case c == '"':
+			inString = true
+			start = i
+		case c == '{':
+			push('{')
+			expectingValue = false
+		case c == '[':
+			push('[')
+			expectingValue = true
+		case c == '}':
+			pop()
+			// A compound value just completed: if it was a key's value,
+			// that key is no longer pending.
+			clearTopKey()
+			expectingValue = false
+		case c == ']':
+			pop()
+			clearTopKey()
+			expectingValue = top() == '['
+		case c == ':':
+			expectingValue = true
+		case isValueStart(c):
+			for i < len(raw) && !isDelim(raw[i]) {
+				i++
+			}
+			clearTopKey()
+			expectingValue = false
+			continue
 		}
+		i++
 	}
-	if !changed {
-		return body, 0, 0
-	}
-	raw["messages"] = messages
-	b, err := json.Marshal(raw)
-	if err != nil {
-		return body, 0, 0
-	}
-	return b, totalBlocks, totalSaved
+	return out
 }
 
-func dedupeOpenAI(body []byte) ([]byte, int, int) {
-	var raw map[string]any
-	if json.Unmarshal(body, &raw) != nil {
-		return body, 0, 0
+// decodeHex4 decodes exactly four hex bytes into a rune.
+func decodeHex4(b []byte) (rune, bool) {
+	if len(b) != 4 {
+		return 0, false
 	}
-	messages, ok := raw["messages"].([]any)
-	if !ok {
-		return body, 0, 0
-	}
-	seen := make(map[string]bool)
-	totalBlocks, totalSaved := 0, 0
-	changed := false
-	for i, m := range messages {
-		msg, ok := m.(map[string]any)
-		if !ok {
-			continue
+	var v int
+	for _, c := range b {
+		h := -1
+		switch {
+		case c >= '0' && c <= '9':
+			h = int(c - '0')
+		case c >= 'a' && c <= 'f':
+			h = int(c-'a') + 10
+		case c >= 'A' && c <= 'F':
+			h = int(c-'A') + 10
 		}
-		if msg["role"] != "tool" {
-			continue
+		if h < 0 {
+			return 0, false
 		}
-		content, ok := msg["content"].(string)
-		if !ok || !strings.Contains(content, "disc-") {
-			continue
-		}
-		deduped, blocks, saved := dedupeTextWithSeen(content, seen)
-		if blocks == 0 {
-			continue
-		}
-		msg["content"] = deduped
-		messages[i] = msg
-		changed = true
-		totalBlocks += blocks
-		totalSaved += saved
+		v = v*16 + h
 	}
-	if !changed {
-		return body, 0, 0
-	}
-	raw["messages"] = messages
-	b, err := json.Marshal(raw)
-	if err != nil {
-		return body, 0, 0
-	}
-	return b, totalBlocks, totalSaved
+	return rune(v), true
 }
 
 // dedupeText collapses repeated disc-* blocks in a tool-result text.
@@ -295,11 +353,6 @@ func dedupeTextWithSeen(text string, seen map[string]bool) (string, int, int) {
 	return strings.Join(out, "\n"), blocks, saved
 }
 
-// dedupSummary formats the [DEDUP] observability log line.
-func dedupSummary(agent string, blocks, saved int) string {
-	return fmt.Sprintf("agent=%s blocks=%d saved_chars=%d", agent, blocks, saved)
-}
-
 // dedupeRequestBody applies discussion dedup to a raw request body before
 // forwarding, logging [DEDUP] only when duplicates were actually collapsed
 // (keeps steady-state logs quiet). Returns the (possibly rewritten) body.
@@ -310,4 +363,9 @@ func dedupeRequestBody(rawBody []byte, agent string) []byte {
 	}
 	u.LogShared("DEDUP", "%s", dedupSummary(agent, blocks, saved))
 	return db
+}
+
+// dedupSummary formats the [DEDUP] observability log line.
+func dedupSummary(agent string, blocks, saved int) string {
+	return fmt.Sprintf("agent=%s blocks=%d saved_chars=%d", agent, blocks, saved)
 }
