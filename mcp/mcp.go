@@ -1373,6 +1373,11 @@ func (s *mcpServer) handleRecordCommit(args map[string]interface{}) mcpToolResul
 			reflection += " 这是此 task 的第一个 commit。"
 		}
 	}
+	// #22: bug 状态卫生 — commit 含修复语义时提示核对 open bug，防止
+	// bug 修完但状态仍停在 open（状态与实现脱节）。
+	if bugHint := commitBugStatusHint(title, summary); bugHint != "" {
+		reflection += " " + bugHint
+	}
 
 	return mcpToolResult{
 		Content: []mcpContent{
@@ -1381,6 +1386,37 @@ func (s *mcpServer) handleRecordCommit(args map[string]interface{}) mcpToolResul
 		RelatedContext: related,
 		Reflection:     reflection,
 	}
+}
+
+// commitBugStatusHint returns a reminder to sync open-bug status when a
+// commit's title/summary carries fix semantics. Empty when nothing to hint.
+func commitBugStatusHint(title, summary string) string {
+	if !hasFixKeyword(title + " " + summary) {
+		return ""
+	}
+	openBugs, err := store.ListBugs("open", "", "", 5, 0)
+	if err != nil {
+		return ""
+	}
+	if len(openBugs) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(openBugs))
+	for _, b := range openBugs {
+		names = append(names, fmt.Sprintf("%s(%s)", b["id"], b["title"]))
+	}
+	return fmt.Sprintf("⚠️ Commit 含修复语义，当前有 %d 个 open bug 未闭环: %s。若本提交修复了某个，请用 aipm_update_bug(bug_id=..., status=\"resolved\", fix=...) 更新。",
+		len(openBugs), strings.Join(names, ", "))
+}
+
+func hasFixKeyword(s string) bool {
+	lower := strings.ToLower(s)
+	for _, k := range []string{"fix", "修复", "resolve", "resolved", "close", "closed"} {
+		if strings.Contains(lower, k) {
+			return true
+		}
+	}
+	return false
 }
 
 // recordCommitDedup handles a commit that already exists — typically recorded

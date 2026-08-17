@@ -74,6 +74,26 @@ func TestFormatDecisionText(t *testing.T) {
 	}
 }
 
+func TestHasFixKeyword(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"fix: migrate 建表顺序", true},
+		{"修复 #19/#20 决策渲染", true},
+		{"resolved: StoreGitCommit 空 hash", true},
+		{"closed the issue", true},
+		{"feat(metrics): E5 显式率指标", false},
+		{"docs(audit): 数据审计", false},
+		{"chore: gofmt 收敛", false},
+	}
+	for _, c := range cases {
+		if got := hasFixKeyword(c.in); got != c.want {
+			t.Errorf("hasFixKeyword(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
 func TestTruncArgRuneSafe(t *testing.T) {
 	args := map[string]interface{}{"title": "iOS UI 对齐 Android 策略：视觉差异优先、改动最小"}
 	got := truncArg(args, "title", 30)
