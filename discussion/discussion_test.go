@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	pmdb "aipmc/db"
@@ -26,6 +27,40 @@ func TestCJKBigrams(t *testing.T) {
 		if got := cjkBigrams(c.in); !reflect.DeepEqual(got, c.want) {
 			t.Errorf("cjkBigrams(%q) = %v, want %v", c.in, got, c.want)
 		}
+	}
+}
+
+func TestSnippetContent(t *testing.T) {
+	long := "前面的上下文内容没有任何关系，真正命中的关键词行为分析出现在中间位置，后面的内容也是无关的补充说明文字。"
+	got := SnippetContent(long, "行为分析", 8)
+	if !strings.Contains(got, "行为分析") {
+		t.Errorf("snippet must contain the hit, got %q", got)
+	}
+	if !strings.HasPrefix(got, "…") || !strings.HasSuffix(got, "…") {
+		t.Errorf("mid-text hit should be elided on both sides, got %q", got)
+	}
+	if len([]rune(got)) > 60 {
+		t.Errorf("snippet too long: %d runes, got %q", len([]rune(got)), got)
+	}
+
+	// CJK 2-gram fallback: row matched via bigrams, query not contiguous.
+	nonContig := "讨论 agent 行为测量分析工具体系"
+	got2 := SnippetContent(nonContig, "行为分析", 8)
+	if !strings.Contains(got2, "行为") {
+		t.Errorf("bigram fallback must show hit context, got %q", got2)
+	}
+
+	// No hit at all → falls back to head truncation.
+	noHit := "完全没有关键词的内容，这里是完全不相关的一段文字，再补一点字数。"
+	got3 := SnippetContent(noHit, "行为分析", 8)
+	if !strings.HasPrefix(got3, "完全没有") {
+		t.Errorf("no-hit fallback should show head, got %q", got3)
+	}
+
+	// Short content → returned as-is.
+	short := "行为分析"
+	if got4 := SnippetContent(short, "行为分析", 8); got4 != short {
+		t.Errorf("short content should be unchanged, got %q", got4)
 	}
 }
 

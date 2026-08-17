@@ -98,3 +98,65 @@ func PreviewContent(s string, maxRunes int) string {
 	}
 	return string(runes[:maxRunes]) + "…"
 }
+
+// SnippetContent renders a compact hit-context snippet around the first
+// occurrence of query (or, failing that, one of its CJK 2-grams) in s.
+// It is the search-results counterpart of PreviewContent: long messages are
+// shown as the hit context instead of a blind head-truncation, so the user
+// sees why the row matched. Falls back to PreviewContent when nothing hits.
+func SnippetContent(s, query string, radius int) string {
+	runes := []rune(s)
+	if len(runes) <= 2*radius+1 || query == "" {
+		return PreviewContent(s, 2*radius+1)
+	}
+	q := []rune(query)
+	pos := indexRunes(runes, q)
+	if pos < 0 {
+		// CJK 2-gram fallback: a row may have matched via bigrams even when
+		// the full query string is not contiguous in the content.
+		for _, g := range cjkBigrams(query) {
+			if pos = indexRunes(runes, []rune(g)); pos >= 0 {
+				break
+			}
+		}
+	}
+	if pos < 0 {
+		return PreviewContent(s, 2*radius+1)
+	}
+	start := pos - radius
+	if start < 0 {
+		start = 0
+	}
+	end := pos + len(q) + radius
+	if end > len(runes) {
+		end = len(runes)
+	}
+	var b strings.Builder
+	if start > 0 {
+		b.WriteString("…")
+	}
+	b.WriteString(string(runes[start:end]))
+	if end < len(runes) {
+		b.WriteString("…")
+	}
+	return b.String()
+}
+
+func indexRunes(haystack, needle []rune) int {
+	if len(needle) == 0 {
+		return -1
+	}
+	for i := 0; i+len(needle) <= len(haystack); i++ {
+		match := true
+		for j := range needle {
+			if haystack[i+j] != needle[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return i
+		}
+	}
+	return -1
+}

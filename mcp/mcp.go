@@ -2102,7 +2102,12 @@ func (s *mcpServer) handleSearchDiscussions(args map[string]interface{}) mcpTool
 		for _, r := range results {
 			role := u.Str(r["role"])
 			src := u.Str(r["source"])
-			content := discussion.PreviewContent(u.Str(r["content"]), discussion.PreviewRunes)
+			content := u.Str(r["content"])
+			if query != "" {
+				content = discussion.SnippetContent(content, query, 60)
+			} else {
+				content = discussion.PreviewContent(content, discussion.PreviewRunes)
+			}
 			b.WriteString(fmt.Sprintf("\n- [%s][%s] %s  %s", role, src, u.Str(r["created_at"]), content))
 		}
 	}
