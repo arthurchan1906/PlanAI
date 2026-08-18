@@ -326,6 +326,56 @@ func BuildAttribution(d *sql.DB, logFile string, since time.Time) (*AttributionR
 	return rep, nil
 }
 
+// FormatHuman 输出人类可读报告（对齐 metrics.go printRow 风格：名字/值/目标/✅❌）。
+// 与 JSON 输出并存（main.go eval 双输出，HARNESS S4 核验项 4）。
+func FormatHuman(rep *AttributionReport) string {
+	var b strings.Builder
+	row := func(name, val, target string, ok bool) {
+		mark := "❌"
+		if ok {
+			mark = "✅"
+		}
+		fmt.Fprintf(&b, "%-26s %-14s 目标 %-10s %s\n", name, val, target, mark)
+	}
+	pct := func(v float64) string { return fmt.Sprintf("%.1f%%", v*100) }
+
+	fmt.Fprintf(&b, "=== M1a 对账完整性（期望 1.0）===\n")
+	for agent, a := range rep.ByAgent {
+		ok := a.M1.LogInject == 0 || a.M1.Reconcile >= 1.0
+		row("M1a "+agent, fmt.Sprintf("注入%d/日志%d %s", a.M1.Injected, a.M1.LogInject, pct(a.M1.Reconcile)), "1.0", ok)
+	}
+	row("M1a write_err", fmt.Sprint(rep.WriteErr), "0", rep.WriteErr == 0)
+
+	fmt.Fprintf(&b, "\n=== M1b 新鲜度（参考，不判定）===\n")
+	for agent, a := range rep.ByAgent {
+		row("M1b "+agent, fmt.Sprintf("注入%d same_content=%d %s", a.M1.Injected, a.M1.SameContent, pct(a.M1.Freshness)), "参考", true)
+	}
+
+	fmt.Fprintf(&b, "\n=== M2 文件命中率（按 session）===\n")
+	for agent, a := range rep.ByAgent {
+		g := func(g M2Group) string {
+			if g.Sessions == 0 {
+				return "-"
+			}
+			return fmt.Sprintf("%d/%d(%.0f%%)", g.HitSessions, g.Sessions, g.HitRate*100)
+		}
+		row("M2 "+agent, fmt.Sprintf("full=%s partial=%s same=%s nosum=%s",
+			g(a.M2.FullInject), g(a.M2.PartialInject), g(a.M2.SameContentCtl), g(a.M2.NoSummaryCtl)), "参考", true)
+	}
+
+	fmt.Fprintf(&b, "\n=== M3 警告回避 ===\n")
+	row("M3", fmt.Sprintf("mapped=%d avoided=%d unknown=%d", rep.M3.Mapped, rep.M3.Avoided, rep.M3.Unknown), "参考", true)
+
+	fmt.Fprintf(&b, "\n=== M4 事件信噪比（近 7 天，目标 <50%%）===\n")
+	row("M4", fmt.Sprintf("noise=%d/%d", rep.M4.Noise, rep.M4.Total), "<50%", rep.M4.Total == 0 || rep.M4.NoiseRatio < 0.5)
+
+	fmt.Fprintf(&b, "\n=== M5 截断分布（:153）===\n")
+	row("M5", fmt.Sprintf("suppressed=%d", rep.M5.SuppressedRequests), "参考", true)
+	fmt.Fprintf(&b, "  segments: file_cut=%d warn=%d act=%d goals=%d guide=%d\n",
+		rep.M5.Segments.FileAssoc, rep.M5.Segments.Warnings, rep.M5.Segments.Actions, rep.M5.Segments.Goals, rep.M5.Segments.Guidelines)
+	return b.String()
+}
+
 // ── M2 helpers ──
 
 type m2Hit struct {

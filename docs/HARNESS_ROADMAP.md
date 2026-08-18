@@ -108,8 +108,15 @@ agent/session/req」在改动落地前不成立，S4 按此核验。
 
 **M1a 注入观测完整性（对账，测量卫生核心）**
 - 分子：`inject_log` 行数（窗口内，含 `suppressed=1`）
-- 分母：日志侧 `:148` 注入行数（`agent=` 正常注入行 + `inject source=guidelines_only` 行；
-  `same_content`/`no_summary` 不写表也不写 `:148`，两侧口径天然一致）
+- 分母：日志侧 `:148` 注入明细行数（**仅 `agent=... hash=` 真实注入行**；
+  `inject source=guidelines_only` 标记行在 dedup 之前打印、对 `same_content` 跳过
+  也出现，计入分母会使 guidelines_only 流量对账系统性虚低——8/18 实测 codex 分母
+  翻倍，已从提取器排除）
+- 窗口起点：**`inject_log` 最早行**（观测层启用时间）。启用前的历史 `:148` 行无
+  对应表行，计入分母会造成系统性误报（8/18 实测 claude reconcile=0.005 根因）
+- 测试进程隔离：proxy 包测试直写生产日志/生产库（8/18 实测 write_err=10 全来自
+  测试临时目录、日志侧 19 条无表行全为空 session 测试行）——测试已整体隔离
+  （`AIPMC_LOG=off` + `PMAI_HOME` 临时目录），观测数据仅计生产流量
 - 期望：**1.0**（每一条 `:148` 日志都有对应 `inject_log` 行）
 - 语义：<1.0 即观测层断裂（写库失败/提取器 bug）——**先验证观测可信，再谈画像**
 - 目标：`= 1.0`；`< 1.0` 触发告警（附 `write_err` 计数与差量）
@@ -312,4 +319,3 @@ fileAssoc（新出现文件）> warnings（新警告）> actionItems（新事件
 
 前置基线（不阻塞 S2-S4，但阻塞 S5 上线）：P0-1 默认构建自举、P0-2 测试隔离 + relpath 修复、
 P0-3 Windows CI。最终验收标准：**默认环境下裸 `go test ./...` 全绿**。
-

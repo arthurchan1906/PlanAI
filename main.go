@@ -304,6 +304,9 @@ func main() {
 				fmt.Fprintf(os.Stderr, "eval attribution: %v\n", err)
 				os.Exit(1)
 			}
+			// S4 核验项 4：JSON + 人类可读双输出（人类可读对齐 metrics.go printRow 风格）
+			fmt.Print(eval.FormatHuman(rep))
+			fmt.Println()
 			out, _ := json.MarshalIndent(rep, "", "  ")
 			fmt.Println(string(out))
 		default:

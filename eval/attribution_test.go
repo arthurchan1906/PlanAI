@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -251,5 +252,27 @@ func TestM1ReconcileWindowExcludesPreEnableLogs(t *testing.T) {
 	}
 	if a.M1.Reconcile != 1.0 {
 		t.Errorf("reconcile = %v, want 1.0（启用前行排除后无观测断裂）", a.M1.Reconcile)
+	}
+}
+
+// S4 核验项 4：人类可读输出（对齐 metrics.go printRow 风格）覆盖关键指标。
+func TestFormatHumanCoversKeyMetrics(t *testing.T) {
+	d := fixtureDB(t)
+	mustExec(t, d, `INSERT INTO inject_log VALUES ('inj-1','codex-cli','sess-A','r100-1','2026-08-14T10:00:00','abc12345','','{"fileAssoc":["a.go"]}',100,0)`)
+	p := filepath.Join(t.TempDir(), "aipmc.log")
+	lines := "[2026-08-14 10:00:00] [INJECT] agent=codex-cli session=sess-A req=r100-1 hash=abc12345 goals=0 warnings=0 actions=0 file_total=1 guidelines=0 guide_del=0 chars=100\n"
+	if err := os.WriteFile(p, []byte(lines), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	since, _ := time.Parse("2006-01-02T15:04:05", "2026-08-14T00:00:00")
+	rep, err := BuildAttribution(d, p, since)
+	if err != nil {
+		t.Fatalf("BuildAttribution: %v", err)
+	}
+	human := FormatHuman(rep)
+	for _, want := range []string{"M1a", "M1b", "M2", "M3", "M4", "M5", "write_err", "codex-cli"} {
+		if !strings.Contains(human, want) {
+			t.Errorf("FormatHuman missing %q:\n%s", want, human)
+		}
 	}
 }
