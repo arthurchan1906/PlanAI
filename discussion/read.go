@@ -53,12 +53,21 @@ func FormatResults(rows []map[string]any, full bool) string {
 	}
 	for _, r := range rows {
 		content := u.Str(r["content"])
+		truncated := false
 		if !full {
+			truncated = len([]rune(content)) > PreviewRunes
 			content = PreviewContent(content, PreviewRunes)
 		}
-		b.WriteString(fmt.Sprintf("%s %s [%s][%s][sid=%s]\n%s\n\n",
+		line := fmt.Sprintf("%s %s [%s][%s][sid=%s]\n%s\n\n",
 			u.Str(r["id"]), u.Str(r["created_at"]), u.Str(r["role"]), u.Str(r["source"]),
-			shortSessionID(u.Str(r["session_id"])), content))
+			shortSessionID(u.Str(r["session_id"])), content)
+		if truncated {
+			// B7：被截断的消息标注展开线索——agent 可按 id 单条展开，无需 full=true 拉整 session。
+			line = strings.TrimSuffix(line, "\n\n") +
+				fmt.Sprintf("…\n[已截断 全文 %d 字，展开: aipm_read_discussions id=%s]\n\n",
+					len([]rune(u.Str(r["content"]))), u.Str(r["id"]))
+		}
+		b.WriteString(line)
 	}
 	return b.String()
 }

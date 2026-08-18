@@ -252,3 +252,28 @@ func TestSearchCJKExactRanksFirst(t *testing.T) {
 			results[0]["id"], results[1]["id"])
 	}
 }
+
+func TestFormatResultsTruncationHint(t *testing.T) {
+	long := strings.Repeat("长消息内容", 60) // 300 字 > PreviewRunes
+	rows := []map[string]any{
+		{"id": "disc-20260818-000000-aaa111", "session_id": "sess-1", "role": "user", "source": "codex-cli", "created_at": "2026-08-18T00:00:00", "content": long},
+	}
+	out := FormatResults(rows, false)
+	if !strings.Contains(out, "[已截断 全文 300 字，展开: aipm_read_discussions id=disc-20260818-000000-aaa111]") {
+		t.Errorf("preview 应标注截断线索，got:\n%s", out)
+	}
+	outFull := FormatResults(rows, true)
+	if strings.Contains(outFull, "已截断") {
+		t.Errorf("full 模式不应截断标注，got:\n%s", outFull)
+	}
+	if !strings.Contains(outFull, long) {
+		t.Error("full 模式应包含全文")
+	}
+	// 短消息不标注
+	short := []map[string]any{
+		{"id": "disc-20260818-000000-bbb222", "session_id": "sess-1", "role": "user", "source": "codex-cli", "created_at": "2026-08-18T00:00:00", "content": "短消息"},
+	}
+	if strings.Contains(FormatResults(short, false), "已截断") {
+		t.Error("短消息不应有截断标注")
+	}
+}

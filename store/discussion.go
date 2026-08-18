@@ -344,6 +344,7 @@ func GetSessionMessagesFor(projectPath, sessionID string) ([]map[string]any, err
 type ReadDiscussionsOpts struct {
 	Source      string
 	SessionID   string
+	ID          string // 按消息 ID 展开单条全文（B7：预览中的 disc-xxx 线索）
 	LastN       int
 	Since       string
 	Cursor      string
@@ -363,6 +364,10 @@ func ReadDiscussions(opts ReadDiscussionsOpts) ([]map[string]any, error) {
 		where += " AND session_id = ?"
 		args = append(args, opts.SessionID)
 	}
+	if opts.ID != "" {
+		where += " AND id = ?"
+		args = append(args, opts.ID)
+	}
 	if opts.Since != "" {
 		where += " AND created_at >= ?"
 		args = append(args, opts.Since)
@@ -371,6 +376,9 @@ func ReadDiscussions(opts ReadDiscussionsOpts) ([]map[string]any, error) {
 	limit := opts.LastN
 	if limit <= 0 {
 		limit = 15
+	}
+	if opts.ID != "" {
+		limit = 1
 	}
 
 	// Cursor-based incremental read: only fetch rows after the cursor chronologically.

@@ -208,3 +208,39 @@ func TestCountExplicitStatuses(t *testing.T) {
 		t.Errorf("explicit = %d, want 1", exp)
 	}
 }
+
+func TestReadDiscussionsByID(t *testing.T) {
+	setupDailyDB(t)
+	if _, err := ReadDiscussions(ReadDiscussionsOpts{LastN: 5}); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	row1, err := LogDiscussion("sess-byid", "user", "codex-cli", "第一条消息", "")
+	if err != nil {
+		t.Fatalf("log 1: %v", err)
+	}
+	if _, err := LogDiscussion("sess-byid", "assistant", "codex-cli", "第二条消息（长内容）", ""); err != nil {
+		t.Fatalf("log 2: %v", err)
+	}
+	id1, ok := row1["id"].(string)
+	if !ok || id1 == "" {
+		t.Fatalf("log 1 id missing: %v", row1)
+	}
+	rows, err := ReadDiscussions(ReadDiscussionsOpts{ID: id1})
+	if err != nil {
+		t.Fatalf("ReadDiscussions by id: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	if got := rows[0]["content"]; got != "第一条消息" {
+		t.Errorf("content = %q, want 第一条消息", got)
+	}
+	// 不存在 ID 返回空
+	rows, err = ReadDiscussions(ReadDiscussionsOpts{ID: "disc-20260818-999999-zzzzzz"})
+	if err != nil {
+		t.Fatalf("ReadDiscussions missing id: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("missing id should return 0 rows, got %d", len(rows))
+	}
+}

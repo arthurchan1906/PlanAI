@@ -647,7 +647,7 @@ func (s *mcpServer) registerTools() {
 	// Discussion log tools
 	s.addTool(MCPTool{
 		Name:        "aipm_read_discussions",
-		Description: "读取其他 Agent（Claude Code/Cursor/Gemini/OpenCode 等）的对话历史。想看某个 Agent 说了什么 → source 指定来源；不传 source 则返回所有人。full=true 返回全文。未指定 last_n 时默认 15 条。传 cursor 可增量读取避免重复（上次读到 disc-xxx, 从那里继续）。禁止 sqlite3 直查数据库。",
+		Description: "读取其他 Agent（Claude Code/Cursor/Gemini/OpenCode 等）的对话历史。想看某个 Agent 说了什么 → source 指定来源；不传 source 则返回所有人。full=true 返回全文。未指定 last_n 时默认 15 条。传 cursor 可增量读取避免重复（上次读到 disc-xxx, 从那里继续）。预览中被截断的长消息带 id=disc-xxx 线索，可用 id= 参数单条展开全文。禁止 sqlite3 直查数据库。",
 		InputSchema: MCPInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
@@ -655,6 +655,7 @@ func (s *mcpServer) registerTools() {
 				"session_id":   map[string]string{"type": "string", "description": "可选: 只看某个具体 session（同一 source 可能有多个同名 agent 进程/会话，如多个 codex）。session_id 可从 aipm_list_sessions 获取。"},
 				"last_n":       map[string]string{"type": "integer", "description": "最近 N 条。默认 15。快速浏览用 5，深入阅读用 30（与 since / cursor 可组合）"},
 				"since":        map[string]string{"type": "string", "description": "可选: ISO 时间下限 (例 2026-06-15T21:48:00)"},
+				"id":           map[string]string{"type": "string", "description": "可选: 按消息 ID 展开单条全文（B7）。预览输出中被截断的长消息会标注 [已截断 全文 N 字，展开: aipm_read_discussions id=disc-xxx]——把 disc-xxx 传入本参数即可只拉该条全文，无需 full=true 拉整个 session。"},
 				"cursor":       map[string]string{"type": "string", "description": "可选: 从上次返回的 cursor 之后继续读取，避免重复（传上次返回结果中 related_context.cursor 的值）"},
 				"full":         map[string]string{"type": "boolean", "description": "true=全文（互读讨论必设），false=预览约 200 字（默认）"},
 				"project_path": map[string]string{"type": "string", "description": "可选: 目标项目路径，不传则读当前项目。例: /Users/dazsec/projects/EncryptDrive"},
@@ -1991,6 +1992,7 @@ func (s *mcpServer) handleSmartSearch(args map[string]interface{}) mcpToolResult
 func (s *mcpServer) handleReadDiscussions(args map[string]interface{}) mcpToolResult {
 	source := getStr(args, "source", "")
 	sessionID := getStr(args, "session_id", "")
+	discID := getStr(args, "id", "")
 	since := getStr(args, "since", "")
 	lastN := getInt(args, "last_n", 0)
 	cursor := getStr(args, "cursor", "")
@@ -2007,9 +2009,17 @@ func (s *mcpServer) handleReadDiscussions(args map[string]interface{}) mcpToolRe
 		full = true
 	}
 
+	if discID != "" {
+		// B7：按预览中的 disc-xxx 线索单条展开全文，不拉整个 session。
+		full = true
+		lastN = 1
+		args["full"] = true
+		args["last_n"] = 1
+	}
 	rows, err := store.ReadDiscussions(store.ReadDiscussionsOpts{
 		Source:      source,
 		SessionID:   sessionID,
+		ID:          discID,
 		LastN:       lastN,
 		Since:       since,
 		Cursor:      cursor,
@@ -2031,6 +2041,9 @@ func (s *mcpServer) handleReadDiscussions(args map[string]interface{}) mcpToolRe
 	if sessionID != "" {
 		header.WriteString(fmt.Sprintf(" [session=%s]", sessionID))
 	}
+	if discID != "" {
+		header.WriteString(fmt.Sprintf(" [id=%s 单条全文]", discID))
+	}
 	if since != "" {
 		header.WriteString(fmt.Sprintf(" [since=%s]", since))
 	}
@@ -2039,11 +2052,15 @@ func (s *mcpServer) handleReadDiscussions(args map[string]interface{}) mcpToolRe
 	text := header.String() + discussion.FormatResults(rows, full)
 	reflection := ""
 	if len(rows) == 0 {
-		if cursor != "" {
+		if discID != "" {
+			reflection = fmt.Sprintf("未找到 id=%s。ID 需为预览输出的 disc-xxx 形式，或检查是否被 substantive 过滤（工具输出类消息不返回）。", discID)
+		} else if cursor != "" {
 			reflection = "cursor 之后无新讨论。如需扩大范围，不传 cursor 重新调用。"
 		} else {
 			reflection = "未找到讨论记录。确认 source 拼写或扩大 since 时间窗。"
 		}
+	} else if discID != "" {
+		reflection = fmt.Sprintf("已展开单条全文（id=%s）。", discID)
 	} else if !full {
 		reflection = "内容为预览（约 200 字）。互读讨论请设 full=true。看某 Agent → source=\"cursor\" + full=true。"
 	} else if sessionID != "" {
