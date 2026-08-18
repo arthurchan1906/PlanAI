@@ -113,6 +113,37 @@ func TestParsePostToolCursorEventCase(t *testing.T) {
 	}
 }
 
+func TestClassifyToolNamePriority(t *testing.T) {
+	// cursor Read + file_path → read（tool_name 优先，不得误判 edit）
+	r := ParseToolRecord("cursor", `{"_type":"post_tool","file_path":"/repo/SKILL.md","hook_event_name":"postToolUse","tool_name":"Read","tool_input":{"file_path":"/repo/SKILL.md"}}`)
+	if r.Tool != "read" {
+		t.Errorf("Read tool = %q, want read", r.Tool)
+	}
+	if len(r.Files) != 1 || r.Files[0] != "/repo/SKILL.md" {
+		t.Errorf("Read files = %v, want [/repo/SKILL.md]", r.Files)
+	}
+	// cursor Grep → read
+	if r := ParseToolRecord("cursor", `{"_type":"post_tool","tool_name":"Grep","tool_input":{}}`); r.Tool != "read" {
+		t.Errorf("Grep tool = %q, want read", r.Tool)
+	}
+	// cursor Shell → bash
+	if r := ParseToolRecord("cursor", `{"_type":"post_tool","tool_name":"Shell","tool_input":{"command":"ls"}}`); r.Tool != "bash" || r.Command != "ls" {
+		t.Errorf("Shell tool/cmd = %q/%q, want bash/ls", r.Tool, r.Command)
+	}
+	// cursor Delete → edit
+	if r := ParseToolRecord("cursor", `{"_type":"post_tool","tool_name":"Delete","tool_input":{}}`); r.Tool != "edit" {
+		t.Errorf("Delete tool = %q, want edit", r.Tool)
+	}
+	// codex mcp 工具名含 "read" 不得误捕为 read（mcp 最优先）
+	if r := ParseToolRecord("codex-cli", `{"_type":"post_tool","tool_name":"mcp__aipm__aipm_read_discussions","tool_input":{}}`); r.Tool != "mcp" {
+		t.Errorf("mcp tool = %q, want mcp", r.Tool)
+	}
+	// 无已知关键字 → 保留原名
+	if r := ParseToolRecord("codex-cli", `{"_type":"post_tool","tool_name":"update_plan","tool_input":{}}`); r.Tool != "update_plan" {
+		t.Errorf("update_plan tool = %q, want 保留原名", r.Tool)
+	}
+}
+
 func TestParseUnknownAndDegraded(t *testing.T) {
 	if r := ParseToolRecord("aipmc-vision", `{"id":"x","iteration":1}`); r.Tool != "unknown" {
 		t.Errorf("unknown tool = %q, want unknown", r.Tool)

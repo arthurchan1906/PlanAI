@@ -35,6 +35,7 @@ type postTool struct {
 	Model         string         `json:"model"`
 	FilePath      string         `json:"file_path"`
 	RelPath       string         `json:"rel_path"`
+	ToolName      string         `json:"tool_name"`
 	ToolInput     map[string]any `json:"tool_input"`
 }
 
@@ -132,7 +133,7 @@ func parsePostTool(source, metadata string, rec ToolRecord) ToolRecord {
 	rec.Cwd = pt.Cwd
 	rec.Model = pt.Model
 	rec.HookEventName = pt.HookEventName
-	tool, cmd, files := classifyToolInput(pt.ToolInput)
+	tool, cmd, files := classifyToolInput(pt.ToolName, pt.ToolInput)
 	if tool == "unknown" && pt.FilePath != "" {
 		// 顶层 file_path 且无命令 → 文件操作（与 tool_input.file_path 归类一致）
 		tool = "edit"
@@ -218,25 +219,27 @@ func appendFiles(files []string, paths ...string) []string {
 	return files
 }
 
-// classifyToolInput 从 post_tool 的 tool_input 判定工具类型并提取命令/文件。
-func classifyToolInput(in map[string]any) (tool, cmd string, files []string) {
-	if in == nil {
+// classifyToolInput 判定工具类型并提取命令/文件。
+// 优先级：tool_name（实测 100% 行存在，权威标识）→ command（bash）→ file_path（无 tool_name 时兜底）。
+func classifyToolInput(toolName string, in map[string]any) (tool, cmd string, files []string) {
+	if toolName != "" {
+		tool = normalizeToolName(toolName)
+	} else if in == nil {
+		return "unknown", "", nil
+	} else if c, ok := in["command"].(string); ok && c != "" {
+		tool = "bash"
+	} else if _, ok := in["file_path"].(string); ok {
+		tool = "edit"
+	} else if t, ok := in["tool_name"].(string); ok {
+		tool = normalizeToolName(t)
+	} else {
 		return "unknown", "", nil
 	}
+	if c, ok := in["command"].(string); ok {
+		cmd = c
+	}
 	files = extractFilesFromInput(in)
-	// bash 类：command 字段
-	if c, ok := in["command"].(string); ok && c != "" {
-		return "bash", c, files
-	}
-	// edit/read/write 类：file_path 或文件名类型字段
-	if _, ok := in["file_path"].(string); ok {
-		return "edit", "", files
-	}
-	// gemini 风格 read_file/write_file 无 command
-	if t, ok := in["tool_name"].(string); ok {
-		return normalizeToolName(t), "", files
-	}
-	return "unknown", "", files
+	return tool, cmd, files
 }
 
 // extractFilesFromInput 从 tool_input 提取文件路径字段（file_path/file_paths/多键）。
@@ -267,19 +270,21 @@ func extractFilesFromInput(in map[string]any) []string {
 	return files
 }
 
-// normalizeToolName gemini/工具名 → 归一类（read_file→read 等）。
+// normalizeToolName 工具名 → 归一类（read_file→read 等），大小写不敏感。
+// mcp 必须最先判定：mcp__aipm__aipm_read_discussions 含 "read" 不得误捕。
 func normalizeToolName(name string) string {
+	lower := strings.ToLower(name)
 	switch {
-	case strings.Contains(name, "read"):
-		return "read"
-	case strings.Contains(name, "write"):
-		return "write"
-	case strings.Contains(name, "edit"):
-		return "edit"
-	case strings.Contains(name, "bash") || strings.Contains(name, "run"):
-		return "bash"
-	case strings.Contains(name, "mcp"):
+	case strings.Contains(lower, "mcp"):
 		return "mcp"
+	case strings.Contains(lower, "read") || strings.Contains(lower, "grep"):
+		return "read"
+	case strings.Contains(lower, "write"):
+		return "write"
+	case strings.Contains(lower, "edit") || strings.Contains(lower, "delete"):
+		return "edit"
+	case strings.Contains(lower, "bash") || strings.Contains(lower, "shell") || strings.Contains(lower, "run"):
+		return "bash"
 	default:
 		return name
 	}
