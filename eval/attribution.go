@@ -132,6 +132,13 @@ func BuildAttribution(d *sql.DB, logFile string, since time.Time) (*AttributionR
 	}
 	rows.Close()
 
+	// M1a 对账窗口：从 inject_log 最早行开始（观测层启用时间）。此前的
+	// :148 日志无对应表行（表 8/18 才启用），计入分母会造成系统性误报。
+	var tableMinTS string
+	if err := d.QueryRow(`SELECT MIN(ts) FROM inject_log WHERE ts >= ?`, sinceISO).Scan(&tableMinTS); err != nil {
+		tableMinTS = ""
+	}
+
 	// 日志侧：:148 注入行（M1a 对账分母）、same_content / no_summary（对照组）、
 	// inject_log write_err（写库故障直接证据）
 	m2Ctl := map[string]map[string]time.Time{} // agent → session → last skip ts
@@ -141,16 +148,29 @@ func BuildAttribution(d *sql.DB, logFile string, since time.Time) (*AttributionR
 		}
 		// 写库失败告警（直接证据，非间接推断——8/18 v2 口径）
 		if strings.Contains(ln, "inject_log write_err=") {
+			// 测试进程写临时库失败的噪音不计入生产观测（8/18 实测：proxy 包
+			// 测试未隔离前，Test* 临时目录的 "PMAI database not found" 全部
+			// 落在生产日志里）。Bootstrap 修复后不再产生，历史行在此过滤。
+			if strings.Contains(ln, os.TempDir()) {
+				continue
+			}
 			ts, _, _, _ := parseSkipLine(ln)
 			if !ts.IsZero() && !ts.Before(since) {
 				rep.WriteErr++
 			}
 			continue
 		}
-		// :148 注入行（M1a 对账分母）：agent= 正常注入 + inject source=guidelines_only
-		if strings.Contains(ln, "[INJECT] agent=") || strings.Contains(ln, "[INJECT] inject agent=") {
+		// :148 注入行（M1a 对账分母）：仅统计真实注入明细行（agent= + hash=）。
+		// 排除 "inject agent=... source=guidelines_only" 标记行——它在 dedup 之前
+		// 打印，对 same_content 跳过也出现，计入分母会让 guidelines_only 流量
+		// 的对账系统性虚低（8/18 实测 codex 分母翻倍）。
+		if strings.Contains(ln, "[INJECT] agent=") && strings.Contains(ln, " hash=") {
 			ts, agent, _, _ := parseSkipLine(ln)
 			if ts.IsZero() || ts.Before(since) || agent == "" {
+				continue
+			}
+			// 观测层启用前的历史 :148 行不参与对账（无对应表行）
+			if tableMinTS != "" && ts.Format("2006-01-02T15:04:05") < tableMinTS {
 				continue
 			}
 			a := rep.ByAgent[agent]

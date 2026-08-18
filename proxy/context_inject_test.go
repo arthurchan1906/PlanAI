@@ -245,6 +245,10 @@ func TestInjectSameContentStillInjectsBlock(t *testing.T) {
 	}
 	t.Setenv("PMAI_HOME", dir)
 	t.Setenv("AIPMC_INJECT", "1")
+	// 先 Bootstrap 建库（避免注入写库失败在测试中产生 write_err 日志噪音）
+	if _, err := pmdb.Bootstrap(); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
 	guidelinesCache.mu.Lock()
 	guidelinesCache.updatedAt = time.Time{} // 强制从 temp 目录重新加载
 	guidelinesCache.content = ""

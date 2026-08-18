@@ -2,6 +2,7 @@ package u
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -25,6 +26,12 @@ const (
 
 func initSharedLogger() {
 	if logLogger != nil {
+		return
+	}
+	// 测试进程隔离（8/18 M1 对账实测）：测试直接调用注入路径会污染生产日志
+	// （:148 分母 / write_err）。proxy 包 TestMain 设 AIPMC_LOG=off 整体屏蔽。
+	if os.Getenv("AIPMC_LOG") == "off" {
+		logLogger = log.New(io.Discard, "", 0)
 		return
 	}
 	// Try project's .pmai directory first

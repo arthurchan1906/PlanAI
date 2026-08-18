@@ -5,6 +5,7 @@ package eval
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -36,16 +37,21 @@ func fixtureDB(t *testing.T) *sql.DB {
 func fixtureLog(t *testing.T) string {
 	t.Helper()
 	lines := []string{
+		"[2026-08-14 10:00:00] [INJECT] inject agent=codex-cli session=sess-A req=r100-1 source=guidelines_only",
 		"[2026-08-14 10:00:00] [INJECT] agent=codex-cli session=sess-A req=r100-1 hash=abc12345 goals=1 warnings=1 actions=0 file_total=2 guidelines=1 guide_del=0 chars=412",
 		"[2026-08-14 11:00:00] [INJECT] agent=codex-cli session=sess-B req=r100-2 hash=def67890 goals=0 warnings=0 actions=0 file_total=1 guidelines=0 guide_del=0 chars=180",
 		"[2026-08-14 12:00:00] [INJECT] agent=codex-cli session=sess-C req=r100-3 hash=abc12346 goals=0 warnings=0 actions=0 file_total=1 guidelines=0 guide_del=0 chars=120",
 		"[2026-08-14 12:30:00] [INJECT] agent=codex-cli session=sess-F req=r100-7 hash=abc12347 goals=0 warnings=0 actions=0 file_total=0 guidelines=1 guide_del=0 chars=90",
 		"[2026-08-14 13:00:00] [INJECT] agent=codex-cli session=sess-G req=r100-8 hash=abc12348 goals=0 warnings=0 actions=0 file_total=1 guidelines=0 guide_del=0 chars=100",
+		"[2026-08-14 10:30:30] [INJECT] inject agent=codex-cli session=sess-D req=r100-4 source=guidelines_only",
 		"[2026-08-14 10:30:00] [INJECT] skip agent=codex-cli session=sess-D req=r100-4 reason=same_content hash=abc12345",
 		"[2026-08-14 10:31:00] [INJECT] skip agent=codex-cli session=sess-E req=r100-5 reason=no_summary_data",
 		"[2026-08-14 10:32:00] [INJECT] suppressed=2 reason=char_limit cap=800 agent=codex-cli session=sess-C req=r100-6 segments=file_cut:1 warn:1 act:0 goals:0 guide:0",
 		"[2026-08-14 10:33:00] [INJECT] inject_log write_err=SQLITE_BUSY",
 	}
+	// 测试进程写临时库的失败噪音（os.TempDir() 特征）不计入生产 WriteErr
+	tempDB := filepath.Join(os.TempDir(), "TestInjectSameContentStillInjectsBlockX", "001", "data", "pmai.db")
+	lines = append(lines, fmt.Sprintf("[2026-08-14 10:33:30] [INJECT] inject_log write_err=PMAI database not found: %s — run aipmc init first", tempDB))
 	p := filepath.Join(t.TempDir(), "aipmc.log")
 	var data string
 	for _, l := range lines {
@@ -216,5 +222,34 @@ func TestM1ReconcileDetectsWriteLoss(t *testing.T) {
 	}
 	if rep.WriteErr != 1 {
 		t.Errorf("WriteErr = %d, want 1", rep.WriteErr)
+	}
+}
+
+// M1a 对账窗口：inject_log 启用前的历史 :148 日志行不参与对账（无对应表行，
+// 计入分母会造成系统性误报——8/18 实测 claude reconcile=0.005 根因）。
+func TestM1ReconcileWindowExcludesPreEnableLogs(t *testing.T) {
+	d := fixtureDB(t)
+	// inject_log 最早行 = 10:00（观测层启用时间）
+	mustExec(t, d, `INSERT INTO inject_log VALUES ('inj-1','codex-cli','sess-A','r100-1','2026-08-14T10:00:00','abc12345','','{"fileAssoc":["a.go"]}',100,0)`)
+	mustExec(t, d, `INSERT INTO inject_log VALUES ('inj-2','codex-cli','sess-B','r100-2','2026-08-14T10:05:00','abc12346','','{"fileAssoc":["b.go"]}',100,0)`)
+	// 日志 3 条 :148 注入行：09:00 在观测层启用前，10:00/10:05 启用后
+	p := filepath.Join(t.TempDir(), "aipmc.log")
+	lines := "[2026-08-14 09:00:00] [INJECT] agent=codex-cli session=sess-PRE req=r100-0 hash=abc12344 goals=0 warnings=0 actions=0 file_total=1 guidelines=0 guide_del=0 chars=100\n" +
+		"[2026-08-14 10:00:00] [INJECT] agent=codex-cli session=sess-A req=r100-1 hash=abc12345 goals=0 warnings=0 actions=0 file_total=1 guidelines=0 guide_del=0 chars=100\n" +
+		"[2026-08-14 10:05:00] [INJECT] agent=codex-cli session=sess-B req=r100-2 hash=abc12346 goals=0 warnings=0 actions=0 file_total=1 guidelines=0 guide_del=0 chars=100\n"
+	if err := os.WriteFile(p, []byte(lines), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	since, _ := time.Parse("2006-01-02T15:04:05", "2026-08-14T00:00:00")
+	rep, err := BuildAttribution(d, p, since)
+	if err != nil {
+		t.Fatalf("BuildAttribution: %v", err)
+	}
+	a := rep.ByAgent["codex-cli"]
+	if a.M1.LogInject != 2 || a.M1.Injected != 2 {
+		t.Fatalf("log_inject=%d injected=%d, want 2/2（启用前 09:00 行排除）", a.M1.LogInject, a.M1.Injected)
+	}
+	if a.M1.Reconcile != 1.0 {
+		t.Errorf("reconcile = %v, want 1.0（启用前行排除后无观测断裂）", a.M1.Reconcile)
 	}
 }
