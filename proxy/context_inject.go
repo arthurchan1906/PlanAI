@@ -143,12 +143,17 @@ func InjectSessionContext(body []byte, agent string) []byte {
 
 	block, sc := buildContextBlock(goals, warnings, actionItems, fileAssoc, guidelines)
 
-	// Content-hash based dedup: only inject if content changed since last injection
-	if !shouldInject(agent, sessionID, reqID, fullHash) {
-		return body
-	}
-
+	// Content-hash based dedup（8/18 修正）：same_content 跳过时不能直接返回
+	// 未注入的 body——每个请求对客户端都是全新 body，注入块不随会话保留；返回
+	// 未注入 body 会让 SP 在「带块/不带块」间交替（cap_1 带注入块 vs cap_2 无
+	// 注入块，字节实证 09:53:39/09:53:57）。正确语义：内容未变时重新注入同一
+	// block（排序后内容逐字节稳定），SP 全程一致、缓存连续。shouldInject 仅
+	// 保留 same_content 观测点，跳过 tracker 更新与 inject 明细日志。
+	sameContent := !shouldInject(agent, sessionID, reqID, fullHash)
 	result := injectIntoPrompt(body, block, agent)
+	if sameContent {
+		return result
+	}
 	injectTracker.Store(agent, injectState{lastAt: time.Now(), contentHash: fullHash})
 	u.LogShared("INJECT", "agent=%s session=%s req=%s goals=%d warnings=%d actions=%d file_total=%d guidelines=%d guide_del=%d chars=%d",
 		agent, sessionID, reqID, len(goals), len(warnings), len(actionItems), len(fileAssoc), len(guidelines), sc.guidelinesDel, len(block))
@@ -605,7 +610,25 @@ func resolveFileContext(body []byte, agent string) []string {
 		}
 	}
 
-	// Match extracted paths against file→task index
+	// Match extracted paths against file→task index. buildFileAssoc sorts the
+	// result so both fullHash and buildContextBlock's sub-budget truncation stay
+	// deterministic across requests (Go map range order is randomized — 8/18
+	// cache 命中率调查: 未排序时每请求重新注入，deepseek prefix cache 在
+	// system prompt 末尾断裂，观测断点 4480/4608 token)。
+	assoc := buildFileAssoc(paths, fileTasks)
+	if len(assoc) > 0 {
+		u.LogShared("INJECT", "file_assoc files=%d matches=%d", len(paths), len(assoc))
+	}
+	return assoc
+}
+
+// buildFileAssoc converts the file→task index into a sorted list of
+// association lines. Sorting is REQUIRED (8/18): the slice feeds both fullHash
+// (order-sensitive %v) and buildContextBlock's sub-budget truncation. An
+// unsorted slice varies per request because Go map range order is randomized,
+// which re-injects every request and breaks the deepseek prefix cache at the
+// system-prompt end (observed 4480/4608 token breakpoints).
+func buildFileAssoc(paths []string, fileTasks map[string]map[string]string) []string {
 	var assoc []string
 	seen := map[string]bool{}
 	for _, p := range paths {
@@ -622,9 +645,7 @@ func resolveFileContext(body []byte, agent string) []string {
 			assoc = append(assoc, fmt.Sprintf("%s → %s %s", p, tag, u.TruncateStr(tid, 20)))
 		}
 	}
-	if len(assoc) > 0 {
-		u.LogShared("INJECT", "file_assoc files=%d matches=%d", len(paths), len(assoc))
-	}
+	sort.Strings(assoc)
 	return assoc
 }
 

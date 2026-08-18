@@ -2,9 +2,13 @@ package proxy
 
 import (
 	"bytes"
+	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Regression: OpenAI Responses format (codex /v1/responses) uses an `input`
@@ -179,5 +183,84 @@ func TestInjectSwitchDisabled(t *testing.T) {
 	t.Setenv("AIPMC_INJECT", "1")
 	if injectSwitchState() != "on" {
 		t.Fatalf("injectSwitchState with AIPMC_INJECT=1 = %q, want on", injectSwitchState())
+	}
+}
+
+// Regression (8/18 cache 命中率调查): buildFileAssoc 的输出必须确定且有序。
+// Go map range 顺序随机，未排序时 fullHash 每请求变化 → 每请求重新注入 →
+// deepseek prefix cache 在 system prompt 末尾断裂（观测断点 4480/4608）。
+// 排序同时稳定 fullHash 与 buildContextBlock 的子预算截断选择。
+func TestBuildFileAssocDeterministic(t *testing.T) {
+	fileTasks := map[string]map[string]string{
+		"a.go": {
+			"task-1": "task-1 (done, P0)",
+			"task-2": "task-2 (in_progress, P1)",
+			"task-3": "task-3 (todo, P2)",
+		},
+		"b.go": {
+			"task-4": "task-4 (done, P1)",
+		},
+	}
+	var first []string
+	for i := 0; i < 100; i++ {
+		got := buildFileAssoc([]string{"b.go", "a.go"}, fileTasks)
+		if i == 0 {
+			first = got
+			continue
+		}
+		if len(got) != len(first) {
+			t.Fatalf("iter %d: length changed: %v vs %v", i, got, first)
+		}
+		for j := range got {
+			if got[j] != first[j] {
+				t.Fatalf("iter %d: assoc order unstable: %v vs %v", i, got, first)
+			}
+		}
+	}
+	if !sort.StringsAreSorted(first) {
+		t.Fatalf("assoc must be sorted, got %v", first)
+	}
+	if len(first) != 4 {
+		t.Fatalf("want 4 associations, got %v", first)
+	}
+	// fullHash 必须随相同 fileAssoc 稳定（same_content 才能命中）。
+	h1 := hashString(fmt.Sprintf("%s%v%s", "block", first, "guidelines"))
+	h2 := hashString(fmt.Sprintf("%s%v%s", "block", first, "guidelines"))
+	if h1 != h2 {
+		t.Fatalf("fullHash unstable for identical fileAssoc: %s vs %s", h1, h2)
+	}
+}
+
+// Regression (8/18 cache 命中率调查): same_content 跳过时不能返回未注入的
+// body。每个请求对客户端都是全新 body（注入块不随会话保留），返回未注入
+// body 会让 SP 在「带块/不带块」间交替（cap_1 带注入块 vs cap_2 无注入块，
+// 字节实证）。正确语义：内容未变时重新注入同一 block，SP 全程一致。
+func TestInjectSameContentStillInjectsBlock(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "guidelines.md"), []byte("test guideline content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PMAI_HOME", dir)
+	t.Setenv("AIPMC_INJECT", "1")
+	guidelinesCache.mu.Lock()
+	guidelinesCache.updatedAt = time.Time{} // 强制从 temp 目录重新加载
+	guidelinesCache.content = ""
+	guidelinesCache.mu.Unlock()
+	injectTracker.Delete("codex")
+
+	body := []byte(`{"input":[{"type":"message","role":"user","content":"hello"}],"instructions":"You are a coding agent"}`)
+	first := InjectSessionContext(body, "codex")
+	if bytes.Equal(first, body) {
+		t.Fatal("first call must inject the block")
+	}
+	if !bytes.Contains(first, []byte("[项目编码规范]")) {
+		t.Fatal("first call block missing guidelines section")
+	}
+	second := InjectSessionContext(body, "codex")
+	if !bytes.Equal(second, first) {
+		t.Fatalf("same_content skip must still inject the identical block")
+	}
+	if !bytes.Contains(second, []byte("[项目编码规范]")) {
+		t.Fatal("second call must also contain the block")
 	}
 }
