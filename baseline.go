@@ -56,6 +56,16 @@ type orphanStat struct {
 	MissingSessionIDs      []string `json:"missing_session_ids,omitempty"`
 }
 
+type coarseAlignStat struct {
+	Status        string `json:"status"` // ok / n_a
+	Reason        string `json:"reason,omitempty"`
+	HoursWithLLM  int    `json:"hours_with_llm"`
+	HoursWithDisc int    `json:"hours_with_disc"`
+	HoursBoth     int    `json:"hours_both"`
+	HoursLLMOnly  int    `json:"hours_llm_only"`
+	HoursDiscOnly int    `json:"hours_disc_only"` // 脱链信号：有 discussion 但无 LLM 转发
+}
+
 type selfReportStat struct {
 	CommitsInWindow int            `json:"commits_in_window"`
 	TestStatus      map[string]int `json:"test_status"`
@@ -64,12 +74,13 @@ type selfReportStat struct {
 }
 
 type baselineReport struct {
-	GeneratedAt string                     `json:"generated_at"`
-	Window      baselineWindow             `json:"window"`
-	Coverage    map[string]coverageStat    `json:"llm_log_coverage"`
-	Underreport map[string]underreportStat `json:"underreport"`
-	Orphans     map[string]orphanStat      `json:"orphan_sessions"`
-	SelfReport  selfReportStat             `json:"self_report"`
+	GeneratedAt     string                     `json:"generated_at"`
+	Window          baselineWindow             `json:"window"`
+	Coverage        map[string]coverageStat    `json:"llm_log_coverage"`
+	Underreport     map[string]underreportStat `json:"underreport"`
+	Orphans         map[string]orphanStat      `json:"orphan_sessions"`
+	SelfReport      selfReportStat             `json:"self_report"`
+	CoarseAlignment map[string]coarseAlignStat `json:"coarse_alignment"`
 }
 
 // isProbeLine 判定连通性探针：in_tok<=1 且 out_tok<=2（非真实 LLM 调用，
@@ -80,15 +91,19 @@ func isProbeLine(fields map[string]string) bool {
 
 // scanLLMLines 扫描日志中窗口内的 [LLM] 行，返回按 agent 的覆盖统计
 // 与 (agent → session → 非探针请求数)。
-func scanLLMLines(path string, since time.Time) (map[string]*coverageStat, map[string]map[string]int, error) {
+// scanLLMLines 扫描日志中窗口内的 [LLM] 行，返回按 agent 的覆盖统计、
+// (agent → session → 非探针请求数) 与 (agent → 活跃小时集合)。
+// 活跃小时用于 claude 等无 session 可 join 的 agent 的粗粒度对账。
+func scanLLMLines(path string, since time.Time) (map[string]*coverageStat, map[string]map[string]int, map[string]map[string]bool, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	defer f.Close()
 
 	coverage := map[string]*coverageStat{}
 	sessions := map[string]map[string]int{}
+	hourActivity := map[string]map[string]bool{}
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1024*1024), 1024*1024)
 	for sc.Scan() {
@@ -113,6 +128,13 @@ func scanLLMLines(path string, since time.Time) (map[string]*coverageStat, map[s
 			st = &coverageStat{}
 			coverage[ag] = st
 		}
+		hourKey := ts.Format("2006-01-02T15")
+		hm := hourActivity[ag]
+		if hm == nil {
+			hm = map[string]bool{}
+			hourActivity[ag] = hm
+		}
+		hm[hourKey] = true
 		st.TotalLines++
 		sid := fields["session"]
 		if sid == "" {
@@ -134,7 +156,7 @@ func scanLLMLines(path string, since time.Time) (map[string]*coverageStat, map[s
 		}
 		m[sid]++
 	}
-	return coverage, sessions, sc.Err()
+	return coverage, sessions, hourActivity, sc.Err()
 }
 
 func parseBaselineSince(arg string) (time.Time, error) {
@@ -215,6 +237,53 @@ func buildOrphans(discByAgent map[string]map[string]int, llmSessions map[string]
 	return out
 }
 
+// buildCoarseAlignment 按「agent × 小时」聚合对比 LLM 请求与 discussion 活动。
+// 用于无 session 可 join 的 agent（claude）：小时级有无对齐是弱信号，
+// HoursDiscOnly>0 表示存在「有 discussion 活动但无任何 LLM 转发」的脱链小时。
+func buildCoarseAlignment(llmHours, discHours map[string]map[string]bool) map[string]coarseAlignStat {
+	out := map[string]coarseAlignStat{}
+	agents := map[string]bool{}
+	for ag := range llmHours {
+		agents[ag] = true
+	}
+	for ag := range discHours {
+		agents[ag] = true
+	}
+	for ag := range agents {
+		lh, dh := llmHours[ag], discHours[ag]
+		st := coarseAlignStat{Status: "ok"}
+		hours := map[string]bool{}
+		for h := range lh {
+			hours[h] = true
+		}
+		for h := range dh {
+			hours[h] = true
+		}
+		for h := range hours {
+			l, d := lh[h], dh[h]
+			switch {
+			case l && d:
+				st.HoursBoth++
+			case l && !d:
+				st.HoursLLMOnly++
+			case !l && d:
+				st.HoursDiscOnly++
+			}
+		}
+		st.HoursWithLLM = len(lh)
+		st.HoursWithDisc = len(dh)
+		if st.HoursWithLLM == 0 && st.HoursWithDisc == 0 {
+			continue
+		}
+		if st.HoursWithLLM == 0 && st.HoursWithDisc > 0 {
+			st.Status = "unmeasurable"
+			st.Reason = "日志侧无该 agent 的 [LLM] 行（可能未接入 proxy），无法做小时级对齐"
+		}
+		out[ag] = st
+	}
+	return out
+}
+
 func capDetail(ids []string) []string {
 	const maxDetail = 20
 	if len(ids) <= maxDetail {
@@ -247,7 +316,7 @@ func runBaseline(args *cli.Args) {
 
 	// 1. 日志侧：扫描 [LLM] 行。
 	logPath := filepath.Join(os.Getenv("HOME"), ".aipmc", "logs", "aipmc.log")
-	coverage, llmSessions, err := scanLLMLines(logPath, since)
+	coverage, llmSessions, llmHours, err := scanLLMLines(logPath, since)
 	if err != nil {
 		fmt.Printf("⚠ 无法读取日志 %s: %v\n", logPath, err)
 		return
@@ -286,9 +355,34 @@ func runBaseline(args *cli.Args) {
 		rows.Close()
 	}
 
+	// discussion_log 按 (source, 小时) 聚合，供无 session 的 agent 做粗粒度对齐。
+	discHours := map[string]map[string]bool{}
+	hrows, err := db.Query(`SELECT source, substr(created_at,1,13) FROM discussion_log
+		WHERE created_at >= ? AND session_id != '' AND session_id != 'unknown'`, sinceISO)
+	if err == nil {
+		for hrows.Next() {
+			var src, hk string
+			if err := hrows.Scan(&src, &hk); err != nil {
+				continue
+			}
+			ag := sourceToAgent[src]
+			if ag == "" {
+				continue
+			}
+			m := discHours[ag]
+			if m == nil {
+				m = map[string]bool{}
+				discHours[ag] = m
+			}
+			m[hk] = true
+		}
+		hrows.Close()
+	}
+
 	// 3. 计算漏录率 + 脱链。
 	underreport := buildUnderreport(llmSessions, discByAgent, coverage)
 	orphans := buildOrphans(discByAgent, llmSessions)
+	coarse := buildCoarseAlignment(llmHours, discHours)
 
 	// 4. 自报可信度：commits 窗口内 test_status 分布；系统验证列存在性。
 	self := selfReportStat{TestStatus: map[string]int{}}
@@ -325,12 +419,13 @@ func runBaseline(args *cli.Args) {
 
 	// 5. 输出。
 	report := baselineReport{
-		GeneratedAt: now.Format("2006-01-02T15:04:05-07:00"),
-		Window:      baselineWindow{Since: sinceISO, Until: now.Format("2006-01-02T15:04:05")},
-		Coverage:    map[string]coverageStat{},
-		Underreport: underreport,
-		Orphans:     orphans,
-		SelfReport:  self,
+		GeneratedAt:     now.Format("2006-01-02T15:04:05-07:00"),
+		Window:          baselineWindow{Since: sinceISO, Until: now.Format("2006-01-02T15:04:05")},
+		Coverage:        map[string]coverageStat{},
+		Underreport:     underreport,
+		Orphans:         orphans,
+		SelfReport:      self,
+		CoarseAlignment: coarse,
 	}
 	for ag, st := range coverage {
 		report.Coverage[ag] = *st
@@ -400,6 +495,26 @@ func printBaselineSummary(r baselineReport, sinceISO string) {
 			fmt.Printf(" 例: %s", strings.Join(st.MissingSessionIDs[:min(3, len(st.MissingSessionIDs))], ", "))
 		}
 		fmt.Println()
+	}
+	fmt.Println()
+
+	fmt.Println("粗粒度对齐（agent × 小时，用于无 session 可 join 的 agent）")
+	caAgents := make([]string, 0, len(r.CoarseAlignment))
+	for ag := range r.CoarseAlignment {
+		caAgents = append(caAgents, ag)
+	}
+	sort.Strings(caAgents)
+	for _, ag := range caAgents {
+		st := r.CoarseAlignment[ag]
+		if st.Status == "unmeasurable" {
+			fmt.Printf("  %-8s 不可对齐: %s\n", ag, st.Reason)
+			continue
+		}
+		fmt.Printf("  %-8s LLM 活跃 %d 小时 | discussion 活跃 %d 小时 | 都有 %d | 仅LLM %d | 仅disc %d\n",
+			ag, st.HoursWithLLM, st.HoursWithDisc, st.HoursBoth, st.HoursLLMOnly, st.HoursDiscOnly)
+		if st.HoursDiscOnly > 0 {
+			fmt.Printf("          ⚠ 有 discussion 但无 LLM 转发的小时: %d（脱链信号）\n", st.HoursDiscOnly)
+		}
 	}
 	fmt.Println()
 

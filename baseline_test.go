@@ -24,9 +24,12 @@ func TestScanLLMLines(t *testing.T) {
 		t.Fatal(err)
 	}
 	since := time.Date(2026, 8, 18, 0, 0, 0, 0, time.Local)
-	coverage, sessions, err := scanLLMLines(path, since)
+	coverage, sessions, hours, err := scanLLMLines(path, since)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(hours["codex"]) != 1 || !hours["codex"]["2026-08-18T00"] {
+		t.Errorf("codex hour activity = %v, want 1 distinct hour 2026-08-18T00（测试日志全在同一小时）", hours["codex"])
 	}
 
 	cx := coverage["codex"]
@@ -115,5 +118,30 @@ func TestParseBaselineSince(t *testing.T) {
 	}
 	if _, err := parseBaselineSince("not-a-date"); err == nil {
 		t.Error("invalid since should error")
+	}
+}
+
+func TestBuildCoarseAlignment(t *testing.T) {
+	llm := map[string]map[string]bool{
+		"claude": {"2026-08-17T09": true, "2026-08-17T10": true, "2026-08-17T12": true},
+		"codex":  {"2026-08-17T09": true},
+	}
+	disc := map[string]map[string]bool{
+		"claude": {"2026-08-17T09": true, "2026-08-17T11": true},
+		"cursor": {"2026-08-17T09": true},
+	}
+	out := buildCoarseAlignment(llm, disc)
+
+	cl := out["claude"]
+	if cl.Status != "ok" || cl.HoursWithLLM != 3 || cl.HoursWithDisc != 2 || cl.HoursBoth != 1 || cl.HoursLLMOnly != 2 || cl.HoursDiscOnly != 1 {
+		t.Errorf("claude coarse = %+v, want llm=3 disc=2 both=1 llm_only=2 disc_only=1", cl)
+	}
+	cursor := out["cursor"]
+	if cursor.Status != "unmeasurable" || cursor.Reason == "" {
+		t.Errorf("cursor coarse = %+v, want unmeasurable（有 discussion 但日志无 [LLM] 行）", cursor)
+	}
+	codex := out["codex"]
+	if codex.Status != "ok" || codex.HoursLLMOnly != 1 || codex.HoursBoth != 0 {
+		t.Errorf("codex coarse = %+v, want llm_only=1 both=0（disc 侧无 codex 数据）", codex)
 	}
 }

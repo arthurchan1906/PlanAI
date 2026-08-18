@@ -9,7 +9,7 @@
 
 ## 1. 结论摘要
 
-1. **文档中的绝对值全部来自 8/15 快照（Windows 机器 `D:\projects\PlanAI`），在本机库不可复现**。
+1. **文档中的绝对值全部来自 8/15 快照（Windows 机器 `D:\projects\AIPMC`），在本机库不可复现**。
    总量、agent 分布、近 30 天占比、摘要覆盖率、自报 commit 数、事件未消费数全部对不上。
 2. **两个"严重度"结论已反转**：
    - "注入回路空转、no_summary_data 92%" → 当前 no_summary 仅 5.3%，注入率 45.4%（8/14 曾达 48.3%）。
@@ -70,8 +70,13 @@
 1. **日志有 NEL（U+0085）行终止符 + 无日期旧格式**，macOS `grep` 会当二进制失明——
    EVAL_PIPELINE 的"乱码容忍"只提 GBK，`parse.go` 必须补 NEL/无日期/二进制检测
    （与 8/12 已修的行日期、LC_ALL=C/grep -a 同源，见 `docs/LOG_GUIDE.md`）。
-2. **`[LLM]` 日志行无 session_id**（`agent=claude model=... in_tok=... injected=Y lat=...`）——
-   M0 漏录率对账无法按 session join；文档只要求 skip 行补 session/req，`[LLM]` 行也要补。
+2. **`[LLM]` 日志行 session 覆盖（8/18 复核结论）**：`567b332` 已给 7 个日志点补 `session=`，
+   但 **codex 路径生效（当前实例 100% 带 session，8/18 10:41 后空 session=0）、claude 路径为
+   结构性缺口**——`extractSessionID` 只认 `client_metadata.session_id`/顶层 `session_id`，
+   Claude Code 的 anthropic 直通请求体（`/v1/messages`）协议本身不带这两个字段，24h 内 197/197
+   行 `session=` 全空（8/18 实测）。影响：codex 漏录率可按 session join；claude 只能做
+   agent×小时粗粒度对齐（8/18 实测 9/9 小时双向一致、0 脱链信号，捕获层健康），精确对账
+   需 serve 侧方案或接受协议限制。
 3. **cooldown 机制已消失**：M2 对照组"按 reason 分层"需按现况重定义
    （char_limit / same_content / no_summary_data / text_too_short / system_fault）。
 4. **8/14 单日 INJECT 行 98,617**（归档日志），注入频率不低——M1/M2 只缺 L2 摘要恢复后的样本，
@@ -81,5 +86,9 @@
 ## 7. 建议的基线动作（按序）
 
 1. 部署当前源码（含 `a66d6e5` + 本审计），确认 L2 恢复产出，再固化 M0 基线（否则基线是"L2 已死"快照）。
+   **8/18 状态：L2 已恢复**——当前日志 no_summary_data 占注入回路 6.9%（8/17 审计 5.3%），主抑制源
+   为 char_limit/same_content（健康形态）。
 2. 新增 M0 基线采集命令（无 LLM、纯 SQL/日志对账），输出 `eval/baseline.json`。
-3. 修正三份文档 §基线 全部绝对值，并以本审计 §2-§5 为 8/17 基线。
+   **8/18 状态：已落地**——`aipmc metrics --baseline`（提交 57b2fb2 + 粗对账增强），
+   24h 实测：codex 漏录 0/2、脱链 0/2（session join，双向一致）；claude 197 行 session 全空
+   不可按 session 对账，降级为小时粗对账 9/9 双向一致（详见 §6.2）。

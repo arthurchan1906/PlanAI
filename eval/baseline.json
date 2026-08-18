@@ -1,21 +1,21 @@
 {
-  "generated_at": "2026-08-18T11:07:13+08:00",
+  "generated_at": "2026-08-18T11:25:38+08:00",
   "window": {
-    "since": "2026-08-17T11:07:13",
-    "until": "2026-08-18T11:07:13"
+    "since": "2026-08-17T11:25:38",
+    "until": "2026-08-18T11:25:38"
   },
   "llm_log_coverage": {
     "claude": {
-      "total_lines": 193,
+      "total_lines": 197,
       "with_session": 0,
-      "empty_session": 193,
+      "empty_session": 197,
       "probe_lines": 0
     },
     "codex": {
-      "total_lines": 1051,
-      "with_session": 879,
-      "empty_session": 172,
-      "probe_lines": 68
+      "total_lines": 1033,
+      "with_session": 923,
+      "empty_session": 110,
+      "probe_lines": 60
     }
   },
   "underreport": {
@@ -49,13 +49,31 @@
   "self_report": {
     "commits_in_window": 17,
     "test_status": {
-      "auto": 13,
+      "auto": 14,
       "failed": 0,
       "not_run": 0,
       "other": 0,
-      "passed": 4
+      "passed": 3
     },
     "system_verify_available": false,
     "verify_note": "commits 表无 verify_status 列——系统实测通过率（L-O）不可查，自报膨胀率 gap 待 schema 迁移后计算（DATA_AUDIT §3）"
+  },
+  "coarse_alignment": {
+    "claude": {
+      "status": "ok",
+      "hours_with_llm": 9,
+      "hours_with_disc": 9,
+      "hours_both": 9,
+      "hours_llm_only": 0,
+      "hours_disc_only": 0
+    },
+    "codex": {
+      "status": "ok",
+      "hours_with_llm": 10,
+      "hours_with_disc": 10,
+      "hours_both": 10,
+      "hours_llm_only": 0,
+      "hours_disc_only": 0
+    }
   }
 }
