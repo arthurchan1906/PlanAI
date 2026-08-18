@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	pmdb "aipmc/db"
 )
 
 // Regression: OpenAI Responses format (codex /v1/responses) uses an `input`
@@ -263,4 +265,83 @@ func TestInjectSameContentStillInjectsBlock(t *testing.T) {
 	if !bytes.Contains(second, []byte("[项目编码规范]")) {
 		t.Fatal("second call must also contain the block")
 	}
+}
+
+// S2（HARNESS §1.3）：实际注入的请求写 inject_log 一行；same_content 跳过不写。
+func TestInjectWritesInjectLog(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "guidelines.md"), []byte("test guideline content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PMAI_HOME", dir)
+	t.Setenv("AIPMC_INJECT", "1")
+	// 先 Bootstrap 建库（inject_log 表依赖 schema v4）
+	if _, err := pmdb.Bootstrap(); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+	guidelinesCache.mu.Lock()
+	guidelinesCache.updatedAt = time.Time{} // 强制从 temp 目录重新加载
+	guidelinesCache.content = ""
+	guidelinesCache.mu.Unlock()
+	injectTracker.Delete("codex")
+
+	body := []byte(`{"input":[{"type":"message","role":"user","content":"hello"}],"instructions":"You are a coding agent"}`)
+	first := InjectSessionContext(body, "codex")
+	if bytes.Equal(first, body) {
+		t.Fatal("first call must inject the block")
+	}
+	// 第一次注入 → 写 1 行
+	count := injectLogCount(t)
+	if count != 1 {
+		t.Fatalf("inject_log rows after first call = %d, want 1", count)
+	}
+	// 第二次 same_content → 注入同一 block，但不写表
+	second := InjectSessionContext(body, "codex")
+	if !bytes.Equal(second, first) {
+		t.Fatal("same_content skip must still inject the identical block")
+	}
+	count = injectLogCount(t)
+	if count != 1 {
+		t.Fatalf("inject_log rows after same_content = %d, want 1 (skip 不写表)", count)
+	}
+	// 校验写入内容
+	db, err := pmdb.Open()
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+	var agent, hash, source, segJSON string
+	var chars int
+	if err := db.QueryRow(`SELECT agent, hash, source, segments_json, chars FROM inject_log`).Scan(&agent, &hash, &source, &segJSON, &chars); err != nil {
+		t.Fatalf("SELECT inject_log: %v", err)
+	}
+	if agent != "codex" {
+		t.Errorf("agent = %s, want codex", agent)
+	}
+	if len(hash) != 8 {
+		t.Errorf("hash = %q, want 8 chars", hash)
+	}
+	if source != "guidelines_only" {
+		t.Errorf("source = %q, want guidelines_only (无 goals/fileAssoc 仅 guidelines)", source)
+	}
+	if chars <= 0 {
+		t.Errorf("chars = %d, want > 0", chars)
+	}
+	if !strings.Contains(segJSON, `"guidelines":true`) {
+		t.Errorf("segments_json missing guidelines: %s", segJSON)
+	}
+}
+
+func injectLogCount(t *testing.T) int {
+	t.Helper()
+	db, err := pmdb.Open()
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM inject_log`).Scan(&n); err != nil {
+		t.Fatalf("COUNT: %v", err)
+	}
+	return n
 }

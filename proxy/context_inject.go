@@ -155,15 +155,50 @@ func InjectSessionContext(body []byte, agent string) []byte {
 		return result
 	}
 	injectTracker.Store(agent, injectState{lastAt: time.Now(), contentHash: fullHash})
-	u.LogShared("INJECT", "agent=%s session=%s req=%s goals=%d warnings=%d actions=%d file_total=%d guidelines=%d guide_del=%d chars=%d",
-		agent, sessionID, reqID, len(goals), len(warnings), len(actionItems), len(fileAssoc), len(guidelines), sc.guidelinesDel, len(block))
+	u.LogShared("INJECT", "agent=%s session=%s req=%s hash=%s goals=%d warnings=%d actions=%d file_total=%d guidelines=%d guide_del=%d chars=%d",
+		agent, sessionID, reqID, fullHash[:8], len(goals), len(warnings), len(actionItems), len(fileAssoc), len(guidelines), sc.guidelinesDel, len(block))
 	// suppressed 计数移到 shouldInject 之后：去重跳过（same_content/cooldown）的请求
 	// 不产出抑制记录——收紧 F2 口径（旧实现把未注入请求的抑制也算进去，虚高）。
 	if sc.total() > 0 {
 		u.LogShared("INJECT", "suppressed=%d reason=char_limit cap=%d agent=%s session=%s req=%s segments=file_cut:%d warn:%d act:%d goals:%d guide:%d",
 			sc.total(), maxInjectChars, agent, sessionID, reqID, sc.fileAssoc, sc.warnings, sc.actionItems, sc.goals, sc.guidelines)
+		return result
 	}
+	// inject_log（HARNESS §1.3，v1 写策略）：仅无 char_limit 裁剪的实际注入写表，
+	// 与 :148 日志同位置。被裁剪的请求从 :153 日志行重建对照组（T7）。
+	source := ""
+	if len(goals) == 0 && len(fileAssoc) == 0 && len(guidelines) > 0 {
+		source = "guidelines_only"
+	}
+	writeInjectLog(agent, sessionID, reqID, source, fullHash, len(block), goals, warnings, actionItems, fileAssoc, guidelines)
 	return result
+}
+
+// writeInjectLog records one actual injection into inject_log. Failure must
+// not break the injection hot path — log and continue (T7 写策略：inject_log
+// 不得出现 suppressed=1，被裁剪请求从日志侧重建对照组）。
+func writeInjectLog(agent, sessionID, reqID, source string, fullHash string, chars int, goals, warnings, actionItems, fileAssoc []string, guidelines string) {
+	segments := map[string]any{
+		"fileAssoc":   fileAssoc,
+		"warnings":    warnings,
+		"actionItems": actionItems,
+		"goals":       goals,
+		"guidelines":  len(guidelines) > 0,
+	}
+	err := pmdb.InsertInjectLog(pmdb.InjectLogEntry{
+		ID:           u.Slug("inj"),
+		Agent:        agent,
+		SessionID:    sessionID,
+		ReqID:        reqID,
+		TS:           u.NowISO(),
+		Hash:         fullHash[:8],
+		Source:       source,
+		SegmentsJSON: u.JsonStr(segments),
+		Chars:        chars,
+	})
+	if err != nil {
+		u.LogShared("INJECT", "inject_log write_err=%v", err)
+	}
 }
 
 func shouldInject(agent, sessionID, reqID, contentHash string) bool {

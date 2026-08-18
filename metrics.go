@@ -506,11 +506,7 @@ func dispatchMetrics(args *cli.Args) {
 	// C1 双口径：inject_rate=实际注入请求占比（same_content 去重跳过是设计行为，
 	// 非失败）；inject_coverage=有数据可注时的覆盖（注入 + 去重 / 排除 no_summary）。
 	printRow("C1  inject_rate", pct(injRate), "参考", true)
-	covDenom := injOK + injGuidelines + injSame + injNoSum
-	covRate := 0.0
-	if covDenom > 0 {
-		covRate = float64(injOK+injGuidelines+injSame) / float64(covDenom)
-	}
+	covRate, _ := injectCoverage(injOK, injGuidelines, injSame, injNoSum)
 	printRow("C1  inject_coverage", pct(covRate)+fmt.Sprintf(" (注入%d+去重%d)", injOK+injGuidelines, injSame), "≥80%", covRate >= 0.80)
 	printRow("C2  file_parse_ok_rate", pct(faRate), "≥90%", faRate >= 0.90)
 	printRow("C3  suppressed(char_limit)", fmt.Sprintf("%d/%d", supChar, supTotal+skipTotal)+" 次", "<30%", supRate < 0.30)
@@ -699,6 +695,18 @@ func printRow(name, val, target string, ok bool) {
 }
 
 func pct(v float64) string { return fmt.Sprintf("%.1f%%", v*100) }
+
+// injectCoverage 计算 C1 inject_coverage（HARNESS M1，8/18 修正）：
+// 分子 = 注入 + 去重（same_content）；分母 = 注入 + 去重 + guidelines_only，
+// **排除 no_summary_data**（无数据可注的请求不稀释覆盖率，与 C1 注释一致）。
+// 返回 (rate, denom)，denom=0 时 rate=0（口径可复现，供 S4 fixture 核验）。
+func injectCoverage(injOK, injGuidelines, injSame, injNoSum int) (float64, int) {
+	denom := injOK + injGuidelines + injSame
+	if denom <= 0 {
+		return 0, 0
+	}
+	return float64(injOK+injGuidelines+injSame) / float64(denom), denom
+}
 
 func atoi(s string) int {
 	n, _ := strconv.Atoi(s)

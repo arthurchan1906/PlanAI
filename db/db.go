@@ -21,7 +21,7 @@ import (
 // SQLite's PRAGMA user_version. Every time the schema or migrations
 // change, bump this — connections with user_version >= this skip the
 // (expensive, write-lock-acquiring) EnsureSchema DDL entirely.
-const SCHEMA_VERSION = 3
+const SCHEMA_VERSION = 4
 
 // schemaUpToDate reports whether the database at d already has the
 // current schema version, so we can skip the DDL pass on hot paths.
@@ -131,6 +131,36 @@ func Open() (*sql.DB, error) {
 		return nil, err
 	}
 	return d, nil
+}
+
+// ── inject_log（HARNESS_ROADMAP §1.3：注入点捕获 v1）──────────────
+
+// InjectLogEntry 记录一次「实际注入」的请求。仅无 char_limit 裁剪的注入写表
+// （suppressed 恒为 0）：被裁剪的请求从 :153 日志行重建对照组（T7 写策略，
+// inject_log 不得出现 suppressed=1）。
+type InjectLogEntry struct {
+	ID           string // u.Slug("inj")，调用方生成
+	Agent        string // codex-cli / claude-code / gemini-cli / cursor / opencode
+	SessionID    string
+	ReqID        string // r<pid>-<seq>，与日志一致
+	TS           string // ISO8601，与 created_at 同格式
+	Hash         string // fullHash 前 8 位
+	Source       string // '' 正常注入 / guidelines_only
+	SegmentsJSON string // 实际注入的 segments（提取器重建「注入了什么」的唯一来源）
+	Chars        int    // 注入块字节数
+}
+
+// InsertInjectLog appends one inject_log row. Write failure must not break the
+// injection hot path — callers log the error and continue.
+func InsertInjectLog(e InjectLogEntry) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	_, err = d.Exec(`INSERT INTO inject_log (id, agent, session_id, req_id, ts, hash, source, segments_json, chars, suppressed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+		e.ID, e.Agent, e.SessionID, e.ReqID, e.TS, e.Hash, e.Source, e.SegmentsJSON, e.Chars)
+	return err
 }
 
 // ensureSchemaIfNeeded runs the schema DDL only when the database is not
@@ -244,6 +274,7 @@ var schemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, type TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, summary TEXT NOT NULL, created_at TEXT NOT NULL, consumed_by_agent INTEGER NOT NULL DEFAULT 0, processed_by_agent INTEGER NOT NULL DEFAULT 0)`,
 	`CREATE TABLE IF NOT EXISTS threads (id TEXT PRIMARY KEY, title TEXT NOT NULL, summary TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active', source TEXT NOT NULL DEFAULT 'manual', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS thread_items (thread_id TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, added_at TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', PRIMARY KEY (thread_id, entity_type, entity_id), FOREIGN KEY(thread_id) REFERENCES threads(id))`,
+	`CREATE TABLE IF NOT EXISTS inject_log (id TEXT PRIMARY KEY, agent TEXT NOT NULL, session_id TEXT NOT NULL, req_id TEXT NOT NULL, ts TEXT NOT NULL, hash TEXT NOT NULL, source TEXT NOT NULL DEFAULT '', segments_json TEXT NOT NULL DEFAULT '{}', chars INTEGER NOT NULL DEFAULT 0, suppressed INTEGER NOT NULL DEFAULT 0)`,
 	`CREATE VIRTUAL TABLE IF NOT EXISTS fts5_index USING fts5(content, entity_type UNINDEXED, entity_id UNINDEXED, title, tokenize='unicode61')`,
 	`CREATE TABLE IF NOT EXISTS agent_profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'coder', capabilities TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS agent_status (session_id TEXT PRIMARY KEY, source TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL, explicit INTEGER NOT NULL DEFAULT 0)`,
@@ -805,7 +836,7 @@ func SyncOpencodeModels(projectRoot string, models []string) error {
 	}
 
 	// Always ensure the provider has the required opencode fields
-	aipm["name"] = "AIPM Proxy"
+	aipm["name"] = "AIPMC Proxy"
 	aipm["npm"] = "@ai-sdk/openai-compatible"
 
 	proxyPort := LoadGlobalConfig().ProxyPort
