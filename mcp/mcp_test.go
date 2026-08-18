@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"aipmc/analyze"
 	pmdb "aipmc/db"
 )
 
@@ -221,5 +222,29 @@ func TestMCPLogSummaryDiscussionFields(t *testing.T) {
 	got4 := mcpLogSummary("aipm_search_discussions", map[string]interface{}{"last_n": 5})
 	if !strings.Contains(got4, "last_n=5") {
 		t.Errorf("last_n-mode search summary must show last_n, got %q", got4)
+	}
+}
+
+func TestFormatAnalyzeDetail(t *testing.T) {
+	r := analyze.AnalyzeReport{
+		Summary: "Found 2 scope drifts, 1 duplicates, 1 conflict",
+		Duplicates: []analyze.DuplicateResult{
+			{EntityType: "task", ID1: "task-a", Title1: "重复任务A", ID2: "task-b", Title2: "重复任务B", Similarity: 0.87},
+		},
+		Conflicts: []analyze.ConflictResult{
+			{TaskID1: "task-x", Title1: "任务X", TaskID2: "task-y", Title2: "任务Y", PlanID: "plan-1", Reason: "同一文件集"},
+		},
+		Drifts: []analyze.DriftResult{
+			{CommitID: "c1", CommitTitle: "c1", OutOfScope: []string{"file_b.go"}},
+		},
+	}
+	got := formatAnalyzeDetail(r)
+	for _, want := range []string{"task-a", "task-b", "87%", "task-x", "task-y", "同一文件集", "file_b.go", "c1"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("formatAnalyzeDetail 缺少 %q，got:\n%s", want, got)
+		}
+	}
+	if !strings.Contains(got, "related_context") {
+		t.Error("应提示 related_context 下钻")
 	}
 }

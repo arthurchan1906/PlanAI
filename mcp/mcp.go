@@ -1921,7 +1921,7 @@ func (s *mcpServer) handleMarkEventProcessed(args map[string]interface{}) mcpToo
 
 func (s *mcpServer) handleAnalyze(args map[string]interface{}) mcpToolResult {
 	report := analyze.RunFullAnalysis()
-	text := fmt.Sprintf("分析完成: %s", report.Summary)
+	text := formatAnalyzeDetail(report)
 
 	return mcpToolResult{
 		Content: []mcpContent{
@@ -1930,6 +1930,70 @@ func (s *mcpServer) handleAnalyze(args map[string]interface{}) mcpToolResult {
 		RelatedContext: report,
 		Reflection:     report.Summary,
 	}
+}
+
+// formatAnalyzeDetail renders drill-down detail for aipm_analyze (#25):
+// duplicates/conflicts carry entity IDs and hit reasons, so the caller can
+// jump to aipm_get_task/get_plan instead of staring at a one-line summary.
+func formatAnalyzeDetail(r analyze.AnalyzeReport) string {
+	var b strings.Builder
+	b.WriteString("分析完成: " + r.Summary + "\n\n")
+
+	const cap = 5
+	if len(r.Duplicates) > 0 {
+		b.WriteString(fmt.Sprintf("### 重复（%d 对）\n", len(r.Duplicates)))
+		for _, d := range r.Duplicates[:min(cap, len(r.Duplicates))] {
+			b.WriteString(fmt.Sprintf("- **%s** [%s] ≈ **%s** [%s] (%.0f%%)\n", d.Title1, d.ID1, d.Title2, d.ID2, d.Similarity*100))
+		}
+		if len(r.Duplicates) > cap {
+			b.WriteString(fmt.Sprintf("  … 共 %d 对。下钻: aipm_get_task(id) 查看详情\n", len(r.Duplicates)))
+		}
+		b.WriteString("\n")
+	}
+	if len(r.Conflicts) > 0 {
+		b.WriteString(fmt.Sprintf("### 冲突（%d 条）\n", len(r.Conflicts)))
+		for _, c := range r.Conflicts[:min(cap, len(r.Conflicts))] {
+			b.WriteString(fmt.Sprintf("- **%s** [%s] 与 **%s** [%s] 冲突（plan %s）: %s\n", c.Title1, c.TaskID1, c.Title2, c.TaskID2, c.PlanID, c.Reason))
+		}
+		if len(r.Conflicts) > cap {
+			b.WriteString(fmt.Sprintf("  … 共 %d 条\n", len(r.Conflicts)))
+		}
+		b.WriteString("\n")
+	}
+	if len(r.Drifts) > 0 {
+		b.WriteString(fmt.Sprintf("### Scope 漂移（%d 条，最近 50 commit 窗口）\n", len(r.Drifts)))
+		for _, d := range r.Drifts[:min(cap, len(r.Drifts))] {
+			b.WriteString(fmt.Sprintf("- %s: 文件 %v 超出 plan scope（commit %s）\n", d.CommitTitle, d.OutOfScope, d.CommitID))
+		}
+		if len(r.Drifts) > cap {
+			b.WriteString(fmt.Sprintf("  … 共 %d 条。下钻: aipm_get_commit(id) 或 aipm_get_task(id)\n", len(r.Drifts)))
+		}
+		b.WriteString("\n")
+	}
+	if len(r.Blocked) > 0 {
+		b.WriteString(fmt.Sprintf("### 阻塞（%d 个，阻塞 %d 天起）\n", len(r.Blocked), r.Blocked[0].DaysBlocked))
+		b.WriteString("\n")
+	}
+	if len(r.Orphans) > 0 {
+		b.WriteString(fmt.Sprintf("### 孤儿任务（%d 个）\n", len(r.Orphans)))
+		for _, o := range r.Orphans[:min(cap, len(r.Orphans))] {
+			b.WriteString(fmt.Sprintf("- **%s** [%s]\n", o.TaskTitle, o.TaskID))
+		}
+		b.WriteString("\n")
+	}
+	if len(r.Impacts) > 0 {
+		b.WriteString(fmt.Sprintf("### 决策影响（%d 项）\n", len(r.Impacts)))
+		for _, imp := range r.Impacts[:min(cap, len(r.Impacts))] {
+			b.WriteString(fmt.Sprintf("- Decision **%s** 影响 %d plans, %d tasks\n", imp.DecisionTitle, len(imp.AffectedPlans), len(imp.AffectedTasks)))
+		}
+		b.WriteString("\n")
+	}
+	if len(r.CrossTasks) > 0 {
+		b.WriteString(fmt.Sprintf("### 跨 task 文件关联（%d 条）\n", len(r.CrossTasks)))
+		b.WriteString("\n")
+	}
+	b.WriteString("[结构化明细见 related_context；下钻: aipm_get_task / aipm_get_plan / aipm_get_commit]\n")
+	return b.String()
 }
 
 func (s *mcpServer) handleSmartSearch(args map[string]interface{}) mcpToolResult {

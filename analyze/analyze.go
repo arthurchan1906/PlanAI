@@ -1485,9 +1485,11 @@ func BuildBriefingLevel(aiClient *ai.Client, graphSection, level string) (string
 	}
 
 	// L2 Session Knowledge (available when L2 summaries exist)
-	if summaryRows, err := store.ListSessionSummariesWithSummary("", 20); err == nil && len(summaryRows) > 0 {
+	// #25: 最近 30 天窗口 + goal 行附 source/完整 session_id，read_discussions 可精准定位。
+	skSince := time.Now().AddDate(0, 0, -30).Format("2006-01-02T15:04:05")
+	if summaryRows, err := store.ListSessionSummariesWithSummary(skSince, 20); err == nil && len(summaryRows) > 0 {
 		b.WriteString("## 🧠 Session Knowledge\n\n")
-		b.WriteString(fmt.Sprintf("Analyzed %d sessions with AI-generated summaries.\n\n", len(summaryRows)))
+		b.WriteString(fmt.Sprintf("Analyzed %d sessions with AI-generated summaries (近 30 天).\n\n", len(summaryRows)))
 
 		// Show recent 3 session goals
 		b.WriteString("### Recent Session Goals\n")
@@ -1498,10 +1500,15 @@ func BuildBriefingLevel(aiClient *ai.Client, graphSection, level string) (string
 			}
 			var l2 session.SessionL2Summary
 			if json.Unmarshal([]byte(sr.Summary), &l2) == nil && l2.Goal != "" {
-				b.WriteString(fmt.Sprintf("- [%s] %s\n", sessionIDPrefix(sr.SessionID), l2.Goal))
+				src := sr.Source
+				if src == "" {
+					src = "?"
+				}
+				b.WriteString(fmt.Sprintf("- [%s %s] %s\n", src, sr.SessionID, l2.Goal))
 				shown++
 			}
 		}
+		b.WriteString("  展开: aipm_read_discussions(source=..., session_id=<上面的完整 id>)\n")
 		b.WriteString("\n")
 
 		// Cross-session patterns
