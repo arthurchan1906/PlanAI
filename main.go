@@ -269,10 +269,11 @@ func main() {
 		return
 	case "eval":
 		// EVAL_PIPELINE：M1-M5 归因提取器（headless，无 LLM 依赖）。
-		// Usage: aipmc eval [--since 30d] [--kind attribution] [--log <path>]
+		// Usage: aipmc eval [--since 30d] [--kind attribution] [--log <path>] [--no-fail]
 		sinceDays := 30
 		kind := "attribution"
 		logPath := ""
+		noFail := false
 		raw := os.Args[2:]
 		for i := 0; i < len(raw); i++ {
 			switch {
@@ -285,6 +286,8 @@ func main() {
 			case raw[i] == "--log" && i+1 < len(raw):
 				logPath = raw[i+1]
 				i++
+			case raw[i] == "--no-fail":
+				noFail = true
 			}
 		}
 		if logPath == "" {
@@ -311,13 +314,15 @@ func main() {
 			fmt.Println(string(out))
 			// M1a 观测断裂告警：write_err>0 或任一 agent 对账<1.0 且差量>0 → 非零退出码
 			// （8/18 攻击性审核补充：仅渲染 ❌ 时无人读输出则告警无意义）。
+			// --no-fail：已知/可解释的窗口残余（如历史测试污染滑动清除期）时显式容忍，
+			// 输出仍渲染 ❌ 但不影响退出码（8/18 Claude 审核建议，避免每日误报阻断）。
 			alert := rep.WriteErr > 0
 			for _, a := range rep.ByAgent {
 				if a.M1.LogInject > 0 && a.M1.Reconcile < 1.0 {
 					alert = true
 				}
 			}
-			if alert {
+			if alert && !noFail {
 				os.Exit(1)
 			}
 		default:
