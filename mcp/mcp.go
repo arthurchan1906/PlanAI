@@ -584,6 +584,19 @@ func (s *mcpServer) registerTools() {
 		},
 	}, s.handleSubmitFeedback)
 
+	s.addTool(MCPTool{
+		Name:        "aipm_feedback_triage",
+		Description: "标记一条远程反馈（feedback）为已处理，写入本地 ~/.aipmc/feedback_triage.json 并启动 30 天复测窗口（B13）。处理前先用 aipm_daily_review 查看未处理反馈列表；bug 类应先用 aipm_record_bug 记录，suggestion 类应评估是否入 plan，再调用本工具标记。参数：feedback_id（必填，反馈 ID 数字）、note（可选，处理说明）。",
+		InputSchema: MCPInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"feedback_id": map[string]string{"type": "string", "description": "反馈 ID（必填，如 21）"},
+				"note":        map[string]string{"type": "string", "description": "处理说明（可选），如关联的 bug_id / task_id 或结论"},
+			},
+			Required: []string{"feedback_id"},
+		},
+	}, s.handleFeedbackTriage)
+
 	// Thread (线索) tools
 	s.addTool(MCPTool{
 		Name:        "aipm_suggest_threads",
@@ -1868,6 +1881,41 @@ func (s *mcpServer) handleSubmitFeedback(args map[string]interface{}) mcpToolRes
 	}
 }
 
+func (s *mcpServer) handleFeedbackTriage(args map[string]interface{}) mcpToolResult {
+	feedbackID := getStr(args, "feedback_id", "")
+	if feedbackID == "" {
+		return mcpToolResult{
+			Content: []mcpContent{{Type: "text", Text: "feedback_id 为必填项"}},
+			IsError: true,
+		}
+	}
+	note := getStr(args, "note", "")
+
+	if err := MarkFeedbackProcessed(feedbackID); err != nil {
+		return mcpToolResult{
+			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("标记失败: %v", err)}},
+			IsError: true,
+		}
+	}
+
+	// 返回剩余未处理数量，帮助 agent 决定是否继续 triage
+	feedbacks, _ := ListFeedbacks("")
+	unprocessed, inWindow := FeedbackTriageSnapshot(feedbacks, 30)
+	suffix := ""
+	if note != "" {
+		suffix = fmt.Sprintf("（备注: %s）", note)
+	}
+	return mcpToolResult{
+		Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("✅ 反馈 #%s 已标记为已处理，30 天复测窗口已启动%s", feedbackID, suffix)}},
+		RelatedContext: map[string]any{
+			"feedback_id":          feedbackID,
+			"note":                 note,
+			"remaining_unprocessed": len(unprocessed),
+			"in_recheck_window":     inWindow,
+		},
+	}
+}
+
 func (s *mcpServer) handleMarkConsumed(args map[string]interface{}) mcpToolResult {
 	if err := store.MarkEventsConsumed(); err != nil {
 		return mcpToolResult{
@@ -2534,6 +2582,30 @@ func (s *mcpServer) handleDailyReview(args map[string]interface{}) mcpToolResult
 		text.WriteString("\n")
 	}
 
+	// Feedback 例行 triage（B9/B13）：未处理列表 + 30 天复测窗口计数
+	feedbacks, _ := ListFeedbacks("")
+	unprocessed, inWindow := FeedbackTriageSnapshot(feedbacks, 30)
+	if len(feedbacks) > 0 {
+		text.WriteString("### Feedback 例行 Triage（B9/B13）\n")
+		text.WriteString(fmt.Sprintf("未处理反馈 **%d** 条 | 30 天复测窗口内已处理 **%d** 条（复测同类反馈是否消失）\n", len(unprocessed), inWindow))
+		for i, f := range unprocessed[:min(10, len(unprocessed))] {
+			id, _ := f["id"].(float64)
+			label := u.Str(f["label"])
+			if label == "" {
+				label = "—"
+			}
+			content := u.TruncateText(u.Str(f["content"]), 120)
+			text.WriteString(fmt.Sprintf("%d. #%.0f [%s] %s\n", i+1, id, label, content))
+		}
+		if len(unprocessed) > 10 {
+			text.WriteString(fmt.Sprintf("… 其余 %d 条未列出\n", len(unprocessed)-10))
+		}
+		if len(unprocessed) > 0 {
+			text.WriteString("处理流程：bug 类先用 aipm_record_bug 记录，suggestion 类评估是否入 plan，然后用 aipm_feedback_triage 标记已处理（30 天复测窗口启动）。\n")
+		}
+		text.WriteString("\n")
+	}
+
 	// Commit list
 	text.WriteString("### 近期 Commits（含上下文）\n")
 	for i, c := range commits[:min(30, len(commits))] {
@@ -2576,8 +2648,13 @@ func (s *mcpServer) handleDailyReview(args map[string]interface{}) mcpToolResult
 			"existing_threads": threads,
 			"suggestions":      suggestions,
 			"thread_status":    status,
+			"feedback": map[string]any{
+				"total":       len(feedbacks),
+				"unprocessed": unprocessed,
+				"in_window":   inWindow,
+			},
 		},
-		Reflection: fmt.Sprintf("已提供 %d 条 commit 供分析，%d 条启发式建议，%d 条已有线索", len(commits), len(suggestions), len(threads)),
+		Reflection: fmt.Sprintf("已提供 %d 条 commit 供分析，%d 条启发式建议，%d 条已有线索，feedback 未处理 %d 条", len(commits), len(suggestions), len(threads), len(unprocessed)),
 	}
 }
 
