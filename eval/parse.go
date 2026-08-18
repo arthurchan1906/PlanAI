@@ -97,6 +97,10 @@ func ParseToolRecord(source, metadata string) ToolRecord {
 	if rec.Tool != "" {
 		return finishParse(rec)
 	}
+	rec = parseClaudeFileOp(source, metadata, rec)
+	if rec.Tool != "" {
+		return finishParse(rec)
+	}
 	rec = parseGeminiTool(source, metadata, rec)
 	if rec.Tool != "" {
 		return finishParse(rec)
@@ -154,6 +158,32 @@ func parseLegacyBash(source, metadata string, rec ToolRecord) ToolRecord {
 	rec.Command = lb.Command
 	rec.ExitCode = lb.ExitCode
 	rec.Output = lb.Stdout
+	return rec
+}
+
+// claudeFileOp claude-code 文件操作格式（8/18 真实库实测）：
+// {"type":"edit|new_file|...","file_path":"..."}（顶层 type + file_path）。
+type claudeFileOp struct {
+	Type     string `json:"type"`
+	FilePath string `json:"file_path"`
+}
+
+// parseClaudeFileOp claude-code 写/读操作：type=edit 等 + 顶层 file_path。
+func parseClaudeFileOp(source, metadata string, rec ToolRecord) ToolRecord {
+	var cf claudeFileOp
+	if err := json.Unmarshal([]byte(metadata), &cf); err != nil || cf.Type == "" || cf.FilePath == "" {
+		return rec
+	}
+	switch cf.Type {
+	case "edit", "new_file", "create", "delete", "rename", "append", "write":
+		rec.Tool = "edit"
+	case "read", "view":
+		rec.Tool = "read"
+	default:
+		return rec // 其他 type（bash 等）不归，避免误捕
+	}
+	rec.Command = cf.Type
+	rec.Files = []string{cf.FilePath}
 	return rec
 }
 

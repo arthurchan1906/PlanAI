@@ -144,6 +144,24 @@ func TestClassifyToolNamePriority(t *testing.T) {
 	}
 }
 
+func TestParseClaudeFileOp(t *testing.T) {
+	// claude-code 实测：type=edit/new_file + 顶层 file_path（8/18 真实库 41 行）
+	r := ParseToolRecord("claude-code", `{"type":"edit","file_path":"/repo/a.go","hunks":[]}`)
+	if r.Tool != "edit" || len(r.Files) != 1 || r.Files[0] != "/repo/a.go" {
+		t.Errorf("edit = %q/%v, want edit/[/repo/a.go]", r.Tool, r.Files)
+	}
+	if r := ParseToolRecord("claude-code", `{"type":"new_file","file_path":"/repo/b.go"}`); r.Tool != "edit" {
+		t.Errorf("new_file = %q, want edit", r.Tool)
+	}
+	if r := ParseToolRecord("claude-code", `{"type":"read","file_path":"/repo/c.go"}`); r.Tool != "read" {
+		t.Errorf("read = %q, want read", r.Tool)
+	}
+	// 其他 type（如 bash）不归文件操作分型
+	if r := ParseToolRecord("claude-code", `{"type":"bash","command":"ls"}`); r.Tool != "bash" {
+		t.Errorf("bash = %q, want bash", r.Tool)
+	}
+}
+
 func TestParseUnknownAndDegraded(t *testing.T) {
 	if r := ParseToolRecord("aipmc-vision", `{"id":"x","iteration":1}`); r.Tool != "unknown" {
 		t.Errorf("unknown tool = %q, want unknown", r.Tool)
