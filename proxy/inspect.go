@@ -1,15 +1,19 @@
-﻿package proxy
+package proxy
 
 import (
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"aipmc/u"
 )
 
 // =============================================================================
@@ -19,16 +23,16 @@ import (
 // captureEntry holds a single captured proxy exchange (request + response).
 // Data lives only in memory; never persisted to database.
 type captureEntry struct {
-	ID        string `json:"id"`
-	Time      string `json:"time"`
-	Agent     string `json:"agent"`
-	Method    string `json:"method"`
-	Path      string `json:"path"`
-	Model     string `json:"model"`
-	Status    int    `json:"status"`
-	Duration  string `json:"duration"`
-	ReqSize   int    `json:"req_size"`
-	RespSize  int    `json:"resp_size"`
+	ID       string `json:"id"`
+	Time     string `json:"time"`
+	Agent    string `json:"agent"`
+	Method   string `json:"method"`
+	Path     string `json:"path"`
+	Model    string `json:"model"`
+	Status   int    `json:"status"`
+	Duration string `json:"duration"`
+	ReqSize  int    `json:"req_size"`
+	RespSize int    `json:"resp_size"`
 
 	// Full request
 	ReqHeaders map[string]string `json:"req_headers"`
@@ -37,21 +41,21 @@ type captureEntry struct {
 
 	// Full response
 	RespHeaders map[string]string `json:"resp_headers,omitempty"`
-	RespBody    string            `json:"resp_body"`     // raw response text
+	RespBody    string            `json:"resp_body"`             // raw response text
 	RespEvents  string            `json:"resp_events,omitempty"` // SSE events as JSON array
 
 	// Token usage (populated after response completes)
-	PromptTokens      int `json:"prompt_tokens"`
-	CompletionTokens  int `json:"completion_tokens"`
-	CacheHitTokens    int `json:"cache_hit_tokens"`
+	PromptTokens        int `json:"prompt_tokens"`
+	CompletionTokens    int `json:"completion_tokens"`
+	CacheHitTokens      int `json:"cache_hit_tokens"`
 	CacheCreationTokens int `json:"cache_creation_tokens"`
 }
 
 var (
-	captureMu   sync.Mutex
-	captureLog  []captureEntry
-	maxCapture  = 200
-	captureSeq  int
+	captureMu  sync.Mutex
+	captureLog []captureEntry
+	maxCapture = 200
+	captureSeq int
 )
 
 // startCapture begins a new capture entry, returning its ID.
@@ -70,22 +74,45 @@ func startCapture(agent, method, path, model string, reqBody []byte, reqHeaders 
 	}
 
 	entry := captureEntry{
-		ID:          id,
-		Time:        time.Now().Format("15:04:05.000"),
-		Agent:       agent,
-		Method:      method,
-		Path:        path,
-		Model:       model,
-		ReqSize:     len(reqBody),
-		ReqHeaders:  reqHeaders,
-		ReqBody:     string(reqBody),
-		ReqUnified:  reqUnified,
+		ID:         id,
+		Time:       time.Now().Format("15:04:05.000"),
+		Agent:      agent,
+		Method:     method,
+		Path:       path,
+		Model:      model,
+		ReqSize:    len(reqBody),
+		ReqHeaders: reqHeaders,
+		ReqBody:    string(reqBody),
+		ReqUnified: reqUnified,
 	}
 	captureLog = append(captureLog, entry)
 	if len(captureLog) > maxCapture {
 		captureLog = captureLog[len(captureLog)-maxCapture:]
 	}
+	persistCaptureBody(id, reqBody)
 	return id
+}
+
+// persistCaptureBody writes the request body to disk when AIPMC_CAPTURE_DIR is
+// set. 8/18: capture 环形缓冲重启即失，P1/P2/P3 的 body 因此丢失，32768 断点
+// 无法追查；落盘用于复测时逐请求 diff 相邻 body（注入后、去重后）。仅调试
+// 取证用，默认关闭。
+func persistCaptureBody(id string, body []byte) {
+	dir := os.Getenv("AIPMC_CAPTURE_DIR")
+	if dir == "" {
+		return
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	// 文件名带 pid：capture 序号在重启后重置，避免新实例覆盖旧实例证据
+	// （8/18 实测 cap_1..N 同名覆盖，P1/P2 时代证据即因重启丢失）。
+	path := filepath.Join(dir, fmt.Sprintf("%s_%d.json", id, os.Getpid()))
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		u.LogShared("CAPTURE", "persist_err id=%s err=%v", id, err)
+		return
+	}
+	u.LogShared("CAPTURE", "persist id=%s bytes=%d path=%s", id, len(body), path)
 }
 
 // SetCaptureTokens sets token usage on an existing capture entry.
@@ -514,6 +541,5 @@ loadList();
 </script>
 </body>
 </html>`
-
 
 // =============================================================================
