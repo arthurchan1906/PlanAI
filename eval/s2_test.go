@@ -76,11 +76,14 @@ func TestClassifyIntent(t *testing.T) {
 	if c := ClassifyIntent("重构整个模块并补充测试", stubClassifier{IntentClass{IntentTask, 0.9}, nil}); c.Type != IntentTask {
 		t.Errorf("LLM 高置信 = %s, want task", c.Type)
 	}
-	if c := ClassifyIntent("重构整个模块并补充测试", stubClassifier{IntentClass{IntentTask, 0.5}, nil}); c.Type != IntentDialogue {
-		t.Errorf("LLM 低置信回退 = %s, want dialogue（保守并入）", c.Type)
+	if c := ClassifyIntent("重构整个模块并补充测试", nil); c.Type != IntentTask || c.Confidence != 0.5 {
+		t.Errorf("无 LLM 长句 = %v, want task/0.5（降级保边界）", c)
 	}
-	if c := ClassifyIntent("你是谁", stubClassifier{IntentClass{}, errors.New("llm down")}); c.Type != IntentDialogue {
-		t.Errorf("LLM 错误 = %s, want dialogue", c.Type)
+	if c := ClassifyIntent("重构整个模块并补充测试", stubClassifier{IntentClass{IntentTask, 0.5}, nil}); c.Type != IntentTask {
+		t.Errorf("LLM 低置信回退 = %s, want task（兜底过滤器后判 task）", c.Type)
+	}
+	if c := ClassifyIntent("你是谁", stubClassifier{IntentClass{}, errors.New("llm down")}); c.Type != IntentTask {
+		t.Errorf("LLM 错误 = %s, want task（降级保边界）", c.Type)
 	}
 }
 

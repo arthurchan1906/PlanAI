@@ -32,7 +32,9 @@ type IntentClassifier interface {
 	Classify(userMsg string) (IntentClass, error)
 }
 
-// ClassifyIntent 兜底规则 + LLM：低置信回退兜底，最终保守 dialogue。
+// ClassifyIntent 兜底规则 + LLM：低置信回退兜底；无 LLM/分类失败时
+// 兜底规则判非任务型、其余判 task（低置信）——降级形态保留强制边界能力，
+// 避免整 session 塌陷成一段（Claude 审核 2026-08-18 1756 建议）。
 func ClassifyIntent(userMsg string, llm IntentClassifier) IntentClass {
 	if c, ok := ruleBasedIntent(userMsg); ok {
 		return c
@@ -45,8 +47,8 @@ func ClassifyIntent(userMsg string, llm IntentClassifier) IntentClass {
 	if c, ok := ruleBasedIntent(userMsg); ok {
 		return c
 	}
-	// 无 LLM/低置信/分类失败：保守并入当前段，避免误开边界
-	return IntentClass{Type: IntentDialogue, Confidence: 0}
+	// 无 LLM/低置信/分类失败：降级判 task（低置信），保证段切分仍有强制边界
+	return IntentClass{Type: IntentTask, Confidence: 0.5}
 }
 
 // ruleBasedIntent 兜底：≤8 字且含会话延续/约束类关键词 → 非任务型。
