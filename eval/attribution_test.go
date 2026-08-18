@@ -36,9 +36,15 @@ func fixtureDB(t *testing.T) *sql.DB {
 func fixtureLog(t *testing.T) string {
 	t.Helper()
 	lines := []string{
+		"[2026-08-14 10:00:00] [INJECT] agent=codex-cli session=sess-A req=r100-1 hash=abc12345 goals=1 warnings=1 actions=0 file_total=2 guidelines=1 guide_del=0 chars=412",
+		"[2026-08-14 11:00:00] [INJECT] agent=codex-cli session=sess-B req=r100-2 hash=def67890 goals=0 warnings=0 actions=0 file_total=1 guidelines=0 guide_del=0 chars=180",
+		"[2026-08-14 12:00:00] [INJECT] agent=codex-cli session=sess-C req=r100-3 hash=abc12346 goals=0 warnings=0 actions=0 file_total=1 guidelines=0 guide_del=0 chars=120",
+		"[2026-08-14 12:30:00] [INJECT] agent=codex-cli session=sess-F req=r100-7 hash=abc12347 goals=0 warnings=0 actions=0 file_total=0 guidelines=1 guide_del=0 chars=90",
+		"[2026-08-14 13:00:00] [INJECT] agent=codex-cli session=sess-G req=r100-8 hash=abc12348 goals=0 warnings=0 actions=0 file_total=1 guidelines=0 guide_del=0 chars=100",
 		"[2026-08-14 10:30:00] [INJECT] skip agent=codex-cli session=sess-D req=r100-4 reason=same_content hash=abc12345",
 		"[2026-08-14 10:31:00] [INJECT] skip agent=codex-cli session=sess-E req=r100-5 reason=no_summary_data",
 		"[2026-08-14 10:32:00] [INJECT] suppressed=2 reason=char_limit cap=800 agent=codex-cli session=sess-C req=r100-6 segments=file_cut:1 warn:1 act:0 goals:0 guide:0",
+		"[2026-08-14 10:33:00] [INJECT] inject_log write_err=SQLITE_BUSY",
 	}
 	p := filepath.Join(t.TempDir(), "aipmc.log")
 	var data string
@@ -90,9 +96,10 @@ func TestBuildAttributionFixture(t *testing.T) {
 
 	a := rep.ByAgent["codex-cli"]
 
-	// M1（T2：no_summary 不进分母；same_content 进分母）
-	if a.M1.Injected != 5 { // inj-1..5 全部写表（含 suppressed=1、无文件行、M3 unknown 行）
-		t.Errorf("M1 injected = %d, want 5", a.M1.Injected)
+	// M1a 对账（T2：no_summary 不参与；:148 行 vs 表行 1:1）
+	if a.M1.Injected != 5 || a.M1.LogInject != 5 || a.M1.Reconcile != 1.0 {
+		t.Errorf("M1a injected=%d log_inject=%d reconcile=%v, want 5/5/1.0",
+			a.M1.Injected, a.M1.LogInject, a.M1.Reconcile)
 	}
 	if a.M1.SameContent != 1 {
 		t.Errorf("M1 same_content = %d, want 1", a.M1.SameContent)
@@ -100,8 +107,13 @@ func TestBuildAttributionFixture(t *testing.T) {
 	if a.M1.NoSummary != 1 {
 		t.Errorf("M1 no_summary = %d, want 1（报告但排除）", a.M1.NoSummary)
 	}
-	if a.M1.Denominator != 6 || a.M1.Coverage != 5.0/6.0 {
-		t.Errorf("M1 denom=%d cov=%v, want 6/%v", a.M1.Denominator, a.M1.Coverage, 5.0/6.0)
+	// M1b 新鲜度 = injected/(injected+same_content)
+	if a.M1.Freshness != 5.0/6.0 {
+		t.Errorf("M1 freshness = %v, want %v", a.M1.Freshness, 5.0/6.0)
+	}
+	// 直接证据告警：write_err 计入报告顶层
+	if rep.WriteErr != 1 {
+		t.Errorf("WriteErr = %d, want 1（write_err 日志行）", rep.WriteErr)
 	}
 
 	// M2（T4：分层不合并；8/18 partial 新分层）
@@ -155,7 +167,13 @@ func TestBuildAttributionFixture(t *testing.T) {
 // T7 写策略：same_content/no_summary 不写 inject_log（对照组从日志侧重建）。
 func TestAttributionWriteStrategy(t *testing.T) {
 	d := fixtureDB(t)
-	logFile := fixtureLog(t)
+	// 纯 skip 日志（无 :148 注入行）：模拟无任何注入的窗口
+	logFile := filepath.Join(t.TempDir(), "aipmc.log")
+	lines := "[2026-08-14 10:30:00] [INJECT] skip agent=codex-cli session=sess-D req=r100-4 reason=same_content hash=abc12345\n" +
+		"[2026-08-14 10:31:00] [INJECT] skip agent=codex-cli session=sess-E req=r100-5 reason=no_summary_data\n"
+	if err := os.WriteFile(logFile, []byte(lines), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	since, _ := time.Parse("2006-01-02T15:04:05", "2026-08-14T00:00:00")
 	rep, err := BuildAttribution(d, logFile, since)
 	if err != nil {
@@ -163,11 +181,40 @@ func TestAttributionWriteStrategy(t *testing.T) {
 	}
 	// 无 inject_log 行 → injected=0，但 same_content/no_summary 从日志侧计入
 	a := rep.ByAgent["codex-cli"]
-	if a.M1.Injected != 0 || a.M1.SameContent != 1 || a.M1.NoSummary != 1 {
-		t.Errorf("M1 without table rows: injected=%d same=%d nosum=%d, want 0/1/1",
-			a.M1.Injected, a.M1.SameContent, a.M1.NoSummary)
+	if a.M1.Injected != 0 || a.M1.LogInject != 0 || a.M1.SameContent != 1 || a.M1.NoSummary != 1 {
+		t.Errorf("M1 without table rows: injected=%d log_inject=%d same=%d nosum=%d, want 0/0/1/1",
+			a.M1.Injected, a.M1.LogInject, a.M1.SameContent, a.M1.NoSummary)
 	}
-	if a.M1.Denominator != 1 || a.M1.Coverage != 0 {
-		t.Errorf("M1 denom=%d cov=%v, want 1/0", a.M1.Denominator, a.M1.Coverage)
+	if a.M1.Reconcile != 0 || a.M1.Freshness != 0 {
+		t.Errorf("M1 reconcile=%v freshness=%v, want 0/0（无表行）", a.M1.Reconcile, a.M1.Freshness)
+	}
+}
+
+// 对账失败（write_err 导致表行缺失）：M1a <1.0 应暴露观测断裂。
+func TestM1ReconcileDetectsWriteLoss(t *testing.T) {
+	d := fixtureDB(t)
+	mustExec(t, d, `INSERT INTO inject_log VALUES ('inj-1','codex-cli','sess-A','r100-1','2026-08-14T10:00:00','abc12345','','{"fileAssoc":["a.go"]}',100,0)`)
+	// 日志有 2 条 :148 注入行，但表只有 1 行（1 次写库失败）
+	p := filepath.Join(t.TempDir(), "aipmc.log")
+	lines := "[2026-08-14 10:00:00] [INJECT] agent=codex-cli session=sess-A req=r100-1 hash=abc12345 goals=0 warnings=0 actions=0 file_total=1 guidelines=0 guide_del=0 chars=100\n" +
+		"[2026-08-14 10:05:00] [INJECT] agent=codex-cli session=sess-B req=r100-2 hash=abc12346 goals=0 warnings=0 actions=0 file_total=1 guidelines=0 guide_del=0 chars=100\n" +
+		"[2026-08-14 10:06:00] [INJECT] inject_log write_err=SQLITE_BUSY\n"
+	if err := os.WriteFile(p, []byte(lines), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	since, _ := time.Parse("2006-01-02T15:04:05", "2026-08-14T00:00:00")
+	rep, err := BuildAttribution(d, p, since)
+	if err != nil {
+		t.Fatalf("BuildAttribution: %v", err)
+	}
+	a := rep.ByAgent["codex-cli"]
+	if a.M1.LogInject != 2 || a.M1.Injected != 1 {
+		t.Fatalf("log_inject=%d injected=%d, want 2/1", a.M1.LogInject, a.M1.Injected)
+	}
+	if a.M1.Reconcile != 0.5 {
+		t.Errorf("reconcile = %v, want 0.5（观测断裂暴露）", a.M1.Reconcile)
+	}
+	if rep.WriteErr != 1 {
+		t.Errorf("WriteErr = %d, want 1", rep.WriteErr)
 	}
 }

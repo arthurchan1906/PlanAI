@@ -99,16 +99,34 @@ agent/session/req」在改动落地前不成立，S4 按此核验。
 原则：**分母先于分子定义**；每组指标必须写清「分母、分组、unknown 规则、时间窗」，否则不实现
 （吸取 P14「mark_consumed 全量消费 → D2 失真」教训）。
 
-### M1 注入覆盖率（对齐 EVALUATION C1/E1）
+### M1 注入观测（8/18 修订 v2：口径与目标语义对齐）
 
-- 分子：`inject_log` 行数（按 agent，按日）
-- 分母：有摘要数据且未被抑制的请求数 = inject + suppressed(same_content/cooldown) 请求数；
-  **排除** `no_summary_data`
-- 注（8/18）：分子含 `suppressed=1` 行（实际注入即写）；报告可按 suppressed 分层展示完整/不完整注入覆盖率
-- 口径：复用 `metrics.go:501-503` 的 C1 `inject_coverage`，差异在**按 agent 拆分 + 按日窗口**
-- **⚠ 已核实 C1 注释/代码不一致（S4 核验项）**：`metrics.go:503` 注释声明"排除 no_summary"，但 `:505` `covDenom := injOK + injGuidelines + injSame + injNoSum` **分母含 injNoSum**，分子不含——覆盖率为被稀释。本规格 M1 按语义修正：分母**排除** no_summary（与 C1 注释一致）。历史基线（EVALUATION.md）若按含 no_summary 算过，需在修复 C1 后重录基线并标注口径变化
-- 目标：`≥ 80%`（与 IMPROVEMENT_PLAN 2.1 一致）
-- unknown 规则：无（分母不含 unknown）
+**背景**：8/18 注入稳定性修复后 `same_content` 跳过时**仍注入同一 block**
+（`injectIntoPrompt` 已调用，仅观测层不写日志/表）——原「覆盖率」口径
+`injected/(injected+same_content)` 实际是「新注入率」，健康形态（SP 稳定）下
+天然 ≈1%，目标 ≥80% 结构不可达（实测 8/821=0.97%）。故拆为两个正交指标：
+
+**M1a 注入观测完整性（对账，测量卫生核心）**
+- 分子：`inject_log` 行数（窗口内，含 `suppressed=1`）
+- 分母：日志侧 `:148` 注入行数（`agent=` 正常注入行 + `inject source=guidelines_only` 行；
+  `same_content`/`no_summary` 不写表也不写 `:148`，两侧口径天然一致）
+- 期望：**1.0**（每一条 `:148` 日志都有对应 `inject_log` 行）
+- 语义：<1.0 即观测层断裂（写库失败/提取器 bug）——**先验证观测可信，再谈画像**
+- 目标：`= 1.0`；`< 1.0` 触发告警（附 `write_err` 计数与差量）
+- unknown 规则：无
+
+**M1b 注入新鲜度（参考，稳定性镜像）**
+- 分子：`inject_log` 行数
+- 分母：`inject_log` 行数 + 日志侧 `reason=same_content` 行数（排除 `no_summary_data`）
+- 语义：高 `same_content` 占比 = 高注入稳定性（8/18 修复的设计目标），非缺陷
+- 目标：**参考**（首跑记基线，趋势监控；不作通过/失败判定）
+
+**注入失效告警（直接证据，非间接推断）**
+- `inject_log write_err=` 日志行出现 → 写库故障告警（与 SQLITE_BUSY 排查 task 联动）
+- M1a 对账 <1.0 且差量 >0 → 观测断裂告警
+- 注：不采用「injected=0 且 same_content>0」作为失效信号——内容确实从未变化时
+  同样满足该条件，是健康形态，会产生误报
+- 历史口径（8/18 v1 的 `inject_coverage`）在 EVALUATION.md 基线中标注口径变更后重录
 
 ### M2 文件命中率（准实验，核心指标）
 
@@ -294,5 +312,4 @@ fileAssoc（新出现文件）> warnings（新警告）> actionItems（新事件
 
 前置基线（不阻塞 S2-S4，但阻塞 S5 上线）：P0-1 默认构建自举、P0-2 测试隔离 + relpath 修复、
 P0-3 Windows CI。最终验收标准：**默认环境下裸 `go test ./...` 全绿**。
-
 

@@ -22,11 +22,12 @@ import (
 
 // AttributionReport 归因报告（HARNESS M1-M5）。
 type AttributionReport struct {
-	Since   string              `json:"since"`
-	ByAgent map[string]AgentM12 `json:"by_agent"` // M1/M2 按 agent
-	M3      M3Report            `json:"m3"`
-	M4      M4Report            `json:"m4"`
-	M5      M5Report            `json:"m5"`
+	Since    string              `json:"since"`
+	WriteErr int                 `json:"write_err"` // inject_log 写库失败次数（直接证据告警）
+	ByAgent  map[string]AgentM12 `json:"by_agent"`  // M1/M2 按 agent
+	M3       M3Report            `json:"m3"`
+	M4       M4Report            `json:"m4"`
+	M5       M5Report            `json:"m5"`
 }
 
 // AgentM12 单个 agent 的 M1（注入覆盖率）与 M2（文件命中率）指标。
@@ -35,14 +36,17 @@ type AgentM12 struct {
 	M2 M2Report `json:"m2"`
 }
 
-// M1Report 注入覆盖率：分子=inject_log 行数（含 suppressed=1），
-// 分母=inject + same_content（排除 no_summary_data）。
+// M1Report（8/18 v2 口径，HARNESS §2）：
+// M1a 注入观测完整性（对账）= Injected/LogInject（:148 日志行 vs 表行，期望 1.0）；
+// M1b 注入新鲜度（参考）= Injected/(Injected+SameContent)（排除 no_summary）。
+// WriteErr 为直接证据告警（inject_log 写库失败），非间接推断。
 type M1Report struct {
-	Injected    int     `json:"injected"`
-	SameContent int     `json:"same_content"`
-	Denominator int     `json:"denominator"`
-	Coverage    float64 `json:"coverage"`
-	NoSummary   int     `json:"no_summary"` // 报告但不进分母
+	Injected    int     `json:"injected"`     // inject_log 行数（含 suppressed=1）
+	LogInject   int     `json:"log_inject"`   // 日志侧 :148 注入行数（对账分母）
+	Reconcile   float64 `json:"reconcile"`    // M1a = injected/log_inject，期望 1.0
+	SameContent int     `json:"same_content"` // 日志侧 reason=same_content
+	Freshness   float64 `json:"freshness"`    // M1b = injected/(injected+same_content)
+	NoSummary   int     `json:"no_summary"`   // 报告但不进任何分母
 }
 
 // M2Group 命中率组。
@@ -128,9 +132,32 @@ func BuildAttribution(d *sql.DB, logFile string, since time.Time) (*AttributionR
 	}
 	rows.Close()
 
-	// 日志侧：same_content / no_summary（8/18 后不写表，仅日志可统计）
+	// 日志侧：:148 注入行（M1a 对账分母）、same_content / no_summary（对照组）、
+	// inject_log write_err（写库故障直接证据）
 	m2Ctl := map[string]map[string]time.Time{} // agent → session → last skip ts
 	for _, ln := range logLines {
+		if !strings.Contains(ln, "[INJECT]") {
+			continue
+		}
+		// 写库失败告警（直接证据，非间接推断——8/18 v2 口径）
+		if strings.Contains(ln, "inject_log write_err=") {
+			ts, _, _, _ := parseSkipLine(ln)
+			if !ts.IsZero() && !ts.Before(since) {
+				rep.WriteErr++
+			}
+			continue
+		}
+		// :148 注入行（M1a 对账分母）：agent= 正常注入 + inject source=guidelines_only
+		if strings.Contains(ln, "[INJECT] agent=") || strings.Contains(ln, "[INJECT] inject agent=") {
+			ts, agent, _, _ := parseSkipLine(ln)
+			if ts.IsZero() || ts.Before(since) || agent == "" {
+				continue
+			}
+			a := rep.ByAgent[agent]
+			a.M1.LogInject++
+			rep.ByAgent[agent] = a
+			continue
+		}
 		if !strings.Contains(ln, "[INJECT] skip") {
 			continue
 		}
@@ -161,9 +188,12 @@ func BuildAttribution(d *sql.DB, logFile string, since time.Time) (*AttributionR
 		rep.ByAgent[agent] = a
 	}
 	for agent, a := range rep.ByAgent {
-		a.M1.Denominator = a.M1.Injected + a.M1.SameContent
-		if a.M1.Denominator > 0 {
-			a.M1.Coverage = float64(a.M1.Injected) / float64(a.M1.Denominator)
+		if a.M1.LogInject > 0 {
+			a.M1.Reconcile = float64(a.M1.Injected) / float64(a.M1.LogInject)
+		}
+		freshDenom := a.M1.Injected + a.M1.SameContent
+		if freshDenom > 0 {
+			a.M1.Freshness = float64(a.M1.Injected) / float64(freshDenom)
 		}
 		rep.ByAgent[agent] = a
 	}
