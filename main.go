@@ -309,6 +309,17 @@ func main() {
 			fmt.Println()
 			out, _ := json.MarshalIndent(rep, "", "  ")
 			fmt.Println(string(out))
+			// M1a 观测断裂告警：write_err>0 或任一 agent 对账<1.0 且差量>0 → 非零退出码
+			// （8/18 攻击性审核补充：仅渲染 ❌ 时无人读输出则告警无意义）。
+			alert := rep.WriteErr > 0
+			for _, a := range rep.ByAgent {
+				if a.M1.LogInject > 0 && a.M1.Reconcile < 1.0 {
+					alert = true
+				}
+			}
+			if alert {
+				os.Exit(1)
+			}
 		default:
 			fmt.Fprintf(os.Stderr, "eval: unknown kind %q (supported: attribution)\n", kind)
 			os.Exit(1)

@@ -22,12 +22,13 @@ import (
 
 // AttributionReport 归因报告（HARNESS M1-M5）。
 type AttributionReport struct {
-	Since    string              `json:"since"`
-	WriteErr int                 `json:"write_err"` // inject_log 写库失败次数（直接证据告警）
-	ByAgent  map[string]AgentM12 `json:"by_agent"`  // M1/M2 按 agent
-	M3       M3Report            `json:"m3"`
-	M4       M4Report            `json:"m4"`
-	M5       M5Report            `json:"m5"`
+	Since       string              `json:"since"`
+	WriteErr    int                 `json:"write_err"` // inject_log 写库失败次数（直接证据告警）
+	ByAgent     map[string]AgentM12 `json:"by_agent"`  // M1/M2 按 agent
+	M3          M3Report            `json:"m3"`
+	M4          M4Report            `json:"m4"`
+	M5          M5Report            `json:"m5"`
+	Annotations []string            `json:"annotations,omitempty"` // 规格注记（HARNESS §2：准实验/含噪/口径边界）
 }
 
 // AgentM12 单个 agent 的 M1（注入覆盖率）与 M2（文件命中率）指标。
@@ -96,8 +97,14 @@ type M5Segments struct {
 // m2Session 注入组的一条 session 记录（取该 session 最后一次注入作为水位）。
 type m2Session struct {
 	agent, session string
-	ts             time.Time
-	files          map[string]bool
+	events         []injectEvent // 该 session 窗口内全部注入事件（按 ts 升序）
+}
+
+// injectEvent 一次注入：时刻 + 注入文件集 + 是否被 cap 裁剪（分层依据）。
+type injectEvent struct {
+	ts         time.Time
+	files      map[string]bool
+	suppressed int
 }
 
 // BuildAttribution 计算 M1-M5。d 为 pmai.db 连接；logFile 为 aipmc 日志路径
@@ -223,13 +230,7 @@ func BuildAttribution(d *sql.DB, logFile string, since time.Time) (*AttributionR
 	if err != nil {
 		return nil, fmt.Errorf("m2 inject_log: %w", err)
 	}
-	type injRec struct {
-		session    string
-		ts         time.Time
-		fileAssoc  []string
-		suppressed int
-	}
-	injBySession := map[string][]injRec{} // agent|session → records
+	eventsByKey := map[string][]injectEvent{} // agent|session → 全部注入事件
 	for injRows.Next() {
 		var agent, session, ts, segJSON string
 		var suppressed int
@@ -246,43 +247,48 @@ func BuildAttribution(d *sql.DB, logFile string, since time.Time) (*AttributionR
 		_ = json.Unmarshal([]byte(segJSON), &seg)
 		t, _ := time.Parse("2006-01-02T15:04:05", ts)
 		key := agent + "|" + session
-		injBySession[key] = append(injBySession[key], injRec{session: session, ts: t, fileAssoc: seg.FileAssoc, suppressed: suppressed})
+		files := map[string]bool{}
+		for _, f := range seg.FileAssoc {
+			files[f] = true
+		}
+		eventsByKey[key] = append(eventsByKey[key], injectEvent{ts: t, files: files, suppressed: suppressed})
 	}
 	injRows.Close()
 
-	// 每 session 取最后一次注入（水位），按 suppressed 分 full/partial 组
+	// 每 session：末次注入的 suppressed 决定 full/partial 分层（水位语义）；
+	// 命中判定用全部注入事件（修正：仅末次文件集会漏早期注入——HARNESS §2
+	// 「注入时刻之后引用注入文件」指该 session 注入过的全部文件）。
 	var fullSess, partialSess []m2Session
-	for key, recs := range injBySession {
-		last := recs[0]
-		for _, r := range recs[1:] {
-			if r.ts.After(last.ts) {
-				last = r
+	injFiles := map[string]map[string]bool{} // agent|session → 已注入文件 union（对照组基线推导）
+	for key, evs := range eventsByKey {
+		last := evs[0]
+		union := map[string]bool{}
+		for _, ev := range evs {
+			if ev.ts.After(last.ts) {
+				last = ev
+			}
+			for f := range ev.files {
+				union[f] = true
 			}
 		}
-		files := map[string]bool{}
-		for _, f := range last.fileAssoc {
-			files[f] = true
-		}
-		if len(files) == 0 {
+		if len(union) == 0 {
 			continue // 无文件关联的注入不进 M2 分母（口径：注入含 ≥1 个文件）
 		}
+		sort.Slice(evs, func(i, j int) bool { return evs[i].ts.Before(evs[j].ts) })
 		parts := strings.SplitN(key, "|", 2)
-		ms := m2Session{agent: parts[0], session: last.session, ts: last.ts, files: files}
+		ms := m2Session{agent: parts[0], session: parts[1], events: evs}
+		injFiles[key] = union
 		if last.suppressed == 0 {
 			fullSess = append(fullSess, ms)
 		} else {
 			partialSess = append(partialSess, ms)
 		}
 	}
-	// 对照组：日志侧 skip 行末次时间之后的文件调用（基线）
-	ctlFiles := map[string][]string{} // agent|session → [file...]（抑制后引用的文件）
-
 	fullHit := computeM2Hit(d, fullSess)
 	partialHit := computeM2Hit(d, partialSess)
-	_ = ctlFiles
 
-	// 对照组：从 m2Ctl（same_content）与 no_summary（暂从日志侧重建 session）计算
-	sameCtl := computeCtlHit(d, m2Ctl, logLines, since, "same_content")
+	// 对照组：same_content 复用注入历史文件集（基线=已见过）；no_summary 语义=无记忆（活跃基线）
+	sameCtl := computeCtlHit(d, m2Ctl, injFiles)
 	noSumCtl := computeCtlHitNoSummary(d, logLines, since)
 
 	// 归并到 ByAgent
@@ -292,6 +298,14 @@ func BuildAttribution(d *sql.DB, logFile string, since time.Time) (*AttributionR
 		a.M2.SameContentCtl = groupFor(sameCtl, agent)
 		a.M2.NoSummaryCtl = groupFor(noSumCtl, agent)
 		rep.ByAgent[agent] = a
+	}
+
+	// 规格注记（HARNESS §2 强制项：准实验/含噪/对照组语义，缺失会让输出被误读）
+	rep.Annotations = []string{
+		"M2 为观察性准实验（非随机对照）：注入/对照组差值反映关联而非因果",
+		"M2 命中判定依赖 discussion_log file_op 的 rel_path；relpath bug 未修前该指标含噪",
+		"M2 same_content 对照组基线=已见过（此前注入过同内容）：有注入历史时按已注入文件判定，无历史时降级为活跃基线（任意文件引用）",
+		"M3 为可映射子集（headless 无 LLM 语义映射），不可映射 warning 记 unknown 单独列示",
 	}
 
 	// ── M3: 警告回避率（inject_log warnings + discussion_log 写操作）──
@@ -373,6 +387,12 @@ func FormatHuman(rep *AttributionReport) string {
 	row("M5", fmt.Sprintf("suppressed=%d", rep.M5.SuppressedRequests), "参考", true)
 	fmt.Fprintf(&b, "  segments: file_cut=%d warn=%d act=%d goals=%d guide=%d\n",
 		rep.M5.Segments.FileAssoc, rep.M5.Segments.Warnings, rep.M5.Segments.Actions, rep.M5.Segments.Goals, rep.M5.Segments.Guidelines)
+	if len(rep.Annotations) > 0 {
+		fmt.Fprintf(&b, "\n=== 注记（HARNESS §2）===\n")
+		for _, a := range rep.Annotations {
+			fmt.Fprintf(&b, "  - %s\n", a)
+		}
+	}
 	return b.String()
 }
 
@@ -390,8 +410,7 @@ func computeM2Hit(d *sql.DB, sessions []m2Session) map[string]m2Hit {
 	for _, s := range sessions {
 		h := hits[s.agent]
 		h.sessions++
-		hit := sessionReferencedAny(d, s.session, s.ts, s.files)
-		if hit {
+		if injectHit(d, s.session, s.events) {
 			h.hitSessions++
 		}
 		hits[s.agent] = h
@@ -411,15 +430,32 @@ func groupFor(hits map[string]m2Hit, agent string) M2Group {
 	return g
 }
 
-// computeCtlHit 对照组：日志侧 (agent, session) 抑制 ts 之后有文件工具调用即「命中」
-// （对照组无注入内容，命中=抑制后该 session 仍引用文件的比例，作为基线）。
-func computeCtlHit(d *sql.DB, ctl map[string]map[string]time.Time, logLines []string, since time.Time, reason string) map[string]m2Hit {
+// injectHit：任一注入事件 (t,F) 之后该 session 引用了 F 中任一文件即命中。
+// 与「仅末次注入水位」的区别：早期注入的文件集不被末次注入覆盖丢失
+// （8/18 攻击性审核修正，HARNESS §2「注入时刻之后引用注入文件」）。
+func injectHit(d *sql.DB, session string, events []injectEvent) bool {
+	ops := sessionFileOps(d, session)
+	for _, ev := range events {
+		for _, op := range ops {
+			if op.ts.After(ev.ts) && ev.files[op.path] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// computeCtlHit same_content 对照组：命中 = 抑制 ts 之后引用了「已注入过的文件」
+// （基线=已见过，从窗口内 inject_log 推导该 session 的注入历史文件集）；
+// 无注入历史的 session 降级为活跃基线（任意文件引用）——两种语义在注记中显式说明。
+func computeCtlHit(d *sql.DB, ctl map[string]map[string]time.Time, injFiles map[string]map[string]bool) map[string]m2Hit {
 	hits := map[string]m2Hit{}
 	for agent, sessions := range ctl {
 		for session, ts := range sessions {
 			h := hits[agent]
 			h.sessions++
-			if sessionReferencedAny(d, session, ts, nil) {
+			ops := sessionFileOps(d, session)
+			if referencedAny(ops, ts, injFiles[agent+"|"+session]) {
 				h.hitSessions++
 			}
 			hits[agent] = h
@@ -447,7 +483,8 @@ func computeCtlHitNoSummary(d *sql.DB, logLines []string, since time.Time) map[s
 		seen[key] = true
 		h := hits[agent]
 		h.sessions++
-		if sessionReferencedAny(d, session, ts, nil) {
+		ops := sessionFileOps(d, session)
+		if referencedAny(ops, ts, nil) {
 			h.hitSessions++
 		}
 		hits[agent] = h
@@ -455,35 +492,54 @@ func computeCtlHitNoSummary(d *sql.DB, logLines []string, since time.Time) map[s
 	return hits
 }
 
-// sessionReferencedAny 查询 discussion_log：session 在 ts 之后是否有 file_op 工具调用，
-// 且（若 files 非空）引用了注入文件集合中的任一文件。
-func sessionReferencedAny(d *sql.DB, session string, ts time.Time, files map[string]bool) bool {
+type fileOp struct {
+	ts   time.Time
+	path string
+}
+
+// relPathRe 解析 file_op metadata 的 rel_path（包级复用，避免每次调用编译）。
+var relPathRe = regexp.MustCompile(`"rel_path"\s*:\s*"([^"]+)"`)
+
+// sessionFileOps 一次查询该 session 全部可解析出 rel_path 的 file_op 调用。
+func sessionFileOps(d *sql.DB, session string) []fileOp {
 	if session == "" {
-		return false
+		return nil
 	}
-	tsISO := ts.Format("2006-01-02T15:04:05")
-	rows, err := d.Query(`SELECT metadata FROM discussion_log WHERE session_id = ? AND created_at > ? AND metadata != ''`, session, tsISO)
+	rows, err := d.Query(`SELECT metadata, created_at FROM discussion_log WHERE session_id = ? AND metadata != ''`, session)
 	if err != nil {
-		return false
+		return nil
 	}
 	defer rows.Close()
-	pathRe := regexp.MustCompile(`"rel_path"\s*:\s*"([^"]+)"`)
+	var ops []fileOp
 	for rows.Next() {
-		var md string
-		if err := rows.Scan(&md); err != nil {
+		var md, ts string
+		if err := rows.Scan(&md, &ts); err != nil {
 			continue
 		}
 		if !strings.Contains(md, "file_op") {
 			continue
 		}
-		m := pathRe.FindStringSubmatch(md)
+		m := relPathRe.FindStringSubmatch(md)
 		if m == nil {
+			continue
+		}
+		t, _ := time.Parse("2006-01-02T15:04:05", ts)
+		ops = append(ops, fileOp{ts: t, path: m[1]})
+	}
+	return ops
+}
+
+// referencedAny：ops 中 after 之后的 file_op；files==nil 时任意命中（活跃基线），
+// files 非空时须命中集合内文件（精确语义）。
+func referencedAny(ops []fileOp, after time.Time, files map[string]bool) bool {
+	for _, op := range ops {
+		if !op.ts.After(after) {
 			continue
 		}
 		if files == nil {
 			return true
 		}
-		if files[m[1]] {
+		if files[op.path] {
 			return true
 		}
 	}

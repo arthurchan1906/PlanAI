@@ -276,3 +276,57 @@ func TestFormatHumanCoversKeyMetrics(t *testing.T) {
 		}
 	}
 }
+
+// M2 注入组修正（8/18 攻击性审核问题 2）：多次注入不同文件集时，
+// 早期注入文件仍计入命中（旧实现仅取末次注入文件集，漏早期注入）。
+func TestM2EarlyInjectFilesStillCount(t *testing.T) {
+	d := fixtureDB(t)
+	// sess-A 两次注入：10:00 注入 a.go，11:00 注入 b.go；11:01 引用了 a.go（早期注入文件）
+	mustExec(t, d, `INSERT INTO inject_log VALUES ('inj-1','codex-cli','sess-A','r100-1','2026-08-14T10:00:00','h1','','{"fileAssoc":["a.go"]}',100,0)`)
+	mustExec(t, d, `INSERT INTO inject_log VALUES ('inj-2','codex-cli','sess-A','r100-2','2026-08-14T11:00:00','h2','','{"fileAssoc":["b.go"]}',100,0)`)
+	mustExec(t, d, `INSERT INTO discussion_log VALUES ('d1','sess-A','assistant','codex-cli','edit a.go','2026-08-14T11:01:00','{"file_op":{"type":"edit","rel_path":"a.go"}}')`)
+	p := filepath.Join(t.TempDir(), "aipmc.log")
+	lines := "[2026-08-14 10:00:00] [INJECT] agent=codex-cli session=sess-A req=r100-1 hash=h1 goals=0 warnings=0 actions=0 file_total=1 guidelines=0 guide_del=0 chars=100\n" +
+		"[2026-08-14 11:00:00] [INJECT] agent=codex-cli session=sess-A req=r100-2 hash=h2 goals=0 warnings=0 actions=0 file_total=1 guidelines=0 guide_del=0 chars=100\n"
+	if err := os.WriteFile(p, []byte(lines), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	since, _ := time.Parse("2006-01-02T15:04:05", "2026-08-14T00:00:00")
+	rep, err := BuildAttribution(d, p, since)
+	if err != nil {
+		t.Fatalf("BuildAttribution: %v", err)
+	}
+	a := rep.ByAgent["codex-cli"]
+	if a.M2.FullInject.Sessions != 1 || a.M2.FullInject.HitSessions != 1 {
+		t.Errorf("M2 full_inject = %+v, want 1/1（早期注入 a.go 的引用应计入命中）", a.M2.FullInject)
+	}
+}
+
+// M2 对照组修正（8/18 攻击性审核问题 1）：same_content 对照组有注入历史时，
+// 命中按「已注入过的文件」判定（基线=已见过），而非任意文件引用（活跃基线）。
+func TestM2SameContentCtlUsesInjectHistory(t *testing.T) {
+	d := fixtureDB(t)
+	// sess-A 注入过 a.go（已见过）；10:30 same_content 抑制；10:31 引用了 b.go（非注入文件）
+	mustExec(t, d, `INSERT INTO inject_log VALUES ('inj-1','codex-cli','sess-A','r100-1','2026-08-14T10:00:00','h1','','{"fileAssoc":["a.go"]}',100,0)`)
+	mustExec(t, d, `INSERT INTO discussion_log VALUES ('d1','sess-A','assistant','codex-cli','edit b.go','2026-08-14T10:31:00','{"file_op":{"type":"edit","rel_path":"b.go"}}')`)
+	p := filepath.Join(t.TempDir(), "aipmc.log")
+	lines := "[2026-08-14 10:00:00] [INJECT] agent=codex-cli session=sess-A req=r100-1 hash=h1 goals=0 warnings=0 actions=0 file_total=1 guidelines=0 guide_del=0 chars=100\n" +
+		"[2026-08-14 10:30:00] [INJECT] skip agent=codex-cli session=sess-A req=r100-2 reason=same_content hash=h1\n"
+	if err := os.WriteFile(p, []byte(lines), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	since, _ := time.Parse("2006-01-02T15:04:05", "2026-08-14T00:00:00")
+	rep, err := BuildAttribution(d, p, since)
+	if err != nil {
+		t.Fatalf("BuildAttribution: %v", err)
+	}
+	a := rep.ByAgent["codex-cli"]
+	if a.M2.SameContentCtl.Sessions != 1 || a.M2.SameContentCtl.HitSessions != 0 {
+		t.Errorf("M2 same_content_ctl = %+v, want 1/0（引用非注入文件 b.go 不应命中——对照组基线=已注入文件）", a.M2.SameContentCtl)
+	}
+	// 注记必须包含准实验说明（HARNESS §2 强制项）
+	joined := strings.Join(rep.Annotations, " ")
+	if !strings.Contains(joined, "准实验") {
+		t.Errorf("Annotations 缺准实验注记: %v", rep.Annotations)
+	}
+}
