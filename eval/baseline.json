@@ -1,0 +1,61 @@
+{
+  "generated_at": "2026-08-18T11:07:13+08:00",
+  "window": {
+    "since": "2026-08-17T11:07:13",
+    "until": "2026-08-18T11:07:13"
+  },
+  "llm_log_coverage": {
+    "claude": {
+      "total_lines": 193,
+      "with_session": 0,
+      "empty_session": 193,
+      "probe_lines": 0
+    },
+    "codex": {
+      "total_lines": 1051,
+      "with_session": 879,
+      "empty_session": 172,
+      "probe_lines": 68
+    }
+  },
+  "underreport": {
+    "claude": {
+      "status": "unmeasurable",
+      "reason": "该 agent 的 [LLM] 行 session= 为空（请求体无 session_id 字段），无法按 session join 对账",
+      "sessions_with_llm": 0,
+      "sessions_missing_in_discussion": 0,
+      "missing_rate": 0
+    },
+    "codex": {
+      "status": "ok",
+      "sessions_with_llm": 2,
+      "sessions_missing_in_discussion": 0,
+      "missing_rate": 0
+    }
+  },
+  "orphan_sessions": {
+    "claude": {
+      "status": "unmeasurable",
+      "reason": "日志侧无可 join 的 [LLM] session（该 agent 请求体无 session_id），脱链与否无法判定",
+      "sessions_with_discussion": 2,
+      "sessions_missing_in_llm_log": 0
+    },
+    "codex": {
+      "status": "ok",
+      "sessions_with_discussion": 2,
+      "sessions_missing_in_llm_log": 0
+    }
+  },
+  "self_report": {
+    "commits_in_window": 17,
+    "test_status": {
+      "auto": 13,
+      "failed": 0,
+      "not_run": 0,
+      "other": 0,
+      "passed": 4
+    },
+    "system_verify_available": false,
+    "verify_note": "commits 表无 verify_status 列——系统实测通过率（L-O）不可查，自报膨胀率 gap 待 schema 迁移后计算（DATA_AUDIT §3）"
+  }
+}

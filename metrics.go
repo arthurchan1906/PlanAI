@@ -49,6 +49,11 @@ func dispatchMetrics(args *cli.Args) {
 			hasCutoff = true
 		}
 	}
+	// --baseline: M0 捕获层完整性对账（独立命令，不走常规指标清单）。
+	if args.Bool("baseline") {
+		runBaseline(args)
+		return
+	}
 	fmt.Println("AIPM 评估指标 — 目标值来自 docs/EVALUATION.md")
 	fmt.Println("DB 类指标: 当前项目 point-in-time；日志类指标: ~/.aipmc/logs/aipmc.log（serve 行带 project= 标签，proxy/hook 行无；已按 20MB 归档，只扫当前文件）")
 	fmt.Printf("窗口: since=%s（--since all 看全表；F1/F4 验收诊断行随窗口，其余 DB 行保持全表=机制健康现状）\n", since)
