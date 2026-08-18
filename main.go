@@ -23,6 +23,7 @@ import (
 	"aipmc/chatcli"
 	"aipmc/cli"
 	pmdb "aipmc/db"
+	"aipmc/eval"
 	"aipmc/hook"
 	"aipmc/proxy"
 	"aipmc/search"
@@ -41,7 +42,7 @@ func main() {
 	application.ReloadAI()
 
 	if len(os.Args) < 2 {
-		fmt.Println("AIPM CLI — AI Project Manager")
+		fmt.Println("AIPMC CLI — AI Project Manager")
 		fmt.Println("Usage: aipmc <command> [args...]")
 		fmt.Println("Run 'aipmc help' for full command list.")
 		os.Exit(0)
@@ -265,6 +266,50 @@ func main() {
 		return
 	case "key":
 		dispatchKey(os.Args)
+		return
+	case "eval":
+		// EVAL_PIPELINE：M1-M5 归因提取器（headless，无 LLM 依赖）。
+		// Usage: aipmc eval [--since 30d] [--kind attribution] [--log <path>]
+		sinceDays := 30
+		kind := "attribution"
+		logPath := ""
+		raw := os.Args[2:]
+		for i := 0; i < len(raw); i++ {
+			switch {
+			case raw[i] == "--since" && i+1 < len(raw):
+				fmt.Sscanf(raw[i+1], "%dd", &sinceDays)
+				i++
+			case raw[i] == "--kind" && i+1 < len(raw):
+				kind = raw[i+1]
+				i++
+			case raw[i] == "--log" && i+1 < len(raw):
+				logPath = raw[i+1]
+				i++
+			}
+		}
+		if logPath == "" {
+			logPath = filepath.Join(os.Getenv("HOME"), ".aipmc", "logs", "aipmc.log")
+		}
+		db, err := pmdb.Open()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "eval: %v\n", err)
+			os.Exit(1)
+		}
+		defer db.Close()
+		since := time.Now().AddDate(0, 0, -sinceDays)
+		switch kind {
+		case "attribution":
+			rep, err := eval.BuildAttribution(db, logPath, since)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "eval attribution: %v\n", err)
+				os.Exit(1)
+			}
+			out, _ := json.MarshalIndent(rep, "", "  ")
+			fmt.Println(string(out))
+		default:
+			fmt.Fprintf(os.Stderr, "eval: unknown kind %q (supported: attribution)\n", kind)
+			os.Exit(1)
+		}
 		return
 	case "agent":
 		if len(os.Args) < 3 {
