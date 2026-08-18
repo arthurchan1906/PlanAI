@@ -83,6 +83,36 @@ func TestParseOpencodeRaw(t *testing.T) {
 	}
 }
 
+func TestParsePostToolTopLevelFile(t *testing.T) {
+	// codex-cli 实测：file_path/rel_path 在顶层，tool_input 只有 command
+	md := `{"_type":"post_tool","cwd":"/repo","file_path":"hook/hook_claude.go","hook_event_name":"PostToolUse","model":"m1","rel_path":"hook/hook_claude.go","tool_input":{"command":"rg -n foo hook/hook_claude.go"}}`
+	r := ParseToolRecord("codex-cli", md)
+	if r.Tool != "bash" || r.HookEventName != "PostToolUse" {
+		t.Errorf("tool/event = %q/%q, want bash/PostToolUse", r.Tool, r.HookEventName)
+	}
+	if len(r.Files) != 1 || r.Files[0] != "hook/hook_claude.go" {
+		t.Errorf("files = %v, want [hook/hook_claude.go]", r.Files)
+	}
+}
+
+func TestParsePostToolCursorEventCase(t *testing.T) {
+	// cursor 实测：事件名小写 postToolUse + 顶层 file_path 与 tool_input 内重复（需去重）
+	md := `{"_type":"post_tool","conversation_id":"c1","file_path":"/repo/a.go","hook_event_name":"postToolUse","tool_input":{"file_path":"/repo/a.go"}}`
+	r := ParseToolRecord("cursor", md)
+	if r.HookEventName != "postToolUse" {
+		t.Errorf("event = %q, want postToolUse", r.HookEventName)
+	}
+	if len(r.Files) != 1 || r.Files[0] != "/repo/a.go" {
+		t.Errorf("files = %v, want 去重后 [/repo/a.go]", r.Files)
+	}
+	// 顶层 file_path 且 tool_input 为空 → 文件操作归类 edit
+	md2 := `{"_type":"post_tool","file_path":"/repo/b.go","hook_event_name":"PostToolUse","tool_input":{}}`
+	r2 := ParseToolRecord("codex-cli", md2)
+	if r2.Tool != "edit" || len(r2.Files) != 1 || r2.Files[0] != "/repo/b.go" {
+		t.Errorf("tool/files = %q/%v, want edit/[/repo/b.go]", r2.Tool, r2.Files)
+	}
+}
+
 func TestParseUnknownAndDegraded(t *testing.T) {
 	if r := ParseToolRecord("aipmc-vision", `{"id":"x","iteration":1}`); r.Tool != "unknown" {
 		t.Errorf("unknown tool = %q, want unknown", r.Tool)

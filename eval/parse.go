@@ -14,23 +14,27 @@ import (
 
 // ToolRecord 归一化工具调用/消息记录。
 type ToolRecord struct {
-	Source   string   `json:"source"`   // 原始来源（claude-code/codex-cli/...）
-	Tool     string   `json:"tool"`     // bash/edit/read/write/llm_message/mcp/unknown
-	Command  string   `json:"command"`  // bash command 或工具输入摘要
-	Files    []string `json:"files"`    // 从 tool_input 提取的文件（不含命令内路径，留阶段 5）
-	ExitCode *int     `json:"exit_code,omitempty"`
-	Output   string   `json:"output,omitempty"` // stdout/工具响应（截断）
-	Model    string   `json:"model,omitempty"`
-	Cwd      string   `json:"cwd,omitempty"`
-	Quality  string   `json:"quality"` // ok / degraded（乱码容忍，不丢弃降权）
+	Source        string   `json:"source"` // 原始来源（claude-code/codex-cli/...）
+	Tool          string   `json:"tool"`   // bash/edit/read/write/llm_message/mcp/unknown
+	Command       string   `json:"command"` // bash command 或工具输入摘要
+	Files         []string `json:"files"`   // 文件路径（tool_input + 顶层 file_path/rel_path，去重）
+	ExitCode      *int     `json:"exit_code,omitempty"`
+	Output        string   `json:"output,omitempty"` // stdout/工具响应（截断）
+	Model         string   `json:"model,omitempty"`
+	Cwd           string   `json:"cwd,omitempty"`
+	HookEventName string   `json:"hook_event_name,omitempty"` // 原始事件名（PostToolUse/postToolUse 大小写不同，阶段 5 判定写操作）
+	Quality       string   `json:"quality"`                    // ok / degraded（乱码容忍，不丢弃降权）
 }
 
-// postTool 新通用工具调用格式（codex-cli 实测；tool_input 为工具入参）。
+// postTool 新通用工具调用格式（codex-cli/cursor 实测；tool_input 为工具入参，
+// file_path/rel_path 为工具关联文件，位于顶层而非 tool_input 内）。
 type postTool struct {
 	Type          string         `json:"_type"`
 	Cwd           string         `json:"cwd"`
 	HookEventName string         `json:"hook_event_name"`
 	Model         string         `json:"model"`
+	FilePath      string         `json:"file_path"`
+	RelPath       string         `json:"rel_path"`
 	ToolInput     map[string]any `json:"tool_input"`
 }
 
@@ -127,10 +131,15 @@ func parsePostTool(source, metadata string, rec ToolRecord) ToolRecord {
 	}
 	rec.Cwd = pt.Cwd
 	rec.Model = pt.Model
+	rec.HookEventName = pt.HookEventName
 	tool, cmd, files := classifyToolInput(pt.ToolInput)
+	if tool == "unknown" && pt.FilePath != "" {
+		// 顶层 file_path 且无命令 → 文件操作（与 tool_input.file_path 归类一致）
+		tool = "edit"
+	}
 	rec.Tool = tool
 	rec.Command = cmd
-	rec.Files = files
+	rec.Files = appendFiles(files, pt.FilePath, pt.RelPath)
 	return rec
 }
 
@@ -154,6 +163,7 @@ func parseGeminiTool(source, metadata string, rec ToolRecord) ToolRecord {
 		return rec
 	}
 	rec.Cwd = gt.Cwd
+	rec.HookEventName = gt.HookEventName
 	rec.Tool = normalizeToolName(gt.ToolName)
 	rec.Command = gt.ToolName
 	rec.Files = extractFilesFromInput(gt.ToolInput)
@@ -182,9 +192,30 @@ func parseCursor(source, metadata string, rec ToolRecord) ToolRecord {
 		return rec
 	}
 	rec.Model = cm.Model
+	rec.HookEventName = cm.HookEventName
 	rec.Tool = "llm_message"
 	rec.Command = cm.Type
 	return rec
+}
+
+// appendFiles 追加文件路径并去重（顶层 file_path/rel_path 与 tool_input 内可能重复）。
+func appendFiles(files []string, paths ...string) []string {
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		dup := false
+		for _, f := range files {
+			if f == p {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			files = append(files, p)
+		}
+	}
+	return files
 }
 
 // classifyToolInput 从 post_tool 的 tool_input 判定工具类型并提取命令/文件。
