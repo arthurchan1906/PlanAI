@@ -143,10 +143,12 @@ func (s *mcpServer) registerTools() {
 	// Core tools
 	s.addTool(MCPTool{
 		Name:        "aipm_get_briefing",
-		Description: "获取当前项目简报。包含进行中的任务、PM 最新变更、进度风险、重复检测、scope 漂移、最近 Agent 活动等分析结果。Agent 在开始编码前应调用此工具获取最新上下文。",
+		Description: "获取当前项目简报。包含进行中的任务、PM 最新变更、进度风险、重复检测、scope 漂移、最近 Agent 活动等分析结果。Agent 在开始编码前应调用此工具获取最新上下文。支持 level=summary（执行摘要，省 token）与 level=full（完整分析，默认）。",
 		InputSchema: MCPInputSchema{
-			Type:       "object",
-			Properties: map[string]interface{}{},
+			Type: "object",
+			Properties: map[string]interface{}{
+				"level": map[string]string{"type": "string", "description": "可选: 'summary'=执行摘要（计数级+前 5 条，约 1-3KB，省 token）；'full'=完整分析（默认）。快速状态检查用 summary，深挖细节用 full。"},
+			},
 		},
 	}, s.handleBriefing)
 
@@ -748,7 +750,13 @@ func (s *mcpServer) addTool(tool MCPTool, handler mcpToolHandler) {
 // ---- Tool Handlers ----
 
 func (s *mcpServer) handleBriefing(args map[string]interface{}) mcpToolResult {
-	briefing, eventIDs := analyze.BuildBriefing(s.ai, buildBriefingGraph())
+	// B8：两级摘要。level=summary 执行摘要（省 token），level=full 完整分析（默认，向后兼容）。
+	level := getStr(args, "level", "full")
+	if level != "summary" && level != "full" {
+		level = "full"
+	}
+	args["level"] = level
+	briefing, eventIDs := analyze.BuildBriefingLevel(s.ai, buildBriefingGraph(), level)
 	report := analyze.RunFullAnalysis()
 
 	// W2（8/13）事件→动作漏斗 surfaced 记录：简报展示了哪些 unconsumed 事件、发给谁。

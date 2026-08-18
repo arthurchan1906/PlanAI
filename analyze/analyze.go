@@ -71,43 +71,43 @@ type DuplicateResult struct {
 
 // BlockedResult indicates a task that has been blocked too long.
 type BlockedResult struct {
-	TaskID          string `json:"task_id"`
-	TaskTitle       string `json:"task_title"`
-	PlanID          string `json:"plan_id"`
-	DaysBlocked     int    `json:"days_blocked"`
-	LastNote        string `json:"last_note"`
+	TaskID      string `json:"task_id"`
+	TaskTitle   string `json:"task_title"`
+	PlanID      string `json:"plan_id"`
+	DaysBlocked int    `json:"days_blocked"`
+	LastNote    string `json:"last_note"`
 }
 
 // CrossTaskResult indicates a commit that touches files related to another active task.
 type CrossTaskResult struct {
-	CommitID    string `json:"commit_id"`
-	CommitTitle string `json:"commit_title"`
-	TaskID      string `json:"task_id"`
-	TaskTitle   string `json:"task_title"`
-	OtherTaskID string `json:"other_task_id"`
-	OtherTitle  string `json:"other_title"`
+	CommitID    string   `json:"commit_id"`
+	CommitTitle string   `json:"commit_title"`
+	TaskID      string   `json:"task_id"`
+	TaskTitle   string   `json:"task_title"`
+	OtherTaskID string   `json:"other_task_id"`
+	OtherTitle  string   `json:"other_title"`
 	SharedFiles []string `json:"shared_files"`
 }
 
 // ConflictResult indicates two tasks under the same plan with potentially conflicting approaches.
 type ConflictResult struct {
-	TaskID1  string `json:"task_id1"`
-	Title1   string `json:"title1"`
-	TaskID2  string `json:"task_id2"`
-	Title2   string `json:"title2"`
-	PlanID   string `json:"plan_id"`
-	Reason   string `json:"reason"`
+	TaskID1 string `json:"task_id1"`
+	Title1  string `json:"title1"`
+	TaskID2 string `json:"task_id2"`
+	Title2  string `json:"title2"`
+	PlanID  string `json:"plan_id"`
+	Reason  string `json:"reason"`
 }
 
 // ProgressResult indicates plan progress vs time remaining.
 type ProgressResult struct {
-	PlanID       string  `json:"plan_id"`
-	PlanTitle    string  `json:"plan_title"`
-	TotalTasks   int     `json:"total_tasks"`
-	DoneTasks    int     `json:"done_tasks"`
-	ProgressPct  int     `json:"progress_pct"`
-	DaysLeft     int     `json:"days_left"`
-	RiskLevel    string  `json:"risk_level"` // "on_track" | "at_risk" | "off_track"
+	PlanID      string `json:"plan_id"`
+	PlanTitle   string `json:"plan_title"`
+	TotalTasks  int    `json:"total_tasks"`
+	DoneTasks   int    `json:"done_tasks"`
+	ProgressPct int    `json:"progress_pct"`
+	DaysLeft    int    `json:"days_left"`
+	RiskLevel   string `json:"risk_level"` // "on_track" | "at_risk" | "off_track"
 }
 
 // ImpactResult indicates tasks affected by a decision change.
@@ -120,15 +120,15 @@ type ImpactResult struct {
 
 // AnalyzeReport is the top-level analysis result.
 type AnalyzeReport struct {
-	Drifts      []DriftResult      `json:"drifts"`
-	Orphans     []OrphanResult     `json:"orphans"`
-	Duplicates  []DuplicateResult  `json:"duplicates"`
-	Blocked     []BlockedResult    `json:"blocked"`
-	Conflicts   []ConflictResult   `json:"conflicts"`
-	Progress    []ProgressResult   `json:"progress"`
-	Impacts     []ImpactResult     `json:"impacts"`
-	CrossTasks  []CrossTaskResult  `json:"cross_tasks"`
-	Summary     string             `json:"summary"`
+	Drifts     []DriftResult     `json:"drifts"`
+	Orphans    []OrphanResult    `json:"orphans"`
+	Duplicates []DuplicateResult `json:"duplicates"`
+	Blocked    []BlockedResult   `json:"blocked"`
+	Conflicts  []ConflictResult  `json:"conflicts"`
+	Progress   []ProgressResult  `json:"progress"`
+	Impacts    []ImpactResult    `json:"impacts"`
+	CrossTasks []CrossTaskResult `json:"cross_tasks"`
+	Summary    string            `json:"summary"`
 }
 
 // analyzeScopeDrift checks all commits for files that may fall outside their plan's scope.
@@ -334,10 +334,10 @@ func RunFullAnalysis() AnalyzeReport {
 		Orphans:    AnalyzeOrphanTasks(),
 		Duplicates: AnalyzeDuplicatePlans(),
 		Blocked:    AnalyzeBlockedTasks(),
-		Conflicts:   AnalyzeConflicts(),
-		Progress:    AnalyzeProgress(),
-		Impacts:     AnalyzeDecisionImpact(),
-		CrossTasks:  AnalyzeCrossTaskFiles(),
+		Conflicts:  AnalyzeConflicts(),
+		Progress:   AnalyzeProgress(),
+		Impacts:    AnalyzeDecisionImpact(),
+		CrossTasks: AnalyzeCrossTaskFiles(),
 	}
 
 	// Build summary
@@ -654,20 +654,20 @@ func TitleSimilarity(a, b string) float64 {
 
 // ThreadSuggestResult is a suggested thread from commit analysis.
 type ThreadSuggestResult struct {
-	SuggestedTitle string          `json:"suggested_title"`
-	Rationale      string          `json:"rationale"`
-	SourceEntities []store.ThreadItem    `json:"source_entities"`
-	Score          float64         `json:"score"`
+	SuggestedTitle string             `json:"suggested_title"`
+	Rationale      string             `json:"rationale"`
+	SourceEntities []store.ThreadItem `json:"source_entities"`
+	Score          float64            `json:"score"`
 }
 
 // ThreadStatusResult shows the status of existing threads.
 type ThreadStatusResult struct {
-	ThreadID     string `json:"thread_id"`
-	ThreadTitle  string `json:"thread_title"`
-	Status       string `json:"status"`
-	DaysSinceLastActivity int `json:"days_since_last_activity"`
-	ItemCount    int    `json:"item_count"`
-	Paused       bool   `json:"paused"`
+	ThreadID              string `json:"thread_id"`
+	ThreadTitle           string `json:"thread_title"`
+	Status                string `json:"status"`
+	DaysSinceLastActivity int    `json:"days_since_last_activity"`
+	ItemCount             int    `json:"item_count"`
+	Paused                bool   `json:"paused"`
 }
 
 // analyzeThreadSuggestions uses multi-dimensional similarity to cluster
@@ -706,13 +706,13 @@ func AnalyzeThreadSuggestions() []ThreadSuggestResult {
 
 // commitItem holds enriched commit data for similarity comparison.
 type commitItem struct {
-	id        string
-	title     string
-	files     []string
-	taskID    string
-	planID    string
-	ts        time.Time
-	keywords  []string
+	id       string
+	title    string
+	files    []string
+	taskID   string
+	planID   string
+	ts       time.Time
+	keywords []string
 }
 
 // stopWords filters out common non-semantic words during keyword extraction.
@@ -1040,7 +1040,10 @@ func GenerateThreadTitle(items []commitItem, indices []int, planSet map[string]b
 	}
 
 	// Strategy 3: Use top 2-3 keywords
-	type kv struct{ k string; v int }
+	type kv struct {
+		k string
+		v int
+	}
 	var kvs []kv
 	for k, v := range keywordCounts {
 		kvs = append(kvs, kv{k, v})
@@ -1083,7 +1086,10 @@ func GenerateThreadRationale(n int, planSet map[string]bool, planTitles map[stri
 
 	// File paths: list top 2 directories
 	if len(fileCounts) > 0 {
-		type fkv struct{ f string; c int }
+		type fkv struct {
+			f string
+			c int
+		}
 		var fkvs []fkv
 		for f, c := range fileCounts {
 			fkvs = append(fkvs, fkv{f, c})
@@ -1166,7 +1172,20 @@ func DaysSince(dateStr string) int {
 // BuildBriefing 生成结构化 Markdown 简报；返回 (简报文本, 展示的 unconsumed 事件 ids)。
 // 后者供 W2（8/13）事件→动作漏斗的 surfaced 记录——MCP get_briefing 返回时
 // 由调用方 LogShared，与 hook 侧调用记录（session+ts）按 agent+时间窗对齐。
+// BuildBriefing returns the full briefing (level=full, backward-compatible).
 func BuildBriefing(aiClient *ai.Client, graphSection string) (string, []string) {
+	return BuildBriefingLevel(aiClient, graphSection, "full")
+}
+
+// BuildBriefingLevel builds the project briefing at the requested level:
+//   - "summary": 执行摘要（计数级 + 前 N 条），agent 默认省 token；
+//   - "full":    完整分析（B8 前行为）。
+//
+// 两级均返回 surfaced 事件 ID（BRIEFING 日志口径不随 level 变化）。
+func BuildBriefingLevel(aiClient *ai.Client, graphSection, level string) (string, []string) {
+	if level == "summary" {
+		return buildBriefingSummary()
+	}
 	report := RunFullAnalysis()
 	tasks, _ := store.ListTasks("in_progress", "")
 	events, _ := store.GetUnconsumedEvents()
@@ -1451,7 +1470,6 @@ func BuildBriefing(aiClient *ai.Client, graphSection string) (string, []string) 
 		}
 	}
 
-
 	// Graph section — injected before AI summary so it survives truncation
 	if graphSection != "" {
 		b.WriteString(graphSection)
@@ -1467,6 +1485,119 @@ func BuildBriefing(aiClient *ai.Client, graphSection string) (string, []string) 
 		}
 	}
 
+	return b.String(), surfaced
+}
+
+// buildBriefingSummary renders the compact executive summary (level=summary):
+// counts + top-N entries only. Full detail stays one level=full call away.
+func buildBriefingSummary() (string, []string) {
+	report := RunFullAnalysis()
+	tasks, _ := store.ListTasks("in_progress", "")
+	events, _ := store.GetUnconsumedEvents()
+	suggestions := AnalyzeThreadSuggestions()
+	var surfaced []string
+
+	var b strings.Builder
+	b.WriteString("🏗️ 项目简报 — AIPM（summary）\n\n")
+
+	// ⚠️ 立即行动（计数 + 例举）
+	hasImmediate := false
+	if len(events) > 0 {
+		hasImmediate = true
+		b.WriteString("## ⚠️ 立即行动\n\n")
+		b.WriteString(fmt.Sprintf("### PM 最新变更（%d 条未消费）\n", len(events)))
+		for _, e := range events[:min(5, len(events))] {
+			b.WriteString(fmt.Sprintf("- [%s] %s\n", e["type"], e["summary"]))
+			if id, ok := e["id"].(string); ok && id != "" {
+				surfaced = append(surfaced, id)
+			}
+		}
+		if len(events) > 5 {
+			b.WriteString(fmt.Sprintf("  … 共 %d 条。处理: aipm_mark_event_processed；已读: aipm_mark_consumed\n", len(events)))
+		}
+		b.WriteString("\n")
+	}
+	if len(report.Blocked) > 0 {
+		hasImmediate = true
+		b.WriteString(fmt.Sprintf("### 阻塞任务: %d 个\n", len(report.Blocked)))
+		for _, bl := range report.Blocked[:min(3, len(report.Blocked))] {
+			b.WriteString(fmt.Sprintf("- **%s**（阻塞 %d 天）\n", bl.TaskTitle, bl.DaysBlocked))
+		}
+		b.WriteString("\n")
+	}
+	if len(report.Orphans) > 0 {
+		hasImmediate = true
+		b.WriteString(fmt.Sprintf("### 孤儿任务: %d 个（3 天无 commit 无讨论）\n", len(report.Orphans)))
+		for _, o := range report.Orphans[:min(3, len(report.Orphans))] {
+			b.WriteString(fmt.Sprintf("- **%s** [%s]\n", o.TaskTitle, o.TaskID))
+		}
+		b.WriteString("\n")
+	}
+	offTrack := 0
+	for _, p := range report.Progress {
+		if p.RiskLevel == "off_track" {
+			offTrack++
+		}
+	}
+	if offTrack > 0 {
+		hasImmediate = true
+		b.WriteString(fmt.Sprintf("### 严重偏离 plan: %d 个\n", offTrack))
+		for _, p := range report.Progress {
+			if p.RiskLevel == "off_track" {
+				b.WriteString(fmt.Sprintf("- **%s**（%d%% 完成）\n", p.PlanTitle, p.ProgressPct))
+			}
+		}
+		b.WriteString("\n")
+	}
+
+	// 📋 当前进行中
+	b.WriteString("## 📋 当前进行中\n\n")
+	if len(tasks) > 0 {
+		b.WriteString(fmt.Sprintf("### 进行中的任务（%d 个）\n", len(tasks)))
+	}
+	if len(tasks) > 0 {
+		for _, t := range tasks[:min(5, len(tasks))] {
+			b.WriteString(fmt.Sprintf("- **%s** [%s] _%s_\n", t.Title, t.ID, t.Status))
+		}
+		if len(tasks) > 5 {
+			b.WriteString(fmt.Sprintf("  … 共 %d 个\n", len(tasks)))
+		}
+		b.WriteString("\n")
+	}
+
+	// 风险/参考计数
+	atRisk := 0
+	for _, p := range report.Progress {
+		if p.RiskLevel == "at_risk" {
+			atRisk++
+		}
+	}
+	info := []string{}
+	if len(report.Drifts) > 0 {
+		info = append(info, fmt.Sprintf("Scope 漂移 %d 条", len(report.Drifts)))
+	}
+	if len(report.Duplicates) > 0 {
+		info = append(info, fmt.Sprintf("重复 %d 对", len(report.Duplicates)))
+	}
+	if atRisk > 0 {
+		info = append(info, fmt.Sprintf("进度风险 %d 个 plan", atRisk))
+	}
+	if len(report.Impacts) > 0 {
+		info = append(info, fmt.Sprintf("决策影响 %d 项", len(report.Impacts)))
+	}
+	if len(suggestions) > 0 {
+		info = append(info, fmt.Sprintf("建议新线索 %d 条", len(suggestions)))
+	}
+	if len(info) > 0 {
+		b.WriteString("### 风险/参考\n")
+		b.WriteString("- " + strings.Join(info, "；") + "\n\n")
+	}
+
+	if !hasImmediate && len(tasks) == 0 && len(info) == 0 {
+		b.WriteString("✅ 一切正常，无问题检测。\n")
+	}
+
+	b.WriteString("\n[完整简报请用 aipm_get_briefing level=full]\n")
 	return b.String(), surfaced
 }
 

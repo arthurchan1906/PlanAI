@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	pmdb "aipmc/db"
@@ -97,5 +98,38 @@ func TestScopeDriftRequiresMajorityOutOfScope(t *testing.T) {
 	}
 	if !major {
 		t.Error("commit with 8/10 files out of scope must be flagged")
+	}
+}
+
+func TestBuildBriefingLevelSummaryCompact(t *testing.T) {
+	setupAnalyzeDB(t)
+	// 有数据场景：summary（计数级）应显著小于 full（完整明细）。
+	seedPlanTask(t, `{"plan-1": ["file_a.go"]}`)
+	seedCommit(t, "c1", "2026-08-01T00:00:00", `["file_a.go"]`)
+	sum, _ := BuildBriefingLevel(nil, "", "summary")
+	full, _ := BuildBriefingLevel(nil, "", "full")
+	if sum == "" || full == "" {
+		t.Fatalf("both levels should render: sum=%d chars full=%d chars", len(sum), len(full))
+	}
+	if len([]rune(sum)) >= len([]rune(full)) {
+		t.Errorf("有数据时 summary (%d) 应小于 full (%d)\nsummary:\n%s\nfull:\n%s", len([]rune(sum)), len([]rune(full)), sum, full)
+	}
+	if !strings.Contains(sum, "level=full") {
+		t.Errorf("summary 应提示 full 展开入口，got:\n%s", sum)
+	}
+	if !strings.Contains(sum, "进行中的任务") {
+		t.Errorf("summary 应含任务清单，got:\n%s", sum)
+	}
+}
+
+func TestBuildBriefingSummaryEmptyDBCompact(t *testing.T) {
+	setupAnalyzeDB(t)
+	// 空库 summary 应远小于 20KB 目标（结构上最多计数级 + 少量标题）。
+	sum, _ := BuildBriefingLevel(nil, "", "summary")
+	if n := len([]rune(sum)); n > 2048 {
+		t.Errorf("空库 summary 应 ≤2KB，got %d 字符:\n%s", n, sum)
+	}
+	if !strings.Contains(sum, "🏗️ 项目简报 — AIPM（summary）") {
+		t.Errorf("summary 应有标题标记，got:\n%s", sum)
 	}
 }
