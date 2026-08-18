@@ -30,6 +30,57 @@ type DriftResult struct {
 	Severity     string   `json:"severity"` // "warn" | "info"
 }
 
+// DriftFileAgg folds drift entries by file: a file touched out-of-scope by
+// multiple commits is one row instead of N commit rows (#23 noise collapse).
+type DriftFileAgg struct {
+	File         string   `json:"file"`
+	CommitCount  int      `json:"commit_count"`
+	SampleTitles []string `json:"sample_titles,omitempty"`
+}
+
+// ScopeDriftAggregate is the briefing-facing view of drift: file-folded list
+// plus a drift rate that distinguishes "a few bad commits" from "scope
+// definition is too narrow" (#23).
+type ScopeDriftAggregate struct {
+	TotalCommits int
+	DriftCommits int
+	DriftRate    float64
+	Files        []DriftFileAgg
+}
+
+// AggregateScopeDrifts folds DriftResults by out-of-scope file and computes
+// the drift rate over the examined commit window.
+func AggregateScopeDrifts(drifts []DriftResult, totalCommits int) ScopeDriftAggregate {
+	agg := ScopeDriftAggregate{TotalCommits: totalCommits, DriftCommits: len(drifts)}
+	if totalCommits > 0 {
+		agg.DriftRate = float64(len(drifts)) / float64(totalCommits)
+	}
+	byFile := map[string]*DriftFileAgg{}
+	for _, d := range drifts {
+		for _, f := range d.OutOfScope {
+			fa := byFile[f]
+			if fa == nil {
+				fa = &DriftFileAgg{File: f}
+				byFile[f] = fa
+			}
+			fa.CommitCount++
+			if len(fa.SampleTitles) < 2 && d.CommitTitle != "" {
+				fa.SampleTitles = append(fa.SampleTitles, d.CommitTitle)
+			}
+		}
+	}
+	for _, fa := range byFile {
+		agg.Files = append(agg.Files, *fa)
+	}
+	sort.Slice(agg.Files, func(i, j int) bool {
+		if agg.Files[i].CommitCount != agg.Files[j].CommitCount {
+			return agg.Files[i].CommitCount > agg.Files[j].CommitCount
+		}
+		return agg.Files[i].File < agg.Files[j].File
+	})
+	return agg
+}
+
 // scopeDriftCommitLimit bounds how many recent commits AnalyzeScopeDrift
 // examines. The full history can be thousands of commits; drift checking is a
 // briefing aid, not an audit, and unbounded scans previously ballooned the
@@ -1277,23 +1328,30 @@ func BuildBriefingLevel(aiClient *ai.Client, graphSection, level string) (string
 
 	if len(report.Drifts) > 0 {
 		b.WriteString("### Scope 漂移\n")
-		shown := report.Drifts
+		// #23：按文件聚合折叠 + 漂移率趋势——一次 745 条的噪音不再逐条铺开。
+		agg := AggregateScopeDrifts(report.Drifts, scopeDriftCommitLimit)
+		if agg.DriftRate > 0.5 {
+			b.WriteString(fmt.Sprintf("  ⚠️ 漂移率 %.0f%%（%d/%d 个近期 commit）——大量 commit 超出 plan scope，"+
+				"更可能是 **plan scope 定义过窄**而非 commit 问题，建议核对 plan scope 后再逐条处理\n",
+				agg.DriftRate*100, agg.DriftCommits, agg.TotalCommits))
+		} else {
+			b.WriteString(fmt.Sprintf("  %d/%d 个近期 commit 有漂移（%.0f%%）\n", agg.DriftCommits, agg.TotalCommits, agg.DriftRate*100))
+		}
+		shown := agg.Files
 		if len(shown) > briefingDriftCap {
 			shown = shown[:briefingDriftCap]
 		}
-		for _, d := range shown {
-			files := d.OutOfScope
-			extra := ""
-			if len(files) > briefingFileCap {
-				extra = fmt.Sprintf(" 等 %d 个文件", len(files)-briefingFileCap)
-				files = files[:briefingFileCap]
+		for _, fa := range shown {
+			b.WriteString(fmt.Sprintf("- **%s**: %d 个 commit 涉及", fa.File, fa.CommitCount))
+			if len(fa.SampleTitles) > 0 {
+				b.WriteString(fmt.Sprintf("（如 %s）", strings.Join(fa.SampleTitles, " / ")))
 			}
-			b.WriteString(fmt.Sprintf("- Commit **%s**: 文件 %v%s 超出 plan scope\n", d.CommitTitle, files, extra))
+			b.WriteString("\n")
 		}
-		if len(report.Drifts) > briefingDriftCap {
-			b.WriteString(fmt.Sprintf("  → 共 %d 条，已省略 %d 条\n", len(report.Drifts), len(report.Drifts)-briefingDriftCap))
+		if len(agg.Files) > briefingDriftCap {
+			b.WriteString(fmt.Sprintf("  → 共 %d 个文件，已省略 %d 个\n", len(agg.Files), len(agg.Files)-briefingDriftCap))
 		}
-		b.WriteString(fmt.Sprintf("  → 建议: 确认这些文件是否应属于当前 task\n\n"))
+		b.WriteString(fmt.Sprintf("  → 建议: 确认这些文件是否应属于当前 task，或调整 plan scope\n\n"))
 	}
 
 	if len(report.Duplicates) > 0 {

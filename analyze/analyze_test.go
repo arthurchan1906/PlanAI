@@ -133,3 +133,29 @@ func TestBuildBriefingSummaryEmptyDBCompact(t *testing.T) {
 		t.Errorf("summary 应有标题标记，got:\n%s", sum)
 	}
 }
+
+func TestAggregateScopeDrifts(t *testing.T) {
+	drifts := []DriftResult{
+		{CommitID: "c1", CommitTitle: "c1", OutOfScope: []string{"file_b.go"}},
+		{CommitID: "c2", CommitTitle: "c2", OutOfScope: []string{"file_b.go", "file_c.go"}},
+		{CommitID: "c3", CommitTitle: "c3", OutOfScope: []string{"file_d.go"}},
+	}
+	agg := AggregateScopeDrifts(drifts, 50)
+	if agg.DriftCommits != 3 || agg.DriftRate != 0.06 {
+		t.Errorf("drift agg = %+v, want 3/50 = 6%%", agg)
+	}
+	if len(agg.Files) != 3 {
+		t.Fatalf("files = %d, want 3（file_b 聚合为一条）", len(agg.Files))
+	}
+	if agg.Files[0].File != "file_b.go" || agg.Files[0].CommitCount != 2 {
+		t.Errorf("top file = %+v, want file_b.go count=2（按 commit 数降序）", agg.Files[0])
+	}
+	if len(agg.Files[0].SampleTitles) != 2 {
+		t.Errorf("sample titles = %v, want 2", agg.Files[0].SampleTitles)
+	}
+	// 高漂移率场景
+	aggHigh := AggregateScopeDrifts(drifts, 3)
+	if aggHigh.DriftRate != 1.0 {
+		t.Errorf("high drift rate = %f, want 1.0", aggHigh.DriftRate)
+	}
+}
