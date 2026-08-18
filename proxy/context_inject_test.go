@@ -153,16 +153,17 @@ func TestBuildContextBlockGuidelinesCountBug(t *testing.T) {
 	}
 }
 
-// 8/13 F2: fileAssoc 独立硬子预算（200 字节）——超出部分记 fileAssoc 裁减，
-// 不再与 guidelines 共用 written 后名存实亡的预留。
+// 8/13 F2: fileAssoc 独立硬子预算——超出部分记 fileAssoc 裁减。
+// 8/18 预算校准：min(200+30×len, 500)。20 文件 → 500B 注入 16/20、裁 4
+// （200B 固定预算实测平均裁剪率 82%，fileAssoc 功能失效，动态缩放修复）。
 func TestBuildContextBlockFileAssocSubBudget(t *testing.T) {
 	files := make([]string, 20)
 	for i := range files {
 		files[i] = strings.Repeat("x", 30)
 	}
 	block, sc := buildContextBlock(nil, nil, nil, files, "")
-	if sc.fileAssoc != 14 {
-		t.Fatalf("fileAssoc suppressed: got %d want 14 (200B sub-budget fits 6 of 20)", sc.fileAssoc)
+	if sc.fileAssoc != 4 {
+		t.Fatalf("fileAssoc suppressed: got %d want 4 (500B dynamic budget fits 16 of 20)", sc.fileAssoc)
 	}
 	if sc.total() != sc.fileAssoc {
 		t.Fatalf("total %d != fileAssoc %d", sc.total(), sc.fileAssoc)
@@ -344,4 +345,31 @@ func injectLogCount(t *testing.T) int {
 		t.Fatalf("COUNT: %v", err)
 	}
 	return n
+}
+
+// 8/18 修订写策略：char_limit 裁剪的请求已实际注入，写表且 suppressed=1
+// （原 T7「suppressed 不写表」废弃——实测 98.9% 注入带裁剪，不写表则表恒空）。
+func TestWriteInjectLogSuppressed(t *testing.T) {
+	t.Setenv("PMAI_HOME", t.TempDir())
+	if _, err := pmdb.Bootstrap(); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+	writeInjectLog("codex", "sess-C", "r1-3", "", "12345678", 90, true, nil, nil, nil, []string{"a.go"}, "")
+
+	db, err := pmdb.Open()
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+	var suppressed int
+	var segJSON string
+	if err := db.QueryRow(`SELECT suppressed, segments_json FROM inject_log`).Scan(&suppressed, &segJSON); err != nil {
+		t.Fatalf("SELECT: %v", err)
+	}
+	if suppressed != 1 {
+		t.Errorf("suppressed = %d, want 1 (裁剪注入如实记录)", suppressed)
+	}
+	if !strings.Contains(segJSON, `"fileAssoc":["a.go"]`) {
+		t.Errorf("segments_json missing fileAssoc: %s", segJSON)
+	}
 }

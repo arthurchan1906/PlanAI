@@ -159,31 +159,36 @@ func InjectSessionContext(body []byte, agent string) []byte {
 		agent, sessionID, reqID, fullHash[:8], len(goals), len(warnings), len(actionItems), len(fileAssoc), len(guidelines), sc.guidelinesDel, len(block))
 	// suppressed 计数移到 shouldInject 之后：去重跳过（same_content/cooldown）的请求
 	// 不产出抑制记录——收紧 F2 口径（旧实现把未注入请求的抑制也算进去，虚高）。
+	// 8/18 修订（HARNESS §1.3）：char_limit 裁剪的请求已实际注入，仍写表，
+	// suppressed 如实记录（对应 :153）。same_content/no_summary 已在上方 return，
+	// 不写表——对照组从日志侧重建。
 	if sc.total() > 0 {
 		u.LogShared("INJECT", "suppressed=%d reason=char_limit cap=%d agent=%s session=%s req=%s segments=file_cut:%d warn:%d act:%d goals:%d guide:%d",
 			sc.total(), maxInjectChars, agent, sessionID, reqID, sc.fileAssoc, sc.warnings, sc.actionItems, sc.goals, sc.guidelines)
-		return result
 	}
-	// inject_log（HARNESS §1.3，v1 写策略）：仅无 char_limit 裁剪的实际注入写表，
-	// 与 :148 日志同位置。被裁剪的请求从 :153 日志行重建对照组（T7）。
+	// inject_log（HARNESS §1.3，8/18 修订写策略）：实际注入即写（含裁剪）。
 	source := ""
 	if len(goals) == 0 && len(fileAssoc) == 0 && len(guidelines) > 0 {
 		source = "guidelines_only"
 	}
-	writeInjectLog(agent, sessionID, reqID, source, fullHash, len(block), goals, warnings, actionItems, fileAssoc, guidelines)
+	writeInjectLog(agent, sessionID, reqID, source, fullHash, len(block), sc.total() > 0, goals, warnings, actionItems, fileAssoc, guidelines)
 	return result
 }
 
 // writeInjectLog records one actual injection into inject_log. Failure must
-// not break the injection hot path — log and continue (T7 写策略：inject_log
-// 不得出现 suppressed=1，被裁剪请求从日志侧重建对照组）。
-func writeInjectLog(agent, sessionID, reqID, source string, fullHash string, chars int, goals, warnings, actionItems, fileAssoc []string, guidelines string) {
+// not break the injection hot path — log and continue. suppressed=1 表示本次
+// 注入有内容被 cap 裁剪（对应 :153），提取器按此分层（8/18 修订，HARNESS §1.3）。
+func writeInjectLog(agent, sessionID, reqID, source string, fullHash string, chars int, suppressed bool, goals, warnings, actionItems, fileAssoc []string, guidelines string) {
 	segments := map[string]any{
 		"fileAssoc":   fileAssoc,
 		"warnings":    warnings,
 		"actionItems": actionItems,
 		"goals":       goals,
 		"guidelines":  len(guidelines) > 0,
+	}
+	supp := 0
+	if suppressed {
+		supp = 1
 	}
 	err := pmdb.InsertInjectLog(pmdb.InjectLogEntry{
 		ID:           u.Slug("inj"),
@@ -195,6 +200,7 @@ func writeInjectLog(agent, sessionID, reqID, source string, fullHash string, cha
 		Source:       source,
 		SegmentsJSON: u.JsonStr(segments),
 		Chars:        chars,
+		Suppressed:   supp,
 	})
 	if err != nil {
 		u.LogShared("INJECT", "inject_log write_err=%v", err)
@@ -459,7 +465,11 @@ func buildContextBlock(goals, warnings, actionItems, fileAssoc []string, guideli
 	// 8/13 F2 修复：独立 200 字节子预算 + 前置写入。旧实现 guidelines 先写且
 	// written 按源长度计数（len(guidelines) 而非截断后长度），1622 字规范把
 	// written 顶到 1642，后续所有段 guard 恒真 → fileAssoc 100% 被裁。
-	const fileAssocBudget = 200
+	// 8/18 预算校准（数据实证）：200B 固定预算在 file_total p50=9/p90=45 时平均
+	// 裁剪率 82%（1669 次注入仅 2.6% 完整注入）→ fileAssoc 功能失效。动态缩放
+	// min(200+30×len, 500)：9 文件→470B≈5 行（56% 注入率）；cap 500B 防挤爆总
+	// 预算（maxInjectChars=800）。参数依据记录于 task-20260818-134522-c6d5e9。
+	fileAssocBudget := min(200+30*len(fileAssoc), 500)
 	if len(fileAssoc) > 0 {
 		buf.WriteString("\n[文件关联]")
 		faWritten := 0

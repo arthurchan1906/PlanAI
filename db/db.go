@@ -135,9 +135,9 @@ func Open() (*sql.DB, error) {
 
 // ── inject_log（HARNESS_ROADMAP §1.3：注入点捕获 v1）──────────────
 
-// InjectLogEntry 记录一次「实际注入」的请求。仅无 char_limit 裁剪的注入写表
-// （suppressed 恒为 0）：被裁剪的请求从 :153 日志行重建对照组（T7 写策略，
-// inject_log 不得出现 suppressed=1）。
+// InjectLogEntry 记录一次「实际注入」的请求（8/18 修订：same_content/no_summary
+// 跳过不写表，对照组从日志侧重建；char_limit 裁剪的请求已实际注入，写表且
+// Suppressed=1，供提取器按 reason 分层）。
 type InjectLogEntry struct {
 	ID           string // u.Slug("inj")，调用方生成
 	Agent        string // codex-cli / claude-code / gemini-cli / cursor / opencode
@@ -148,6 +148,7 @@ type InjectLogEntry struct {
 	Source       string // '' 正常注入 / guidelines_only
 	SegmentsJSON string // 实际注入的 segments（提取器重建「注入了什么」的唯一来源）
 	Chars        int    // 注入块字节数
+	Suppressed   int    // 1 = 本次请求有内容被 cap 裁剪（对应 :153）
 }
 
 // InsertInjectLog appends one inject_log row. Write failure must not break the
@@ -158,8 +159,8 @@ func InsertInjectLog(e InjectLogEntry) error {
 		return err
 	}
 	defer d.Close()
-	_, err = d.Exec(`INSERT INTO inject_log (id, agent, session_id, req_id, ts, hash, source, segments_json, chars, suppressed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
-		e.ID, e.Agent, e.SessionID, e.ReqID, e.TS, e.Hash, e.Source, e.SegmentsJSON, e.Chars)
+	_, err = d.Exec(`INSERT INTO inject_log (id, agent, session_id, req_id, ts, hash, source, segments_json, chars, suppressed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, e.Agent, e.SessionID, e.ReqID, e.TS, e.Hash, e.Source, e.SegmentsJSON, e.Chars, e.Suppressed)
 	return err
 }
 

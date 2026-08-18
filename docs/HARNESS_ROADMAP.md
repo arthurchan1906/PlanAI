@@ -8,7 +8,7 @@
 
 ## 0. 背景与定位
 
-PlanAI 作为 harness 的独特能力是「观察 → 理解 → 注入 → **再观察**」闭环：
+AIPMC 作为 harness 的独特能力是「观察 → 理解 → 注入 → **再观察**」闭环：
 hook/proxy 记录 agent 行为，pipeline 理解，INJECT 注入，下一轮 hook 又能看到注入对行为的
 影响。本文档把「再观察」这条腿量化——用**生产日志**（而非编排任务）计算注入是否真的改变了
 agent 行为，并修复评测所依赖的**注入可观测性缺口**。
@@ -64,8 +64,19 @@ CREATE TABLE IF NOT EXISTS inject_log (
    "actionItems":["commit_orphan: xxx"],"goals":["修复 proxy token 认证"],"guidelines":true}
   ```
 - 写入时机：仅「实际注入」的请求写一行（`shouldInject` 通过后、`injectIntoPrompt` 返回前），
-  与 `:148` 日志同位置；**suppressed 的请求不写**（避免把未注入请求算进分母口径，与 F2 收紧一致）。
+  与 `:148` 日志同位置；**same_content / no_summary 跳过的请求不写**（对照组从日志侧重建）。
+- **suppressed 字段如实记录 0/1（8/18 修订，原 T7「suppressed 不写表」废弃）**：
+  char_limit 裁剪的请求**已实际注入**（只是内容不完整），必须写表且 `suppressed=1`（对应 `:153`），
+  否则 M1 分子漏计裁剪注入、M2 注入组只剩「完整注入」session 造成样本偏差。
+  提取器按 `suppressed` 分层：0=完整注入样本，1=不完整注入样本。
+  `segments_json` v1 记录**注入前完整 segments**（`buildContextBlock` 不返回裁剪后实际内容），
+  提取器对 `suppressed=1` 行按「不完整样本」处理；升级为返回实际段内容留待 S4 核验。
 - 该表挂在 `db.go` 的 `schemaStatements` 中，`SCHEMA_VERSION` 升到 3（含 `migrate()` 增量路径）。
+
+> **口径变更记录（8/18）**：原写策略「suppressed 不写表」在 heavy 环境失效——实测
+> 1669 次注入中 1651 次（98.9%）带 char_limit 裁剪（file_total p50=9/p90=45，200B 预算
+> 平均裁剪率 82%），导致 inject_log 恒空。修订为「实际注入即写 + suppressed 如实记录」。
+> M1/M2 基线需在修订后重录，报告标注口径变化（HARNESS §1.3 修订，8/18）。
 
 ### 1.4 改动 3：skip 行补 session/req（M2 对照组重建前提，claude-code S2 认领）
 
@@ -93,6 +104,7 @@ agent/session/req」在改动落地前不成立，S4 按此核验。
 - 分子：`inject_log` 行数（按 agent，按日）
 - 分母：有摘要数据且未被抑制的请求数 = inject + suppressed(same_content/cooldown) 请求数；
   **排除** `no_summary_data`
+- 注（8/18）：分子含 `suppressed=1` 行（实际注入即写）；报告可按 suppressed 分层展示完整/不完整注入覆盖率
 - 口径：复用 `metrics.go:501-503` 的 C1 `inject_coverage`，差异在**按 agent 拆分 + 按日窗口**
 - **⚠ 已核实 C1 注释/代码不一致（S4 核验项）**：`metrics.go:503` 注释声明"排除 no_summary"，但 `:505` `covDenom := injOK + injGuidelines + injSame + injNoSum` **分母含 injNoSum**，分子不含——覆盖率为被稀释。本规格 M1 按语义修正：分母**排除** no_summary（与 C1 注释一致）。历史基线（EVALUATION.md）若按含 no_summary 算过，需在修复 C1 后重录基线并标注口径变化
 - 目标：`≥ 80%`（与 IMPROVEMENT_PLAN 2.1 一致）
@@ -249,7 +261,7 @@ fileAssoc（新出现文件）> warnings（新警告）> actionItems（新事件
 | T4 对照组分层 | M2 按 reason 输出三组，不合并 |
 | T5 unknown 规则 | M3 不可映射 warning 进 unknown 列，不进分母 |
 | T6 对照组分层 | fixture 3.2b 三组（same_content/char_limit/no_summary）分别输出，不合并 |
-| T7 写策略 | fixture 中 suppressed 请求必须来自日志行，inject_log 不得出现 suppressed=1 |
+| T7 写策略 | fixture 中 same_content/no_summary 请求必须来自日志行（inject_log 无对应行）；char_limit 裁剪请求写表且 `suppressed=1`，与 `:153` 日志一致 |
 
 ### 5.2 行为回归层（`aipmc eval`，手动/定时，跑开发机生产库）
 
@@ -282,7 +294,5 @@ fileAssoc（新出现文件）> warnings（新警告）> actionItems（新事件
 
 前置基线（不阻塞 S2-S4，但阻塞 S5 上线）：P0-1 默认构建自举、P0-2 测试隔离 + relpath 修复、
 P0-3 Windows CI。最终验收标准：**默认环境下裸 `go test ./...` 全绿**。
-
-
 
 

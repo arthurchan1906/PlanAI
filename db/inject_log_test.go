@@ -49,7 +49,23 @@ func TestInjectLogSchemaAndRoundTrip(t *testing.T) {
 		t.Errorf("chars = %d, want 120", got.Chars)
 	}
 	if suppressed != 0 {
-		t.Errorf("suppressed = %d, want 0 (T7: inject_log 不得出现 suppressed=1)", suppressed)
+		t.Errorf("suppressed = %d, want 0 (默认无裁剪)", suppressed)
+	}
+
+	// 8/18 修订写策略：char_limit 裁剪的请求已实际注入，写表且 suppressed=1
+	if err := InsertInjectLog(InjectLogEntry{
+		ID: "inj-test-2", Agent: "codex-cli", SessionID: "sess-B", ReqID: "r1-2",
+		TS: "2026-08-18T12:01:00", Hash: "def45678", Source: "",
+		SegmentsJSON: `{"fileAssoc":["a.go","b.go"]}`, Chars: 80, Suppressed: 1,
+	}); err != nil {
+		t.Fatalf("InsertInjectLog(suppressed=1): %v", err)
+	}
+	var supp int
+	if err := d.QueryRow(`SELECT suppressed FROM inject_log WHERE id = ?`, "inj-test-2").Scan(&supp); err != nil {
+		t.Fatalf("SELECT suppressed: %v", err)
+	}
+	if supp != 1 {
+		t.Errorf("suppressed = %d, want 1 (修订后如实记录裁剪)", supp)
 	}
 }
 
