@@ -76,8 +76,37 @@ func TestExtractBehavior(t *testing.T) {
 	if b.TextSignals.ClaimedDone != 1 {
 		t.Errorf("ClaimedDone = %d, want 1", b.TextSignals.ClaimedDone)
 	}
+	if b.SelfClaimWithoutProof {
+		t.Error("段内有 go test，声称测试通过不算无实据自证")
+	}
 	if b.OutOfScopeFiles != 0 {
 		t.Errorf("OutOfScopeFiles = %v, want 0（全在 /repo 内）", b.OutOfScopeFiles)
+	}
+}
+
+func TestExtractRetrySameCommand(t *testing.T) {
+	// 失败后不同命令成功：不计 RetrySuccess（仅解除失败态）
+	ep := epWith(
+		rec("bash", "go build ./...", "", ip(1)), // 失败 failedCmd=go build
+		rec("bash", "git status", "", ip(0)),     // 不同命令成功 → 不计 RetrySuccess
+		rec("bash", "git status", "", ip(1)),     // failedCmd=git status
+		rec("bash", "git status", "", ip(0)),     // 同命令成功 → RetrySuccess++
+	)
+	b := ExtractBehavior(ep, "")
+	if b.ExitCode.Failures != 2 || b.ExitCode.Retries != 0 || b.ExitCode.RetrySuccess != 1 {
+		t.Errorf("ExitCode = %+v, want Failures=2 Retries=0 RetrySuccess=1（git status 首次成功不得计入）", b.ExitCode)
+	}
+}
+
+func TestSelfClaimWithoutProof(t *testing.T) {
+	// 声称测试通过但段内无 test 命令 → 自证标记
+	ep := epWith(
+		rec("unknown", "", "实现完成，测试通过 ✅", nil),
+		rec("bash", "git status", "", ip(0)),
+	)
+	b := ExtractBehavior(ep, "")
+	if !b.SelfClaimWithoutProof {
+		t.Error("声称测试通过且未运行测试 → 应标记 self_claim_without_proof")
 	}
 }
 

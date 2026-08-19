@@ -13,13 +13,14 @@ import (
 
 // EpisodeBehavior 段级行为信号。
 type EpisodeBehavior struct {
-	ToolUsage       map[string]int // bash/edit/read/write/mcp/llm_message/unknown/其他
-	CmdSemantics    map[string]int // build/test/vet/git/query/deploy/other
-	Files           FilesSignal
-	OutOfScopeFiles float64          // 段外文件占比（相对 cwd，绝对路径判定）
-	ExitCode        ExitCodeSignal
-	Verification    VerificationSignal
-	TextSignals     TextSignal
+	ToolUsage           map[string]int // bash/edit/read/write/mcp/llm_message/unknown/其他
+	CmdSemantics        map[string]int // build/test/vet/git/query/deploy/other
+	Files               FilesSignal
+	OutOfScopeFiles     float64          // 段外文件占比（相对 cwd，绝对路径判定）
+	ExitCode            ExitCodeSignal
+	Verification        VerificationSignal
+	TextSignals         TextSignal
+	SelfClaimWithoutProof bool // 声称测试通过但未运行测试（§3.6 自证检测）
 }
 
 type FilesSignal struct {
@@ -72,13 +73,16 @@ func ExtractBehavior(ep *Episode, cwd string) EpisodeBehavior {
 				}
 				if tool.ExitCode != nil && *tool.ExitCode != 0 {
 					b.ExitCode.Failures++
-					if failedCmd == tool.Command {
+					if tool.Command == failedCmd {
 						b.ExitCode.Retries++
 					} else {
 						failedCmd = tool.Command
 					}
-				} else if tool.ExitCode != nil && *tool.ExitCode == 0 && failedCmd != "" {
-					b.ExitCode.RetrySuccess++
+				} else if tool.ExitCode != nil && *tool.ExitCode == 0 {
+					// 重试成功 = 同一命令再次执行成功；不同命令成功只解除失败态不计成功
+					if tool.Command == failedCmd {
+						b.ExitCode.RetrySuccess++
+					}
 					failedCmd = ""
 				}
 			}
@@ -109,6 +113,8 @@ func ExtractBehavior(ep *Episode, cwd string) EpisodeBehavior {
 		}
 	}
 	b.Verification.HasCommit = len(ep.Commits) > 0
+	// §3.6 自证检测：声称测试通过但段内未运行测试
+	b.SelfClaimWithoutProof = b.TextSignals.ClaimedTestPassed > 0 && !b.Verification.RanTest
 
 	if cwd != "" && len(allFiles) > 0 {
 		out := 0
@@ -129,7 +135,7 @@ func classifyCommand(cmd string) string {
 		return "vet"
 	case matchAny(cmd, "go test", "pytest", "npm test", "swift test", "xcodebuild test", "make test"):
 		return "test"
-	case matchAny(cmd, "go build", "go install", "npm run build", "npm build", "swift build", "xcodebuild build", "make", "cmake --build"):
+	case matchAny(cmd, "go build", "go install", "npm run build", "npm build", "swift build", "xcodebuild build", "make ", "cmake --build"):
 		return "build"
 	case matchAny(cmd, "git "):
 		return "git"
@@ -183,7 +189,7 @@ func claimsDone(s string) bool {
 
 // claimsTestPassed 文本声称测试通过。
 func claimsTestPassed(s string) bool {
-	return matchAny(s, "测试通过", "测试全过", "全部通过", "tests pass", "passed", "✅ 通过")
+	return matchAny(s, "测试通过", "测试全过", "全部通过", "tests pass", "test passed", "tests passed", "✅ 通过")
 }
 
 // isUnder 判定 path 是否在 root 之下（含 root 本身）。
