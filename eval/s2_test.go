@@ -61,6 +61,9 @@ func TestRuleBasedIntent(t *testing.T) {
 	if c, ok := ruleBasedIntent("暂时不要开工"); !ok || c.Type != IntentDialogue {
 		t.Errorf("暂时不要开工 → %v/%v, want dialogue", c, ok)
 	}
+	if c, ok := ruleBasedIntent("Push"); !ok || c.Type != IntentDialogue {
+		t.Errorf("Push → %v/%v, want dialogue（大小写不敏感）", c, ok)
+	}
 	if _, ok := ruleBasedIntent("你是谁"); ok {
 		t.Error("无关键词短句不应兜底")
 	}

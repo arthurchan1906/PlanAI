@@ -62,6 +62,7 @@ func ruleBasedIntent(msg string) (IntentClass, bool) {
 }
 
 func containsAny(s string, keys ...string) bool {
+	s = strings.ToLower(s) // 英文关键词大小写不敏感（Push/PUSH）
 	for _, k := range keys {
 		if strings.Contains(s, k) {
 			return true

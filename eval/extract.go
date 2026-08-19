@@ -149,6 +149,7 @@ func classifyCommand(cmd string) string {
 }
 
 func matchAny(s string, keys ...string) bool {
+	s = strings.ToLower(s) // 大小写不敏感：英文 LLM 输出 "Test passed" 大写变体常见
 	for _, k := range keys {
 		if strings.Contains(s, k) {
 			return true

@@ -139,3 +139,14 @@ func TestIsLLMText(t *testing.T) {
 		t.Error("bash 记录不应计入文本信号")
 	}
 }
+
+func TestClaimsCaseInsensitive(t *testing.T) {
+	ep := epWith(
+		rec("unknown", "", "All tests passed", nil),
+		rec("unknown", "", "All done", nil),
+	)
+	b := ExtractBehavior(ep, "")
+	if b.TextSignals.ClaimedTestPassed != 1 || b.TextSignals.ClaimedDone != 1 {
+		t.Errorf("大写变体漏检: claims=%+v", b.TextSignals)
+	}
+}
