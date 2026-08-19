@@ -37,6 +37,14 @@ func TestLiveSmoke(t *testing.T) {
 		fmt.Printf("  ep%d [%s] %d turns files=%d commits=%d jaccard=%v intent=%q\n",
 			i, ep.Boundary, len(ep.Turns), len(ep.Files), len(ep.Commits), ep.JaccardHit, trunc(ep.IntentText, 20))
 	}
+	// 阶段 5 extract 冒烟：前 3 段行为统计
+	for i := 0; i < len(eps) && i < 3; i++ {
+		b := ExtractBehavior(&eps[i], "/Users/dazsec/workspace/aipmc")
+		fmt.Printf("  ep%d behavior tools=%v cmds=%v write=%d read=%d fail=%d retry=%d test=%v vet=%v commit=%v claims={done:%d test:%d} outscope=%.2f\n",
+			i, b.ToolUsage, b.CmdSemantics, len(b.Files.Write), len(b.Files.Read),
+			b.ExitCode.Failures, b.ExitCode.Retries, b.Verification.RanTest, b.Verification.RanVet,
+			b.Verification.HasCommit, b.TextSignals.ClaimedDone, b.TextSignals.ClaimedTestPassed, b.OutOfScopeFiles)
+	}
 }
 
 func trunc(s string, n int) string {

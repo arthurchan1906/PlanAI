@@ -55,7 +55,7 @@ func ClassifyIntent(userMsg string, llm IntentClassifier) IntentClass {
 // 注意：≤8 字但无关键词（如"你是谁"）不判定，交给 LLM；无 LLM 时归 dialogue。
 func ruleBasedIntent(msg string) (IntentClass, bool) {
 	msg = strings.TrimSpace(msg)
-	if utf8.RuneCountInString(msg) <= 8 && containsAny(msg, "继续", "执行", "查看", "推送", "不要", "暂时", "开工", "重启", "接着", "好的", "继续行动") {
+	if utf8.RuneCountInString(msg) <= 8 && containsAny(msg, "继续", "执行", "查看", "推送", "不要", "暂时", "开工", "重启", "接着", "好的", "继续行动", "push", "continue", "check") {
 		return IntentClass{Type: IntentDialogue, Confidence: 0.8}, true
 	}
 	return IntentClass{}, false

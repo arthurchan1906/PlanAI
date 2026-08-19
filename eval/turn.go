@@ -7,6 +7,7 @@ package eval
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -73,6 +74,11 @@ func BuildTurns(db *sql.DB, sessionID string) ([]Turn, error) {
 			CreatedAt: ts,
 		}
 		if role == "user" {
+			// 阶段 0 容错：系统日志（[Log]/[Progress]）偶发混入 user 角色（8/19 实测 13 行），
+			// 过滤避免产生假回合（校准输入，见 task 备注）。
+			if isFakeUser(content) {
+				continue
+			}
 			turns = append(turns, Turn{UserMsg: content, Start: ts, End: ts})
 			continue
 		}
@@ -90,4 +96,10 @@ func BuildTurns(db *sql.DB, sessionID string) ([]Turn, error) {
 		return nil, err
 	}
 	return turns, nil
+}
+
+// isFakeUser 判定是否为系统日志混入 user 角色的假消息。
+func isFakeUser(content string) bool {
+	c := strings.TrimSpace(content)
+	return strings.HasPrefix(c, "[Log]") || strings.HasPrefix(c, "[Progress]")
 }
