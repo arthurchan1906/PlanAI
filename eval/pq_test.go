@@ -229,8 +229,8 @@ func TestIsRealBuild(t *testing.T) {
 }
 
 func TestFindDeadloops(t *testing.T) {
-	// §4.1 小时表：15h build=20 零自发 → 候选；16h build=15 零自发 → 候选；
-	// 11h build=11 零自发但窗口内有 edit（修复执行）→ 排除（11h 教训）
+	// §4.1 小时表 + T5 校准（8/24）：15h/16h 盲试正样本 → 候选（edit/根因不排除）；
+	// 11h 修复验证期负样本 → 靠 commit 信号排除（11:48 在 11h 桶内）
 	mk := func(ts string, n int, kind string) []Record {
 		var out []Record
 		for i := 0; i < n; i++ {
@@ -244,10 +244,10 @@ func TestFindDeadloops(t *testing.T) {
 		{Records: mk("2026-06-23T15:10:00", 20, "build")},
 		{Records: mk("2026-06-23T16:10:00", 15, "build")},
 		{Records: mk("2026-06-24T11:10:00", 11, "build")},
-		{Records: mk("2026-06-24T11:20:00", 3, "edit")}, // 修复执行 → 排除 11h
+		{Records: mk("2026-06-24T11:20:00", 3, "edit")}, // 修复执行（edit 不再排除）
 	}
-	cands := FindDeadloops(turns, nil, nil, DefaultDeadloopParams())
-	// 15h/16h = 候选；11h 满足 build≥10+自发<2 但桶内有 edit → near-miss（Excluded=true）
+	commitTs := []time.Time{mustTs("2026-06-24T11:48:14")} // fix commit → 排除 11h
+	cands := FindDeadloops(turns, nil, nil, commitTs, DefaultDeadloopParams())
 	if len(cands) != 3 {
 		t.Fatalf("死循环候选 = %d, want 3（15h/16h 候选 + 11h near-miss）", len(cands))
 	}
@@ -264,7 +264,7 @@ func TestFindDeadloops(t *testing.T) {
 		}
 	}
 	if excluded != 1 {
-		t.Errorf("排除候选 = %d, want 1（11h 修复验证期）", excluded)
+		t.Errorf("排除候选 = %d, want 1（11h 经 commit 排除）", excluded)
 	}
 }
 
@@ -326,7 +326,7 @@ func TestRecognizeFeedbackModernChannel(t *testing.T) {
 }
 
 func TestFindDeadloopsSignals(t *testing.T) {
-	// 15h 桶：build 20 + fail 3 + user 4 + 零自发 → 候选；16h 桶含根因定位文本 → 排除
+	// 15h 桶：build 20 + fail 3 + user 2 + 零自发 → 候选；16h 桶含根因定位文本 → 记录不排除
 	mk := func(ts string, n int, kind string, fail int) []Record {
 		var out []Record
 		for i := 0; i < n; i++ {
@@ -351,9 +351,9 @@ func TestFindDeadloopsSignals(t *testing.T) {
 		{Records: mk("2026-06-23T16:10:00", 12, "build", 0)},
 		{Records: []Record{rc}},
 	}
-	cands := FindDeadloops(turns, nil, nil, DefaultDeadloopParams())
+	cands := FindDeadloops(turns, nil, nil, nil, DefaultDeadloopParams())
 	if len(cands) != 2 {
-		t.Fatalf("候选 = %d, want 2（15h 候选 + 16h near-miss）", len(cands))
+		t.Fatalf("候选 = %d, want 2（15h/16h 均候选，根因文本只记录不排除）", len(cands))
 	}
 	var c15, c16 *DeadloopCandidate
 	for i := range cands {
@@ -367,7 +367,26 @@ func TestFindDeadloopsSignals(t *testing.T) {
 	if c15 == nil || c15.Excluded || c15.Builds != 20 || c15.Fails != 3 || c15.UserMsgs != 2 {
 		t.Errorf("15h 候选 = %+v, want build=20 fail=3 user=2 未排除", c15)
 	}
-	if c16 == nil || !c16.Excluded {
-		t.Errorf("16h 应被根因定位信号排除: %+v", c16)
+	if c16 == nil || c16.Excluded || c16.RootCause != 1 {
+		t.Errorf("16h 根因文本应记录不排除: %+v", c16)
+	}
+}
+
+func TestFindDeadloopsPassiveExcludes(t *testing.T) {
+	// 17h 纠偏响应实证：被动检索>0 → 非盲试，不构成候选
+	mk := func(ts string, n int) []Record {
+		var out []Record
+		for i := 0; i < n; i++ {
+			out = append(out, pqRec("bash", "go build ./...", ts))
+		}
+		return out
+	}
+	turns := []Turn{
+		{Records: mk("2026-06-23T17:10:00", 12)},
+	}
+	passive := []time.Time{mustTs("2026-06-23T17:15:00")}
+	cands := FindDeadloops(turns, nil, passive, nil, DefaultDeadloopParams())
+	if len(cands) != 0 {
+		t.Errorf("被动检索>0 不应构成候选: %+v", cands)
 	}
 }

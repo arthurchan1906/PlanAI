@@ -62,24 +62,30 @@ func BuildProcessReport(db *sql.DB, sessionID, fixHashPrefix string) (*ProcessRe
 	rep.Feedback, rep.Counts = RecognizeFeedback(turns, modern)
 	// T4 检索三分类
 	rep.Retrieval = CountRetrieval(turns, rep.Feedback)
-	// T5 死循环候选（自发检索时间点 + commit 时间点）
-	var spontTs []time.Time
+	// T5 死循环候选（自发/被动检索时间点 + commit 时间点；扫描上界 = fix commit 时刻，
+	// 之后的新问题时段（如 11:50:08 KSN bug）不属于本问题域）
+	var spontTs, passiveTs []time.Time
 	for i := range turns {
 		for j := range turns[i].Records {
 			rec := turns[i].Records[j]
 			if isHistoryRetrieval(rec.Tool) {
 				if inCorrectionWindow(rec.CreatedAt, correctionTs(rep.Feedback)) {
-					continue
+					passiveTs = append(passiveTs, rec.CreatedAt)
+				} else {
+					spontTs = append(spontTs, rec.CreatedAt)
 				}
-				spontTs = append(spontTs, rec.CreatedAt)
 			}
 		}
 	}
 	var commitTs []time.Time
+	var cutoff time.Time
 	if rep.CommitLink != nil {
 		commitTs = append(commitTs, rep.CommitLink.CreatedAt)
+		cutoff = rep.CommitLink.CreatedAt
 	}
-	rep.Deadloops = FindDeadloops(turns, spontTs, commitTs, DefaultDeadloopParams())
+	p := DefaultDeadloopParams()
+	p.Cutoff = cutoff
+	rep.Deadloops = FindDeadloops(turns, spontTs, passiveTs, commitTs, p)
 	if strings.HasPrefix(sessionID, "c0ad2534") {
 		// 对照物（§9.2 checkpoint）：死循环候选 ↔ §4.1 冻结小时表
 		rep.Annotations = append(rep.Annotations, FrozenDeadloopAnnotations(rep.Deadloops)...)
@@ -101,6 +107,7 @@ func FrozenDeadloopAnnotations(cands []DeadloopCandidate) []string {
 		{"2026-06-23T15", "正样本（盲试 build=20 自发=0）", true},
 		{"2026-06-23T16", "正样本（盲试 build=15 自发=0）", true},
 		{"2026-06-24T09", "正样本（盲试 build=17，09:00-09:11 活跃段）", true},
+		{"2026-06-24T10", "负样本（纠偏响应 build=13 被动=18，应排除）", false},
 		{"2026-06-24T11", "负样本（修复验证期 build=11，应排除）", false},
 	}
 	var out []string
@@ -167,8 +174,9 @@ func FormatProcessHuman(rep *ProcessReport) string {
 		rep.Retrieval.Spontaneous, rep.Retrieval.Passive, rep.Retrieval.Routine,
 		ratioFmt(rep.Retrieval.Ratio))
 	for _, d := range rep.Deadloops {
-		fmt.Fprintf(&sb, "  T5 死循环候选: %s → %s build=%d fail=%d user=%d 自发=%d%s\n",
-			tsFmt(d.Start), tsFmt(d.End), d.Builds, d.Fails, d.UserMsgs, d.SpontRetr,
+		fmt.Fprintf(&sb, "  T5 死循环候选: %s → %s build=%d fail=%d user=%d edit=%d 根因=%d 自发=%d 被动=%d%s\n",
+			tsFmt(d.Start), tsFmt(d.End), d.Builds, d.Fails, d.UserMsgs, d.Edits, d.RootCause,
+			d.SpontRetr, d.Passive,
 			map[bool]string{true: "（" + d.Reason + "）", false: ""}[d.Excluded])
 	}
 	for _, a := range rep.Annotations {
