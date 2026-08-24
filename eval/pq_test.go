@@ -4,6 +4,7 @@ package eval
 
 import (
 	"database/sql"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -175,6 +176,9 @@ func TestRecognizeFeedbackTwoLevel(t *testing.T) {
 	}
 	if counts.Intervention != 3 { // d1 + d4 + d5
 		t.Errorf("介入 = %d, want 3", counts.Intervention)
+	}
+	if counts.Progress != 1 { // d5「继续」推进
+		t.Errorf("推进 = %d, want 1", counts.Progress)
 	}
 	if counts.Suspicious != 1 {
 		t.Errorf("存疑 = %d, want 1", counts.Suspicious)
@@ -424,7 +428,7 @@ func TestFindDeadloopsPassiveExcludes(t *testing.T) {
 
 // 规格实证输入（§9.3）：01a013f3 8/19 15:09 用户原话 vs 4b41ba8 commit 标题。
 const (
-	anchorMsg15_09 = "还有一个问题 从第三方应用选择图片或者文件 然后在打开方式中选择资云集 没有跳转资云集的界面 自己手动点击打开资云集才能看到有数据导入"
+	anchorMsg15_09     = "还有一个问题 从第三方应用选择图片或者文件 然后在打开方式中选择资云集 没有跳转资云集的界面 自己手动点击打开资云集才能看到有数据导入"
 	anchorClaim4b41ba8 = "fix: 第三方「打开方式」直传文件不跳转/不导入 — SceneDelegate 转发 URL + 外部文件队列暂存"
 )
 
@@ -839,4 +843,93 @@ func TestAcceptance2Directional(t *testing.T) {
 		}
 	}
 	t.Error("验收② 行缺失")
+}
+
+// ── 聚合层端到端（pq_process.go / pq_report.go，覆盖 BuildProcessReport 主路径）──
+
+// TestBuildProcessReportEndToEnd 用内存 sqlite 模拟 c0ad2534 微缩样本，断言 T1-T5 聚合输出：
+// T1 start / T2 partial 关联 / T3 纠偏计数 / T4 自发检索 / T5 15h 候选（build≥10 零自发）。
+func TestBuildProcessReportEndToEnd(t *testing.T) {
+	d := pqDB(t)
+	mustExec(t, d, `INSERT INTO commits (id, title, summary, branch, commit_hash, task_id, decision_id, status, test_status, review_status, files_json, created_at, updated_at, evidence_summary, review_notes) VALUES
+		('c1','fix: PalV2 跨平台兼容 - header sizeof 对齐 + BLE 大块写分块','s','main','d628b7a','','','committed','passed','approved','["PalService.swift"]','2026-06-24T11:48:14','2026-06-24T11:48:14','','')`)
+	mustExec(t, d, `INSERT INTO bugs (id, title, description, severity, status, commit_id, created_at, updated_at, error, files, root_cause, fix, tags) VALUES
+		('bug-1','iOS PalV2 密友跨平台不兼容：header sizeof 差1字节 + BLE 大块写截断','d','major','open','','2026-06-24T11:45:00','2026-06-24T11:45:00','','PalService.swift','','','')`)
+	// session 记录：首条 user → 14:00 纠偏 → 15h 桶 10 条 make 构建 + 1 条 git log（自发）
+	mustExec(t, d, `INSERT INTO discussion_log VALUES ('u1','s','user','codex-cli','用户报 bug','2026-06-23T13:51:53','')`)
+	mustExec(t, d, `INSERT INTO discussion_log VALUES ('u2','s','user','codex-cli','方向不对 重新审视','2026-06-23T14:00:00','')`)
+	mustExec(t, d, `INSERT INTO discussion_log VALUES ('r1','s','assistant','codex-cli','','2026-06-23T15:01:00','{"type":"bash","command":"cd /Users/x/build-ios-device && make -j8 2>&1 | tail -5","exit_code":0}')`)
+	for i := 0; i < 9; i++ {
+		ts := fmt.Sprintf("2026-06-23T15:%02d:00", 10+i)
+		mustExec(t, d, `INSERT INTO discussion_log VALUES ('r`+fmt.Sprint(i+2)+`','s','assistant','codex-cli','','`+ts+`','{"type":"bash","command":"cd /Users/x/build-ios-device && make -j8 2>&1 | tail -5","exit_code":0}')`)
+	}
+	mustExec(t, d, `INSERT INTO discussion_log VALUES ('r12','s','assistant','codex-cli','','2026-06-23T15:31:00','{"type":"bash","command":"git log --oneline -5","exit_code":0}')`)
+
+	rep, err := BuildProcessReport(d, "s", "d628b7a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Boundary.Start.Format("2006-01-02T15:04:05") != "2026-06-23T13:51:53" {
+		t.Errorf("T1 start = %s", rep.Boundary.Start)
+	}
+	if rep.CommitLink == nil || rep.CommitLink.Fallback != "partial" {
+		t.Fatalf("T2 fallback = %+v, want partial（palv2/header/sizeof 命中）", rep.CommitLink)
+	}
+	if rep.Counts.Correction != 1 {
+		t.Errorf("T3 纠偏 = %d, want 1", rep.Counts.Correction)
+	}
+	if rep.Retrieval.Spontaneous < 1 {
+		t.Errorf("T4 自发 = %d, want ≥1（git log 非纠偏窗口）", rep.Retrieval.Spontaneous)
+	}
+	var hit15 *DeadloopCandidate
+	for i := range rep.Deadloops {
+		if rep.Deadloops[i].Start.Format("15") == "15" {
+			hit15 = &rep.Deadloops[i]
+		}
+	}
+	if hit15 == nil || hit15.Builds < 10 || hit15.Excluded {
+		t.Fatalf("T5 15h 候选缺失/排除: %+v", rep.Deadloops)
+	}
+	if rep.Boundary.End.Format("2006-01-02T15:04:05") != "2026-06-24T11:48:14" {
+		t.Errorf("T2 锚定 end = %s, want 11:48:14", rep.Boundary.End)
+	}
+}
+
+// TestBuildAcceptanceReportEndToEnd 聚合入口跑通 + 验收①③ 行输出（无 anchor → 验收③ not_run）。
+func TestBuildAcceptanceReportEndToEnd(t *testing.T) {
+	d := pqDB(t)
+	mustExec(t, d, `INSERT INTO commits (id, title, summary, branch, commit_hash, task_id, decision_id, status, test_status, review_status, files_json, created_at, updated_at, evidence_summary, review_notes) VALUES
+		('c1','fix: PalV2 跨平台兼容 - header sizeof 对齐 + BLE 大块写分块','s','main','d628b7a','','','committed','passed','approved','[]','2026-06-24T11:48:14','2026-06-24T11:48:14','','')`)
+	mustExec(t, d, `INSERT INTO bugs (id, title, description, severity, status, commit_id, created_at, updated_at, error, files, root_cause, fix, tags) VALUES
+		('bug-1','PalV2 header 兼容','d','major','open','','2026-06-24T11:45:00','2026-06-24T11:45:00','','','','','')`)
+	mustExec(t, d, `INSERT INTO discussion_log VALUES ('u1','s','user','codex-cli','用户报 bug','2026-06-23T13:51:53','')`)
+	mustExec(t, d, `INSERT INTO discussion_log VALUES ('a1','s','assistant','codex-cli','','2026-06-23T15:01:00','{"type":"bash","command":"cd /Users/x/build-ios-device && make -j8","exit_code":0}')`)
+
+	rep, err := BuildAcceptanceReport(d, "s", "d628b7a", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Acceptance) == 0 {
+		t.Fatal("验收行缺失")
+	}
+	var recall, anchor, hollow string
+	for _, r := range rep.Acceptance {
+		switch r.Item {
+		case "死循环召回":
+			recall = r.Status
+		case "目标锚定负样本验证":
+			anchor = r.Status
+		case "空壳构建单样本检出":
+			hollow = r.Status
+		}
+	}
+	if !strings.HasPrefix(recall, "pass") && !strings.HasPrefix(recall, "fail") {
+		t.Errorf("验收① 死循环召回状态异常: %s", recall)
+	}
+	if anchor != "not_run" {
+		t.Errorf("无 anchor 验收③ 应 not_run: %s", anchor)
+	}
+	if hollow != "fail | 空壳构建候选 0 个（01a013f3 10:25 正样本应被规则命中）" {
+		t.Errorf("验收③ 空壳应 fail（本 fixture 无空壳样本）: %s", hollow)
+	}
 }

@@ -97,6 +97,7 @@ func RecognizeFeedback(turns []Turn, modern bool) ([]FeedbackCandidate, Feedback
 			counts.Correction++
 		case len(kw.Progress) > 0:
 			kind = KindProgress
+			counts.Progress++
 		}
 		out = append(out, FeedbackCandidate{
 			UserMsgID: t.UserMsgID, Ts: t.Start, Kind: kind,
@@ -186,7 +187,6 @@ func snippetOf(s string) string {
 	}
 	return s[:80] + "…"
 }
-
 
 // extractReferents 反馈所指实体 L1 提取（T8 对准近似消费，规格 §2.1：所指实体由 T3 提取输出）。
 // 规则：用户消息 CJK 2-4 字段，去停用词/纠偏关键词/方位词，去重。
