@@ -92,7 +92,7 @@ type P0a2DetectorRow struct {
 // P0a2DetectorSummary P0a2 检测点汇总表（配套方向性报告文档）。
 func P0a2DetectorSummary(rep *P0a2Report) []P0a2DetectorRow {
 	return []P0a2DetectorRow{
-		{"主动触发·死循环时段该用未用", "死循环候选时段内零自发 aipm 检索（工具采用）", "c0ad2534 15h/16h（38 条 aipm 调用全在用户提示后）", countKind(rep.Proactive, "deadloop_no_aipm")},
+		{"主动触发·死循环时段该用未用", "死循环候选时段内零自发 aipm 检索（工具采用）", "c0ad2534 15h/16h（47 条去重 aipm 调用全在用户提示后）", countKind(rep.Proactive, "deadloop_no_aipm")},
 		{"主动触发·用户提示后响应", "用户提示查记录/历史/aipm/跨 agent 讨论后窗口内 aipm 检索", "c0ad2534 17:20 提示 → 30 秒内响应", countKind(rep.Proactive, "hint_responded") + countKind(rep.Proactive, "hint_missed")},
 		{"静态可核对", "真机轮次前窗口内无 SDK 头文件/API 签名核对", "01a013f3 10:52 等你真机验证 → 10:56 崩溃 → 11:15 才查头文件", len(rep.StaticChecks)},
 		{"重复验证点", "同一验证点（无 fix commit/休眠间隔）重复真机验证请求", "01a013f3 8/19 晚 9 次 + 8/20 早 3 次请求 → 10:16 用户抗议", len(rep.RepeatedVerif)},
