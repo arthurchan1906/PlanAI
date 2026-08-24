@@ -273,6 +273,7 @@ func main() {
 		// Usage: aipmc eval [--since 30d] [--kind attribution] [--log <path>] [--no-fail]
 		//        aipmc eval process --session <id> [--fix-hash <prefix>]（P0a1a，T1-T5）
 		//        aipmc eval acceptance --session <id> [--fix-hash <prefix>] [--hollow-session <id>] [--anchor-msg <msg>] [--claim <title>]（P0a1b，T9）
+		//        aipmc eval p0a2 --session <id> [--fix-hash <prefix>]（P0a2 方向性报告：主动触发/静态可核对/P3 计数基线）
 		sinceDays := 30
 		kind := "attribution"
 		logPath := ""
@@ -408,8 +409,23 @@ func main() {
 			if fail && !noFail {
 				os.Exit(1)
 			}
+		case "p0a2":
+			// P0a2 方向性报告：主动触发（工具采用）/ 静态可核对 / P3 计数基线（重复验证点/自建记录利用）
+			if sessionID == "" {
+				fmt.Fprintf(os.Stderr, "eval p0a2: 需要 --session <id>\n")
+				os.Exit(1)
+			}
+			rep, err := eval.BuildP0a2Report(db, sessionID, fixHash)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "eval p0a2: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Print(eval.FormatP0a2Human(rep))
+			fmt.Println()
+			out, _ := json.MarshalIndent(rep, "", "  ")
+			fmt.Println(string(out))
 		default:
-			fmt.Fprintf(os.Stderr, "eval: unknown kind %q (supported: attribution/process/acceptance)\n", kind)
+			fmt.Fprintf(os.Stderr, "eval: unknown kind %q (supported: attribution/process/acceptance/p0a2)\n", kind)
 			os.Exit(1)
 		}
 		return

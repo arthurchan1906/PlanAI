@@ -505,3 +505,17 @@ Claude 第四轮发现遗留文件 `eval/grounding.go`（未提交、无测试�
 ### 10.12 P0a1 验收报告交付（2026-08-24，门禁物）
 
 T9 验收报告正式文档 = `docs/ACCEPTANCE_REPORT_P0a1.md`（对照物 T1-T9 + 验收①-③ 数据 + 复现命令），配套 CLI 双输出（`aipmc eval process/acceptance`，JSON + 人类可读）可复现。验收①-③ 真实数据：召回 92%（可复现 120/120=100%）/ 误报 0 / 29 倍 / 空壳 2 候选 + 目标锚定 0.83 不误报。数据差异（09h、frozen build 列）归因已闭环（§10.11）。**P0a1 完成，待用户抽查验收数据后过门禁进入 P0a2**（EXECUTION_PLAN §1 阶段门禁）。
+
+### 10.13 P0a2 方向性报告交付（2026-08-24，门禁物）
+
+P0a2 方向性报告正式文档 = `docs/DIRECTIONAL_REPORT_P0a2.md`（阶段 × 检测点 × 对照物映射 + 真实数据 + 复现命令），配套 CLI `aipmc eval p0a2`（JSON + 人类可读双输出）。四个 P0a2 层检测点均出候选：
+
+| 检测点 | 实现 | 实证对照物命中 |
+|---|---|---|
+| 主动触发·死循环时段该用未用 | `DetectProactiveTriggers`（eval/pq_proactive.go） | c0ad2534 15h/16h 零自发 aipm（对照物：38 条调用全在用户提示后）✓ |
+| 主动触发·用户提示后响应 | 同上 ② | c0ad2534 17:20 提示 → 30 秒内 13 次调用 ✓；01a 全 responded ✓ |
+| 静态可核对 | `DetectStaticCheckMisses`（eval/pq_staticcheck.go） | 01a013f3 10:50-11:14 三次真机构建 + 两崩溃全在 11:15 首次 SDK 核对前 ✓ |
+| 重复验证点 | `DetectRepeatedVerification`（eval/pq_counts.go） | 01a013f3 8/19 17:25 + 8/20 09:05 同 episode（15:33→10:40 无 commit）12 次请求 → 10:16 用户抗议 ✓ |
+| 自建记录利用 | `DetectSelfRecordUsage`（eval/pq_counts.go） | 01a013f3 15:32 record_bug → 17:29 才首次检索（延迟 117 分钟）✓ |
+
+已知局限（如实记录于报告 §3）：L1 时间窗/跨问题域/「查了但查错 API」类不足归 P1 L2；`_type:stop` assistant 文本以 `isAssistantText` 兼容（不改 parse.go，避免影响 M1-M5 归因）。**P0a2 完成，待用户抽查方向性报告后过门禁进入 P0b**（EXECUTION_PLAN §1 阶段门禁）。
