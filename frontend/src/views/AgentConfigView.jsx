@@ -51,6 +51,7 @@ export default function AgentConfigView({ models = [], keys = {} }) {
   const [saving, setSaving] = useState(null);
   const [modelList, setModelList] = useState(models);
   const [currentModel, setCurrentModel] = useState({});
+  const [visionModel, setVisionModel] = useState("");
   const [switchingModel, setSwitchingModel] = useState(false);
   const [claudeForm] = Form.useForm();
   const [codexForm] = Form.useForm();
@@ -71,6 +72,16 @@ export default function AgentConfigView({ models = [], keys = {} }) {
 
 const modelOpts = (models.length > 0 ? models : modelList).map(m => modelLabel(m));
 
+// Vision-capable models for the aipmc_vision selector. Local models legitimately
+// have no API key, so unlike modelLabel these options are never disabled.
+const visionModelOpts = (models.length > 0 ? models : modelList)
+  .filter(m => (m.tags || []).includes("vision"))
+  .map(m => {
+    const routes = m.routes || [];
+    const parts = routes.map(r => r.provider + (keys[r.provider] ? "✓" : "✗"));
+    return { value: m.id, label: (m.display_name || m.id) + " (" + (parts.join(", ") || "-") + ")" };
+  });
+
   async function loadProfiles() {
     setLoading(true);
     try {
@@ -79,6 +90,7 @@ const modelOpts = (models.length > 0 ? models : modelList).map(m => modelLabel(m
       if (data.claude) claudeForm.setFieldsValue({ ...data.claude, extra_env: extraEnvToArray(data.claude.extra_env) });
       if (data.codex) codexForm.setFieldsValue({ ...data.codex, extra_env: extraEnvToArray(data.codex.extra_env) });
       if (data.gemini) geminiForm.setFieldsValue({ ...data.gemini, extra_env: extraEnvToArray(data.gemini.extra_env) });
+      setVisionModel(data.vision_model || "");
       if (data.opencode) {
         const o = data.opencode;
         opencodeForm.setFieldsValue({ ...o, extra_env: extraEnvToArray(o.extra_env), models: o.models || [] });
@@ -104,6 +116,16 @@ const modelOpts = (models.length > 0 ? models : modelList).map(m => modelLabel(m
       } else message.error(d.error);
     } catch (e) { message.error(e.message); }
     setSwitchingModel(false);
+  }
+
+  async function saveVisionModel(v) {
+    setSaving("vision");
+    try {
+      await api("/pmai/config", { method: "POST", body: JSON.stringify({ vision_model: v || "" }) });
+      setVisionModel(v || "");
+      message.success(v ? `Vision model set to ${v}` : "Vision model cleared (auto)");
+    } catch (e) { message.error(e.message); }
+    setSaving(null);
   }
 
   useEffect(() => { loadProfiles(); fetchCurrentModels(); }, []);
@@ -269,12 +291,36 @@ const modelOpts = (models.length > 0 ? models : modelList).map(m => modelLabel(m
   );
 
   return (
-    <Tabs activeKey={activeTab} onChange={setActiveTab}
-      items={[
-        { key: "claude", label: "Claude Code", children: claudeTab },
-        { key: "codex",  label: "Codex CLI",  children: codexTab },
-        { key: "opencode", label: "OpenCode",    children: opencodeTab },
-        { key: "gemini",   label: "Gemini CLI", children: geminiTab },
-      ]} />
+    <div>
+      <div style={{ marginBottom: 16, padding: "12px 16px", border: "1px solid #f0f0f0", borderRadius: 8 }}>
+        <Text strong>Vision 模型</Text>
+        <Text type="secondary" style={{ display: "block", fontSize: 12, marginBottom: 8 }}>
+          aipmc_vision 图片分析（截图描述 / UI 验证）使用的模型。Agent 调用时显式传 model 参数优先于此处选择；清空则恢复自动（本地优先）。
+        </Text>
+        <Select
+          value={visionModel || undefined}
+          placeholder="Auto（本地优先）"
+          style={{ width: 320 }}
+          size="small"
+          loading={saving === "vision"}
+          onChange={v => saveVisionModel(v || "")}
+          allowClear
+          showSearch
+          options={visionModelOpts}
+        />
+        {visionModelOpts.length === 0 && (
+          <Text type="secondary" style={{ display: "block", fontSize: 12, marginTop: 4 }}>
+            暂无 vision 模型。请先在 models.json 中添加 tags 含 "vision" 的模型（如 qwen3.5-4b-vision）。
+          </Text>
+        )}
+      </div>
+      <Tabs activeKey={activeTab} onChange={setActiveTab}
+        items={[
+          { key: "claude", label: "Claude Code", children: claudeTab },
+          { key: "codex",  label: "Codex CLI",  children: codexTab },
+          { key: "opencode", label: "OpenCode",    children: opencodeTab },
+          { key: "gemini",   label: "Gemini CLI", children: geminiTab },
+        ]} />
+    </div>
   );
 }

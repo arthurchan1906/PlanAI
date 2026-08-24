@@ -32,6 +32,7 @@ func (s *Server) handleGetConfig(w http.ResponseWriter) {
 		"anthropic_url":         gcfg.AnthropicURL,
 		"extra_env":             gcfg.ExtraEnv,
 		"default_model":         gcfg.DefaultModel,
+		"vision_model":          gcfg.VisionModel,
 		"claude":                gcfg.Claude,
 		"codex":                 gcfg.Codex,
 		"gemini":                gcfg.Gemini,
@@ -139,6 +140,11 @@ func (s *Server) handlePostConfig(w http.ResponseWriter, body map[string]any) {
 					}
 				}
 			}
+		}
+	}
+	if v, ok := body["vision_model"]; ok {
+		if s, isStr := v.(string); isStr {
+			gcfg.VisionModel = s // empty string clears back to auto selection
 		}
 	}
 	// Handle models.json: load once, modify if needed, save once.

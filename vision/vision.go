@@ -186,6 +186,21 @@ func resolveVisionModel(explicit string) (*visionRoute, error) {
 		return r, nil
 	}
 
+	// User-selected default from the web UI (config.json vision_model).
+	// Explicit model parameter takes precedence; auto-selection below is the fallback.
+	if def := pmdb.LoadGlobalConfig().VisionModel; def != "" {
+		if vm := reg.FindModel(def); vm != nil {
+			r := pickBestRoute(reg, vm)
+			if r != nil {
+				r.DisplayName = vm.DisplayName
+				if r.DisplayName == "" {
+					r.DisplayName = vm.ID
+				}
+				return r, nil
+			}
+		}
+	}
+
 	// Sort models by priority (ascending) so higher-priority models come first.
 	// Matches proxy/router.go ListCodexModels() behavior.
 	sorted := make([]pmdb.VirtualModel, len(reg.Models))

@@ -796,6 +796,10 @@ type GlobalConfig struct {
 	// DefaultModel is the fallback virtual model used when no per-agent model is configured.
 	DefaultModel string `json:"default_model,omitempty"`
 
+	// VisionModel is the user-selected default model for aipmc_vision image
+	// analysis (configured via the web UI). Empty = auto selection.
+	VisionModel string `json:"vision_model,omitempty"`
+
 	Claude   ClaudeProfile   `json:"claude"`
 	Codex    CodexProfile    `json:"codex"`
 	Gemini   GeminiProfile   `json:"gemini"`
