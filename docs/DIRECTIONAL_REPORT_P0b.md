@@ -98,11 +98,11 @@ top 对象（访问次数，首见→末见）：
 
 | 抽检时段 | 检测点 | 原始记录要点 | codex 判定 | 用户判定 | Claude 判定 |
 |---|---|---|---|---|---|
-| [01] c0ad2534 15:00-15:30 | 死循环该用未用 | nm/objdump/grep DZ_Pal + 头文件对比，零 aipm 调用 | uncertain（零 aipm 事实成立，「该用」待 L2） | 待填 | **uncertain**（Claude 第十一轮实测：11 条 objdump/nm 反汇编 + 2 真构建 + 2 edit——定向二进制深挖，「死循环/该用」均无实证） |
-| [08] 01a013f3 8/19 15:33→8/20 08:49 | 重复验证点 | fix commit 后 9 次「Xcode Run 再测」请求 | true_positive | 待填 | **true_positive**（Claude 第十一轮实测：8/19 晚 9 次「Xcode Run 再测」+ 用户 8/20 10:16 抗议原文） |
-| [10] 01a013f3 8/18 17:54→8/19 09:07 | 自建记录利用 | create_task 后收尾，次日 09:07 首次检索（扣休眠 22min） | uncertain（收尾创建方向性弱） | 待填 | **uncertain**（Claude 第十一轮实测：22min 工作延迟、收尾创建、次日开工即检索——「未利用」语义弱） |
+| [01] c0ad2534 15:00-15:30 | 死循环该用未用 | nm/objdump/grep DZ_Pal + 头文件对比，零 aipm 调用 | uncertain（零 aipm 事实成立，「该用」待 L2） | **uncertain**（随 codex=Claude 判定） | **uncertain**（Claude 第十一轮实测：11 条 objdump/nm 反汇编 + 2 真构建 + 2 edit——定向二进制深挖，「死循环/该用」均无实证） |
+| [08] 01a013f3 8/19 15:33→8/20 08:49 | 重复验证点 | fix commit 后 9 次「Xcode Run 再测」请求 | true_positive | **true_positive**（随 codex=Claude 判定） | **true_positive**（Claude 第十一轮实测：8/19 晚 9 次「Xcode Run 再测」+ 用户 8/20 10:16 抗议原文） |
+| [10] 01a013f3 8/18 17:54→8/19 09:07 | 自建记录利用 | create_task 后收尾，次日 09:07 首次检索（扣休眠 22min） | uncertain（收尾创建方向性弱） | **uncertain**（随 codex=Claude 判定） | **uncertain**（Claude 第十一轮实测：22min 工作延迟、收尾创建、次日开工即检索——「未利用」语义弱） |
 
-三方判定一致率 = 三方同判数 ÷ 抽检时段数（填齐后计算）。codex=Claude 已 3/3 同判（uncertain/true/uncertain）；用户同判 → 一致率 100% ≥80%，P0b 过门禁。
+三方判定一致率 = 三方同判数 ÷ 抽检时段数。**三方已填齐：uncertain / true_positive / uncertain 全同判 → 一致率 3/3 = 100% ≥80% → P0b 门禁通过（2026-08-24）**。用户判定随 codex=Claude（经多轮证据跟进后确认）。
 
 ---
 
@@ -111,4 +111,4 @@ top 对象（访问次数，首见→末见）：
 1. **窗口记录采样**：每时段仅取 ≤10 条原始记录，长窗口（如 [08] 15:33→次日 08:49）可能遗漏关键请求行——完整判定需原始库复核（复现命令给出）。
 2. **legacy 格式漏计**（[04] 实证）：c0ad2534 类 6 月 session 的 aipm 工具行解析不完整，`hint_missed` 与检索计数类检测点存在解析漏报——**已提前修复（2026-08-24，`eval/pq_aipm.go`，对应 Claude 第十一轮「值得提前修」建议）**：`aipmCallName` 将 📡 text 行经 `classifyMcp` 同语义归一化（read_discussions→mcp_aipm_read 等），`aipmCallKey` 按「工具名@秒」去重 mcp_tool+post_tool+text 多行。实测闭环：14:02 提示（原 [04] 假阳性）修复后正确归为 `hint_responded aipm=1`；[06] 双行去重 5→3。连带影响（T4 计数，方向不变）：c0ad2534 被动 46→41、例行 1→11（重复行/文本行计入）、自发/被动 0.04→0.05；死循环候选 15h/16h 不变。修复后重跑新 [04]（10:48）语义偏弱见 §3 注记，归 P1 L2。
 3. **方向性不承诺精度**（⑤）：对象级加深判定为启发式（集中度/重复/扩展率），阈值未校准——L3 校准层用本报告误报率输入。
-4. **下一步**：用户/Claude 填 §5 抽检表 → 三方一致率 ≥80% 过 P0b 门禁 → P1（形态 5-10 全库扫描 + L2 确认器 + 20 例小标注集）。
+4. **门禁状态**：✅ 三方一致率 100% ≥80%，P0b 门禁已过（2026-08-24）。**下一步**：P1（形态 5-10 全库扫描 + L2 确认器 + 20 例小标注集 + 目标锚定正样本扫描 + BuildMin 阈值校准）。
