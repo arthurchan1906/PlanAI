@@ -16,7 +16,7 @@
 | 主动触发·死循环时段该用未用 | 死循环候选时段内零自发 aipm 检索（工具采用） | `DetectProactiveTriggers` ① | c0ad2534 15h/16h（38 条 aipm 调用全在用户提示后，自发=0） | c0ad2534: **2**（15h/16h 命中 ✓）；01a: 0（无死循环候选，方向一致） |
 | 主动触发·用户提示后响应 | 用户提示「查看 aipm/历史/记录/跨 agent 讨论」后窗口内 aipm 检索 | `DetectProactiveTriggers` ② | c0ad2534 17:20「每次在你修改代码之前 你或许最好可以查看搜索aipm中有没有相关记录」→ 30 秒内响应（13 次调用） | c0ad2534: 11（responded 8 + missed 3）；01a: 10（responded 全 ✓） |
 | 静态可核对 | 真机轮次前 SDK 头文件/API 签名核对（`open:` vs `openURL:` 教训） | `DetectStaticCheckMisses` | 01a013f3 10:50 真机构建 → 10:52 等你真机验证 → 10:56 崩溃 → 11:15 才 grep iPhoneOS SDK 头文件 | c0ad2534: 0（无 iOS 真机轮次，方向一致）；01a: **7**（10:50/11:00/11:14 真机构建 + 09:42/10:26 崩溃，全在 11:15 首次核对前 ✓） |
-| P3 基线·重复验证点 | 同一验证点（无 fix commit 间隔）重复真机验证请求 N 次 | `DetectRepeatedVerification` | 01a013f3 8/19 17:25「请 Xcode Run…再测」+ 8/20 09:05「你直接 Xcode Run 到真机测」→ 8/20 10:16 用户抗议「为什么你要一而再再而三的测试？」 | c0ad2534: 0；01a: **3**（关键 episode 15:33→10:40 请求 12 次，含两锚点 ✓） |
+| P3 基线·重复验证点 | 同一验证点（无 fix commit/休眠间隔）重复真机验证请求 N 次 | `DetectRepeatedVerification` | 01a013f3 8/19 17:25「请 Xcode Run…再测」+ 8/20 09:05「你直接 Xcode Run 到真机测」→ 8/20 10:16 用户抗议「为什么你要一而再再而三的测试？」 | c0ad2534: 0；01a: **5**（8/19 轮 9 次 + 8/20 轮 3 次，跨夜休眠切分，含两锚点 ✓） |
 | P3 基线·自建记录利用 | 自己/aipm 已有记录（bug/commit/task）在后续调试中是否被访问利用 | `DetectSelfRecordUsage` | 01a013f3 8/19 15:32 record_bug（bug-20260819-153222-dd3d52）→ 17:29 才首次检索（延迟 117 分钟） | c0ad2534: 1（11:44 收尾 record_bug 后未再检索，见 §3 局限）；01a: **8**（15:32 record_bug 候选命中 ✓ + 7 个同类） |
 
 ---
