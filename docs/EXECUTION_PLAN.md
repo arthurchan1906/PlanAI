@@ -352,3 +352,15 @@ type FiveSignals struct {
 3. **T6-T9**（P0a1b）：目标锚定负样本验证（15:09 vs 4b41ba8）+ 空壳构建 + 验收报告。
 4. **验收①-③ 跑通**：T9 验收报告需要 T5 校准后重算召回/误报。
 
+
+### 10.4 Claude 审核修复（2026-08-24 第二轮，disc-20260824-103406）
+
+Claude 审核 commit `4929bd8` 后指出 3 个规格偏差，均已修复：
+
+| # | 偏差 | 修复 |
+|---|---|---|
+| 1 | T2 fallback 第 3 级 time_window 空实现（`pq_boundary.go` 循环体无判定） | ✅ 实现：commit 在 bug 创建 ±1h 且 files 有交集 → `time_window`；无交集 → `none`（弱 ground truth）。新增 `parseFilesJSON`/`splitFiles`/`filesIntersect` |
+| 2 | T3 规则⑤「现代通道交 P1 L2」分支缺失（无 session 时代参数，一律计入介入） | ✅ `RecognizeFeedback(turns, modern)`：modern（019f 时代，`modernChannelSince`=6/26）→ ⑤ 输出介入候选清单（`ManualCandidates`）不直接计数；legacy 维持原口径 |
+| 3 | T5 组合信号缺 失败/用户高峰/根因定位 | ✅ `DeadloopCandidate` 增 `Fails`/`UserMsgs` 记录项；排除规则补根因定位文本信号（`根因`/`已定位`/`原因已确认`） |
+
+**修复后真实数据验证（c0ad2534）**：T3 纠偏=25 不变；T5 桶内信号完整输出（15h build=16 fail=0 user=8 根因文本排除、16h build=10 user=13 edit 排除）；11h 仍不误报。15h 根因文本（15:01:55「根因已确认」）为**错误根因声明**（用户 15:09 推回）——L1 无法区分正确/猜测根因，排除规则过严的校准张力仍在，对照物如实标注，T5 校准待办不变。

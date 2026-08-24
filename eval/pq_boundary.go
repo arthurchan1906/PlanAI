@@ -6,6 +6,7 @@ package eval
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -110,10 +111,10 @@ type CommitLink struct {
 // 时间窗口兜底（commit 在 bug 前后 1h 且 files 含 bug.files）→ 仍不成立 → 弱 ground truth。
 func LinkFixCommitByHash(db *sql.DB, hashPrefix string) (*CommitLink, error) {
 	var cl CommitLink
-	var created string
-	err := db.QueryRow(`SELECT id, commit_hash, title, created_at FROM commits
+	var created, filesJSON string
+	err := db.QueryRow(`SELECT id, commit_hash, title, created_at, files_json FROM commits
 		WHERE commit_hash LIKE ? ORDER BY created_at ASC LIMIT 1`, hashPrefix+"%").Scan(
-		&cl.CommitID, &cl.Hash, &cl.Title, &created)
+		&cl.CommitID, &cl.Hash, &cl.Title, &created, &filesJSON)
 	if err != nil {
 		return nil, fmt.Errorf("commit %s: %w", hashPrefix, err)
 	}
@@ -167,23 +168,88 @@ func LinkFixCommitByHash(db *sql.DB, hashPrefix string) (*CommitLink, error) {
 		return &cl, nil
 	}
 
-	// 3) 时间窗口兜底：commit 在 bug 创建 ±1h 且 files 有交集
-	rows2, err := db.Query(`SELECT id, title, COALESCE(files,'') FROM bugs`)
+	// 3) 时间窗口兜底（v1.1 规格）：commit 在 bug 创建 ±1h 且 files 有交集
+	commitFiles := parseFilesJSON(filesJSON)
+	rows2, err := db.Query(`SELECT id, title, COALESCE(files,''), created_at FROM bugs`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows2.Close()
 	for rows2.Next() {
-		var c cand
-		if err := rows2.Scan(&c.id, &c.title, &c.files); err != nil {
+		var id, title, files, created2 string
+		if err := rows2.Scan(&id, &title, &files, &created2); err != nil {
 			return nil, err
 		}
-		// 已无精确时间窗口字段可用，简化为同分钟/同任务近似，标注 weak
+		bt, err := time.Parse("2006-01-02T15:04:05", created2)
+		if err != nil {
+			continue
+		}
+		if diff := cl.CreatedAt.Sub(bt); diff < -time.Hour || diff > time.Hour {
+			continue
+		}
+		if filesIntersect(commitFiles, splitFiles(files)) {
+			cl.BugID, cl.BugTitle = id, title
+			cl.Fallback = "time_window"
+			cl.Evidence = append(cl.Evidence,
+				fmt.Sprintf("时间窗口兜底：commit %s 距 bug %s 创建 %s 且文件有交集", cl.CreatedAt.Format("15:04"), created2, cl.CreatedAt.Sub(bt).Round(time.Minute)))
+			return &cl, nil
+		}
 	}
 	cl.Fallback = "none"
 	cl.Weak = true
 	cl.Evidence = append(cl.Evidence, "关联不成立：标注弱 ground truth，验收①降级为方向性检查")
 	return &cl, nil
+}
+
+// parseFilesJSON 解析 commits.files_json（JSON 字符串数组）。
+func parseFilesJSON(filesJSON string) []string {
+	var out []string
+	if filesJSON == "" {
+		return out
+	}
+	if err := json.Unmarshal([]byte(filesJSON), &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+// splitFiles 按逗号/空白切分 bugs.files。
+func splitFiles(f string) []string {
+	var out []string
+	for _, p := range strings.FieldsFunc(f, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\n' || r == '\t'
+	}) {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// filesIntersect 两个文件集合是否有路径交集（basename 或完整路径命中，大小写不敏感）。
+func filesIntersect(a, b []string) bool {
+	norm := func(p string) string { return strings.ToLower(strings.TrimSpace(p)) }
+	bs := map[string]bool{}
+	for _, p := range b {
+		if p != "" {
+			bs[norm(p)] = true
+			bs[norm(filepathBase(p))] = true
+		}
+	}
+	for _, p := range a {
+		if bs[norm(p)] || bs[norm(filepathBase(p))] {
+			return true
+		}
+	}
+	return false
+}
+
+func filepathBase(p string) string {
+	i := strings.LastIndexAny(p, "/\\")
+	if i >= 0 {
+		return p[i+1:]
+	}
+	return p
 }
 
 // commitTitleKeywords 从 commit title 提取 ≥2 字关键词（英文按空白切，中文按 2-gram）。

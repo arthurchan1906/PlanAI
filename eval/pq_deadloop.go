@@ -25,14 +25,21 @@ func DefaultDeadloopParams() DeadloopParams {
 }
 
 // DeadloopCandidate 死循环候选时段（Excluded=true 为 near-miss：满足 build+自发条件但被排除规则命中）。
+// Fails/UserMsgs 为组合信号记录项（§2.1：build 密集 + 失败 + 用户高峰 + 自发检索<2），
+// 阈值未冻结前如实记录供校准（§9.6 数据反馈）。
 type DeadloopCandidate struct {
 	Start     time.Time `json:"start"`
 	End       time.Time `json:"end"`
 	Builds    int       `json:"builds"`
+	Fails     int       `json:"fails"`     // 失败命令数（ExitCode != 0）
+	UserMsgs  int       `json:"user_msgs"` // 桶内 user 消息数（用户高峰信号）
 	SpontRetr int       `json:"spont_retr"`
 	Excluded  bool      `json:"excluded"`
 	Reason    string    `json:"reason,omitempty"`
 }
+
+// rootCauseRe 根因定位信号（§2.1 排除规则，11h 教训）：agent 文本声明根因。
+var rootCauseRe = regexp.MustCompile(`根因|已定位|原因已确认`)
 
 var buildNoisePathRe = regexp.MustCompile(`(?i)DerivedData/.*/Build/|/Logs/Build|build[0-9]`)
 
@@ -96,28 +103,44 @@ func FindDeadloops(turns []Turn, spontaneous, commits []time.Time, p DeadloopPar
 		switch kind {
 		case "build":
 			b.Builds++
+		case "fail":
+			b.Fails++
+		case "user":
+			b.UserMsgs++
 		case "spont":
 			b.SpontRetr++
-		case "edit", "commit":
+		case "edit", "commit", "rootcause":
 			if !b.Excluded {
 				b.Excluded = true
-				if kind == "edit" {
+				switch kind {
+				case "edit":
 					b.Reason = "桶内有 edit/write 信号（修复/进展）"
-				} else {
+				case "commit":
 					b.Reason = "桶内有 commit 信号（进展锚点）"
+				case "rootcause":
+					b.Reason = "桶内有根因定位文本信号"
 				}
 			}
 		}
 	}
 
 	for i := range turns {
+		if turns[i].UserMsg != "" {
+			add(turns[i].Start, "user")
+		}
 		for j := range turns[i].Records {
 			rec := turns[i].Records[j]
 			switch {
 			case rec.Tool.Tool == "bash" && isBuildDense(rec.Tool.Command):
 				add(rec.CreatedAt, "build")
+				if rec.Tool.ExitCode != nil && *rec.Tool.ExitCode != 0 {
+					add(rec.CreatedAt, "fail")
+				}
 			case rec.Tool.Tool == "edit" || rec.Tool.Tool == "write":
 				add(rec.CreatedAt, "edit")
+			}
+			if rec.Role == "assistant" && rootCauseRe.MatchString(rec.Content) {
+				add(rec.CreatedAt, "rootcause")
 			}
 		}
 	}

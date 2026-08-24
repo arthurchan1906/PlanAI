@@ -155,7 +155,7 @@ func TestRecognizeFeedbackTwoLevel(t *testing.T) {
 		pqTurn("d4", "go on", "2026-06-23T14:03:00"),                             // ⑤ 介入非纠偏
 		pqTurn("d5", "继续", "2026-06-23T14:04:00"),                                // 推进
 	}
-	_, counts := RecognizeFeedback(turns)
+	_, counts := RecognizeFeedback(turns, false)
 	if counts.Correction != 1 {
 		t.Errorf("纠偏 = %d, want 1", counts.Correction)
 	}
@@ -265,5 +265,109 @@ func TestFindDeadloops(t *testing.T) {
 	}
 	if excluded != 1 {
 		t.Errorf("排除候选 = %d, want 1（11h 修复验证期）", excluded)
+	}
+}
+
+// ── Claude 审核修复测试（2026-08-24）──
+
+func TestLinkFixCommitTimeWindow(t *testing.T) {
+	d := pqDB(t)
+	// commit 与 bug 创建 ±1h 内 + files 有交集 → time_window fallback
+	mustExec(t, d, `INSERT INTO commits VALUES ('c1','chore: 其他主题','','main','abc123def','','','draft','passed','pending','["src/proxy.go","src/hook.go"]','2026-06-24T11:48:14','2026-06-24T11:48:14','','')`)
+	mustExec(t, d, `INSERT INTO bugs VALUES ('b1','无关标题','','major','open','','2026-06-24T11:10:00','2026-06-24T11:10:00','','src/proxy.go','','','')`)
+
+	cl, err := LinkFixCommitByHash(d, "abc123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cl.Fallback != "time_window" {
+		t.Errorf("fallback = %s, want time_window（commit ±1h 且 files 交集）", cl.Fallback)
+	}
+	if cl.BugID != "b1" || cl.Weak {
+		t.Errorf("bug_id/weak = %s/%v, want b1/false", cl.BugID, cl.Weak)
+	}
+}
+
+func TestLinkFixCommitTimeWindowNoMatch(t *testing.T) {
+	d := pqDB(t)
+	mustExec(t, d, `INSERT INTO commits VALUES ('c1','chore: 其他主题','','main','abc123','','','draft','passed','pending','["src/proxy.go"]','2026-06-24T11:48:14','2026-06-24T11:48:14','','')`)
+	// 超 1h + 无文件交集 → 落 none（弱 ground truth）
+	mustExec(t, d, `INSERT INTO bugs VALUES ('b1','无关标题','','major','open','','2026-06-24T09:00:00','2026-06-24T09:00:00','','src/other.go','','','')`)
+	cl, err := LinkFixCommitByHash(d, "abc123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cl.Fallback != "none" || !cl.Weak {
+		t.Errorf("fallback/weak = %s/%v, want none/true", cl.Fallback, cl.Weak)
+	}
+}
+
+func TestRecognizeFeedbackModernChannel(t *testing.T) {
+	turns := []Turn{
+		pqTurn("d1", "之前的方向不对", "2026-08-19T15:09:00"),                         // ① CJK 纠偏仍计数
+		pqTurn("d2", "Failed to install: compile fail", "2026-08-19T15:10:00"), // ⑤ 现代通道 → 候选不计数
+		pqTurn("d3", "go on", "2026-08-19T15:11:00"),                           // ⑤ 同上
+	}
+	_, counts := RecognizeFeedback(turns, true)
+	if counts.Correction != 1 {
+		t.Errorf("纠偏 = %d, want 1", counts.Correction)
+	}
+	if counts.Intervention != 1 {
+		t.Errorf("介入 = %d, want 1（现代通道⑤不直接计入）", counts.Intervention)
+	}
+	if counts.ManualCandidates != 2 {
+		t.Errorf("manual_candidates = %d, want 2（P1 L2 确认后回填）", counts.ManualCandidates)
+	}
+	// legacy 通道：⑤ 直接计入介入
+	_, legacy := RecognizeFeedback(turns, false)
+	if legacy.Intervention != 3 {
+		t.Errorf("legacy 介入 = %d, want 3", legacy.Intervention)
+	}
+}
+
+func TestFindDeadloopsSignals(t *testing.T) {
+	// 15h 桶：build 20 + fail 3 + user 4 + 零自发 → 候选；16h 桶含根因定位文本 → 排除
+	mk := func(ts string, n int, kind string, fail int) []Record {
+		var out []Record
+		for i := 0; i < n; i++ {
+			tool := map[string]string{"build": "bash", "edit": "edit"}[kind]
+			cmd := map[string]string{"build": "go build ./...", "edit": ""}[kind]
+			r := pqRec(tool, cmd, ts)
+			if kind == "build" && i < fail {
+				ec := 1
+				r.Tool.ExitCode = &ec
+			}
+			out = append(out, r)
+		}
+		return out
+	}
+	rc := pqRec("bash", "go build ./...", "2026-06-23T16:30:00")
+	rc.Role = "assistant"
+	rc.Content = "## 根因已确认：APDU 分块"
+	turns := []Turn{
+		pqTurn("u1", "继续", "2026-06-23T15:30:00"),
+		pqTurn("u2", "看看", "2026-06-23T15:45:00"),
+		{Records: mk("2026-06-23T15:10:00", 20, "build", 3)},
+		{Records: mk("2026-06-23T16:10:00", 12, "build", 0)},
+		{Records: []Record{rc}},
+	}
+	cands := FindDeadloops(turns, nil, nil, DefaultDeadloopParams())
+	if len(cands) != 2 {
+		t.Fatalf("候选 = %d, want 2（15h 候选 + 16h near-miss）", len(cands))
+	}
+	var c15, c16 *DeadloopCandidate
+	for i := range cands {
+		if cands[i].Start.Hour() == 15 {
+			c15 = &cands[i]
+		}
+		if cands[i].Start.Hour() == 16 {
+			c16 = &cands[i]
+		}
+	}
+	if c15 == nil || c15.Excluded || c15.Builds != 20 || c15.Fails != 3 || c15.UserMsgs != 2 {
+		t.Errorf("15h 候选 = %+v, want build=20 fail=3 user=2 未排除", c15)
+	}
+	if c16 == nil || !c16.Excluded {
+		t.Errorf("16h 应被根因定位信号排除: %+v", c16)
 	}
 }

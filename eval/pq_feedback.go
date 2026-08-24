@@ -45,7 +45,9 @@ var moduleStructuredRe = regexp.MustCompile(`^(?:\[[A-Za-z0-9_-]+\][^\n]*\n?)+$`
 
 // RecognizeFeedback 对 session 全部 user 消息做反馈识别。
 // 返回候选列表 + 两级计数（介入 / 纠偏）。
-func RecognizeFeedback(turns []Turn) ([]FeedbackCandidate, FeedbackCounts) {
+// modern 为「现代通道」（019f 时代，ED 库 6/26 起，v1.3 七轮口径）：规则⑤
+// （无 CJK 手动输入）只输出介入候选清单不直接计数，交 P1 L2 确认（与②存疑同处理）。
+func RecognizeFeedback(turns []Turn, modern bool) ([]FeedbackCandidate, FeedbackCounts) {
 	var out []FeedbackCandidate
 	var counts FeedbackCounts
 	for i := range turns {
@@ -69,7 +71,16 @@ func RecognizeFeedback(turns []Turn) ([]FeedbackCandidate, FeedbackCounts) {
 			counts.Injection++
 			continue
 		}
-		// ① ⑤ 用户介入（CJK 或手动输入）
+		// ⑤ 现代通道：介入候选不直接计数（P1 L2 确认后回填）
+		if c.Class == 5 && modern {
+			out = append(out, FeedbackCandidate{
+				UserMsgID: t.UserMsgID, Ts: t.Start, Kind: KindManual,
+				TextClass: 5, Snippet: snippetOf(t.UserMsg),
+			})
+			counts.ManualCandidates++
+			continue
+		}
+		// ① ⑤（legacy）用户介入
 		counts.Intervention++
 		kw := matchKeywords(t.UserMsg)
 		kind := KindManual
@@ -91,11 +102,12 @@ func RecognizeFeedback(turns []Turn) ([]FeedbackCandidate, FeedbackCounts) {
 
 // FeedbackCounts 两级计数（介入 ⊇ 纠偏）。
 type FeedbackCounts struct {
-	Intervention int `json:"intervention"` // ①⑤ 合计
-	Correction   int `json:"correction"`   // 纠偏关键词/否定方向词命中
-	Progress     int `json:"progress"`     // 推进
-	Suspicious   int `json:"suspicious"`   // ② 存疑（P0a1 标记，P1 L2 判定）
-	Injection    int `json:"injection"`    // ④ 系统通知排除
+	Intervention     int `json:"intervention"`      // ①⑤(legacy) 合计
+	Correction       int `json:"correction"`        // 纠偏关键词/否定方向词命中
+	Progress         int `json:"progress"`          // 推进
+	Suspicious       int `json:"suspicious"`        // ② 存疑（P0a1 标记，P1 L2 判定）
+	Injection        int `json:"injection"`         // ④ 系统通知排除
+	ManualCandidates int `json:"manual_candidates"` // ⑤ 现代通道介入候选（P1 L2 确认后回填）
 }
 
 // textClass 文本层判别结果。

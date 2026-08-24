@@ -57,8 +57,9 @@ func BuildProcessReport(db *sql.DB, sessionID, fixHashPrefix string) (*ProcessRe
 		rep.Annotations = append(rep.Annotations, "无回合数据（无 user 消息或全部被 isFakeUser 过滤）")
 	}
 
-	// T3 反馈识别
-	rep.Feedback, rep.Counts = RecognizeFeedback(turns)
+	// T3 反馈识别（modern = 019f 现代通道，ED 库 6/26 起，v1.3 七轮口径）
+	modern := !b.Start.Before(modernChannelSince)
+	rep.Feedback, rep.Counts = RecognizeFeedback(turns, modern)
 	// T4 检索三分类
 	rep.Retrieval = CountRetrieval(turns, rep.Feedback)
 	// T5 死循环候选（自发检索时间点 + commit 时间点）
@@ -85,6 +86,9 @@ func BuildProcessReport(db *sql.DB, sessionID, fixHashPrefix string) (*ProcessRe
 	}
 	return rep, nil
 }
+
+// modernChannelSince 019f 现代通道起点（ED 库 6/26 起两通道并存，v1.3 实证）。
+var modernChannelSince = time.Date(2026, 6, 26, 0, 0, 0, 0, time.Local)
 
 // FrozenDeadloopAnnotations T5 对照物：L1 死循环候选 ↔ c0ad2534 冻结小时表映射。
 // 口径差异显式标注（§9.6 数据反馈驱动修订）。
@@ -163,8 +167,8 @@ func FormatProcessHuman(rep *ProcessReport) string {
 		rep.Retrieval.Spontaneous, rep.Retrieval.Passive, rep.Retrieval.Routine,
 		ratioFmt(rep.Retrieval.Ratio))
 	for _, d := range rep.Deadloops {
-		fmt.Fprintf(&sb, "  T5 死循环候选: %s → %s build=%d 自发=%d%s\n",
-			tsFmt(d.Start), tsFmt(d.End), d.Builds, d.SpontRetr,
+		fmt.Fprintf(&sb, "  T5 死循环候选: %s → %s build=%d fail=%d user=%d 自发=%d%s\n",
+			tsFmt(d.Start), tsFmt(d.End), d.Builds, d.Fails, d.UserMsgs, d.SpontRetr,
 			map[bool]string{true: "（" + d.Reason + "）", false: ""}[d.Excluded])
 	}
 	for _, a := range rep.Annotations {
