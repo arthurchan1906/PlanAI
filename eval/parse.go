@@ -14,8 +14,8 @@ import (
 
 // ToolRecord 归一化工具调用/消息记录。
 type ToolRecord struct {
-	Source        string   `json:"source"` // 原始来源（claude-code/codex-cli/...）
-	Tool          string   `json:"tool"`   // bash/edit/read/write/llm_message/mcp/unknown
+	Source        string   `json:"source"`  // 原始来源（claude-code/codex-cli/...）
+	Tool          string   `json:"tool"`    // bash/edit/read/write/llm_message/mcp/unknown
 	Command       string   `json:"command"` // bash command 或工具输入摘要
 	Files         []string `json:"files"`   // 文件路径（tool_input + 顶层 file_path/rel_path，去重）
 	ExitCode      *int     `json:"exit_code,omitempty"`
@@ -23,7 +23,7 @@ type ToolRecord struct {
 	Model         string   `json:"model,omitempty"`
 	Cwd           string   `json:"cwd,omitempty"`
 	HookEventName string   `json:"hook_event_name,omitempty"` // 原始事件名（PostToolUse/postToolUse 大小写不同，阶段 5 判定写操作）
-	Quality       string   `json:"quality"`                    // ok / degraded（乱码容忍，不丢弃降权）
+	Quality       string   `json:"quality"`                   // ok / degraded（乱码容忍，不丢弃降权）
 }
 
 // postTool 新通用工具调用格式（codex-cli/cursor 实测；tool_input 为工具入参，
@@ -306,7 +306,7 @@ func normalizeToolName(name string) string {
 	lower := strings.ToLower(name)
 	switch {
 	case strings.Contains(lower, "mcp"):
-		return "mcp"
+		return classifyMcp(lower)
 	case strings.Contains(lower, "read") || strings.Contains(lower, "grep"):
 		return "read"
 	case strings.Contains(lower, "write"):
@@ -318,4 +318,28 @@ func normalizeToolName(name string) string {
 	default:
 		return name
 	}
+}
+
+// classifyMcp mcp 工具细分（G1 执行就绪核查，T4 定向边界依赖，SPEC §2.1 历史检索意识）：
+// mcp_aipm_search/mcp_aipm_trace = 历史检索；mcp_aipm_get/mcp_aipm_list = 状态读取（当前态）；
+// mcp_aipm_read（read_discussions）= 例行，不计入检索意识；其余 aipm 工具 = mcp_aipm_other。
+// 非 aipm 的 mcp 工具保持原 mcp 大类。
+func classifyMcp(lower string) string {
+	if strings.Contains(lower, "aipm") {
+		switch {
+		case strings.Contains(lower, "search"):
+			return "mcp_aipm_search"
+		case strings.Contains(lower, "trace"):
+			return "mcp_aipm_trace"
+		case strings.Contains(lower, "get_"):
+			return "mcp_aipm_get"
+		case strings.Contains(lower, "list"):
+			return "mcp_aipm_list"
+		case strings.Contains(lower, "read"):
+			return "mcp_aipm_read"
+		default:
+			return "mcp_aipm_other"
+		}
+	}
+	return "mcp"
 }

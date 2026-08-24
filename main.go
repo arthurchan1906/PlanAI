@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"database/sql"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -270,10 +271,14 @@ func main() {
 	case "eval":
 		// EVAL_PIPELINE：M1-M5 归因提取器（headless，无 LLM 依赖）。
 		// Usage: aipmc eval [--since 30d] [--kind attribution] [--log <path>] [--no-fail]
+		//        aipmc eval process --session <id> [--fix-hash <prefix>]（P0a1a，T1-T5）
 		sinceDays := 30
 		kind := "attribution"
 		logPath := ""
 		noFail := false
+		sessionID := ""
+		fixHash := ""
+		dbPath := ""
 		raw := os.Args[2:]
 		for i := 0; i < len(raw); i++ {
 			switch {
@@ -288,12 +293,27 @@ func main() {
 				i++
 			case raw[i] == "--no-fail":
 				noFail = true
+			case raw[i] == "--session" && i+1 < len(raw):
+				sessionID = raw[i+1]
+				i++
+			case raw[i] == "--fix-hash" && i+1 < len(raw):
+				fixHash = raw[i+1]
+				i++
+			case raw[i] == "--db" && i+1 < len(raw):
+				dbPath = raw[i+1]
+				i++
 			}
 		}
 		if logPath == "" {
 			logPath = filepath.Join(os.Getenv("HOME"), ".aipmc", "logs", "aipmc.log")
 		}
 		db, err := pmdb.Open()
+		if dbPath != "" {
+			if db != nil {
+				db.Close()
+			}
+			db, err = sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(15000)&_pragma=synchronous(NORMAL)")
+		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "eval: %v\n", err)
 			os.Exit(1)
@@ -325,8 +345,23 @@ func main() {
 			if alert && !noFail {
 				os.Exit(1)
 			}
+		case "process":
+			// P0a1a T1-T5：时段边界 + d628b7a 关联 + 反馈识别 + 检索三分类 + 死循环候选
+			if sessionID == "" {
+				fmt.Fprintf(os.Stderr, "eval process: 需要 --session <id>\n")
+				os.Exit(1)
+			}
+			rep, err := eval.BuildProcessReport(db, sessionID, fixHash)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "eval process: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Print(eval.FormatProcessHuman(rep))
+			fmt.Println()
+			out, _ := json.MarshalIndent(rep, "", "  ")
+			fmt.Println(string(out))
 		default:
-			fmt.Fprintf(os.Stderr, "eval: unknown kind %q (supported: attribution)\n", kind)
+			fmt.Fprintf(os.Stderr, "eval: unknown kind %q (supported: attribution/process)\n", kind)
 			os.Exit(1)
 		}
 		return

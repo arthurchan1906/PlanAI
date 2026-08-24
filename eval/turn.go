@@ -22,10 +22,11 @@ type Record struct {
 
 // Turn 一个回合：user 消息 + 其后全部记录。
 type Turn struct {
-	UserMsg string
-	Records []Record
-	Start   time.Time
-	End     time.Time
+	UserMsg   string
+	UserMsgID string // discussion_log id（T3 反馈识别对照物输出用）
+	Records   []Record
+	Start     time.Time
+	End       time.Time
 }
 
 // Files 返回该回合引用的全部文件（去重，供阶段 3 Jaccard 计算）。
@@ -79,7 +80,7 @@ func BuildTurns(db *sql.DB, sessionID string) ([]Turn, error) {
 			if isFakeUser(content) {
 				continue
 			}
-			turns = append(turns, Turn{UserMsg: content, Start: ts, End: ts})
+			turns = append(turns, Turn{UserMsg: content, UserMsgID: id, Start: ts, End: ts})
 			continue
 		}
 		if len(turns) == 0 {

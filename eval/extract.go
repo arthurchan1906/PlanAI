@@ -13,13 +13,13 @@ import (
 
 // EpisodeBehavior 段级行为信号。
 type EpisodeBehavior struct {
-	ToolUsage           map[string]int // bash/edit/read/write/mcp/llm_message/unknown/其他
-	CmdSemantics        map[string]int // build/test/vet/git/query/deploy/other
-	Files               FilesSignal
-	OutOfScopeFiles     float64          // 段外文件占比（相对 cwd，绝对路径判定）
-	ExitCode            ExitCodeSignal
-	Verification        VerificationSignal
-	TextSignals         TextSignal
+	ToolUsage             map[string]int // bash/edit/read/write/mcp/llm_message/unknown/其他
+	CmdSemantics          map[string]int // build/test/vet/git/query/deploy/other
+	Files                 FilesSignal
+	OutOfScopeFiles       float64 // 段外文件占比（相对 cwd，绝对路径判定）
+	ExitCode              ExitCodeSignal
+	Verification          VerificationSignal
+	TextSignals           TextSignal
 	SelfClaimWithoutProof bool // 声称测试通过但未运行测试（§3.6 自证检测）
 }
 
@@ -60,6 +60,10 @@ func ExtractBehavior(ep *Episode, cwd string) EpisodeBehavior {
 		for _, rec := range turn.Records {
 			tool := rec.Tool
 			b.ToolUsage[tool.Tool]++
+			if strings.HasPrefix(tool.Tool, "mcp_aipm_") {
+				// G2 执行就绪核查：aipm 工具接入命令语义分类（T4 三分类依赖）
+				b.CmdSemantics[classifyAipmTool(tool.Tool)]++
+			}
 			if tool.Tool == "bash" {
 				class := classifyCommand(tool.Command)
 				b.CmdSemantics[class]++
@@ -128,6 +132,24 @@ func ExtractBehavior(ep *Episode, cwd string) EpisodeBehavior {
 	return b
 }
 
+// classifyAipmTool aipm 工具语义分类（G2：aipm 子类 → 命令语义桶，T4 三分类依赖）。
+func classifyAipmTool(tool string) string {
+	switch tool {
+	case "mcp_aipm_search":
+		return "aipm_search"
+	case "mcp_aipm_trace":
+		return "aipm_trace"
+	case "mcp_aipm_get":
+		return "aipm_get"
+	case "mcp_aipm_list":
+		return "aipm_list"
+	case "mcp_aipm_read":
+		return "aipm_read"
+	default:
+		return "aipm_other"
+	}
+}
+
 // classifyCommand bash 命令语义分类（前缀/关键词匹配，顺序敏感）。
 func classifyCommand(cmd string) string {
 	switch {
@@ -163,8 +185,10 @@ func isLLMText(content, tool string) bool {
 	if tool == "llm_message" {
 		return true // cursor/opencode 已归一
 	}
-	switch tool {
-	case "bash", "edit", "read", "write", "mcp":
+	switch {
+	case tool == "bash" || tool == "edit" || tool == "read" || tool == "write":
+		return false
+	case strings.HasPrefix(tool, "mcp"):
 		return false
 	}
 	c := strings.TrimSpace(content)

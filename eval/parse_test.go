@@ -134,9 +134,29 @@ func TestClassifyToolNamePriority(t *testing.T) {
 	if r := ParseToolRecord("cursor", `{"_type":"post_tool","tool_name":"Delete","tool_input":{}}`); r.Tool != "edit" {
 		t.Errorf("Delete tool = %q, want edit", r.Tool)
 	}
-	// codex mcp 工具名含 "read" 不得误捕为 read（mcp 最优先）
-	if r := ParseToolRecord("codex-cli", `{"_type":"post_tool","tool_name":"mcp__aipm__aipm_read_discussions","tool_input":{}}`); r.Tool != "mcp" {
-		t.Errorf("mcp tool = %q, want mcp", r.Tool)
+	// codex mcp 工具名含 "read" 不得误捕为 read（mcp 最优先，G1：aipm 子类细分）
+	if r := ParseToolRecord("codex-cli", `{"_type":"post_tool","tool_name":"mcp__aipm__aipm_read_discussions","tool_input":{}}`); r.Tool != "mcp_aipm_read" {
+		t.Errorf("aipm read tool = %q, want mcp_aipm_read", r.Tool)
+	}
+	// G1：aipm 工具子类细分（search/trace = 历史检索；get/list = 状态读取；read = 例行）
+	cases := []struct{ tool, want string }{
+		{"mcp__aipm__aipm_search_context", "mcp_aipm_search"},
+		{"mcp__aipm__aipm_smart_search", "mcp_aipm_search"},
+		{"mcp__aipm__aipm_search_discussions", "mcp_aipm_search"},
+		{"mcp__aipm__aipm_trace_context", "mcp_aipm_trace"},
+		{"mcp__aipm__aipm_get_task", "mcp_aipm_get"},
+		{"mcp__aipm__aipm_get_commit", "mcp_aipm_get"},
+		{"mcp__aipm__aipm_list_commits", "mcp_aipm_list"},
+		{"mcp__aipm__aipm_list_tasks", "mcp_aipm_list"},
+		{"mcp__aipm__aipm_read_discussions", "mcp_aipm_read"},
+		{"mcp__aipm__aipm_record_commit", "mcp_aipm_other"},
+		{"mcp__other__some_tool", "mcp"},
+	}
+	for _, c := range cases {
+		meta := `{"_type":"post_tool","tool_name":"` + c.tool + `","tool_input":{}}`
+		if r := ParseToolRecord("codex-cli", meta); r.Tool != c.want {
+			t.Errorf("tool %q = %q, want %q", c.tool, r.Tool, c.want)
+		}
 	}
 	// 无已知关键字 → 保留原名
 	if r := ParseToolRecord("codex-cli", `{"_type":"post_tool","tool_name":"update_plan","tool_input":{}}`); r.Tool != "update_plan" {

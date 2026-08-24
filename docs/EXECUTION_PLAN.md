@@ -306,3 +306,49 @@ type FiveSignals struct {
 
 
 **已回写（2026-08-20 用户确认修正版冻结）**：正文回写完成（SPEC §1/§2.1/§4.6/§5/§9.1 + 方案 §1/§2 T6/§3.1-3.3），两文档状态行已更新 → 进入 P0a1a 执行（第 0 步执行就绪核查 → T1-T5）。
+
+---
+
+## 10. P0a1a 执行记录（2026-08-24，codex 第 0 步 + T1-T5 落地）
+
+> 执行纪律（§9）：checkpoint 输出客观对照物；G1-G8 逐项核对以代码/数据实证为准。
+
+### 10.1 第 0 步：执行就绪核查 G1-G8 核对结果（全部完成）
+
+| # | 缺口 | 核对方式 | 结果 |
+|---|---|---|---|
+| G1 | `normalizeToolName` mcp 大类过粗 | 代码核查 `eval/parse.go:305` | ✅ 已修：`classifyMcp` 细分 `mcp_aipm_search/trace/get/list/read/other`（T4 定向边界依赖） |
+| G2 | `classifyCommand` 未接 aipm 工具 | 代码核查 `eval/extract.go:132` | ✅ 已修：`classifyAipmTool` 接入 CmdSemantics（aipm_search/trace/get/list/read/other） |
+| G3 | `aipmc eval process` CLI 不存在 | `main.go` eval 仅 attribution | ✅ 已加：`--kind process --session <id> [--fix-hash] [--db]`（双输出复用） |
+| G4 | ED 库无 `sessions` 表 | `.tables` 实测仅 `session_summaries` | ✅ 数据源修正；T1 start 从 `discussion_log` 首条 user 消息直接算 |
+| G5 | `events` 表无分钟级事件边界 | 6/23-25 仅 2 条 `task_created` | ✅ §4.1 边界 = `C0ad2534FrozenEvents` 冻结常量表硬编码 |
+| G6 | `isFakeUser` 过窄 | 代码核查 `eval/turn.go:102` | ✅ 按预判：P0a1a 固定边界不重切分；BuildTurns 扩展留 P1 |
+| G7 | T6 首条消息对 01a013f3 不成立 | 规格实证（跨 3 天多子任务） | ✅ T6 归 P0a1b 负样本验证；Episode 复用标注 |
+| G8 | 「两张图片」场景词引用错误 | hindsight 修正已回写正文 | ✅ 文档层已闭环 |
+
+### 10.2 T1-T5 落地（c0ad2534 真实数据对照物）
+
+**T1 时段边界**：start=2026-06-23 13:51:53（冻结表精确命中 ✓），end=2026-06-24 11:48:14（d628b7a ✓），休眠 17:38→08:58 跨夜标记 ✓。
+
+**T2 d628b7a 关联**：`commit-20260624-114814-521602`，bug.commit_id 为空 → fallback=partial（标题关键词命中 4 个）→ `bug-20260624-114337-813aa9`，weak=false。与收工备注实证一致 ✓。
+
+**T3 反馈识别**：介入=107，**纠偏=25（冻结 ground truth 精确命中 ✓，T3 独立验收召回=100%）**；存疑=0、注入排除=0（c0ad2534 为 6 月数据，无 019f 注入通道，符合预期）。
+
+**T4 检索三分类**：自发=2（冻结口径 2 条真实自发 ✓）、被动=9、例行=0、比=0.22。⚠️ 与 §4.1 表 0.05（43 被动）差异 = 口径不同（v1.4 定向边界 = git 历史 + aipm search/trace；§4.1 表为 v1.2 宽口径），方向性一致（被动主导），同口径下可比较。
+
+**T5 死循环候选对照物（§4.1 冻结小时表映射）**：
+
+| 小时 | frozen 判定 | L1 结果 | 差异记录（§9.6 数据反馈） |
+|---|---|---|---|
+| 6/23 15h | 正样本（盲试 build=20） | near-miss（build=16 自发=0，桶内有 edit） | **排除规则过严待校准**——盲试期"猜测补丁"edit 不应排除，需区分根因定位后修复（11h）vs 猜测修改（15h） |
+| 6/23 16h | 正样本（盲试 build=15） | near-miss（build=10 自发=0，桶内有 edit） | 同上 |
+| 6/24 09h | 正样本（盲试 build=17） | 未出候选 | **build 密集口径差异**——现数据 09h 无构建命令（grep/sed/git show 为主），frozen 17 与现数据不符，待复核 |
+| 6/24 11h | 负样本（修复验证期） | 未误报 ✓ | 正确排除（build 计数未达阈值 + edit/commit 信号） |
+
+### 10.3 待办（下次继续点）
+
+1. **T5 排除规则校准**（P0a1a 内）：区分"猜测补丁 edit"（15h 不排除）vs"根因定位后修复 edit"（11h 排除）——候选判别需叠加根因文本信号（`根因`/`已确认`）与 edit 的时间关系；当前近-miss 全量输出已可作为校准输入。
+2. **09h build 口径复核**：frozen build=17 与现数据 09h 无构建命令矛盾，需回溯 8/19 冻结分析口径。
+3. **T6-T9**（P0a1b）：目标锚定负样本验证（15:09 vs 4b41ba8）+ 空壳构建 + 验收报告。
+4. **验收①-③ 跑通**：T9 验收报告需要 T5 校准后重算召回/误报。
+
