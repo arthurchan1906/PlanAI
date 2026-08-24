@@ -59,6 +59,11 @@ func isRealBuild(cmd string) bool {
 		return false
 	}
 	lower := strings.ToLower(cmd)
+	// xcodebuild 的 build 动词在参数后（xcodebuild -project X -scheme Y build）：
+	// 识别「xcodebuild ... build」（排除 -list/-showsdks 等非构建子命令）
+	if strings.HasPrefix(lower, "xcodebuild") && strings.Contains(lower, " build") {
+		return true
+	}
 	for _, k := range []string{"xcodebuild build", "swift build", "go build", "go install", "npm run build", "cmake --build", "make "} {
 		if strings.Contains(lower, k) {
 			return true

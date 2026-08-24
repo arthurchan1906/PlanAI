@@ -32,7 +32,8 @@ type FeedbackCandidate struct {
 	Ts        time.Time    `json:"ts"`
 	Kind      FeedbackKind `json:"kind"`
 	Keywords  []string     `json:"keywords,omitempty"`
-	TextClass int          `json:"text_class"` // 1/2/4/5（对应文本层判别规则）
+	Referents []string     `json:"referents,omitempty"` // 反馈所指实体（L1 正则候选，T8 对准近似消费；精确判定归 L2 matched_object，P1 接入）
+	TextClass int          `json:"text_class"`          // 1/2/4/5（对应文本层判别规则）
 	Snippet   string       `json:"snippet"`
 }
 
@@ -75,7 +76,7 @@ func RecognizeFeedback(turns []Turn, modern bool) ([]FeedbackCandidate, Feedback
 		if c.Class == 5 && modern {
 			out = append(out, FeedbackCandidate{
 				UserMsgID: t.UserMsgID, Ts: t.Start, Kind: KindManual,
-				TextClass: 5, Snippet: snippetOf(t.UserMsg),
+				Referents: extractReferents(t.UserMsg), TextClass: 5, Snippet: snippetOf(t.UserMsg),
 			})
 			counts.ManualCandidates++
 			continue
@@ -83,6 +84,7 @@ func RecognizeFeedback(turns []Turn, modern bool) ([]FeedbackCandidate, Feedback
 		// ① ⑤（legacy）用户介入
 		counts.Intervention++
 		kw := matchKeywords(t.UserMsg)
+		refs := extractReferents(t.UserMsg)
 		kind := KindManual
 		switch {
 		case len(kw.Correction) > 0:
@@ -93,7 +95,7 @@ func RecognizeFeedback(turns []Turn, modern bool) ([]FeedbackCandidate, Feedback
 		}
 		out = append(out, FeedbackCandidate{
 			UserMsgID: t.UserMsgID, Ts: t.Start, Kind: kind,
-			Keywords: append(kw.Correction, kw.Progress...), TextClass: c.Class,
+			Keywords: append(kw.Correction, kw.Progress...), Referents: refs, TextClass: c.Class,
 			Snippet: snippetOf(t.UserMsg),
 		})
 	}
@@ -174,4 +176,67 @@ func snippetOf(s string) string {
 		return s
 	}
 	return s[:80] + "…"
+}
+
+
+// extractReferents 反馈所指实体 L1 提取（T8 对准近似消费，规格 §2.1：所指实体由 T3 提取输出）。
+// 规则：用户消息 CJK 2-4 字段，去停用词/纠偏关键词/方位词，去重。
+// 精确判定归 L2 matched_object（P1 接入），L1 只做候选（低精度高召回）。
+func extractReferents(msg string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, seg := range cjkSegments(msg) {
+		runes := []rune(seg)
+		n := len(runes)
+		for l := 2; l <= 4 && l <= n; l++ {
+			for i := 0; i+l <= n; i++ {
+				w := string(runes[i : i+l])
+				if sceneStopWord(w) || referentStopWord(w) {
+					continue
+				}
+				if !seen[w] {
+					seen[w] = true
+					out = append(out, w)
+				}
+			}
+		}
+	}
+	// 优先保留 2-4 字段整词（如「打开方式」优于「打开」），被更长词包含的短词去除
+	var merged []string
+	for _, w := range out {
+		absorbed := false
+		for _, o := range out {
+			if o != w && len([]rune(o)) > len([]rune(w)) && strings.Contains(o, w) {
+				absorbed = true
+				break
+			}
+		}
+		if !absorbed {
+			merged = append(merged, w)
+		}
+	}
+	return merged
+}
+
+// referentStopWord 反馈消息中的泛词/纠偏关键词/方位词（区别于场景词提取的停用词表）。
+func referentStopWord(w string) bool {
+	if referentStopWords[w] {
+		return true
+	}
+	for _, ch := range w {
+		if strings.ContainsRune("时里中上下前后这那新旧同样的都还也再就", ch) {
+			return true
+		}
+	}
+	return false
+}
+
+var referentStopWords = map[string]bool{
+	"此前": true, "之前": true, "以前": true, "历史": true, "记录": true,
+	"提交记录": true, "应该": true, "方向": true, "问题": true,
+	"继续": true, "还有": true, "已经": true, "没有": true, "可以": true,
+	"这个": true, "那个": true, "需要": true, "看看": true, "一个": true,
+	"重新": true, "不要": true, "一直": true, "怎么": true, "什么": true,
+	"就是": true, "还是": true, "现在": true, "重新审视": true,
+	"能不能": true, "麻烦": true, "请": true, "一下": true, "的话": true,
 }

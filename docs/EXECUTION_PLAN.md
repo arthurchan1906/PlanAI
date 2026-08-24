@@ -387,3 +387,34 @@ Claude 审核 commit `4929bd8` 后指出 3 个规格偏差，均已修复：
 **验收①对照（build 可检出小时口径）**：正样本召回 = 2/2（15h/16h），负样本误报 = 0（10h/11h）。09h 为数据差异待复核。
 
 **规格修订待确认（用户/Claude）**：§2.1 排除规则原文「中间无 edit/commit/根因定位信号」被校准为「默认仅 commit 排除 + 被动≤0」，属数据反馈驱动的定向修订（§9.6），参数保留原始规则开关（ExcludeEdit/ExcludeRootCause）。
+
+### 10.6 P0a1b 执行记录（2026-08-24，T6-T9 落地）
+
+**T6 目标锚定**（`eval/pq_anchoring.go`）：
+- 实现：场景词提取（单条消息内重复 ≥2 次的 CJK 子串，去停用词）+ 声称对象提取（首个 commit 标题问题描述部分六词分法）+ 对准判定（覆盖率 ≥0.5 且高频词全命中）
+- 负样本验证（验收③存在性）：15:09 原话 vs 4b41ba8 实测 **覆盖率 5/6 = 0.83 + 高频词全命中 → 对准**（不误报）✓；`TestAnchoringNegativeSampleAligned`
+- 声称对象词 = 第三方/打开方式/直传/文件/不跳转/不导入（直传文件按名词核心拆分，`nounCoreSuffix`）；否定前缀剥离（不跳转→跳转）计入共享，方向判定归 L2
+- 口径记录：规格实证「资云集×3/打开方式×2 全命中」中资云集为产品专名（commit 以功能描述指代），操作化为「高频词与声称对象共享核心主题（打开 ↔ 打开方式）」；覆盖率分母 = 声称对象词（规格文字「用户场景词」为双向匹配同值表述，本实现输出完整计算表）
+- 无场景词（纯英文/无重复主题词）→ `Undecidable`（模糊指令类排除，单独计数）
+
+**T7 构建产物完整性**（`eval/pq_artifact.go`）：
+- 实现：构建命令（`isRealBuild`，T5 复用）后 30min 窗口内产物检查（ls/plutil/PlistBuddy/file/find 指向 `*.app`/`*.appex`）→ 空壳判定（ls total 极小且无主可执行 / CFBundleExecutable 占位符残留）
+- 单样本检出（验收③）：01a013f3 8/20 10:24-10:27 空壳构建 **2 个候选命中**（10:26:38 占位符 + 10:27:26 ls total 16 空壳）✓；`TestHollowBuildDetected`
+- 修复两处实现缺口：① `isRealBuild` 不识别 `xcodebuild ... build`（build 动词在参数后）——已补（T5/T7 共同受益）；② `DetectHollowBuilds` 只扫同 turn——10:26:21 user 贴安装失败日志切新 turn，改扁平时间索引跨 turn 扫描；③ `isArtifactCheck` 误用 T5 `buildNoisePathRe` 排除 DerivedData/Build 路径（产物恰在该目录下）——改只排除 Logs/Build + build 版本号
+
+**T8 命令级五子信号**（`eval/pq_signal.go` + `pq_feedback.go` Referents）：
+- 实现：响应（纠偏后 20min 内新行为，非检索非旧命令重复）/ 持续近似（响应后旧命令不重现）/ 收敛（用户确认词或修复 commit，**不绑 agent 自报**——「编译通过」不算）/ 对准近似（响应对象 vs 反馈所指，L1 领域映射 Share→分享）
+- 反馈所指实体 = T3 提取输出（`FeedbackCandidate.Referents`，L1 正则候选；精确判定归 L2 matched_object P1）
+- 真实数据（c0ad2534）：107 反馈事件，响应 103 / 持续 71 / 收敛 104 / 对准 0（L1 保守，英文响应对象与中文反馈所指无字面共享 → 全部标 ✗ 交 L2，符合 L1 低精度高召回设计）
+- T8 = 报告输出（方向性），不占验收①-③（v1.3）
+
+**T9 验收报告**（`eval/pq_report.go` + `aipmc eval acceptance`）：
+- 聚合 T1-T5（process）+ T6-T8 → 验收①-③ 数据结果表（JSON + 人类可读）
+- 真实数据全跑通：
+  - 验收①：死循环召回 **120/131 分钟 = 92% ≥80%** ✅；负样本误报 **0 分钟 ≤15** ✅
+  - 验收②：自发/被动比方向性（directional）+ 同项目对照（c0ad2534 vs 01a013f3 规格实证 48.6 倍）
+  - 验收③：空壳构建单样本 **2 候选命中** ✅；目标锚定负样本 **对准（0.83）不误报** ✅
+- CLI：`aipmc eval acceptance --session <id> [--fix-hash <prefix>] [--hollow-session <id>] [--anchor-msg <msg>] [--claim <title>]`
+- 顺手修复：`aipmc eval process/acceptance` 位置参数 kind 未解析（usage 与实际不符）——已补位置参数解析（与 `--kind` 等价）
+
+**遗留待确认**：① T8 对准近似 L1 英文-中文映射表（Share→分享等）为最小领域词表，P1 接入 L2 精确判定；② 验收① 09h 数据差异（frozen build=17 不可复现）维持待复核；③ T6 覆盖率 0.83 的分母口径（声称对象词 vs 规格文字「用户场景词」）已在代码注释与匹配表如实标注。

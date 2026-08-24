@@ -4,6 +4,7 @@ package eval
 
 import (
 	"database/sql"
+	"strings"
 	"testing"
 	"time"
 )
@@ -389,4 +390,417 @@ func TestFindDeadloopsPassiveExcludes(t *testing.T) {
 	if len(cands) != 0 {
 		t.Errorf("被动检索>0 不应构成候选: %+v", cands)
 	}
+}
+
+// ── T6 目标锚定（P0a1b）──
+
+// 规格实证输入（§9.3）：01a013f3 8/19 15:09 用户原话 vs 4b41ba8 commit 标题。
+const (
+	anchorMsg15_09 = "还有一个问题 从第三方应用选择图片或者文件 然后在打开方式中选择资云集 没有跳转资云集的界面 自己手动点击打开资云集才能看到有数据导入"
+	anchorClaim4b41ba8 = "fix: 第三方「打开方式」直传文件不跳转/不导入 — SceneDelegate 转发 URL + 外部文件队列暂存"
+)
+
+func TestExtractHighFreqWords15_09(t *testing.T) {
+	got := extractHighFreqWords(anchorMsg15_09, 2)
+	if len(got) != 2 {
+		t.Fatalf("高频场景词 = %d 个, want 2（资云集×3/打开×2）：%v", len(got), got)
+	}
+	byWord := map[string]int{}
+	for _, w := range got {
+		byWord[w.Word] = w.Count
+	}
+	if byWord["资云集"] != 3 {
+		t.Errorf("资云集 = %d, want 3（规格 C2 实证）", byWord["资云集"])
+	}
+	if byWord["打开"] != 2 {
+		t.Errorf("打开 = %d, want 2（打开方式 + 打开资云集，规格表述打开方式×2）", byWord["打开"])
+	}
+	// 停用词不得混入：选择×2 是动词
+	if _, ok := byWord["选择"]; ok {
+		t.Errorf("停用词「选择」混入高频词: %v", got)
+	}
+}
+
+func TestExtractClaimWords4b41ba8(t *testing.T) {
+	got := extractClaimWords(anchorClaim4b41ba8)
+	want := []string{"第三方", "打开方式", "直传", "文件", "不跳转", "不导入"}
+	if len(got) != len(want) {
+		t.Fatalf("声称对象词 = %v, want %v（六词分法，直传文件拆分）", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("声称对象词[%d] = %s, want %s（全量 %v）", i, got[i], want[i], got)
+		}
+	}
+}
+
+// 验收③目标锚定 = 负样本验证（存在性）：15:09 vs 4b41ba8 已知对准，不误报为错位。
+func TestAnchoringNegativeSampleAligned(t *testing.T) {
+	target := AnchorTarget{
+		SessionID: "01a013f3", UserMsg: anchorMsg15_09,
+		UserTs: mustTs("2026-08-19T15:09:56"),
+		Claim:  anchorClaim4b41ba8, ClaimTs: mustTs("2026-08-19T15:33:05"),
+	}
+	res := AnalyzeAnchoring(target, DefaultAnchoringParams())
+	if res.Undecidable {
+		t.Fatalf("不可判定（存在场景词），结果: %+v", res)
+	}
+	if !res.Aligned {
+		t.Fatalf("负样本误报：15:09 vs 4b41ba8 已知对准被判错位。覆盖率 %.2f 高频全命中 %v", res.Coverage, res.HighFreqAll)
+	}
+	if res.Coverage < 0.5 {
+		t.Errorf("覆盖率 %.2f < 0.5", res.Coverage)
+	}
+	if !res.HighFreqAll {
+		t.Errorf("高频词全命中 = false（打开 ↔ 打开方式 应共享）")
+	}
+	// 实证 0.83（5/6）：第三方/打开方式/文件/跳转/导入 共享，直传未命中
+	if got := len(res.Shared); got != 5 {
+		t.Errorf("共享词 = %d 个, want 5（0.83）：%v", got, res.Shared)
+	}
+}
+
+// 高频词全命中判定的正/负例：声称对象覆盖用户强调主题（打开 ↔ 打开方式）。
+func TestHighFreqShared(t *testing.T) {
+	positive := []SceneWord{{Word: "打开", Count: 2}, {Word: "资云集", Count: 3}}
+	if !highFreqShared(positive, []string{"打开方式", "直传", "文件"}) {
+		t.Error("打开 ↔ 打开方式 应共享（声称对象覆盖用户强调主题）")
+	}
+	negative := []SceneWord{{Word: "资云集", Count: 3}}
+	if highFreqShared(negative, []string{"直传", "文件"}) {
+		t.Error("资云集 与 直传/文件 无共享，不应判命中")
+	}
+}
+
+// 明显错位样本：用户报 A（资云集打开方式跳转）、agent 首 commit 做 B（蓝牙配对刷新）→ 目标错位候选。
+func TestAnchoringMismatch(t *testing.T) {
+	target := AnchorTarget{
+		UserMsg: "从第三方选择图片 打开方式 资云集 打开方式 资云集 没有跳转",
+		Claim:   "fix: 蓝牙设备配对列表刷新异常",
+	}
+	res := AnalyzeAnchoring(target, DefaultAnchoringParams())
+	if res.Undecidable {
+		t.Fatal("有场景词，不应不可判定")
+	}
+	if res.Aligned {
+		t.Errorf("错位样本误判对准: %+v", res)
+	}
+	if res.Coverage >= 0.5 {
+		t.Errorf("错位样本覆盖率 %.2f 应 < 0.5", res.Coverage)
+	}
+}
+
+// 不可判定：无场景词（无重复 CJK 主题词 / 纯英文）。
+func TestAnchoringUndecidable(t *testing.T) {
+	target := AnchorTarget{UserMsg: "继续", Claim: "fix: 继续开发"}
+	res := AnalyzeAnchoring(target, DefaultAnchoringParams())
+	if !res.Undecidable {
+		t.Errorf("短消息无场景词应不可判定: %+v", res)
+	}
+	target2 := AnchorTarget{UserMsg: "please continue the work", Claim: "feat: add auth"}
+	res2 := AnalyzeAnchoring(target2, DefaultAnchoringParams())
+	if !res2.Undecidable {
+		t.Errorf("纯英文消息应不可判定: %+v", res2)
+	}
+}
+
+// ── T7 构建产物完整性（P0a1b）──
+
+// 验收③空壳构建单样本：01a013f3 8/20 10:24 xcodebuild build（BUILD SUCCEEDED）→
+// 10:27:26 ls /tmp/EDDerived/.../EncryptDrive.app/ 输出 total 16（无主可执行）→ 规则命中。
+func TestHollowBuildDetected(t *testing.T) {
+	turns := []Turn{{
+		UserMsg: "编译验证主工程",
+		Start:   mustTs("2026-08-20T10:24:03"), End: mustTs("2026-08-20T10:27:26"),
+		Records: []Record{
+			pqRec("bash", "xcodebuild -project EncryptDrive.xcodeproj -scheme EncryptDrive -sdk iphonesimulator -derivedDataPath /tmp/EDDerived build 2>&1 | tail -5", "2026-08-20T10:24:23"),
+			pqRec("bash", "echo \"===/tmp sim build contents===\"; ls -la /tmp/EDDerived/Build/Products/Debug-iphonesimulator/EncryptDrive.app/ | head -20", "2026-08-20T10:27:26"),
+		},
+	}}
+	// 补 ls 输出（空壳：total 16，无 EncryptDrive 主可执行行）
+	turns[0].Records[1].Content = "===/tmp sim build contents===\ntotal 16\ndrwxr-xr-x  5 dazsec  wheel   160 Aug 20 10:24 .\ndrwxr-xr-x@ 3 dazsec  wheel    96 Aug 20 10:24 ..\ndrwxr-xr-x  3 dazsec  wheel    96 Aug 20 10:24 Frameworks\n"
+
+	hbs := DetectHollowBuilds(turns, DefaultArtifactParams())
+	if len(hbs) != 1 {
+		t.Fatalf("空壳构建候选 = %d, want 1（10:25 空壳构建单样本）", len(hbs))
+	}
+	if !hbs[0].Hollow {
+		t.Errorf("Hollow = false, want true（ls total 16 无主可执行）")
+	}
+	if hbs[0].AppPath != "EncryptDrive.app" {
+		t.Errorf("AppPath = %s, want EncryptDrive.app", hbs[0].AppPath)
+	}
+}
+
+// 正常构建：产物含主可执行文件 → 不标记空壳。
+func TestHollowBuildNormalNotFlagged(t *testing.T) {
+	turns := []Turn{{
+		UserMsg: "构建验证",
+		Start:   mustTs("2026-08-20T11:00:00"), End: mustTs("2026-08-20T11:05:00"),
+		Records: []Record{
+			pqRec("bash", "xcodebuild -project EncryptDrive.xcodeproj -scheme EncryptDrive -sdk iphonesimulator build 2>&1 | tail -5", "2026-08-20T11:00:10"),
+			pqRec("bash", "ls -la /tmp/Out/Debug-iphonesimulator/EncryptDrive.app/", "2026-08-20T11:05:00"),
+		},
+	}}
+	turns[0].Records[1].Content = "total 4096\ndrwxr-xr-x  5 dazsec  wheel   160 Aug 20 11:05 .\n-rwxr-xr-x  1 dazsec  wheel  987654 Aug 20 11:05 EncryptDrive\n"
+
+	hbs := DetectHollowBuilds(turns, DefaultArtifactParams())
+	if len(hbs) != 0 {
+		t.Fatalf("正常构建被误标空壳: %+v", hbs)
+	}
+}
+
+// 无产物检查的构建 → 不标记（缺证据不误报）。
+func TestHollowBuildNoCheckNotFlagged(t *testing.T) {
+	turns := []Turn{{
+		UserMsg: "构建",
+		Start:   mustTs("2026-08-20T11:00:00"), End: mustTs("2026-08-20T11:01:00"),
+		Records: []Record{
+			pqRec("bash", "xcodebuild -project EncryptDrive.xcodeproj build 2>&1 | tail -5", "2026-08-20T11:00:10"),
+		},
+	}}
+	hbs := DetectHollowBuilds(turns, DefaultArtifactParams())
+	if len(hbs) != 0 {
+		t.Fatalf("无产物检查的构建不应标记: %+v", hbs)
+	}
+}
+
+// 构建产物占位符残留信号（产物 Info.plist CFBundleExecutable = $(EXECUTABLE_NAME)）。
+func TestHollowBuildPlaceholder(t *testing.T) {
+	turns := []Turn{{
+		UserMsg: "构建",
+		Start:   mustTs("2026-08-20T11:00:00"), End: mustTs("2026-08-20T11:02:00"),
+		Records: []Record{
+			pqRec("bash", "xcodebuild -project EncryptDrive.xcodeproj build 2>&1 | tail -5", "2026-08-20T11:00:10"),
+			pqRec("bash", "/usr/libexec/PlistBuddy -c \"Print :CFBundleExecutable\" /tmp/Out/EncryptDrive.app/Info.plist", "2026-08-20T11:02:00"),
+		},
+	}}
+	turns[0].Records[1].Content = "$(EXECUTABLE_NAME)\n"
+
+	hbs := DetectHollowBuilds(turns, DefaultArtifactParams())
+	if len(hbs) != 1 || !hbs[0].Placeholder {
+		t.Fatalf("占位符残留应被标记: %+v", hbs)
+	}
+}
+
+// ── T8 命令级五子信号（P0a1b）──
+
+// 响应✓ + 对准✓ + 收敛✓：纠偏「分享时没有日志打印」→ agent 20min 内 edit 分享日志相关文件 →
+// 用户确认「可以了」。
+func TestSignalResponseAlignedConverged(t *testing.T) {
+	turns := []Turn{{
+		UserMsg: "分享时没有日志打印",
+		Start:   mustTs("2026-08-19T17:06:09"), End: mustTs("2026-08-19T17:10:00"),
+		Records: []Record{
+			pqRec("bash", "grep -rn \"print\" ShareExtension --include='*.swift'", "2026-08-19T17:06:30"),
+			pqRec("edit", "add log", "2026-08-19T17:08:00"),
+		},
+	}, {
+		UserMsg: "可以了",
+		Start:   mustTs("2026-08-19T17:12:00"), End: mustTs("2026-08-19T17:12:00"),
+	}}
+	// 给 edit 记录补文件
+	turns[0].Records[1].Tool.Files = []string{"ShareExtension/ShareViewController.swift"}
+
+	feedback := []FeedbackCandidate{{
+		Ts: mustTs("2026-08-19T17:06:09"), Kind: KindCorrection,
+		Snippet: "分享时没有日志打印", Referents: []string{"分享", "日志", "打印"},
+	}}
+	rep := BuildSignalReport(turns, feedback, nil, DefaultSignalParams())
+	if len(rep.Rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rep.Rows))
+	}
+	r := rep.Rows[0]
+	if !r.Response {
+		t.Errorf("响应 = false, want true（17:08 edit 分享扩展文件）")
+	}
+	if !r.Aligned {
+		t.Errorf("对准近似 = false, want true（ShareViewController ↔ 分享）")
+	}
+	if !r.Converged {
+		t.Errorf("收敛 = false, want true（用户确认「可以了」）")
+	}
+}
+
+// 响应✓ + 对准✗：纠偏「分享时没有日志打印」→ agent 补不相关 dzsec-import 日志（01a013f3 17:06 实证形态）。
+func TestSignalAlignedMismatch(t *testing.T) {
+	turns := []Turn{{
+		UserMsg: "分享时没有日志打印",
+		Start:   mustTs("2026-08-19T17:06:09"), End: mustTs("2026-08-19T17:09:00"),
+		Records: []Record{
+			pqRec("edit", "add log", "2026-08-19T17:07:00"),
+		},
+	}}
+	turns[0].Records[0].Tool.Files = []string{"EncryptDrive/App/dzsec-import.swift"}
+
+	feedback := []FeedbackCandidate{{
+		Ts: mustTs("2026-08-19T17:06:09"), Kind: KindCorrection,
+		Snippet: "分享时没有日志打印", Referents: []string{"分享", "日志", "打印"},
+	}}
+	rep := BuildSignalReport(turns, feedback, nil, DefaultSignalParams())
+	r := rep.Rows[0]
+	if !r.Response {
+		t.Errorf("响应 = false, want true（有 edit 行为）")
+	}
+	if r.Aligned {
+		t.Errorf("对准近似 = true, want false（dzsec-import ↔ 分享 无共享）")
+	}
+}
+
+// 响应✗：纠偏后只重复纠偏前命令（旧行为重现，无新命令/edit）→ 响应 ✗（交 L2）。
+func TestSignalNoResponse(t *testing.T) {
+	turns := []Turn{{
+		UserMsg: "继续测试",
+		Start:   mustTs("2026-06-24T09:00:00"), End: mustTs("2026-06-24T09:11:00"),
+		Records: []Record{
+			pqRec("bash", "git log --oneline -10", "2026-06-24T09:05:00"),
+		},
+	}, {
+		UserMsg: "方向不对 重新审视",
+		Start:   mustTs("2026-06-24T09:11:46"), End: mustTs("2026-06-24T09:30:00"),
+		Records: []Record{
+			pqRec("bash", "git log --oneline -10", "2026-06-24T09:20:00"), // 与纠偏前重复
+		},
+	}}
+	feedback := []FeedbackCandidate{{
+		Ts: mustTs("2026-06-24T09:11:46"), Kind: KindCorrection,
+		Snippet: "方向不对 重新审视", Referents: []string{"方向"},
+	}}
+	rep := BuildSignalReport(turns, feedback, nil, DefaultSignalParams())
+	if rep.Rows[0].Response {
+		t.Errorf("响应 = true, want false（纠偏后仅重复旧命令）")
+	}
+}
+
+// 持续近似✗：响应后同命令重现（旧对象重现）。
+func TestSignalNotPersistent(t *testing.T) {
+	turns := []Turn{{
+		UserMsg: "还是不行",
+		Start:   mustTs("2026-08-13T11:37:00"), End: mustTs("2026-08-13T12:00:00"),
+		Records: []Record{
+			pqRec("bash", "xcodebuild -project X build 2>&1 | tail -5", "2026-08-13T11:38:00"),
+			pqRec("bash", "xcodebuild -project X build 2>&1 | tail -5", "2026-08-13T11:50:00"),
+		},
+	}}
+	feedback := []FeedbackCandidate{{
+		Ts: mustTs("2026-08-13T11:37:00"), Kind: KindCorrection,
+		Snippet: "还是不行", Referents: []string{"显示"},
+	}}
+	rep := BuildSignalReport(turns, feedback, nil, DefaultSignalParams())
+	r := rep.Rows[0]
+	if !r.Response {
+		t.Fatalf("响应 = false, want true")
+	}
+	if r.Persistent {
+		t.Errorf("持续近似 = true, want false（11:50 同命令重现）")
+	}
+}
+
+// 收敛不绑自报：agent 声称「编译通过」但无用户确认/无 commit → 收敛 ✗。
+func TestSignalConvergedNotSelfClaim(t *testing.T) {
+	turns := []Turn{{
+		UserMsg: "请修复",
+		Start:   mustTs("2026-08-20T10:20:00"), End: mustTs("2026-08-20T10:26:00"),
+		Records: []Record{
+			pqRec("bash", "xcodebuild -project EncryptDrive.xcodeproj build 2>&1 | tail -5", "2026-08-20T10:24:00"),
+			pqRec("llm_message", "", "2026-08-20T10:25:21"),
+		},
+	}}
+	turns[0].Records[1].Content = "完成。改动已就绪，编译通过。"
+	feedback := []FeedbackCandidate{{
+		Ts: mustTs("2026-08-20T10:20:00"), Kind: KindCorrection,
+		Snippet: "请修复", Referents: []string{"打开方式"},
+	}}
+	rep := BuildSignalReport(turns, feedback, nil, DefaultSignalParams())
+	if rep.Rows[0].Converged {
+		t.Errorf("收敛 = true, want false（agent 自报「编译通过」≠ 收敛，无用户确认/无 commit）")
+	}
+}
+
+// ── T9 验收报告（P0a1b）──
+
+// 验收① 分钟级计算：候选命中正样本（6/23 15:00-17:00、6/24 09:00-09:11）与负样本。
+func TestAcceptance1MinuteCalc(t *testing.T) {
+	rep := &AcceptanceReport{Process: &ProcessReport{Deadloops: []DeadloopCandidate{
+		{Start: mustTs("2026-06-23T15:00:00"), End: mustTs("2026-06-23T17:00:00")}, // 正样本 120min
+		{Start: mustTs("2026-06-24T09:00:00"), End: mustTs("2026-06-24T09:11:00")}, // 正样本 11min
+		{Start: mustTs("2026-06-24T11:05:00"), End: mustTs("2026-06-24T11:10:00")}, // 负样本（修复执行）5min
+	}}}
+	rows := acceptanceRows(rep)
+	var recallRow, fpRow *AcceptanceRow
+	for i := range rows {
+		if rows[i].ID == "验收①" && rows[i].Item == "死循环召回" {
+			recallRow = &rows[i]
+		}
+		if rows[i].ID == "验收①" && rows[i].Item == "负样本误报" {
+			fpRow = &rows[i]
+		}
+	}
+	if recallRow == nil || !strings.HasPrefix(recallRow.Status, "pass") {
+		t.Errorf("召回未达标: %+v", recallRow)
+	}
+	if !strings.Contains(recallRow.Status, "131/131") {
+		t.Errorf("召回明细 = %s, want 131/131（正样本全覆盖）", recallRow.Status)
+	}
+	if fpRow == nil || !strings.HasPrefix(fpRow.Status, "pass") {
+		t.Errorf("误报超限: %+v", fpRow)
+	}
+	if !strings.Contains(fpRow.Status, "5 分钟") {
+		t.Errorf("误报明细 = %s, want 5 分钟", fpRow.Status)
+	}
+}
+
+// 验收③：anchor 负样本（15:09 vs 4b41ba8）→ 目标锚定 pass；空壳构建 → pass。
+func TestAcceptance3Rows(t *testing.T) {
+	anchor := AnchorTarget{UserMsg: anchorMsg15_09, Claim: anchorClaim4b41ba8}
+	rep := &AcceptanceReport{
+		Anchoring: func() *AnchoringResult {
+			a := AnalyzeAnchoring(anchor, DefaultAnchoringParams())
+			return &a
+		}(),
+		Hollow: []HollowBuild{{Hollow: true, BuildCmd: "xcodebuild ... build", BuildAt: mustTs("2026-08-20T10:24:23")}},
+	}
+	rows := acceptanceRows(rep)
+	got := map[string]string{}
+	for _, r := range rows {
+		if r.ID == "验收③" {
+			got[r.Item] = r.Status
+		}
+	}
+	if !strings.HasPrefix(got["空壳构建单样本检出"], "pass") {
+		t.Errorf("空壳构建检出未 pass: %s", got["空壳构建单样本检出"])
+	}
+	if !strings.HasPrefix(got["目标锚定负样本验证"], "pass") {
+		t.Errorf("目标锚定负样本未 pass: %s", got["目标锚定负样本验证"])
+	}
+}
+
+// 验收③：无 anchor 参数 → not_run（不卡验收）。
+func TestAcceptance3AnchorNotRun(t *testing.T) {
+	rep := &AcceptanceReport{}
+	rows := acceptanceRows(rep)
+	for _, r := range rows {
+		if r.ID == "验收③" && r.Item == "目标锚定负样本验证" {
+			if r.Status != "not_run" {
+				t.Errorf("无 anchor 应 not_run: %s", r.Status)
+			}
+			return
+		}
+	}
+	t.Error("验收③ 目标锚定行缺失")
+}
+
+// 验收②：自发/被动比方向性输出。
+func TestAcceptance2Directional(t *testing.T) {
+	rep := &AcceptanceReport{Process: &ProcessReport{Retrieval: RetrievalStats{Spontaneous: 2, Passive: 9, Ratio: 0.222}}}
+	rows := acceptanceRows(rep)
+	for _, r := range rows {
+		if r.ID == "验收②" {
+			if r.Status != "directional" {
+				t.Errorf("验收② 应为 directional: %s", r.Status)
+			}
+			return
+		}
+	}
+	t.Error("验收② 行缺失")
 }
