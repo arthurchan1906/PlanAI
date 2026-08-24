@@ -42,21 +42,30 @@ type ProactiveCandidate struct {
 // 末分支 = 查看跨 agent 分析（read_discussions 例行工具的自然响应）。
 var recordHintRe = regexp.MustCompile(`(?:查看|搜索|查查|查一下|查询|检查)[^。，;；]{0,12}(?:aipm|历史|记录)|aipm[^。，;；]{0,12}记录|历史记录|提交记录|查看[^。，]{0,30}(?:Claude|opencode|分析|讨论|意见|建议)`)
 
-// aipmRetrievalInWindow 统计 [from, to] 内 aipm 工具调用数（mcp_aipm_* 全类：search/trace/
-// get/list/read/other——「工具采用」口径 = 用了 aipm 设施即可，不区分检索/状态读取/例行）。
+// aipmRetrievalInWindow 统计 [from, to] 内 aipm 工具调用数（mcp_aipm_* 全类 + 📡 text 行——
+// 「工具采用」口径 = 用了 aipm 设施即可，不区分检索/状态读取/例行）。
+// 按「工具名@秒」去重：mcp_tool + post_tool 双行 / 📡 text 行 = 同一次调用（P0b 实证）。
 func aipmRetrievalInWindow(all []Record, from, to time.Time) int {
 	if from.IsZero() || to.IsZero() {
 		return 0
 	}
+	seen := map[string]bool{}
 	n := 0
 	for i := range all {
 		r := &all[i]
-		if !strings.HasPrefix(r.Tool.Tool, "mcp_aipm_") {
+		if r.CreatedAt.Before(from) || r.CreatedAt.After(to) {
 			continue
 		}
-		if !r.CreatedAt.Before(from) && !r.CreatedAt.After(to) {
-			n++
+		name := aipmCallName(r)
+		if name == "" {
+			continue
 		}
+		key := aipmCallKey(name, r.CreatedAt)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		n++
 	}
 	return n
 }
@@ -76,25 +85,26 @@ func DetectProactiveTriggers(turns []Turn, deadloops []DeadloopCandidate, p Proa
 			all = append(all, turns[i].Records[j])
 		}
 	}
-	// 1) 死循环时段：aipm 检索数（T5 候选 = build 密集 + 自发检索<2 + 被动≤0；Excluded=near-miss 不算场景）
+	// 1) 死循环时段：「该用未用」判定 = 时段内零自发 aipm 检索（SpontRetr，search/trace 非纠偏窗）。
+	//    例行 read_discussions 不计——「零任意 aipm 调用」口径在 legacy 解析盲区下误报（P0b 实证
+	//    c0ad2534 15h 3 条 📡 text 行 read，2026-08-24 修正为与定义「零自发」一致）。
 	for i := range deadloops {
 		if deadloops[i].Excluded {
 			continue
 		}
 		d := &deadloops[i]
-		n := aipmRetrievalInWindow(all, d.Start, d.End)
-		if n == 0 {
+		if d.SpontRetr == 0 {
 			out = append(out, ProactiveCandidate{
 				SceneAt: d.Start, SceneKind: "deadloop_no_aipm",
 				SceneSnippet: fmt.Sprintf("死循环候选 %s→%s（build=%d 自发检索=%d）", tsClock(d.Start), tsClock(d.End), d.Builds, d.SpontRetr),
 				WindowMin:    p.WindowMin, SelfRetrieval: 0,
-				Note: "该用未用：死循环时段应主动查历史（aipm 检索）但零调用（与 T5 零自发同源：T4 自发检索含 aipm，死循环候选自发<2 时 aipm=0 为必然）",
+				Note: "该用未用：死循环时段零自发 aipm 检索（search/trace；例行 read_discussions 不计）",
 			})
 		} else {
 			out = append(out, ProactiveCandidate{
 				SceneAt: d.Start, SceneKind: "deadloop_used_aipm",
-				SceneSnippet: fmt.Sprintf("死循环候选 %s→%s（aipm 调用=%d）", tsClock(d.Start), tsClock(d.End), n),
-				WindowMin:    p.WindowMin, SelfRetrieval: n,
+				SceneSnippet: fmt.Sprintf("死循环候选 %s→%s（build=%d 自发检索=%d）", tsClock(d.Start), tsClock(d.End), d.Builds, d.SpontRetr),
+				WindowMin:    p.WindowMin, SelfRetrieval: d.SpontRetr,
 			})
 		}
 	}

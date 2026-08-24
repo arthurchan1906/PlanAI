@@ -150,9 +150,9 @@ type SelfRecordCandidate struct {
 var recordCreateRe = regexp.MustCompile(`record_bug|record_commit|create_task|record_decision`)
 
 // isAipmConsult 记录利用检索：get/search/trace/list（状态读取与定向检索均可能命中记录）；
-// read_discussions（例行）不算（T4 边界同源）。
-func isAipmConsult(t ToolRecord) bool {
-	switch t.Tool {
+// read_discussions（例行）不算（T4 边界同源）。📡 text 行经 aipmCallName 同语义识别（P0b 实证）。
+func isAipmConsult(r *Record) bool {
+	switch aipmCallName(r) {
 	case "mcp_aipm_get", "mcp_aipm_search", "mcp_aipm_trace", "mcp_aipm_list":
 		return true
 	}
@@ -261,7 +261,7 @@ func scanRecordUsage(all []Record, idx int, created *Record, workMin int, sleeps
 	var consultAt time.Time
 	for i := idx + 1; i < len(all); i++ {
 		r := &all[i]
-		if isAipmConsult(r.Tool) {
+		if isAipmConsult(r) {
 			consultAt = r.CreatedAt
 			break
 		}

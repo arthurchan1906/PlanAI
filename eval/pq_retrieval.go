@@ -32,12 +32,30 @@ func CountRetrieval(turns []Turn, candidates []FeedbackCandidate) RetrievalStats
 		}
 	}
 	var st RetrievalStats
+	seen := map[string]bool{} // aipm 调用同秒多行去重（mcp_tool+post_tool+📡 text 行）
 	for i := range turns {
 		for j := range turns[i].Records {
 			rec := turns[i].Records[j]
+			name := aipmCallName(&rec)
+			if name != "" {
+				key := aipmCallKey(name, rec.CreatedAt)
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				switch {
+				case name == "mcp_aipm_read":
+					st.Routine++
+				case name == "mcp_aipm_search" || name == "mcp_aipm_trace":
+					if inCorrectionWindow(rec.CreatedAt, windows) {
+						st.Passive++
+					} else {
+						st.Spontaneous++
+					}
+				}
+				continue
+			}
 			switch {
-			case isRoutineRead(rec.Tool):
-				st.Routine++
 			case isHistoryRetrieval(rec.Tool):
 				if inCorrectionWindow(rec.CreatedAt, windows) {
 					st.Passive++
@@ -62,11 +80,6 @@ func isHistoryRetrieval(t ToolRecord) bool {
 		return gitHistoryCmd(t.Command)
 	}
 	return false
-}
-
-// isRoutineRead 例行：read_discussions（不计入检索意识）。
-func isRoutineRead(t ToolRecord) bool {
-	return t.Tool == "mcp_aipm_read"
 }
 
 // gitHistoryCmd git 历史检索命令（git show <旧commit>/log/blame/grep/rev-list）。
