@@ -88,7 +88,7 @@ func DetectProactiveTriggers(turns []Turn, deadloops []DeadloopCandidate, p Proa
 				SceneAt: d.Start, SceneKind: "deadloop_no_aipm",
 				SceneSnippet: fmt.Sprintf("死循环候选 %s→%s（build=%d 自发检索=%d）", tsClock(d.Start), tsClock(d.End), d.Builds, d.SpontRetr),
 				WindowMin:    p.WindowMin, SelfRetrieval: 0,
-				Note: "该用未用：死循环时段应主动查历史（aipm 检索）但零调用",
+				Note: "该用未用：死循环时段应主动查历史（aipm 检索）但零调用（与 T5 零自发同源：T4 自发检索含 aipm，死循环候选自发<2 时 aipm=0 为必然）",
 			})
 		} else {
 			out = append(out, ProactiveCandidate{

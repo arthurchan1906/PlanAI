@@ -515,7 +515,7 @@ P0a2 方向性报告正式文档 = `docs/DIRECTIONAL_REPORT_P0a2.md`（阶段 ×
 | 主动触发·死循环时段该用未用 | `DetectProactiveTriggers`（eval/pq_proactive.go） | c0ad2534 15h/16h 零自发 aipm（对照物：38 条调用全在用户提示后）✓ |
 | 主动触发·用户提示后响应 | 同上 ② | c0ad2534 17:20 提示 → 30 秒内 13 次调用 ✓；01a 全 responded ✓ |
 | 静态可核对 | `DetectStaticCheckMisses`（eval/pq_staticcheck.go） | 01a013f3 10:50-11:14 三次真机构建 + 两崩溃全在 11:15 首次 SDK 核对前 ✓ |
-| 重复验证点 | `DetectRepeatedVerification`（eval/pq_counts.go） | 01a013f3 8/19 17:25 + 8/20 09:05 同 episode（15:33→10:40 无 commit）12 次请求 → 10:16 用户抗议 ✓ |
+| 重复验证点 | `DetectRepeatedVerification`（eval/pq_counts.go） | 01a013f3 8/19 17:25 + 8/20 09:05（跨夜休眠切分为 8/19 轮 9 次 + 8/20 轮 3 次，不再跨天合并）→ 10:16 用户抗议 ✓ |
 | 自建记录利用 | `DetectSelfRecordUsage`（eval/pq_counts.go） | 01a013f3 15:32 record_bug → 17:29 才首次检索（延迟 117 分钟）✓ |
 
 已知局限（如实记录于报告 §3）：L1 时间窗/跨问题域/「查了但查错 API」类不足归 P1 L2；`_type:stop` assistant 文本以 `isAssistantText` 兼容（不改 parse.go，避免影响 M1-M5 归因）。**P0a2 完成，待用户抽查方向性报告后过门禁进入 P0b**（EXECUTION_PLAN §1 阶段门禁）。

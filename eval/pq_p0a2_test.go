@@ -157,17 +157,14 @@ func TestDetectRepeatedVerification(t *testing.T) {
 		{Records: []Record{
 			pqRec("edit", "ShareViewController.swift", "2026-08-19T15:10:00"),
 			pqRec("bash", "git commit -m \"fix: SceneDelegate 转发 URL\"", "2026-08-19T15:33:05"),
+			// 同轮次（无 commit、无跨夜）内两次验证请求 → 候选
 			{Role: "assistant", Content: "现在请 Xcode Run 一次，然后用文件 App → 长按文件 → 共享 → 打开方式 → 资云集再测。", Tool: ToolRecord{Tool: "llm_message"}, CreatedAt: mustTs("2026-08-19T17:25:14")},
-		}},
-		// 同 episode（无 commit）内第二次验证请求 → 候选
-		{Records: []Record{
-			{Role: "assistant", Content: "你直接 Xcode Run 到真机测，注意区分两条链路", Tool: ToolRecord{Tool: "llm_message"}, CreatedAt: mustTs("2026-08-20T09:05:40")},
-			pqRec("edit", "ShareViewController.swift", "2026-08-20T09:10:00"),
-			pqRec("bash", "git commit -m \"fix: 移除 Share Extension\"", "2026-08-20T10:41:03"),
+			{Role: "assistant", Content: "请再测一次：Xcode Run 最新代码", Tool: ToolRecord{Tool: "llm_message"}, CreatedAt: mustTs("2026-08-19T17:40:57")},
+			pqRec("bash", "git commit -m \"fix: 移除 Share Extension\"", "2026-08-19T17:50:00"),
 		}},
 		// 新 episode 单次请求 → 不候选
 		{Records: []Record{
-			{Role: "assistant", Content: "已动手完成改造，等你真机验证。", Tool: ToolRecord{Tool: "llm_message"}, CreatedAt: mustTs("2026-08-20T10:52:18")},
+			{Role: "assistant", Content: "已动手完成改造，等你真机验证。", Tool: ToolRecord{Tool: "llm_message"}, CreatedAt: mustTs("2026-08-19T18:00:00")},
 		}},
 	}
 	cands := DetectRepeatedVerification(turns, DefaultRepeatedVerificationParams())
@@ -176,10 +173,40 @@ func TestDetectRepeatedVerification(t *testing.T) {
 	}
 	c := cands[0]
 	if c.Count != 2 {
-		t.Errorf("count = %d, want 2（17:25 + 09:05 同 episode 两次真机验证请求）", c.Count)
+		t.Errorf("count = %d, want 2（17:25 + 17:40 同轮次两次真机验证请求）", c.Count)
 	}
 	if c.EpisodeStart.Format("15:04") != "17:25" {
 		t.Errorf("episode_start = %s, want 17:25", c.EpisodeStart.Format("15:04"))
+	}
+}
+
+func TestDetectRepeatedVerificationSleepSplit(t *testing.T) {
+	// 跨夜两自然轮次各自重复（Claude challenge 1）：8/19 晚 2 次 + 8/20 上午 2 次 → 2 候选，
+	// 不做跨天合并（合并会把「12 次」跨天失真）
+	turns := []Turn{
+		pqTurn("u0", "问题：资云集打开方式不跳转", "2026-08-19T15:00:00"),
+		{Records: []Record{
+			pqRec("bash", "git commit -m \"fix: SceneDelegate 转发 URL\"", "2026-08-19T15:33:05"),
+			{Role: "assistant", Content: "现在请 Xcode Run 一次，然后打开方式 → 资云集再测。", Tool: ToolRecord{Tool: "llm_message"}, CreatedAt: mustTs("2026-08-19T17:25:14")},
+			{Role: "assistant", Content: "请再测一次：Xcode Run 最新代码", Tool: ToolRecord{Tool: "llm_message"}, CreatedAt: mustTs("2026-08-19T17:40:57")},
+			// 跨夜休眠：17:40 → 次日 09:05（gap ≥6h 且跨日）
+			{Role: "assistant", Content: "你直接 Xcode Run 到真机测，注意区分两条链路", Tool: ToolRecord{Tool: "llm_message"}, CreatedAt: mustTs("2026-08-20T09:05:40")},
+			{Role: "assistant", Content: "请你真机验证 1. 彻底划掉资云集", Tool: ToolRecord{Tool: "llm_message"}, CreatedAt: mustTs("2026-08-20T09:38:34")},
+		}},
+	}
+	cands := DetectRepeatedVerification(turns, DefaultRepeatedVerificationParams())
+	if len(cands) != 2 {
+		t.Fatalf("重复验证点候选 = %d, want 2（跨夜切分两轮各 2 次）", len(cands))
+	}
+	got := map[string]int{}
+	for _, c := range cands {
+		got[c.EpisodeStart.Format("2006-01-02")] = c.Count
+	}
+	if got["2026-08-19"] != 2 {
+		t.Errorf("8/19 轮次请求 = %d, want 2", got["2026-08-19"])
+	}
+	if got["2026-08-20"] != 2 {
+		t.Errorf("8/20 轮次请求 = %d, want 2", got["2026-08-20"])
 	}
 }
 
@@ -232,5 +259,36 @@ func TestDetectSelfRecordUsageConsultedImmediately(t *testing.T) {
 	cands := DetectSelfRecordUsage(turns, DefaultSelfRecordParams())
 	if len(cands) != 0 {
 		t.Fatalf("记录后立即检索不应出候选, got %d", len(cands))
+	}
+}
+
+func TestDetectSelfRecordUsageSleepDeduct(t *testing.T) {
+	// Claude challenge 2：8/18 17:54 create_task → 8/19 09:07 检索，912min 含 14h 跨夜休眠；
+	// DelayMin 应扣休眠 ≈ 工作延迟（小时级），不得报 912 误导
+	turns := []Turn{
+		pqTurn("u0", "调查", "2026-08-18T17:00:00"),
+		{Records: []Record{
+			pqRec("mcp_aipm_other", "aipm_create_task", "2026-08-18T17:54:40"),
+			pqRec("edit", "ShareViewController.swift", "2026-08-18T17:55:00"),
+			pqRec("bash", "xcodebuild build", "2026-08-18T17:56:00"),
+			pqRec("bash", "grep -n \"shareInbox\" ContentView.swift", "2026-08-18T17:57:00"),
+			pqRec("edit", "ContentView.swift", "2026-08-18T17:58:00"),
+			pqRec("bash", "xcodebuild build", "2026-08-18T17:59:00"),
+			// 跨夜休眠（17:59 → 次日 08:00+）
+			pqRec("bash", "git status --short", "2026-08-19T08:30:00"),
+			pqRec("mcp_aipm_search", "aipm_search_discussions", "2026-08-19T09:07:00"),
+		}},
+	}
+	cands := DetectSelfRecordUsage(turns, DefaultSelfRecordParams())
+	if len(cands) != 1 {
+		t.Fatalf("自建记录利用候选 = %d, want 1", len(cands))
+	}
+	c := cands[0]
+	// 总跨度 912min，休眠 ≈ 8/18 17:59→8/19 08:30（12.5h=750min）→ 工作延迟 ≈ 162min
+	if c.DelayMin >= 900 {
+		t.Errorf("delay_min = %d, want 扣休眠后 < 900（不得含跨夜休眠夸大）", c.DelayMin)
+	}
+	if c.DelayMin <= 0 {
+		t.Errorf("delay_min = %d, want >0（8/19 08:30 开工后 09:07 才检索，仍有工作延迟）", c.DelayMin)
 	}
 }

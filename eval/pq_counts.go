@@ -5,14 +5,20 @@ package eval
 // 知识沉淀时机/复盘存在性）P1。P3 改进绑定前后对比（先测基线再改进），P0a2 只出方向性候选。
 //
 // 重复验证点：同一验证点（同一测试/同一真机验证请求）重复 N 次。实证负样本 = 01a013f3
-// 8/20 10:16「我已经说了资云集始终无法触发 为什么你要一而再再而三的测试？」——同 episode
-// （无 fix commit 间隔）内 agent 8/19 17:25「请 Xcode Run…再测」+ 8/20 09:05「你直接 Xcode
-// Run 到真机测」两次真机验证请求。P3 改进：测试记录结构化（记录后 analyze 可先喊停）。
+// 8/20 10:16「我已经说了资云集始终无法触发 为什么你要一而再再而三的测试？」——agent 8/19
+// 17:25「请 Xcode Run…再测」+ 8/20 09:05「你直接 Xcode Run 到真机测」在各自自然轮次内
+// 重复多次。P3 改进：测试记录结构化（记录后 analyze 可先喊停）。
+// 口径（Claude P0a2 审核 challenge 1，2026-08-24）：episode 边界 = fix commit **或跨夜休眠**
+// （相邻事件 gap ≥ SleepGapHours 且跨日，T1 同源口径）——8/19 晚与 8/20 上午是两个自然验证
+// 轮次，合并计算会把「12 次」跨天失真（实测切分 = 8/19 9 次 + 8/20 3 次）。
 //
 // 自建记录利用：自己/aipm 已有记录（bug/commit/task）在后续调试中是否被访问利用。实证：
 // 01a013f3 8/19 15:32 record_bug（bug-20260819-153222-dd3d52）后 16:48-17:29 继续调试
 // 17:29 才首次检索（search_discussions）；「15:32 的 bug 记录被无视 2 天」（SPEC §2.1）。
 // P3 改进：代码↔任务索引。
+// 口径（Claude P0a2 审核 challenge 2，2026-08-24）：DelayMin = 扣休眠后的工作延迟——8/18
+// 17:54 create_task → 8/19 09:07 检索的 912min 含 14h 跨夜休眠，扣后 ≈ 工作延迟（小时级），
+// 避免「延迟 912min 未利用」夸大。休眠段 = 相邻记录 gap ≥ SleepGapHours 且跨日（T1 同源）。
 
 import (
 	"fmt"
@@ -76,7 +82,7 @@ func DetectRepeatedVerification(turns []Turn, p RepeatedVerificationParams) []Re
 		}
 	}
 	var out []RepeatedVerificationCandidate
-	var epStart, epEnd time.Time
+	var epStart, epEnd, prevTs time.Time
 	var reqs []time.Time
 	flush := func(end time.Time) {
 		if len(reqs) >= p.MinRequests {
@@ -86,7 +92,7 @@ func DetectRepeatedVerification(turns []Turn, p RepeatedVerificationParams) []Re
 			}
 			out = append(out, RepeatedVerificationCandidate{
 				EpisodeStart: epStart, EpisodeEnd: end, Requests: times, Count: len(reqs),
-				Note: fmt.Sprintf("同一验证点重复 %d 次（无 fix commit 间隔）；测试记录结构化（P3）可先喊停", len(reqs)),
+				Note: fmt.Sprintf("同一验证点重复 %d 次（无 fix commit/休眠间隔）；测试记录结构化（P3）可先喊停", len(reqs)),
 			})
 		}
 		reqs = nil
@@ -97,8 +103,16 @@ func DetectRepeatedVerification(turns []Turn, p RepeatedVerificationParams) []Re
 			flush(e.ts)
 			epStart = time.Time{}
 			epEnd = time.Time{}
+			prevTs = e.ts
 			continue
 		}
+		// 跨夜休眠（T1 同源口径：相邻事件 gap ≥ SleepGapHours 且跨日）= 新自然验证轮次
+		if !prevTs.IsZero() && e.ts.Sub(prevTs) >= SleepGapHours && e.ts.Day() != prevTs.Day() {
+			flush(e.ts)
+			epStart = time.Time{}
+			epEnd = time.Time{}
+		}
+		prevTs = e.ts
 		if epStart.IsZero() {
 			epStart = e.ts
 		}
@@ -187,6 +201,7 @@ func DetectSelfRecordUsage(turns []Turn, p SelfRecordParams) []SelfRecordCandida
 		}
 	}
 	var out []SelfRecordCandidate
+	sleeps := recordSleepRanges(all)
 	var lastCreate time.Time
 	for i := range all {
 		r := &all[i]
@@ -196,7 +211,7 @@ func DetectSelfRecordUsage(turns []Turn, p SelfRecordParams) []SelfRecordCandida
 				continue
 			}
 			lastCreate = r.CreatedAt
-			if c, ok := scanRecordUsage(all, i, r, p.WorkMin); ok {
+			if c, ok := scanRecordUsage(all, i, r, p.WorkMin, sleeps); ok {
 				out = append(out, c)
 			}
 		}
@@ -204,8 +219,44 @@ func DetectSelfRecordUsage(turns []Turn, p SelfRecordParams) []SelfRecordCandida
 	return out
 }
 
+// recordSleepRanges 记录流中的跨夜休眠段（相邻记录 gap ≥ SleepGapHours 且跨日，T1 同源口径）。
+func recordSleepRanges(all []Record) []SleepRange {
+	var out []SleepRange
+	var prev time.Time
+	for i := range all {
+		ts := all[i].CreatedAt
+		if !prev.IsZero() && ts.Sub(prev) >= SleepGapHours && ts.Day() != prev.Day() {
+			out = append(out, SleepRange{Start: prev, End: ts})
+		}
+		prev = ts
+	}
+	return out
+}
+
+// awakeMinutes 扣休眠后的工作分钟数（[from, to] 内总时长减去休眠段重叠）。
+func awakeMinutes(from, to time.Time, sleeps []SleepRange) int {
+	total := int(to.Sub(from).Minutes())
+	for _, s := range sleeps {
+		st, en := s.Start, s.End
+		if st.Before(from) {
+			st = from
+		}
+		if en.After(to) {
+			en = to
+		}
+		if en.After(st) {
+			total -= int(en.Sub(st).Minutes())
+		}
+	}
+	if total < 0 {
+		total = 0
+	}
+	return total
+}
+
 // scanRecordUsage 从创建事件位置向后扫描到首次 aipm 检索（或会话结束）。
-func scanRecordUsage(all []Record, idx int, created *Record, workMin int) (SelfRecordCandidate, bool) {
+// DelayMin 扣休眠（awakeMinutes），避免跨夜休眠夸大「未利用」严重性（Claude challenge 2）。
+func scanRecordUsage(all []Record, idx int, created *Record, workMin int, sleeps []SleepRange) (SelfRecordCandidate, bool) {
 	work := 0
 	var consultAt time.Time
 	for i := idx + 1; i < len(all); i++ {
@@ -225,14 +276,15 @@ func scanRecordUsage(all []Record, idx int, created *Record, workMin int) (SelfR
 		CreatedAt: created.CreatedAt, Kind: created.Tool.Command,
 		BlockStart: created.CreatedAt, WorkRecords: work,
 	}
+	end := all[len(all)-1].CreatedAt
 	if !consultAt.IsZero() {
 		c.FirstConsultAt = consultAt
-		c.DelayMin = int(consultAt.Sub(created.CreatedAt).Minutes())
+		end = consultAt
 		c.Note = "记录创建后该记录在后续调试未被访问利用（工作期间零 aipm 检索），首次检索后才消费"
 	} else {
-		c.DelayMin = int(all[len(all)-1].CreatedAt.Sub(created.CreatedAt).Minutes())
 		c.Note = "记录创建后至会话结束零 aipm 检索（该记录从未被后续调试访问）"
 	}
+	c.DelayMin = awakeMinutes(created.CreatedAt, end, sleeps)
 	return c, true
 }
 
