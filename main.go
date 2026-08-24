@@ -397,6 +397,17 @@ func main() {
 			fmt.Println()
 			out, _ := json.MarshalIndent(rep, "", "  ")
 			fmt.Println(string(out))
+			// 验收 fail 行 → exit 1（与 attribution alert 语义对称）；--no-fail 逃生口
+			fail := false
+			for _, r := range rep.Acceptance {
+				if strings.HasPrefix(r.Status, "fail") {
+					fail = true
+					break
+				}
+			}
+			if fail && !noFail {
+				os.Exit(1)
+			}
 		default:
 			fmt.Fprintf(os.Stderr, "eval: unknown kind %q (supported: attribution/process/acceptance)\n", kind)
 			os.Exit(1)

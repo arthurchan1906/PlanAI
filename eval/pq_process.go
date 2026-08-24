@@ -98,17 +98,19 @@ var modernChannelSince = time.Date(2026, 6, 26, 0, 0, 0, 0, time.Local)
 
 // FrozenDeadloopAnnotations T5 对照物：L1 死循环候选 ↔ c0ad2534 冻结小时表映射。
 // 口径差异显式标注（§9.6 数据反馈驱动修订）。
+// §10.11 归因：frozen build 列为行级 content grep 计数（非命令级语义分类），数值已作废——
+// 对照物只保留判定方向（盲试/纠偏响应/修复期），不再展示作废 build 数值。
 func FrozenDeadloopAnnotations(cands []DeadloopCandidate) []string {
 	type row struct {
 		h, frozen string
 		pos       bool
 	}
 	rows := []row{
-		{"2026-06-23T15", "正样本（盲试 build=20 自发=0）", true},
-		{"2026-06-23T16", "正样本（盲试 build=15 自发=0）", true},
-		{"2026-06-24T09", "正样本（盲试 build=17，09:00-09:11 活跃段）", true},
-		{"2026-06-24T10", "负样本（纠偏响应 build=13 被动=18，应排除）", false},
-		{"2026-06-24T11", "负样本（修复验证期 build=11，应排除）", false},
+		{"2026-06-23T15", "正样本（盲试，判定=零自发+事件边界；frozen build 数值已作废 §10.11）", true},
+		{"2026-06-23T16", "正样本（盲试，判定=零自发+事件边界；frozen build 数值已作废 §10.11）", true},
+		{"2026-06-24T09", "正样本（09:00-09:11 活跃段；frozen build=17 为散文指令误计已作废 §10.11）", true},
+		{"2026-06-24T10", "负样本（纠偏响应，被动=18 应排除；frozen build 数值已作废 §10.11）", false},
+		{"2026-06-24T11", "负样本（修复验证期，commit 锚点应排除；frozen build 数值已作废 §10.11）", false},
 	}
 	var out []string
 	for _, r := range rows {
@@ -162,7 +164,7 @@ func FormatProcessHuman(rep *ProcessReport) string {
 			fmt.Fprintf(&sb, "    证据: %s\n", e)
 		}
 	}
-	fmt.Fprintf(&sb, "  T3 反馈识别: 介入=%d 纠偏=%d 推进=%d 存疑=%d 注入排除=%d\n",
+	fmt.Fprintf(&sb, "  T3 反馈识别: 介入=%d 纠偏=%d 推进=%d 存疑=%d 注入排除=%d（推进 = L1 关键词近似，含许可/疑问语义噪音，P1 L2 精化）\n",
 		rep.Counts.Intervention, rep.Counts.Correction, rep.Counts.Progress,
 		rep.Counts.Suspicious, rep.Counts.Injection)
 	for _, c := range rep.Feedback {
