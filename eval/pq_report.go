@@ -113,7 +113,7 @@ type acceptanceWindow struct {
 }
 
 var accept1Positive = []acceptanceWindow{
-	{parseTs("2026-06-23T15:00:00"), parseTs("2026-06-23T17:00:00")}, // 死循环正样本（build 密集 35 次+零自发）
+	{parseTs("2026-06-23T15:00:00"), parseTs("2026-06-23T17:00:00")}, // 死循环正样本（判定依据 = 零自发+事件边界；build 数值作废，§10.11）
 	{parseTs("2026-06-24T09:00:00"), parseTs("2026-06-24T09:11:00")}, // 活跃盲试段
 }
 
@@ -127,7 +127,8 @@ var accept1Negative = []acceptanceWindow{
 }
 
 // accept1DataDiff 验收①数据差异正样本：09:00-09:11「活跃盲试段」——frozen build=17
-// 与现数据矛盾（09:00-09:11 零构建命令，§10.7 调查结论），此 11 分钟无法由 L1 标记，
+// 为行级 grep 计数（17 条「Build & Run」散文指令，零真构建，§10.11 归因；§10.7 调查），
+// 此 11 分钟无法由 L1 标记，
 // 单独分账不在可复现召回分子（Claude 审核 8/24：09h 被 92% 掩盖）。
 var accept1DataDiff = []acceptanceWindow{
 	{parseTs("2026-06-24T09:00:00"), parseTs("2026-06-24T09:11:00")},
@@ -170,6 +171,10 @@ func acceptanceRows(rep *AcceptanceReport) []AcceptanceRow {
 		detail += fmt.Sprintf("；09:00-09:11 的 %d 分钟因 frozen 数据差异（build=17 不可复现，§10.7）未验证——可复现正样本召回 = %d/%d = %.0f%%",
 			dataDiffTotal, positiveMin, reproducibleTotal, reproducibleRecall*100)
 	}
+	// 阈值口径注记（§10.11 归因）：frozen build 列 = 行级 substring grep 计数，非命令级语义分类；
+	// BuildMin=10/isBuildDense 密集口径是冻结错误数字校准的产物，严格 isRealBuild 下无小时达标。
+	// pass 不代表阈值可信——避免 92% 呈现为「干净 pass」，阈值合理性留 P1 全库扫描校准。
+	detail += "；注：BuildMin=10/密集口径为冻结错误数字校准产物（§10.11），P1 校准"
 	rows = append(rows, AcceptanceRow{
 		ID: "验收①", Item: "死循环召回",
 		Status: statusOf(recallOK, detail),
