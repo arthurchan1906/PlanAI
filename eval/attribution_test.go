@@ -37,22 +37,28 @@ func fixtureDB(t *testing.T) *sql.DB {
 
 func fixtureLog(t *testing.T) string {
 	t.Helper()
+	// 相对日期基准（bug-20260824-101846，Claude 8/24 建议修复）：原硬编码 8/14
+	// 滑出 M4 近 7 天窗口后 fixture 全部失效。基准 = 2 天前（保证窗口内）。
+	base := time.Now().AddDate(0, 0, -2)
+	ts := func(hh, mm int) string {
+		return time.Date(base.Year(), base.Month(), base.Day(), hh, mm, 0, 0, time.Local).Format("2006-01-02 15:04:05")
+	}
 	lines := []string{
-		"[2026-08-14 10:00:00] [INJECT] inject agent=codex-cli session=sess-A req=r100-1 source=guidelines_only",
-		"[2026-08-14 10:00:00] [INJECT] agent=codex-cli session=sess-A req=r100-1 hash=abc12345 goals=1 warnings=1 actions=0 file_total=2 guidelines=1 guide_del=0 chars=412",
-		"[2026-08-14 11:00:00] [INJECT] agent=codex-cli session=sess-B req=r100-2 hash=def67890 goals=0 warnings=0 actions=0 file_total=1 guidelines=0 guide_del=0 chars=180",
-		"[2026-08-14 12:00:00] [INJECT] agent=codex-cli session=sess-C req=r100-3 hash=abc12346 goals=0 warnings=0 actions=0 file_total=1 guidelines=0 guide_del=0 chars=120",
-		"[2026-08-14 12:30:00] [INJECT] agent=codex-cli session=sess-F req=r100-7 hash=abc12347 goals=0 warnings=0 actions=0 file_total=0 guidelines=1 guide_del=0 chars=90",
-		"[2026-08-14 13:00:00] [INJECT] agent=codex-cli session=sess-G req=r100-8 hash=abc12348 goals=0 warnings=0 actions=0 file_total=1 guidelines=0 guide_del=0 chars=100",
-		"[2026-08-14 10:30:30] [INJECT] inject agent=codex-cli session=sess-D req=r100-4 source=guidelines_only",
-		"[2026-08-14 10:30:00] [INJECT] skip agent=codex-cli session=sess-D req=r100-4 reason=same_content hash=abc12345",
-		"[2026-08-14 10:31:00] [INJECT] skip agent=codex-cli session=sess-E req=r100-5 reason=no_summary_data",
-		"[2026-08-14 10:32:00] [INJECT] suppressed=2 reason=char_limit cap=800 agent=codex-cli session=sess-C req=r100-6 segments=file_cut:1 warn:1 act:0 goals:0 guide:0",
-		"[2026-08-14 10:33:00] [INJECT] inject_log write_err=SQLITE_BUSY",
+		"[" + ts(10, 0) + "] [INJECT] inject agent=codex-cli session=sess-A req=r100-1 source=guidelines_only",
+		"[" + ts(10, 0) + "] [INJECT] agent=codex-cli session=sess-A req=r100-1 hash=abc12345 goals=1 warnings=1 actions=0 file_total=2 guidelines=1 guide_del=0 chars=412",
+		"[" + ts(11, 0) + "] [INJECT] agent=codex-cli session=sess-B req=r100-2 hash=def67890 goals=0 warnings=0 actions=0 file_total=1 guidelines=0 guide_del=0 chars=180",
+		"[" + ts(12, 0) + "] [INJECT] agent=codex-cli session=sess-C req=r100-3 hash=abc12346 goals=0 warnings=0 actions=0 file_total=1 guidelines=0 guide_del=0 chars=120",
+		"[" + ts(12, 30) + "] [INJECT] agent=codex-cli session=sess-F req=r100-7 hash=abc12347 goals=0 warnings=0 actions=0 file_total=0 guidelines=1 guide_del=0 chars=90",
+		"[" + ts(13, 0) + "] [INJECT] agent=codex-cli session=sess-G req=r100-8 hash=abc12348 goals=0 warnings=0 actions=0 file_total=1 guidelines=0 guide_del=0 chars=100",
+		"[" + ts(10, 30) + "] [INJECT] inject agent=codex-cli session=sess-D req=r100-4 source=guidelines_only",
+		"[" + ts(10, 30) + "] [INJECT] skip agent=codex-cli session=sess-D req=r100-4 reason=same_content hash=abc12345",
+		"[" + ts(10, 31) + "] [INJECT] skip agent=codex-cli session=sess-E req=r100-5 reason=no_summary_data",
+		"[" + ts(10, 32) + "] [INJECT] suppressed=2 reason=char_limit cap=800 agent=codex-cli session=sess-C req=r100-6 segments=file_cut:1 warn:1 act:0 goals:0 guide:0",
+		"[" + ts(10, 33) + "] [INJECT] inject_log write_err=SQLITE_BUSY",
 	}
 	// 测试进程写临时库的失败噪音（os.TempDir() 特征）不计入生产 WriteErr
 	tempDB := filepath.Join(os.TempDir(), "TestInjectSameContentStillInjectsBlockX", "001", "data", "pmai.db")
-	lines = append(lines, fmt.Sprintf("[2026-08-14 10:33:30] [INJECT] inject_log write_err=PMAI database not found: %s — run aipmc init first", tempDB))
+	lines = append(lines, fmt.Sprintf("["+ts(10, 33)+"] [INJECT] inject_log write_err=PMAI database not found: %s — run aipmc init first", tempDB))
 	p := filepath.Join(t.TempDir(), "aipmc.log")
 	var data string
 	for _, l := range lines {
@@ -67,35 +73,40 @@ func fixtureLog(t *testing.T) string {
 // T1/T2/T4/T5/T7：综合 fixture 覆盖 M1-M5 与 8/18 修订写策略。
 func TestBuildAttributionFixture(t *testing.T) {
 	d := fixtureDB(t)
+	// 相对日期基准（与 fixtureLog 一致：2 天前，保证近 7 天窗口内）
+	base := time.Now().AddDate(0, 0, -2)
+	ts := func(hh, mm int) string {
+		return time.Date(base.Year(), base.Month(), base.Day(), hh, mm, 0, 0, time.Local).Format("2006-01-02T15:04:05")
+	}
 	// inject_log（8/18 修订：same_content/no_summary 不写表；char_limit 写表 suppressed=1）
-	mustExec(t, d, `INSERT INTO inject_log VALUES ('inj-1','codex-cli','sess-A','r100-1','2026-08-14T10:00:00','abc12345','','{"fileAssoc":["src/proxy.go","src/hook.go"],"warnings":["src/proxy.go 被多 session 修改"],"actionItems":[],"goals":["修 proxy 认证"],"guidelines":true}',412,0)`)
-	mustExec(t, d, `INSERT INTO inject_log VALUES ('inj-2','codex-cli','sess-B','r100-2','2026-08-14T11:00:00','def67890','','{"fileAssoc":["src/api/server.go"],"warnings":[],"actionItems":[],"goals":[],"guidelines":false}',180,0)`)
+	mustExec(t, d, `INSERT INTO inject_log VALUES ('inj-1','codex-cli','sess-A','r100-1','`+ts(10, 0)+`','abc12345','','{"fileAssoc":["src/proxy.go","src/hook.go"],"warnings":["src/proxy.go 被多 session 修改"],"actionItems":[],"goals":["修 proxy 认证"],"guidelines":true}',412,0)`)
+	mustExec(t, d, `INSERT INTO inject_log VALUES ('inj-2','codex-cli','sess-B','r100-2','`+ts(11, 0)+`','def67890','','{"fileAssoc":["src/api/server.go"],"warnings":[],"actionItems":[],"goals":[],"guidelines":false}',180,0)`)
 	// 8/18 修订：char_limit 裁剪请求写表 suppressed=1（原 T7 不写已废弃）
-	mustExec(t, d, `INSERT INTO inject_log VALUES ('inj-3','codex-cli','sess-C','r100-3','2026-08-14T12:00:00','abc12346','','{"fileAssoc":["src/x.go"],"warnings":[],"actionItems":[],"goals":[],"guidelines":false}',120,1)`)
+	mustExec(t, d, `INSERT INTO inject_log VALUES ('inj-3','codex-cli','sess-C','r100-3','`+ts(12, 0)+`','abc12346','','{"fileAssoc":["src/x.go"],"warnings":[],"actionItems":[],"goals":[],"guidelines":false}',120,1)`)
 	// 无文件关联的注入不进 M2 分母（口径：注入含 ≥1 个文件）
-	mustExec(t, d, `INSERT INTO inject_log VALUES ('inj-4','codex-cli','sess-F','r100-7','2026-08-14T12:30:00','abc12347','','{"fileAssoc":[],"warnings":[],"actionItems":[],"goals":[],"guidelines":true}',90,0)`)
+	mustExec(t, d, `INSERT INTO inject_log VALUES ('inj-4','codex-cli','sess-F','r100-7','`+ts(12, 30)+`','abc12347','','{"fileAssoc":[],"warnings":[],"actionItems":[],"goals":[],"guidelines":true}',90,0)`)
 	// M3 unknown 规则：warning 无路径 → unknown
-	mustExec(t, d, `INSERT INTO inject_log VALUES ('inj-5','codex-cli','sess-G','r100-8','2026-08-14T13:00:00','abc12348','','{"fileAssoc":["src/y.go"],"warnings":["注意编码规范"],"actionItems":[],"goals":[],"guidelines":false}',100,0)`)
+	mustExec(t, d, `INSERT INTO inject_log VALUES ('inj-5','codex-cli','sess-G','r100-8','`+ts(13, 0)+`','abc12348','','{"fileAssoc":["src/y.go"],"warnings":["注意编码规范"],"actionItems":[],"goals":[],"guidelines":false}',100,0)`)
 
 	// discussion_log：注入后工具调用
-	mustExec(t, d, `INSERT INTO discussion_log VALUES ('d1','sess-A','assistant','codex-cli','edit proxy.go','2026-08-14T10:01:00','{"file_op":{"type":"edit","rel_path":"src/proxy.go"}}')`)
-	mustExec(t, d, `INSERT INTO discussion_log VALUES ('d2','sess-A','assistant','codex-cli','edit other.go','2026-08-14T10:02:00','{"file_op":{"type":"edit","rel_path":"src/other.go"}}')`)
-	mustExec(t, d, `INSERT INTO discussion_log VALUES ('d3','sess-B','assistant','codex-cli','read server.go','2026-08-14T11:05:00','{"file_op":{"type":"read","rel_path":"src/api/server.go"}}')`)
+	mustExec(t, d, `INSERT INTO discussion_log VALUES ('d1','sess-A','assistant','codex-cli','edit proxy.go','`+ts(10, 1)+`','{"file_op":{"type":"edit","rel_path":"src/proxy.go"}}')`)
+	mustExec(t, d, `INSERT INTO discussion_log VALUES ('d2','sess-A','assistant','codex-cli','edit other.go','`+ts(10, 2)+`','{"file_op":{"type":"edit","rel_path":"src/other.go"}}')`)
+	mustExec(t, d, `INSERT INTO discussion_log VALUES ('d3','sess-B','assistant','codex-cli','read server.go','`+ts(11, 5)+`','{"file_op":{"type":"read","rel_path":"src/api/server.go"}}')`)
 
 	// events（M4）：近 7 天 30 orphan + 5 tentative_link + 1 mcp_error
 	now := time.Now()
 	for i := 0; i < 30; i++ {
-		mustExec(t, d, `INSERT INTO events VALUES (?, 'commit_orphan','commit','c','orphan','2026-08-14T12:00:00',0,0)`, "e-orphan-"+string(rune('a'+i%26))+string(rune('0'+i/26)))
+		mustExec(t, d, `INSERT INTO events VALUES (?, 'commit_orphan','commit','c','orphan','`+ts(12, 0)+`',0,0)`, "e-orphan-"+string(rune('a'+i%26))+string(rune('0'+i/26)))
 	}
 	for i := 0; i < 5; i++ {
-		mustExec(t, d, `INSERT INTO events VALUES (?, 'tentative_link','commit','c','link','2026-08-14T12:00:00',0,0)`, "e-link-"+string(rune('a'+i)))
+		mustExec(t, d, `INSERT INTO events VALUES (?, 'tentative_link','commit','c','link','`+ts(12, 0)+`',0,0)`, "e-link-"+string(rune('a'+i)))
 	}
-	mustExec(t, d, `INSERT INTO events VALUES ('e-mcp','mcp_error','tool','x','err','2026-08-14T12:00:00',0,0)`)
+	mustExec(t, d, `INSERT INTO events VALUES ('e-mcp','mcp_error','tool','x','err','`+ts(12, 0)+`',0,0)`)
 	// 8 天前的 orphan 必须被 M4 时间窗排除（T3）
 	mustExec(t, d, `INSERT INTO events VALUES ('e-old','commit_orphan','commit','c','old','`+now.AddDate(0,0,-8).Format("2006-01-02T15:04:05")+`',0,0)`)
 
 	logFile := fixtureLog(t)
-	since, _ := time.Parse("2006-01-02T15:04:05", "2026-08-14T00:00:00")
+	since := time.Date(base.Year(), base.Month(), base.Day(), 0, 0, 0, 0, time.Local)
 	rep, err := BuildAttribution(d, logFile, since)
 	if err != nil {
 		t.Fatalf("BuildAttribution: %v", err)
