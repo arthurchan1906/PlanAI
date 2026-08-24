@@ -113,6 +113,10 @@ func ParseToolRecord(source, metadata string) ToolRecord {
 	if rec.Tool != "" {
 		return finishParse(rec)
 	}
+	rec = parseMcpTool(source, metadata, rec)
+	if rec.Tool != "" {
+		return finishParse(rec)
+	}
 	rec.Tool = "unknown"
 	return finishParse(rec)
 }
@@ -226,6 +230,33 @@ func parseCursor(source, metadata string, rec ToolRecord) ToolRecord {
 	rec.HookEventName = cm.HookEventName
 	rec.Tool = "llm_message"
 	rec.Command = cm.Type
+	return rec
+}
+
+// mcpTool 现代 mcp_tool 记录格式（8/24 实测，claude-code 通道真实数据）：
+// {"type":"mcp_tool","tool":"aipm_smart_search","reflection":"..."}。
+type mcpTool struct {
+	Type       string `json:"type"`
+	Tool       string `json:"tool"`
+	Reflection string `json:"reflection"`
+	Cwd        string `json:"cwd,omitempty"`
+	Model      string `json:"model,omitempty"`
+}
+
+// parseMcpTool mcp_tool 分型（G1/G2 执行就绪核查补盲，Claude 审核 8/24）：
+// 真实验收样本（c0ad2534）38 条 mcp 记录全部是此格式，此前全落 unknown →
+// T4 aipm 检索 36 条在管道消失。tool 名（aipm_smart_search 等）经 classifyMcp
+// 归入 mcp_aipm_search/trace/get/list/read/other，与 post_tool 前缀格式同一语义。
+func parseMcpTool(source, metadata string, rec ToolRecord) ToolRecord {
+	var mt mcpTool
+	if err := json.Unmarshal([]byte(metadata), &mt); err != nil || mt.Type != "mcp_tool" || mt.Tool == "" {
+		return rec
+	}
+	rec.Cwd = mt.Cwd
+	rec.Model = mt.Model
+	rec.Tool = classifyMcp(strings.ToLower(mt.Tool))
+	rec.Command = mt.Tool
+	rec.Output = mt.Reflection
 	return rec
 }
 

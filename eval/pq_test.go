@@ -85,6 +85,10 @@ func TestLinkFixCommitPartial(t *testing.T) {
 	d := pqDB(t)
 	mustExec(t, d, `INSERT INTO commits VALUES ('c1','fix: PalV2 跨平台兼容 - header sizeof 对齐 + BLE 大块写分块','','main','d628b7aaa1b2cdc5c6f40027d7edd0463e5fe743','','','draft','passed','pending','[]','2026-06-24T11:48:14','2026-06-24T11:48:14','','')`)
 	mustExec(t, d, `INSERT INTO bugs VALUES ('b1','iOS PalV2 密友跨平台不兼容：header sizeof 差1字节 + BLE 大块写截断导致 detail 解密失败','','major','resolved','','2026-06-24T11:43:37','2026-06-24T11:43:37','','','','','')`)
+	// 平局契约（Claude 审核 8/24）：标题几乎相同的重复 bug（b2 后建）hits 相同 →
+	// 取 created_at 更早的 b1，且证据只显示实际命中的关键词（palv2/header/sizeof/ble，
+	// 不含 fix/跨平台兼容——「跨平台不兼容」不含子串「跨平台兼容」）。
+	mustExec(t, d, `INSERT INTO bugs VALUES ('b2','iOS PalV2 密友跨平台不兼容：header sizeof 差1字节 + BLE 大块写截断','','major','open','','2026-06-24T11:44:11','2026-06-24T11:44:11','','','','','')`)
 
 	cl, err := LinkFixCommitByHash(d, "d628b7a")
 	if err != nil {
@@ -101,6 +105,12 @@ func TestLinkFixCommitPartial(t *testing.T) {
 	}
 	if cl.CreatedAt.Format("2006-01-02T15:04:05") != "2026-06-24T11:48:14" {
 		t.Errorf("created_at = %s, want 2026-06-24T11:48:14", cl.CreatedAt)
+	}
+	if len(cl.Evidence) != 1 || !strings.Contains(cl.Evidence[0], "palv2/header/sizeof/ble") {
+		t.Errorf("evidence = %v, want 命中关键词 palv2/header/sizeof/ble（而非前 N 个关键词）", cl.Evidence)
+	}
+	if strings.Contains(strings.Join(cl.Evidence, " "), "fix/") || strings.Contains(strings.Join(cl.Evidence, " "), "跨平台兼容") {
+		t.Errorf("evidence 含未命中关键词: %v", cl.Evidence)
 	}
 }
 
@@ -155,6 +165,9 @@ func TestRecognizeFeedbackTwoLevel(t *testing.T) {
 		pqTurn("d3", "<task-notification> sync", "2026-06-23T14:02:00"),          // ④ 排除
 		pqTurn("d4", "go on", "2026-06-23T14:03:00"),                             // ⑤ 介入非纠偏
 		pqTurn("d5", "继续", "2026-06-23T14:04:00"),                                // 推进
+		{UserMsg: "", Start: mustTs("2026-06-23T14:05:00"), End: mustTs("2026-06-23T14:05:00"), Records: []Record{
+			pqRec("bash", "go build", "2026-06-23T14:05:00"),
+		}}, // 孤立回合（无 user 前置）不污染介入计数（Claude 审核 8/24）
 	}
 	_, counts := RecognizeFeedback(turns, false)
 	if counts.Correction != 1 {
@@ -180,6 +193,10 @@ func TestGitHistoryCmd(t *testing.T) {
 		"git grep FIXME":          true,
 		"git show d628b7a --stat": true,
 		"git show HEAD:src/a.go":  false, // 当前态
+		"git show HEAD":           false, // 当前 HEAD commit
+		"git show HEAD~1 --stat":  true,  // 旧 commit（Claude 审核 8/24：原实现误排除）
+		"git show HEAD^:x.go":     true,  // 父 commit
+		"git show HEAD@{1}":       true,  // reflog 旧引用
 		"git status":              false,
 		"git diff":                false,
 	}
@@ -251,6 +268,17 @@ func TestFindDeadloops(t *testing.T) {
 	cands := FindDeadloops(turns, nil, nil, commitTs, DefaultDeadloopParams())
 	if len(cands) != 3 {
 		t.Fatalf("死循环候选 = %d, want 3（15h/16h 候选 + 11h near-miss）", len(cands))
+	}
+	// 正样本必须 Excluded=false（Claude 审核 8/24：原测试只断言 excluded=1，
+	// 实测 15h/16h 曾被排除规则命中（near-miss）而测试未守住）
+	byHour := map[string]bool{}
+	for _, c := range cands {
+		byHour[c.Start.Format("2006-01-02T15")] = c.Excluded
+	}
+	for _, h := range []string{"2026-06-23T15", "2026-06-23T16"} {
+		if byHour[h] {
+			t.Errorf("%s 正样本 Excluded=true（应 false，盲试正样本应命中候选）", h)
+		}
 	}
 	var excluded int
 	for _, c := range cands {

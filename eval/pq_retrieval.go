@@ -79,9 +79,28 @@ func gitHistoryCmd(cmd string) bool {
 		}
 	}
 	if strings.Contains(lower, "git show") {
-		return !strings.Contains(lower, "git show head")
+		return !gitShowCurrentState(lower)
 	}
 	return false
+}
+
+// gitShowCurrentState git show HEAD 当前态判定（Claude 审核 8/24）：
+// HEAD / HEAD:path 为当前态（不计历史检索）；HEAD~1 / HEAD^ / HEAD@{n}
+// 是旧 commit 引用，应算历史检索——原实现 substring「git show head」把
+// HEAD~1/HEAD^ 也误排除（HEAD~1 含前缀 "head"）。
+func gitShowCurrentState(lower string) bool {
+	i := strings.Index(lower, "git show")
+	ref := strings.TrimSpace(lower[i+len("git show"):])
+	if sp := strings.IndexAny(ref, " \t\n"); sp >= 0 {
+		ref = ref[:sp]
+	}
+	ref = strings.ToLower(ref)
+	if !strings.HasPrefix(ref, "head") {
+		return false // 非 HEAD 引用（git show <hash>）= 历史 commit
+	}
+	rest := ref[len("head"):]
+	// 当前态：HEAD（空引用）或 HEAD:path；含 ~ ^ @ 的祖先引用 = 历史
+	return rest == "" || strings.HasPrefix(rest, ":") || !strings.ContainsAny(rest, "~^@")
 }
 
 func inCorrectionWindow(ts time.Time, windows []time.Time) bool {

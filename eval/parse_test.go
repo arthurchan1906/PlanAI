@@ -207,10 +207,44 @@ func TestParseAllKnownFormats(t *testing.T) {
 		{"gemini-cli", `{"_type":"after_tool","hook_event_name":"AfterTool","tool_name":"run_bash","tool_input":{"command":"ls"}}`},
 		{"cursor", `{"_type":"after_agent_thought","conversation_id":"c1"}`},
 		{"opencode", `{"_raw":{"properties":{"info":{"agent":"build","path":{"cwd":"/"}}}}}`},
+		{"claude-code", `{"type":"mcp_tool","tool":"aipm_smart_search","reflection":"未找到匹配结果"}`},
 	}
 	for _, s := range samples {
 		if r := ParseToolRecord(s.source, s.md); r.Tool == "unknown" {
 			t.Errorf("%s parse failed: %q", s.source, s.md)
 		}
+	}
+}
+
+// TestParseMcpTool 真实 mcp_tool 格式分型（Claude 审核 8/24：测试数据格式与真实验收
+// 样本脱节——c0ad2534 38 条 mcp 记录全部是 {"type":"mcp_tool","tool":...}，此前全落 unknown）。
+func TestParseMcpTool(t *testing.T) {
+	cases := []struct{ tool, want string }{
+		{"aipm_smart_search", "mcp_aipm_search"},
+		{"aipm_search_context", "mcp_aipm_search"},
+		{"aipm_search_discussions", "mcp_aipm_search"},
+		{"aipm_trace_context", "mcp_aipm_trace"},
+		{"aipm_get_task", "mcp_aipm_get"},
+		{"aipm_list_tasks", "mcp_aipm_list"},
+		{"aipm_read_discussions", "mcp_aipm_read"},
+		{"aipm_record_bug", "mcp_aipm_other"},
+	}
+	for _, c := range cases {
+		md := `{"type":"mcp_tool","tool":"` + c.tool + `","reflection":"r"}`
+		r := ParseToolRecord("claude-code", md)
+		if r.Tool != c.want {
+			t.Errorf("tool %q = %q, want %q", c.tool, r.Tool, c.want)
+		}
+		if r.Command != c.tool {
+			t.Errorf("command = %q, want %q", r.Command, c.tool)
+		}
+	}
+	// reflection 进 Output，供阶段 5 降权/提示词消费
+	if r := ParseToolRecord("claude-code", `{"type":"mcp_tool","tool":"aipm_smart_search","reflection":"无结果"}`); r.Output != "无结果" {
+		t.Errorf("output = %q, want 无结果", r.Output)
+	}
+	// 非 mcp_tool type 不误捕
+	if r := ParseToolRecord("claude-code", `{"type":"post_tool","tool":"aipm_smart_search"}`); r.Tool != "unknown" {
+		t.Errorf("post_tool + tool 字段 = %q, want unknown（无 tool_name 的 post_tool 兜底）", r.Tool)
 	}
 }

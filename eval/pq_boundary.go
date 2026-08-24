@@ -134,25 +134,38 @@ func LinkFixCommitByHash(db *sql.DB, hashPrefix string) (*CommitLink, error) {
 		return &cl, nil
 	}
 
-	// 2) 部分：标题关键词 ≥2 命中（关键词 = commit title 中 ≥2 字的词）
+	// 2) 部分：标题关键词 ≥2 命中（关键词 = commit title 中 ≥2 字的词）。
+	// 平局契约（Claude 审核 8/24）：hits 相同时取 created_at 更早的 bug（原报优先，
+	// 后建视为重复），再平局按 id 字典序——created_at/id 均为数据值，数据重建不漂移
+	// （此前取首个 rowid，DB 重建后 114337/114411 平局会漂移）。
 	keys := commitTitleKeywords(cl.Title)
-	rows, err := db.Query(`SELECT id, title, COALESCE(files,'') FROM bugs`)
+	rows, err := db.Query(`SELECT id, title, COALESCE(files,''), created_at FROM bugs`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	type cand struct {
 		id, title, files string
+		createdAt        time.Time
 		hits             int
+		matched          []string
 	}
 	var best *cand
 	for rows.Next() {
 		var c cand
-		if err := rows.Scan(&c.id, &c.title, &c.files); err != nil {
+		var created string
+		if err := rows.Scan(&c.id, &c.title, &c.files, &created); err != nil {
 			return nil, err
 		}
-		c.hits = keywordHits(c.title, keys)
-		if best == nil || c.hits > best.hits {
+		if t, err := time.Parse("2006-01-02T15:04:05", created); err == nil {
+			c.createdAt = t
+		}
+		c.hits, c.matched = keywordHits(c.title, keys)
+		better := best == nil ||
+			c.hits > best.hits ||
+			(c.hits == best.hits && c.createdAt.Before(best.createdAt)) ||
+			(c.hits == best.hits && c.createdAt.Equal(best.createdAt) && c.id < best.id)
+		if better {
 			cc := c
 			best = &cc
 		}
@@ -164,7 +177,7 @@ func LinkFixCommitByHash(db *sql.DB, hashPrefix string) (*CommitLink, error) {
 		cl.BugID, cl.BugTitle = best.id, best.title
 		cl.Fallback = "partial"
 		cl.Evidence = append(cl.Evidence,
-			fmt.Sprintf("标题关键词命中 %d 个（%s）", best.hits, strings.Join(keys[:minInt(best.hits, len(keys))], "/")))
+			fmt.Sprintf("标题关键词命中 %d 个（%s）", best.hits, strings.Join(best.matched, "/")))
 		return &cl, nil
 	}
 
@@ -252,7 +265,9 @@ func filepathBase(p string) string {
 	return p
 }
 
-// commitTitleKeywords 从 commit title 提取 ≥2 字关键词（英文按空白切，中文按 2-gram）。
+// commitTitleKeywords 从 commit title 提取关键词：按空白/连字符/冒号/斜杠/括号切分，
+// 取 ≥2 字的整词（子串匹配命中，非 2-gram——注释与实现一致，Claude 审核 8/24）。
+// 2 字整词保留原文大小写（如 BLE），其余统一小写，去重保序。
 func commitTitleKeywords(title string) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -279,21 +294,15 @@ func commitTitleKeywords(title string) []string {
 	return out
 }
 
-// keywordHits 统计 bug title 命中关键词个数（子串匹配，大小写不敏感）。
-func keywordHits(title string, keys []string) int {
+// keywordHits 统计 bug title 命中关键词（子串匹配，大小写不敏感），返回命中数与
+// 实际命中的关键词（证据文案显示命中项而非前 N 个，Claude 审核 8/24）。
+func keywordHits(title string, keys []string) (int, []string) {
 	lower := strings.ToLower(title)
-	hits := 0
+	var matched []string
 	for _, k := range keys {
 		if strings.Contains(lower, strings.ToLower(k)) {
-			hits++
+			matched = append(matched, k)
 		}
 	}
-	return hits
-}
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
+	return len(matched), matched
 }

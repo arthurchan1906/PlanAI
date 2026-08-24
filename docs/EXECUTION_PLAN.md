@@ -334,7 +334,7 @@ type FiveSignals struct {
 
 **T3 反馈识别**：介入=107，**纠偏=25（冻结 ground truth 精确命中 ✓，T3 独立验收召回=100%）**；存疑=0、注入排除=0（c0ad2534 为 6 月数据，无 019f 注入通道，符合预期）。
 
-**T4 检索三分类**：自发=2（冻结口径 2 条真实自发 ✓）、被动=9、例行=0、比=0.22。⚠️ 与 §4.1 表 0.05（43 被动）差异 = 口径不同（v1.4 定向边界 = git 历史 + aipm search/trace；§4.1 表为 v1.2 宽口径），方向性一致（被动主导），同口径下可比较。
+**T4 检索三分类**：自发=2（冻结口径 2 条真实自发 ✓）、被动=9、例行=0、比=0.22——**此为 mcp_tool 分型补盲前数值（仅 git 检索维度）；补盲后（§10.7 C1）：自发=2/被动=45/例行=1/比 0.04**（36 条 aipm 检索入管道，35 条落纠偏窗口）。⚠️ 与 §4.1 表 0.05（43 被动）差异 = 口径不同（v1.4 定向边界 = git 历史 + aipm search/trace；§4.1 表为 v1.2 宽口径），方向性一致（被动主导），同口径下可比较。
 
 **T5 死循环候选对照物（§4.1 冻结小时表映射）**：
 
@@ -348,7 +348,7 @@ type FiveSignals struct {
 ### 10.3 待办（下次继续点）
 
 1. ~~**T5 排除规则校准**~~ **已完成（2026-08-24，见 §10.5）**——排除规则参数化：edit/根因文本默认不排除（16h/15h 实证）、commit 仍排除（11h 实证）、被动检索>0 即非盲试（17h/10h 实证）。
-2. **09h build 口径复核**：frozen build=17 与现数据 09h 无构建命令矛盾——疑似 ED discussion_log 在 8/19 冻结后被动过（无 updated_at 无法溯源），需人工复核或改用「edit 密集」备选信号（09h 有 27 次 edit，09:00-09:11 活跃盲试段或可用 edit 密集 + 自发<2 检出，未实现）。
+2. ~~**09h build 口径复核**~~ **已完成（2026-08-24，见 §10.7）**——调查证据补齐：09:00-09:11 活跃段**零构建命令**（git show 二进制提取 ×2 + 文件读取 + 09:10:48 根因分析长文 + 09:11:46 纠偏后 8 次定向检索），整小时仅 1 条 objdump、27 次 edit；frozen build=17 **不可复现**（各桶 frozen 数字系统性高于现数据约 2 倍，疑似冻结后数据变更）。现数据语义 = 重分析阶段（非盲试），**edit 密集备选信号不采纳**（会把分析阶段误报为死循环）。
 3. **T6-T9**（P0a1b）：目标锚定负样本验证（15:09 vs 4b41ba8）+ 空壳构建 + 验收报告。
 4. **验收①-③ 跑通**：T9 验收报告需要 T5 校准后重算召回/误报。
 
@@ -386,7 +386,7 @@ Claude 审核 commit `4929bd8` 后指出 3 个规格偏差，均已修复：
 
 **验收①对照（build 可检出小时口径）**：正样本召回 = 2/2（15h/16h），负样本误报 = 0（10h/11h）。09h 为数据差异待复核。
 
-**规格修订待确认（用户/Claude）**：§2.1 排除规则原文「中间无 edit/commit/根因定位信号」被校准为「默认仅 commit 排除 + 被动≤0」，属数据反馈驱动的定向修订（§9.6），参数保留原始规则开关（ExcludeEdit/ExcludeRootCause）。
+**规格修订（2026-08-24 已回写）**：§2.1 排除规则原文「中间无 edit/commit/根因定位信号」按数据反馈（§9.6）校准为「默认仅 commit 排除 + 被动≤0」，已回写 `PROCESS_QUALITY_SPEC.md` §2.1 重复停滞行；参数保留原始规则开关（ExcludeEdit/ExcludeRootCause，默认 false）。
 
 ### 10.6 P0a1b 执行记录（2026-08-24，T6-T9 落地）
 
@@ -418,3 +418,20 @@ Claude 审核 commit `4929bd8` 后指出 3 个规格偏差，均已修复：
 - 顺手修复：`aipmc eval process/acceptance` 位置参数 kind 未解析（usage 与实际不符）——已补位置参数解析（与 `--kind` 等价）
 
 **遗留待确认**：① T8 对准近似 L1 英文-中文映射表（Share→分享等）为最小领域词表，P1 接入 L2 精确判定；② 验收① 09h 数据差异（frozen build=17 不可复现）维持待复核；③ T6 覆盖率 0.83 的分母口径（声称对象词 vs 规格文字「用户场景词」）已在代码注释与匹配表如实标注。
+
+### 10.7 Claude 第三轮 challenge 修复（2026-08-24，disc-20260824-115651-e652da）
+
+Claude 深度审核 commit `4929bd8`（数据级实证：真实库逐命令核对 + ParseToolRecord 格式追踪），4 个实质挑战 + 9 个中小问题。本轮修复：
+
+| # | 挑战/问题 | 修复 |
+|---|---|---|
+| C1 | **G1/G2 在验收样本上零覆盖**——真实 mcp 记录是 `{"type":"mcp_tool","tool":"aipm_smart_search"}` 格式，`ParseToolRecord` 无 mcp_tool 分型全落 unknown，T4 只统计了 git 检索（aipm 36 条在管道消失） | ✅ `parse.go` 补 `parseMcpTool`（type=mcp_tool → `classifyMcp` 归 mcp_aipm_search/trace/get/list/read/other）。**T4 重算：自发=2/被动=45/例行=1/比 0.04**（原 2/9——被动从 9 增至 45，36 条 aipm 检索入管道，其中 35 条落在纠偏窗口 = 被动）。方向性不变（被动主导） |
+| C2 | T5「build 密集」口径漂移——objdump/nm 反汇编、build-ios 路径操作被算进 build 密集 | 第 3 轮已参数化校准（§10.5）；本轮规格回写完成（`PROCESS_QUALITY_SPEC.md` §2.1） |
+| C3 | frozen 表矛盾归因不一致——09h 没调查就归因 frozen 表错 | ✅ 调查证据补齐：09:00-09:11 零构建命令（见 §10.3 待办 2），frozen build=17 不可复现（各桶系统性偏高约 2 倍）；现数据语义 = 重分析阶段，edit 密集备选信号不采纳 |
+| C4 | T2 Evidence 文案误导（显示前 N 个关键词）+ 平局无契约 | ✅ `keywordHits` 返回实际命中关键词（证据 = `palv2/header/sizeof/ble`，不再含 fix/跨平台兼容）；平局契约 = created_at 更早者优先（原报优先，数据值不随重建漂移），仍平局按 id 字典序 |
+| 10 | 孤立回合（无 user 前置）`classifyUserText("")` → ⑤ → 介入计数污染 | ✅ `RecognizeFeedback` 跳过空 UserMsg 回合 |
+| 11 | `git show HEAD~1`/`HEAD^` 被 `contains("git show head")` 子串误排除 | ✅ `gitShowCurrentState`：HEAD/HEAD:path = 当前态；HEAD~1/^/@{} = 历史检索 |
+| 12 | `TestFindDeadloops` 只断言 excluded=1，未断言正样本 `Excluded=false` | ✅ 补按小时断言 15h/16h 正样本必须 Excluded=false |
+| 13 | `commitTitleKeywords` 注释声称 2-gram 实现无；`hasCJK` 声称日韩文只覆盖汉字区 | ✅ 注释改为与实际实现一致（整词子串匹配）；`hasCJK` 扩平假名/片假名/谚文区 |
+
+**T4 对照物更新**：自发=2/被动=45（原 9）——此前 T4 对照物在残缺数据上算出（Claude C1），重算后方向性结论不变但数值真实化。`TestParseMcpTool` 用真实验收格式断言（c0ad2534 38 条 mcp_tool 全覆盖）。

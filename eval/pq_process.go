@@ -123,7 +123,7 @@ func FrozenDeadloopAnnotations(cands []DeadloopCandidate) []string {
 		case hit == nil && !r.pos:
 			out = append(out, fmt.Sprintf("T5 对照物: %s %s — L1 未误报 ✓", r.h, r.frozen))
 		case hit == nil:
-			out = append(out, fmt.Sprintf("T5 对照物: %s %s — L1 未出候选（build 密集口径差异，§9.6 记录待校准）", r.h, r.frozen))
+			out = append(out, fmt.Sprintf("T5 对照物: %s %s — L1 未出候选（09h 数据差异已调查：09:00-09:11 零构建命令，frozen build=17 不可复现，§10.7）", r.h, r.frozen))
 		case hit.Excluded:
 			out = append(out, fmt.Sprintf("T5 对照物: %s %s — L1 near-miss（build=%d 自发=%d，%s）；frozen 判盲试 → 排除规则过严待校准", r.h, r.frozen, hit.Builds, hit.SpontRetr, hit.Reason))
 		default:

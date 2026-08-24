@@ -53,6 +53,11 @@ func RecognizeFeedback(turns []Turn, modern bool) ([]FeedbackCandidate, Feedback
 	var counts FeedbackCounts
 	for i := range turns {
 		t := &turns[i]
+		// 孤立回合（无 user 前置的 assistant/tool 记录）UserMsg 为空，
+		// classifyUserText("") 会误判为 ⑤ 手动输入污染介入计数（Claude 审核 8/24）。
+		if strings.TrimSpace(t.UserMsg) == "" {
+			continue
+		}
 		c := classifyUserText(t.UserMsg)
 		// ② 存疑：不参与纠偏关键词匹配，只标记
 		if c.Class == 2 {
@@ -161,9 +166,13 @@ func matchKeywords(content string) keywordMatch {
 }
 
 // hasCJK 是否含 CJK 字符（中文/日文/韩文统一区）。
+// hasCJK 汉字/假名/谚文任一即视为 CJK 文本（名称与行为一致，Claude 审核 8/24：
+// 原实现只覆盖汉字区，日文假名/韩文谚文未覆盖）。
 func hasCJK(s string) bool {
 	for _, r := range s {
-		if r >= 0x4E00 && r <= 0x9FFF || r >= 0x3400 && r <= 0x4DBF || r >= 0xF900 && r <= 0xFAFF {
+		if r >= 0x4E00 && r <= 0x9FFF || r >= 0x3400 && r <= 0x4DBF || r >= 0xF900 && r <= 0xFAFF || // 汉字
+			r >= 0x3040 && r <= 0x30FF || // 平假名/片假名
+			r >= 0xAC00 && r <= 0xD7AF || r >= 0x1100 && r <= 0x11FF { // 谚文音节/字母
 			return true
 		}
 	}
