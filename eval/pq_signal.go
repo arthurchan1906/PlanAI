@@ -53,6 +53,7 @@ type SignalSummary struct {
 type SignalReport struct {
 	Rows    []SignalRow   `json:"rows"`
 	Summary SignalSummary `json:"summary"`
+	Notes   []string      `json:"notes,omitempty"` // 信息量标注（Claude 审核 8/24：单 commit 样本上收敛/对准子信号输出信息量低）
 }
 
 // BuildSignalReport T8 命令级五子信号判定。
@@ -132,6 +133,28 @@ func BuildSignalReport(turns []Turn, feedback []FeedbackCandidate, commits []tim
 		if rep.Rows[i].Aligned {
 			rep.Summary.Aligned++
 		}
+	}
+	// 信息量标注（Claude 审核 8/24）：
+	// ① 收敛在单 fix commit 样本上 = 「反馈均早于修复 commit」的必然（commitAfter 全覆盖），
+	//    除非存在反馈晚于 commit 且仍被判收敛（用户确认词），否则收敛子信号无判别信息。
+	// ② 对准近似 L1 保守（英文响应对象 vs 中文反馈所指无字面共享）→ 全 ✗ 交 L2，
+	//    单 commit 样本上该子信号无输出信息量（P1 L2 精确判定后才有意义）。
+	convergedLate := 0
+	for i := range rep.Rows {
+		if rep.Rows[i].Converged {
+			for _, c := range commits {
+				if rep.Rows[i].FeedbackTs.After(c) {
+					convergedLate++
+					break
+				}
+			}
+		}
+	}
+	if rep.Summary.Converged > 0 && convergedLate == 0 && len(commits) > 0 {
+		rep.Notes = append(rep.Notes, fmt.Sprintf("收敛=%d/%d 全部由「反馈早于修复 commit」必然成立（单 commit 样本），无用户确认词增量证据——收敛子信号信息量低", rep.Summary.Converged, rep.Summary.Total))
+	}
+	if rep.Summary.Total > 0 && rep.Summary.Aligned == 0 {
+		rep.Notes = append(rep.Notes, "对准近似=0：L1 保守（英文响应对象 vs 中文反馈所指无字面共享），全交 P1 L2 精确判定——单 commit 样本上对准子信号无输出信息量")
 	}
 	return rep
 }

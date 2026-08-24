@@ -33,9 +33,21 @@ type AcceptanceReport struct {
 	Anchoring   *AnchoringResult `json:"anchoring,omitempty"`  // T6 结果（anchor 传入时）
 	Hollow      []HollowBuild    `json:"hollow_builds"`        // T7
 	Signals     *SignalReport    `json:"signals,omitempty"`    // T8
+	CompareRetrieval *RetrievalStats `json:"compare_retrieval,omitempty"` // 验收②对照 session（01a013f3）检索统计（实时计算）
 	Acceptance  []AcceptanceRow  `json:"acceptance"`           // 验收①-③ 数据结果表
 	Annotations []string         `json:"annotations,omitempty"`
 	GeneratedAt time.Time        `json:"generated_at"`
+}
+
+// retrievalForSessionIfExists 计算某 session 的 T4 检索三分类（验收②同项目对照实时计算）。
+// session 不存在或出错返回 nil（对照降级为方向性记录，不硬凑）。
+func retrievalForSessionIfExists(db *sql.DB, sessionID string) *RetrievalStats {
+	proc, err := BuildProcessReport(db, sessionID, "")
+	if err != nil {
+		return nil
+	}
+	st := proc.Retrieval
+	return &st
 }
 
 // BuildAcceptanceReport T9 验收报告聚合。
@@ -85,6 +97,9 @@ func BuildAcceptanceReport(db *sql.DB, sessionID, fixHash, hollowSessionID strin
 			rep.Hollow = DetectHollowBuilds(ht, DefaultArtifactParams())
 		}
 	}
+	// 验收②同项目对照（Claude 审核 8/24：48.6 倍此前只是复述规格文字，未实算）。
+	// 对照 session = 01a013f3（T7 空壳样本同 session）；不存在于库中则只记方向性。
+	rep.CompareRetrieval = retrievalForSessionIfExists(db, accept2CompareSession)
 
 	// 验收①-③ 比对
 	rep.Acceptance = acceptanceRows(rep)
@@ -111,6 +126,16 @@ var accept1Negative = []acceptanceWindow{
 	{parseTs("2026-06-24T15:00:00"), parseTs("2026-06-24T16:00:00")}, // 15h 修复后
 }
 
+// accept1DataDiff 验收①数据差异正样本：09:00-09:11「活跃盲试段」——frozen build=17
+// 与现数据矛盾（09:00-09:11 零构建命令，§10.7 调查结论），此 11 分钟无法由 L1 标记，
+// 单独分账不在可复现召回分子（Claude 审核 8/24：09h 被 92% 掩盖）。
+var accept1DataDiff = []acceptanceWindow{
+	{parseTs("2026-06-24T09:00:00"), parseTs("2026-06-24T09:11:00")},
+}
+
+// accept2CompareSession 验收②同项目对照 session（01a013f3，健康样本，规格实证）。
+const accept2CompareSession = "01a013f3-e6ca-7f20-8bde-de0414cabe4c"
+
 // acceptanceRows 验收①-③ 数据结果表。
 func acceptanceRows(rep *AcceptanceReport) []AcceptanceRow {
 	var rows []AcceptanceRow
@@ -118,6 +143,7 @@ func acceptanceRows(rep *AcceptanceReport) []AcceptanceRow {
 	// ── 验收①：死循环时段分离（T5 候选 vs 事件边界）──
 	positiveMin, negativeMin := 0, 0
 	positiveTotal := windowMinutes(accept1Positive)
+	dataDiffTotal := windowMinutes(accept1DataDiff)
 	if rep.Process != nil {
 		for i := range rep.Process.Deadloops {
 			c := &rep.Process.Deadloops[i]
@@ -132,27 +158,53 @@ func acceptanceRows(rep *AcceptanceReport) []AcceptanceRow {
 	if positiveTotal > 0 {
 		recall = float64(positiveMin) / float64(positiveTotal)
 	}
+	// 可复现正样本召回（剔除数据差异窗口）：09h 11 分钟无法由 L1 标记，诚实分账
+	reproducibleTotal := positiveTotal - dataDiffTotal
+	reproducibleRecall := 0.0
+	if reproducibleTotal > 0 {
+		reproducibleRecall = float64(positiveMin) / float64(reproducibleTotal)
+	}
 	recallOK := recall >= 0.8
+	detail := fmt.Sprintf("被标记正样本 %d/%d 分钟（%.0f%% ≥80%%）", positiveMin, positiveTotal, recall*100)
+	if dataDiffTotal > 0 {
+		detail += fmt.Sprintf("；09:00-09:11 的 %d 分钟因 frozen 数据差异（build=17 不可复现，§10.7）未验证——可复现正样本召回 = %d/%d = %.0f%%",
+			dataDiffTotal, positiveMin, reproducibleTotal, reproducibleRecall*100)
+	}
 	rows = append(rows, AcceptanceRow{
 		ID: "验收①", Item: "死循环召回",
-		Status: statusOf(recallOK, fmt.Sprintf("被标记正样本 %d/%d 分钟（%.0f%% ≥80%%）", positiveMin, positiveTotal, recall*100)),
+		Status: statusOf(recallOK, detail),
 	})
 	rows = append(rows, AcceptanceRow{
 		ID: "验收①", Item: "负样本误报",
 		Status: statusOf(negativeMin <= 15, fmt.Sprintf("负样本被标记 %d 分钟（≤15）", negativeMin)),
 	})
 
-	// ── 验收②：方向性检查（自发/被动比）──
+	// ── 验收②：方向性检查（自发/被动比）+ 同项目对照（实时计算，≥5 倍）──
 	if rep.Process != nil {
 		r := rep.Process.Retrieval
 		direction := "方向性记录"
 		if r.Ratio > 0 {
 			direction = fmt.Sprintf("自发/被动 = %d/%d（比 %.2f）", r.Spontaneous, r.Passive, r.Ratio)
 		}
+		compare := "同项目对照未实算（库中无 01a013f3 对照 session）"
+		if rep.CompareRetrieval != nil && rep.CompareRetrieval.Ratio > 0 && r.Ratio > 0 {
+			fold := rep.CompareRetrieval.Ratio / r.Ratio
+			ok := fold >= 5
+			status := "fail | "
+			if ok {
+				status = "pass | "
+			}
+			compare = fmt.Sprintf("同项目对照 01a013f3（自发/被动 = %d/%d = %.2f）vs c0ad2534 = %.0f 倍 ≥5 倍",
+				rep.CompareRetrieval.Spontaneous, rep.CompareRetrieval.Passive, rep.CompareRetrieval.Ratio, fold)
+			rows = append(rows, AcceptanceRow{
+				ID: "验收②", Item: "同项目对照 ≥5 倍",
+				Status: status + compare,
+			})
+		}
 		rows = append(rows, AcceptanceRow{
 			ID: "验收②", Item: "自发/被动比方向性",
 			Status: "directional",
-			Detail: direction + "；同项目对照 c0ad2534 vs 01a013f3 差异 ≥5 倍（规格实证 48.6 倍）",
+			Detail: direction + "；" + compare,
 		})
 	}
 

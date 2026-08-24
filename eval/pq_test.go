@@ -488,15 +488,23 @@ func TestAnchoringNegativeSampleAligned(t *testing.T) {
 	}
 }
 
-// 高频词全命中判定的正/负例：声称对象覆盖用户强调主题（打开 ↔ 打开方式）。
-func TestHighFreqShared(t *testing.T) {
+// 高频词全命中判定的正/负例（Claude 审核 8/24：任一互含 → 全部功能高频词命中 + 专名豁免）：
+// 声称对象必须覆盖每个功能高频词的核心主题（打开 ↔ 打开方式）；产品专名（资云集）豁免。
+func TestHighFreqAllHit(t *testing.T) {
+	// 正例：功能高频词 打开×2 被 打开方式 覆盖；资云集×3 为专名豁免
 	positive := []SceneWord{{Word: "打开", Count: 2}, {Word: "资云集", Count: 3}}
-	if !highFreqShared(positive, []string{"打开方式", "直传", "文件"}) {
-		t.Error("打开 ↔ 打开方式 应共享（声称对象覆盖用户强调主题）")
+	if !highFreqAllHit(positive, []string{"打开方式", "直传", "文件"}) {
+		t.Error("打开 ↔ 打开方式 应共享（功能高频词全命中 + 专名豁免）")
 	}
-	negative := []SceneWord{{Word: "资云集", Count: 3}}
-	if highFreqShared(negative, []string{"直传", "文件"}) {
-		t.Error("资云集 与 直传/文件 无共享，不应判命中")
+	// 负例（严格规则）：两个功能高频词仅一个命中 → 全命中不成立
+	twoFunctional := []SceneWord{{Word: "打开", Count: 2}, {Word: "文件", Count: 2}}
+	if highFreqAllHit(twoFunctional, []string{"打开方式", "直传"}) {
+		t.Error("功能高频词 文件×2 未命中，全命中应 false（原「任一互含」会误判 true）")
+	}
+	// 负例：全部为专名/无功能高频词 → 高频约束不成立（保守交 L2）
+	onlyProper := []SceneWord{{Word: "资云集", Count: 3}}
+	if highFreqAllHit(onlyProper, []string{"直传", "文件"}) {
+		t.Error("无功能高频词（全专名）应 false（保守交 L2）")
 	}
 }
 

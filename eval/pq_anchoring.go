@@ -11,9 +11,16 @@ package eval
 //   - 声称对象 = 首个 commit 标题问题描述部分（破折号前）关键词；「直传文件」按名词核心拆为
 //     直传/文件；实证六词分法 = 第三方/打开方式/直传/文件/不跳转/不导入。
 //   - 覆盖率 = 共享词 ÷ 声称对象词（实证 5/6 = 0.83）。
-//   - 高频词全命中：声称对象覆盖至少一个高频场景词的核心主题（打开 ↔ 打开方式）；
-//     产品专名（资云集）不要求字面出现于声称对象——commit 以功能描述（第三方打开方式直传文件）
-//     指代，若要求专名字面共享则本负样本会误报，与规格「判对准」矛盾。
+//   - 高频词全命中：**每个功能高频词**都必须与至少一个声称词核心主题互含
+//     （打开 ↔ 打开方式）；**产品专名豁免**——资云集为品牌专名（dzsec），commit 以
+//     功能描述（第三方打开方式直传文件）指代，不要求专名字面出现于声称对象
+//     （若要求字面共享则本负样本会误报，与规格「判对准」矛盾——规格 8/20 冻结时
+//     「资云集×3 全命中」断言本身是事实错误，4b41ba8 声称词无资云集，本轮按
+//     功能主题词口径回写规格 §2.1）。专名仍输出在 SceneWords 供人工核对。
+//   - 覆盖率 = 共享声称对象词 ÷ 声称对象词（0.83，5/6）；若按用户场景词分母
+//     则为 0.67（4/6）——两口径均 ≥0.5 结论不变，公式以声称对象词为准
+//     （测「agent 声称的功能点被用户原话支撑的比例」，与规格实证 0.83 一致，
+//     §2.1 本轮回写）。
 
 import (
 	"fmt"
@@ -112,7 +119,17 @@ func AnalyzeAnchoring(target AnchorTarget, p AnchoringParams) AnchoringResult {
 		res.Notes = append(res.Notes, "无场景词可提取（用户原话无重复 CJK 主题词）→ 目标锚定不可判定（模糊指令类排除）")
 		return res
 	}
-	res.HighFreqAll = highFreqShared(highFreq, claimWords)
+	res.HighFreqAll = highFreqAllHit(highFreq, claimWords)
+	// 产品专名豁免记录（资云集 = dzsec 品牌专名）：不参与全命中要求，输出供人工核对
+	var exempt []string
+	for _, hw := range highFreq {
+		if productProperNoun[hw.Word] {
+			exempt = append(exempt, hw.Word)
+		}
+	}
+	if len(exempt) > 0 {
+		res.Notes = append(res.Notes, fmt.Sprintf("产品专名豁免（不参与高频词全命中）：%s", strings.Join(exempt, "/")))
+	}
 	res.Aligned = res.Coverage >= p.CoverageMin && res.HighFreqAll
 	return res
 }
@@ -337,18 +354,35 @@ func claimCore(w string) string {
 	return w
 }
 
-// highFreqShared 高频词与声称对象的共享判定：任一高频词与任一声称词核心互相包含。
-// 实证：打开 ↔ 打开方式（strings.Contains("打开方式", "打开")）→ 覆盖用户强调主题。
-func highFreqShared(highFreq []SceneWord, claimWords []string) bool {
+// productProperNoun 产品专名表（品牌/产品名——声称对象以功能描述指代，不要求字面重复）。
+var productProperNoun = map[string]bool{
+	"资云集": true, // dzsec 产品品牌（ED 密友/网盘）
+}
+
+// highFreqAllHit 高频词全命中：每个功能高频词（非专名）都必须与至少一个声称词核心互含。
+// 实证：打开 ×2 ↔ 打开方式（strings.Contains("打开方式", "打开")）。
+// Claude 审核 8/24：原实现「任一互含」把规则稀释为保 15:09 通过；改为全部功能高频词命中
+// + 产品专名豁免（资云集豁免后 15:09 仍全命中，规则不再为单样本调参）。
+func highFreqAllHit(highFreq []SceneWord, claimWords []string) bool {
+	need := 0
 	for _, hw := range highFreq {
+		if productProperNoun[hw.Word] {
+			continue // 专名豁免
+		}
+		need++
+		hit := false
 		for _, cw := range claimWords {
 			core := claimCore(cw)
 			if strings.Contains(hw.Word, core) || strings.Contains(core, hw.Word) {
-				return true
+				hit = true
+				break
 			}
 		}
+		if !hit {
+			return false
+		}
 	}
-	return false
+	return need > 0 // 无功能高频词（全专名/全豁免）→ 高频约束不成立（交 L2 保守处理）
 }
 
 // FormatAnchoringHuman T6 人类可读输出（匹配表 + 阈值计算）。
