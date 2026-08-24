@@ -284,6 +284,7 @@ func main() {
 		anchorMsg := ""
 		claim := ""
 		hollowSession := ""
+		confirmSessions := ""
 		raw := os.Args[2:]
 		// 位置参数 kind（aipmc eval process / acceptance）：与 --kind 等价（usage 声明形式）
 		if len(raw) > 0 && raw[0] != "--since" && raw[0] != "--kind" && raw[0] != "--log" && !strings.HasPrefix(raw[0], "--") {
@@ -320,6 +321,9 @@ func main() {
 				i++
 			case raw[i] == "--hollow-session" && i+1 < len(raw):
 				hollowSession = raw[i+1]
+				i++
+			case raw[i] == "--confirm-sessions" && i+1 < len(raw):
+				confirmSessions = raw[i+1]
 				i++
 			}
 		}
@@ -424,8 +428,33 @@ func main() {
 			fmt.Println()
 			out, _ := json.MarshalIndent(rep, "", "  ")
 			fmt.Println(string(out))
+		case "p0b":
+			// P0b：对象级加深方向性（019ff89b）+ 候选→人工确认闭环（10 候选时段）
+			// 用法：aipmc eval p0b --db <ed-db> --session <019ff89b session>
+			//   --confirm-sessions <c0ad2534>,<01a013f3>
+			if sessionID == "" {
+				fmt.Fprintf(os.Stderr, "eval p0b: 需要 --session <deepen-session>\n")
+				os.Exit(1)
+			}
+			var cs []string
+			if confirmSessions != "" {
+				for _, s := range strings.Split(confirmSessions, ",") {
+					if s = strings.TrimSpace(s); s != "" {
+						cs = append(cs, s)
+					}
+				}
+			}
+			rep, err := eval.BuildP0bReport(db, sessionID, cs)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "eval p0b: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Print(eval.FormatP0bHuman(rep))
+			fmt.Println()
+			out, _ := json.MarshalIndent(rep, "", "  ")
+			fmt.Println(string(out))
 		default:
-			fmt.Fprintf(os.Stderr, "eval: unknown kind %q (supported: attribution/process/acceptance/p0a2)\n", kind)
+			fmt.Fprintf(os.Stderr, "eval: unknown kind %q (supported: attribution/process/acceptance/p0a2/p0b)\n", kind)
 			os.Exit(1)
 		}
 		return

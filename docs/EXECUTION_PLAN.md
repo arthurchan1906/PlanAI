@@ -519,3 +519,11 @@ P0a2 方向性报告正式文档 = `docs/DIRECTIONAL_REPORT_P0a2.md`（阶段 ×
 | 自建记录利用 | `DetectSelfRecordUsage`（eval/pq_counts.go） | 01a013f3 15:32 record_bug → 17:29 才首次检索（延迟 117 分钟）✓ |
 
 已知局限（如实记录于报告 §3）：L1 时间窗/跨问题域/「查了但查错 API」类不足归 P1 L2；`_type:stop` assistant 文本以 `isAssistantText` 兼容（不改 parse.go，避免影响 M1-M5 归因）。**P0a2 完成，待用户抽查方向性报告后过门禁进入 P0b**（EXECUTION_PLAN §1 阶段门禁）。
+
+### 10.14 P0b 方向性报告交付（2026-08-24，门禁物）
+
+P0b 方向性报告正式文档 = `docs/DIRECTIONAL_REPORT_P0b.md`（⑤ 对象级加深方向性 + ⑥ 候选→人工确认闭环 + 误报率报告 + 三方抽检材料），配套 CLI `aipmc eval p0b`（JSON + 人类可读双输出）可复现。
+
+- **⑤ 对象级「加深」方向性（019ff89b）**：`DetectObjectDeepening`（eval/pq_p0b.go）——领域集中度 56%（EncryptDrive 域）、top1 LocalVaultStore×43、4 对象 3h+ 重复访问 ≥20 次 → **加深✗ 方向性成立**（单点死磕 + 重复调查复合，不承诺精度）。
+- **⑥ 候选→人工确认闭环**：`SelectConfirmWindows` 从 P0a2 候选抽 10 时段（覆盖 5 检测点，每段 ≤10 条原始记录）。codex 自评误报率 **2/10（20%）**：`hint_missed` legacy 格式漏计（14:02 read_discussions 实为 3 秒响应）+ 收尾记录类误报；uncertain 2/10 归 P1 L2。
+- **三方抽检**：3 时段（死循环 15:00 / 重复验证 8/19 轮 / 自建记录 17:54）已标 SpotCheck，待用户/Claude 判定后计算一致率（≥80% 过门禁进 P1）。
