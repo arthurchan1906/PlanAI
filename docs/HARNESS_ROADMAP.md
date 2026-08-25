@@ -145,20 +145,41 @@ agent/session/req」在改动落地前不成立，S4 按此核验。
   `no_summary_data`（语义=无记忆）——三者语义不同，**必须分开报告**，禁止混在一起
 - 混杂因子注记：`same_content` 抑制意味着刚注入过同内容，对照组基线不是「无注入」而是
   「已见过」；本指标是**准实验，不是随机对照**，报告必须带此注记
-- 文件引用判定：复用 hook 的 `file_op` meta（`rel_path`）与 `session/files.go classifyFiles` 逻辑；
-  路径解析依赖 `hook/relpath.go`（**relpath bug 未修前，该指标含噪**，报告标注）
+- 文件引用判定：**多格式兼容解析器**（8/25 修订）——复用 EVAL S1 `ParseToolRecord` 归一化，
+  兼容 ① post_tool 平铺（codex/cursor 主流，顶层 `rel_path`/`file_path` + `tool_name`）
+  ② `file_op` 嵌套旧格式（claude）③ 顶层 `type` 格式；引用 = 工具调用携带的任一文件路径
+  （读/写均计，M2 语义是「模型是否引用注入文件」）。**8/25 口径变更注记**：旧实现只认
+  `file_op` meta（生产仅 107 行 vs post_tool 10,366 行，漏 ~95% 带路径记录），解析器兼容后
+  历史 M2 基线作废，需重录；变更来源 task-20260824-164234 审核链（Claude 审核 + codex 实测）。
 - 输出：注入组/对照组各一个比率 + 差，标注「关联，非因果」
 - unknown 规则：无法解析出文件路径的工具调用不计数
 
 ### M3 警告回避率（对齐 EVALUATION D4/F 层）
 
-- 定义：注入的 warning 指向文件 X 后，agent 是否在 N 轮（默认 5 轮）内**未对 X 发生写操作**
+- 定义：注入的风险提示（**warnings + actionItems**，8/25 D2 修订——生产注入端把路径风险提示
+  放在 actionItems，warnings 恒空，仅读 warnings 分母恒空）指向文件 X 后，agent 是否在**窗口内**
+  未对 X 发生写操作；
+  窗口 = 该次注入 ts 至该 session 下一次注入 ts（8/25 修订：原「N 轮（LIMIT 5 近邻）」会丢
+  第 6+ 条写操作，且 `file_op` 嵌套假设对 post_tool 解析恒失败 → 回避率虚高；全窗口会让更晚的
+  无关写计入「未回避」→ 方向失真；近邻注入窗口保留近邻语义且不丢数据）
 - 分子：回避的 warning 数（warning→文件映射成功且后续无写）
 - 分母：注入的 warning 总数中**能映射到具体文件**的数量
 - 映射失败的处理：记为 `unknown` 单独一列报告，**不进分母**（当前 warning 多为自然语言，
   语义映射需要 LLM，headless 阶段只统计「可映射」子集；可映射子集覆盖率的提升本身是一条
   sub-metric）
-- 写操作判定：`file_op` meta 中 `type ∈ {edit, create, delete, rename, append}`
+- 写操作判定：**多格式兼容**（8/25 修订）——`ParseToolRecord` 归一化工具 ∈
+  {edit, create, delete, rename, append, write, new_file, multi_edit, patch} 且携带文件路径，
+  或 `file_op` meta 中 `type ∈ {edit, create, delete, rename, append}`；`read/bash/mcp` 不计写
+- **8/25 口径变更注记**：写操作识别由 file_op-only 改为解析器兼容，且窗口由 LIMIT 5 近邻改为
+  近邻注入窗口——旧实现算出的 M3 历史数值（8/7 基线、metrics 快照）作废，需重录并在报告中
+  标注口径断层；变更前「回避率虚高」的量化见 8/25 审核（Claude C4）；8/25 D2 再修订：数据源
+  并入 actionItems（真实库实证 warnings 0/274 非空，mapped 从 0 恢复到 214）；8/25 E1 再修订：
+  写判定与警告路径 basename 归一化匹配（原精确匹配让回避率恒 100% 假象）；**语义局限注记**：
+  当前 actionItems 语义是「建 task 跟踪」而非「禁止写」，回避率宜解读为「对告警文件继续操作的比例」；
+  8/25 E1b 再修订：codex 写操作经 Bash 执行 apply_patch/sed -i/重定向，tool_name=Bash 被写过滤器
+  误挡（111 条 apply_patch 全带 file_path）——写判定消费 hook 已打标的 source=bash_heuristic +
+  type∈写集合（read/stage/unverified 不计），并解析 rel_paths 复数；真实库 M3 回避率
+  100% → 99.55%（首个非 100% 数值：注入 HARNESS_ROADMAP.md 后窗口内多文件 apply_patch 命中）
 - 目标：先定基线（首次运行记录值），暂不设阈值
 
 ### M4 立即行动区信噪比（收件箱卫生指标）

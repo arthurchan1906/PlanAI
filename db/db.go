@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"aipmc/u"
 
@@ -159,9 +160,33 @@ func InsertInjectLog(e InjectLogEntry) error {
 		return err
 	}
 	defer d.Close()
-	_, err = d.Exec(`INSERT INTO inject_log (id, agent, session_id, req_id, ts, hash, source, segments_json, chars, suppressed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.ID, e.Agent, e.SessionID, e.ReqID, e.TS, e.Hash, e.Source, e.SegmentsJSON, e.Chars, e.Suppressed)
-	return err
+	return RetryBusy(func() error {
+		_, err := d.Exec(`INSERT INTO inject_log (id, agent, session_id, req_id, ts, hash, source, segments_json, chars, suppressed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			e.ID, e.Agent, e.SessionID, e.ReqID, e.TS, e.Hash, e.Source, e.SegmentsJSON, e.Chars, e.Suppressed)
+		return err
+	})
+}
+
+// RetryBusy 对 SQLITE_BUSY 做 3 次指数退避重试（100/200/400ms）。用途说明（8/25 排查，
+// task-20260818-144508-9f7931）：注入热路径每请求写 inject_log，多进程并发写 WAL 时锁竞争
+// 会产生 write_err（实测 8/18-8/24 共 24 行 database is locked；"261" 是 SQLite 扩展错误码
+// SQLITE_BUSY_RECOVERY(5|1<<8=261)，不是次数——8/17 审计误读）。busy_timeout(15000) 已覆盖
+// 普通锁等待（>15s 的锁重试无效，属于根因范畴）；重试主要针对 BUSY_RECOVERY（busy handler
+// 不处理该错误码，需调用方重试）。写失败保持 fail-open（调用方 log-and-continue）。
+// 与 store.retryOnBusy 同构，统一收敛在此（store 侧委托本函数，避免双份实现）。
+func RetryBusy(fn func() error) error {
+	var err error
+	for i := 0; i < 3; i++ {
+		err = fn()
+		if err == nil {
+			return nil
+		}
+		if !strings.Contains(err.Error(), "SQLITE_BUSY") && !strings.Contains(err.Error(), "database is locked") {
+			return err
+		}
+		time.Sleep(time.Duration(1<<uint(i)) * 100 * time.Millisecond)
+	}
+	return fmt.Errorf("still busy after 3 retries: %w", err)
 }
 
 // ensureSchemaIfNeeded runs the schema DDL only when the database is not

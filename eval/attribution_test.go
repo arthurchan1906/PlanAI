@@ -341,3 +341,207 @@ func TestM2SameContentCtlUsesInjectHistory(t *testing.T) {
 		t.Errorf("Annotations 缺准实验注记: %v", rep.Annotations)
 	}
 }
+
+// M2/M3 多格式兼容（8/18 Claude 审核 + codex 实测，P0）：生产 post_tool（codex/cursor）
+// 无 file_op 键，写操作识别必须兼容 ① post_tool 平铺（rel_path/file_path + tool_name）
+// ② file_op 嵌套旧格式 ③ 顶层 type 格式；read/bash/mcp 不得误判。
+func TestWriteOpPathsMultiFormat(t *testing.T) {
+	cases := []struct {
+		name string
+		md   string
+		want []string
+	}{
+		{"codex post_tool Edit 顶层 rel_path", `{"_type":"post_tool","rel_path":"src/app.go","tool_name":"Edit","tool_input":{}}`, []string{"src/app.go"}},
+		{"codex post_tool Edit 顶层 file_path", `{"_type":"post_tool","file_path":"/repo/a.go","tool_name":"Edit","tool_input":{"file_path":"/repo/a.go"}}`, []string{"/repo/a.go"}},
+		{"cursor post_tool 无 tool_name tool_input.file_path", `{"_type":"post_tool","file_path":"/repo/b.go","hook_event_name":"postToolUse","tool_input":{"file_path":"/repo/b.go"}}`, []string{"/repo/b.go"}},
+		{"cursor Write 工具", `{"_type":"post_tool","file_path":"c.go","hook_event_name":"PostToolUse","tool_name":"Write","tool_input":{"file_path":"c.go"}}`, []string{"c.go"}},
+		{"codex Create 工具", `{"_type":"post_tool","rel_path":"new.go","tool_name":"Create","tool_input":{}}`, []string{"new.go"}},
+		{"file_op 嵌套旧格式", `{"file_op":{"type":"edit","rel_path":"src/old.go"}}`, []string{"src/old.go"}},
+		{"顶层 type 格式", `{"type":"edit","file_path":"d.go"}`, []string{"d.go"}},
+		{"read 工具不算写", `{"_type":"post_tool","rel_path":"r.go","tool_name":"Read","tool_input":{}}`, nil},
+		{"bash 不算写", `{"_type":"post_tool","tool_name":"Bash","tool_input":{"command":"ls"}}`, nil},
+		{"aipm mcp 不算写", `{"_type":"post_tool","tool_name":"mcp__aipm__aipm_list_tasks","tool_input":{}}`, nil},
+	}
+	for _, c := range cases {
+		got := writeOpPaths(c.md)
+		if len(got) != len(c.want) {
+			t.Errorf("%s: writeOpPaths = %v, want %v", c.name, got, c.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Errorf("%s: writeOpPaths[%d] = %q, want %q", c.name, i, got[i], c.want[i])
+			}
+		}
+	}
+}
+
+// codex 写操作经 Bash 执行 apply_patch/sed -i/重定向（hook 已打标 source=bash_heuristic +
+// type=edit 等写类型；read/stage/unverified 不得误判）——8/25 Claude 审核优化：
+// 消费 hook 已有标记而非自写正则。
+func TestWriteOpPathsReadsBashHeuristic(t *testing.T) {
+	cases := []struct {
+		name string
+		md   string
+		want []string
+	}{
+		{"bash_heuristic edit 单文件", `{"_type":"post_tool","tool_name":"Bash","source":"bash_heuristic","type":"edit","file_path":"eval/attribution.go","rel_path":"eval/attribution.go","tool_input":{"command":"apply_patch <<'PATCH'..."}}`, []string{"eval/attribution.go"}},
+		{"bash_heuristic edit 多文件 rel_paths", `{"_type":"post_tool","tool_name":"Bash","source":"bash_heuristic","type":"edit","file_path":"main.go","rel_path":"main.go","rel_paths":["main.go","project/packets.go"],"tool_input":{"command":"apply_patch ..."}}`, []string{"main.go", "project/packets.go"}},
+		{"bash_heuristic read 不算写", `{"_type":"post_tool","tool_name":"Bash","source":"bash_heuristic","type":"read","rel_path":"hook/bashpaths.go","tool_input":{"command":"sed -n '1,10p' hook/bashpaths.go"}}`, nil},
+		{"bash_heuristic stage 不算写", `{"_type":"post_tool","tool_name":"Bash","source":"bash_heuristic","type":"stage","rel_path":"a.go","tool_input":{"command":"git add a.go"}}`, nil},
+		{"bash_heuristic_unverified 排除", `{"_type":"post_tool","tool_name":"Bash","source":"bash_heuristic_unverified","type":"edit","rel_path":"a.go","tool_input":{"command":"apply_patch ..."}}`, nil},
+		{"纯 bash 无打标不算写", `{"_type":"post_tool","tool_name":"Bash","tool_input":{"command":"rg foo"}}`, nil},
+	}
+	for _, c := range cases {
+		got := writeOpPaths(c.md)
+		if len(got) != len(c.want) {
+			t.Errorf("%s: writeOpPaths = %v, want %v", c.name, got, c.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Errorf("%s: writeOpPaths[%d] = %q, want %q", c.name, i, got[i], c.want[i])
+			}
+		}
+	}
+}
+
+// M2 生产 post_tool 格式（codex/cursor 无 file_op 键）必须计入命中（P0 修复，原丢 90%）。
+func TestM2PostToolFormatCounts(t *testing.T) {
+	d := fixtureDB(t)
+	mustExec(t, d, `INSERT INTO inject_log VALUES ('inj-1','codex-cli','sess-A','r100-1','2026-08-14T10:00:00','h1','','{"fileAssoc":["a.go"]}',100,0)`)
+	mustExec(t, d, `INSERT INTO discussion_log VALUES ('d1','sess-A','assistant','codex-cli','edit a.go','2026-08-14T11:01:00','{"_type":"post_tool","rel_path":"a.go","hook_event_name":"PostToolUse","tool_name":"Edit","tool_input":{}}')`)
+	p := filepath.Join(t.TempDir(), "aipmc.log")
+	lines := "[2026-08-14 10:00:00] [INJECT] agent=codex-cli session=sess-A req=r100-1 hash=h1 goals=0 warnings=0 actions=0 file_total=1 guidelines=0 guide_del=0 chars=100\n"
+	if err := os.WriteFile(p, []byte(lines), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	since, _ := time.Parse("2006-01-02T15:04:05", "2026-08-14T00:00:00")
+	rep, err := BuildAttribution(d, p, since)
+	if err != nil {
+		t.Fatalf("BuildAttribution: %v", err)
+	}
+	a := rep.ByAgent["codex-cli"]
+	if a.M2.FullInject.Sessions != 1 || a.M2.FullInject.HitSessions != 1 {
+		t.Errorf("M2 full_inject = %+v, want 1/1（post_tool Edit a.go 应命中注入文件 a.go）", a.M2.FullInject)
+	}
+}
+
+// M3 生产 post_tool 格式：warning 指向 a.go，post_tool Edit a.go → 未回避（原 LIMIT 5 +
+// file_op 嵌套假设导致恒 false → 回避率虚高，P0 修复）。
+func TestM3PostToolFormatNotAvoided(t *testing.T) {
+	d := fixtureDB(t)
+	mustExec(t, d, `INSERT INTO inject_log VALUES ('inj-1','codex-cli','sess-A','r100-1','2026-08-14T10:00:00','h1','','{"fileAssoc":["a.go"],"warnings":["a.go 被多 session 修改"]}',100,0)`)
+	mustExec(t, d, `INSERT INTO discussion_log VALUES ('d1','sess-A','assistant','codex-cli','edit a.go','2026-08-14T10:01:00','{"_type":"post_tool","rel_path":"a.go","hook_event_name":"postToolUse","tool_name":"Edit","tool_input":{}}')`)
+	p := filepath.Join(t.TempDir(), "aipmc.log")
+	lines := "[2026-08-14 10:00:00] [INJECT] agent=codex-cli session=sess-A req=r100-1 hash=h1 goals=0 warnings=0 actions=0 file_total=1 guidelines=0 guide_del=0 chars=100\n"
+	if err := os.WriteFile(p, []byte(lines), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	since, _ := time.Parse("2006-01-02T15:04:05", "2026-08-14T00:00:00")
+	rep, err := BuildAttribution(d, p, since)
+	if err != nil {
+		t.Fatalf("BuildAttribution: %v", err)
+	}
+	if rep.M3.Mapped != 1 {
+		t.Errorf("M3 mapped = %d, want 1", rep.M3.Mapped)
+	}
+	if rep.M3.Avoided != 0 {
+		t.Errorf("M3 avoided = %d, want 0（post_tool Edit a.go 已写，不应回避）", rep.M3.Avoided)
+	}
+}
+
+// M3 窗口语义（8/25 Claude 审核 C4）：窗口 = 注入 ts 至该 session 下一次注入 ts。
+// 下一次注入之后对同一路径的写，不属于前一个 warning 的窗口 → 不改变回避判定。
+func TestM3WindowExcludesWriteAfterNextInject(t *testing.T) {
+	d := fixtureDB(t)
+	mustExec(t, d, `INSERT INTO inject_log VALUES ('inj-1','codex-cli','sess-A','r100-1','2026-08-14T10:00:00','h1','','{"fileAssoc":["a.go"],"warnings":["a.go 被多 session 修改"]}',100,0)`)
+	mustExec(t, d, `INSERT INTO inject_log VALUES ('inj-2','codex-cli','sess-A','r100-2','2026-08-14T10:30:00','h2','','{"fileAssoc":["b.go"],"warnings":[]}',100,0)`)
+	// 10:40 的写发生在第二次注入之后 → 10:00 warning 窗口内无写 → 应回避
+	mustExec(t, d, `INSERT INTO discussion_log VALUES ('d1','sess-A','assistant','codex-cli','edit a.go','2026-08-14T10:40:00','{"_type":"post_tool","rel_path":"a.go","tool_name":"Edit","tool_input":{}}')`)
+	p := filepath.Join(t.TempDir(), "aipmc.log")
+	lines := "[2026-08-14 10:00:00] [INJECT] agent=codex-cli session=sess-A req=r100-1 hash=h1 goals=0 warnings=0 actions=0 file_total=1 guidelines=0 guide_del=0 chars=100\n" +
+		"[2026-08-14 10:30:00] [INJECT] agent=codex-cli session=sess-A req=r100-2 hash=h2 goals=0 warnings=0 actions=0 file_total=1 guidelines=0 guide_del=0 chars=100\n"
+	if err := os.WriteFile(p, []byte(lines), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	since, _ := time.Parse("2006-01-02T15:04:05", "2026-08-14T00:00:00")
+	rep, err := BuildAttribution(d, p, since)
+	if err != nil {
+		t.Fatalf("BuildAttribution: %v", err)
+	}
+	if rep.M3.Mapped != 1 || rep.M3.Avoided != 1 {
+		t.Errorf("M3 mapped/avoided = %d/%d, want 1/1（10:00 warning 窗口至 10:30 截止，10:40 的写不算）", rep.M3.Mapped, rep.M3.Avoided)
+	}
+}
+
+// D1 回归（8/25 Claude D1）：生产 fileAssoc 是注记串格式（"a.go → task-xxx (done, P0)"），
+// 必须拆路径后与 post_tool 写操作匹配——旧精确查找恒 miss（真实库 241/241 注记串，M2 恒 0%）。
+func TestM2AnnotationStringFileAssocMatches(t *testing.T) {
+	d := fixtureDB(t)
+	mustExec(t, d, `INSERT INTO inject_log VALUES ('inj-1','codex-cli','sess-A','r100-1','2026-08-14T10:00:00','h1','','{"fileAssoc":["a.go → task-20260814-093315-284a5a (done, P0) task-20260814-093315-284a5a"],"warnings":null}',100,0)`)
+	mustExec(t, d, `INSERT INTO discussion_log VALUES ('d1','sess-A','assistant','codex-cli','edit a.go','2026-08-14T11:01:00','{"_type":"post_tool","rel_path":"a.go","hook_event_name":"PostToolUse","tool_name":"Edit","tool_input":{}}')`)
+	p := filepath.Join(t.TempDir(), "aipmc.log")
+	lines := "[2026-08-14 10:00:00] [INJECT] agent=codex-cli session=sess-A req=r100-1 hash=h1 goals=0 warnings=0 actions=0 file_total=1 guidelines=0 guide_del=0 chars=100\n"
+	if err := os.WriteFile(p, []byte(lines), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	since, _ := time.Parse("2006-01-02T15:04:05", "2026-08-14T00:00:00")
+	rep, err := BuildAttribution(d, p, since)
+	if err != nil {
+		t.Fatalf("BuildAttribution: %v", err)
+	}
+	a := rep.ByAgent["codex-cli"]
+	if a.M2.FullInject.Sessions != 1 || a.M2.FullInject.HitSessions != 1 {
+		t.Errorf("M2 full_inject = %+v, want 1/1（注记串 fileAssoc 拆路径后应命中）", a.M2.FullInject)
+	}
+}
+
+// D2 回归（8/25 Claude D2）：生产注入端路径风险提示在 actionItems（warnings 恒空），
+// M3 数据源须并入 actionItems——否则分母恒空（真实库 274 行 warnings 0 非空）。
+func TestM3ActionItemsAsWarningSource(t *testing.T) {
+	d := fixtureDB(t)
+	mustExec(t, d, `INSERT INTO inject_log VALUES ('inj-1','codex-cli','sess-A','r100-1','2026-08-14T10:00:00','h1','','{"fileAssoc":null,"warnings":null,"actionItems":["⚠️ 8 个文件被多 session 修改：a.go, b.go\n  → aipm_create_task 为最活跃文件建 task"]}',100,0)`)
+	mustExec(t, d, `INSERT INTO discussion_log VALUES ('d1','sess-A','assistant','codex-cli','edit a.go','2026-08-14T10:01:00','{"_type":"post_tool","rel_path":"a.go","tool_name":"Edit","tool_input":{}}')`)
+	p := filepath.Join(t.TempDir(), "aipmc.log")
+	lines := "[2026-08-14 10:00:00] [INJECT] agent=codex-cli session=sess-A req=r100-1 hash=h1 goals=0 warnings=0 actions=0 file_total=0 guidelines=0 guide_del=0 chars=100\n"
+	if err := os.WriteFile(p, []byte(lines), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	since, _ := time.Parse("2006-01-02T15:04:05", "2026-08-14T00:00:00")
+	rep, err := BuildAttribution(d, p, since)
+	if err != nil {
+		t.Fatalf("BuildAttribution: %v", err)
+	}
+	if rep.M3.Mapped != 1 {
+		t.Errorf("M3 mapped = %d, want 1（actionItems 路径提示应计入可映射）", rep.M3.Mapped)
+	}
+	if rep.M3.Avoided != 0 {
+		t.Errorf("M3 avoided = %d, want 0（post_tool Edit a.go 已写，不应回避）", rep.M3.Avoided)
+	}
+}
+
+// E1 回归（8/25 Claude E1）：警告提取为 basename（pathInWarningRe 从 "⚠️ ... discussion_test.go, ..."
+// 提取 "discussion_test.go"），真实写操作带目录（"discussion/discussion_test.go"）——
+// sessionWrotePath 精确匹配恒 miss → 回避率恒 100%（假象）。basename 归一化后应命中。
+func TestM3BasenameWarningMatchesDirWrite(t *testing.T) {
+	d := fixtureDB(t)
+	mustExec(t, d, `INSERT INTO inject_log VALUES ('inj-1','codex-cli','sess-A','r100-1','2026-08-14T10:00:00','h1','','{"fileAssoc":null,"warnings":null,"actionItems":["⚠️ 8 个文件被多 session 修改：discussion_test.go, store_test.go\n  → aipm_create_task 为最活跃文件建 task"]}',100,0)`)
+	mustExec(t, d, `INSERT INTO discussion_log VALUES ('d1','sess-A','assistant','codex-cli','edit discussion_test.go','2026-08-14T10:01:00','{"_type":"post_tool","file_path":"discussion/discussion_test.go","tool_name":"Edit","tool_input":{}}')`)
+	p := filepath.Join(t.TempDir(), "aipmc.log")
+	lines := "[2026-08-14 10:00:00] [INJECT] agent=codex-cli session=sess-A req=r100-1 hash=h1 goals=0 warnings=0 actions=0 file_total=0 guidelines=0 guide_del=0 chars=100\n"
+	if err := os.WriteFile(p, []byte(lines), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	since, _ := time.Parse("2006-01-02T15:04:05", "2026-08-14T00:00:00")
+	rep, err := BuildAttribution(d, p, since)
+	if err != nil {
+		t.Fatalf("BuildAttribution: %v", err)
+	}
+	if rep.M3.Mapped != 1 {
+		t.Errorf("M3 mapped = %d, want 1", rep.M3.Mapped)
+	}
+	if rep.M3.Avoided != 0 {
+		t.Errorf("M3 avoided = %d, want 0（basename 警告 vs 带目录写路径应命中，回避率恒 1 是匹配断链假象）", rep.M3.Avoided)
+	}
+}

@@ -35,6 +35,7 @@ type postTool struct {
 	Model         string         `json:"model"`
 	FilePath      string         `json:"file_path"`
 	RelPath       string         `json:"rel_path"`
+	RelPaths      []string       `json:"rel_paths"`
 	ToolName      string         `json:"tool_name"`
 	ToolInput     map[string]any `json:"tool_input"`
 }
@@ -148,7 +149,7 @@ func parsePostTool(source, metadata string, rec ToolRecord) ToolRecord {
 	}
 	rec.Tool = tool
 	rec.Command = cmd
-	rec.Files = appendFiles(files, pt.FilePath, pt.RelPath)
+	rec.Files = appendFiles(files, append([]string{pt.FilePath, pt.RelPath}, pt.RelPaths...)...)
 	return rec
 }
 

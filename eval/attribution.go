@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"regexp"
 	"sort"
 	"strings"
@@ -249,7 +250,7 @@ func BuildAttribution(d *sql.DB, logFile string, since time.Time) (*AttributionR
 		key := agent + "|" + session
 		files := map[string]bool{}
 		for _, f := range seg.FileAssoc {
-			files[f] = true
+			files[fileAssocPath(f)] = true
 		}
 		eventsByKey[key] = append(eventsByKey[key], injectEvent{ts: t, files: files, suppressed: suppressed})
 	}
@@ -303,9 +304,11 @@ func BuildAttribution(d *sql.DB, logFile string, since time.Time) (*AttributionR
 	// 规格注记（HARNESS §2 强制项：准实验/含噪/对照组语义，缺失会让输出被误读）
 	rep.Annotations = []string{
 		"M2 为观察性准实验（非随机对照）：注入/对照组差值反映关联而非因果",
-		"M2 命中判定依赖 discussion_log file_op 的 rel_path；relpath bug 未修前该指标含噪",
+		"M2 命中判定（8/25 修订）：fileAssoc 注记串按 ' → ' 拆路径 + op 路径精确/basename/后缀三级匹配；写/读引用均计",
 		"M2 same_content 对照组基线=已见过（此前注入过同内容）：有注入历史时按已注入文件判定，无历史时降级为活跃基线（任意文件引用）",
-		"M3 为可映射子集（headless 无 LLM 语义映射），不可映射 warning 记 unknown 单独列示",
+		"M3 为可映射子集（headless 无 LLM 语义映射），不可映射风险提示记 unknown 单独列示；数据源 = warnings + actionItems（8/25 修订，生产注入端路径风险提示在 actionItems）",
+		"M3 语义局限（8/25 注记）：当前 actionItems 的行为语义是「建 task 跟踪」（热点/阻塞提示），非「禁止写该文件」——回避率数值含义有限，宜解读为「对告警文件继续操作的比例」",
+		"M3 same_content/无后续注入窗口注记：对照组命中率偏低可能因抑制多发生在会话尾部（天然无后续操作），非仅匹配问题",
 	}
 
 	// ── M3: 警告回避率（inject_log warnings + discussion_log 写操作）──
@@ -437,9 +440,49 @@ func injectHit(d *sql.DB, session string, events []injectEvent) bool {
 	ops := sessionFileOps(d, session)
 	for _, ev := range events {
 		for _, op := range ops {
-			if op.ts.After(ev.ts) && ev.files[op.path] {
+			if op.ts.After(ev.ts) && fileHit(ev.files, op.path) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// fileAssocPath 从注入 fileAssoc 元素提取纯路径（8/25 D1 修复）：
+// 生产格式是注记串 "agent/session.go → task-xxx (done, P0) task-xxx..."（resolveFileContext
+// 故意拼接「文件→task 关联」），精确 map 查找恒 miss（真实库 241/241 注记串、M2 恒 0%）。
+// 取 " → " 前段并 trim；裸路径（旧格式/夹具）原样返回。
+func fileAssocPath(f string) string {
+	if i := strings.Index(f, " → "); i > 0 {
+		return strings.TrimSpace(f[:i])
+	}
+	return f
+}
+
+// pathsMatch 两级路径归一化匹配（精确 / basename / 后缀）。
+// 真实数据形态：警告提取为 basename（"discussion_test.go"）、写操作为带目录
+// （"discussion/discussion_test.go"）或绝对路径——精确匹配恒 miss。
+func pathsMatch(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	if a == b {
+		return true
+	}
+	if path.Base(a) == path.Base(b) {
+		return true
+	}
+	return strings.HasSuffix(b, "/"+a) || strings.HasSuffix(a, "/"+path.Base(b))
+}
+
+// fileHit 判定 op 解析路径是否命中注入文件集（精确 / basename / 后缀三级匹配）。
+func fileHit(files map[string]bool, opPath string) bool {
+	if files[opPath] {
+		return true
+	}
+	for f := range files {
+		if pathsMatch(f, opPath) {
+			return true
 		}
 	}
 	return false
@@ -497,10 +540,71 @@ type fileOp struct {
 	path string
 }
 
-// relPathRe 解析 file_op metadata 的 rel_path（包级复用，避免每次调用编译）。
-var relPathRe = regexp.MustCompile(`"rel_path"\s*:\s*"([^"]+)"`)
+// isWriteTool 判定工具名是否为写操作（大小写不敏感：normalizeToolName default 保留原大小写，
+// 如 Create/NewFile）。writeTypes（edit/create/delete/rename/append）之外补 write/newfile/
+// new_file/multiedit/patch 等变体。
+func isWriteTool(t string) bool {
+	switch strings.ToLower(t) {
+	case "edit", "create", "delete", "rename", "append", "write", "newfile", "new_file", "multiedit", "patch":
+		return true
+	}
+	return false
+}
 
-// sessionFileOps 一次查询该 session 全部可解析出 rel_path 的 file_op 调用。
+// opPaths 从一条 metadata 提取引用路径（M2 用，任意类型含读：注入文件被后续 read/edit 引用均计命中）。
+// 多格式兼容：post_tool 平铺（rel_path/file_path + tool_name）→ ParseToolRecord 归一化；
+// file_op 嵌套旧格式（claude）兜底。
+func opPaths(metadata string) []string {
+	rec := ParseToolRecord("", metadata)
+	if len(rec.Files) > 0 {
+		return rec.Files
+	}
+	var wrapper struct {
+		FileOp struct {
+			RelPath string `json:"rel_path"`
+		} `json:"file_op"`
+	}
+	if json.Unmarshal([]byte(metadata), &wrapper) == nil && wrapper.FileOp.RelPath != "" {
+		return []string{wrapper.FileOp.RelPath}
+	}
+	return nil
+}
+
+// writeOpPaths 从一条 metadata 提取写操作路径（M3 用，8/18 Claude 审核 + codex 实测）：
+// 生产主流 post_tool（codex/cursor）无 file_op 键——复用 S1 ParseToolRecord 归一化
+// （顶层 rel_path/file_path + tool_name → edit/write 等）；file_op 嵌套旧格式（claude）兜底；
+// read/bash/mcp 等非写操作返回 nil。
+func writeOpPaths(metadata string) []string {
+	rec := ParseToolRecord("", metadata)
+	if isWriteTool(rec.Tool) {
+		return rec.Files
+	}
+	// codex 写操作经 Bash 执行 apply_patch/sed -i/重定向（8/25 Claude 审核 + codex 实测）：
+	// tool_name=Bash 被写过滤器误挡，但 hook 已打标 source=bash_heuristic + type=edit 等
+	// 写类型（read/stage 不得误判）；unverified（退出码非 0，写未发生）排除；
+	// ParseToolRecord 已把顶层 rel_path/rel_paths 并入 rec.Files。
+	var ph struct {
+		Source string `json:"source"`
+		Type   string `json:"type"`
+	}
+	if rec.Tool == "bash" && len(rec.Files) > 0 &&
+		json.Unmarshal([]byte(metadata), &ph) == nil &&
+		ph.Source == "bash_heuristic" && isWriteTool(ph.Type) {
+		return rec.Files
+	}
+	var wrapper struct {
+		FileOp struct {
+			Type    string `json:"type"`
+			RelPath string `json:"rel_path"`
+		} `json:"file_op"`
+	}
+	if json.Unmarshal([]byte(metadata), &wrapper) == nil && isWriteTool(wrapper.FileOp.Type) && wrapper.FileOp.RelPath != "" {
+		return []string{wrapper.FileOp.RelPath}
+	}
+	return nil
+}
+
+// sessionFileOps 一次查询该 session 全部可解析出路径的引用调用（多格式兼容，任意类型）。
 func sessionFileOps(d *sql.DB, session string) []fileOp {
 	if session == "" {
 		return nil
@@ -516,15 +620,10 @@ func sessionFileOps(d *sql.DB, session string) []fileOp {
 		if err := rows.Scan(&md, &ts); err != nil {
 			continue
 		}
-		if !strings.Contains(md, "file_op") {
-			continue
+		for _, p := range opPaths(md) {
+			t, _ := time.Parse("2006-01-02T15:04:05", ts)
+			ops = append(ops, fileOp{ts: t, path: p})
 		}
-		m := relPathRe.FindStringSubmatch(md)
-		if m == nil {
-			continue
-		}
-		t, _ := time.Parse("2006-01-02T15:04:05", ts)
-		ops = append(ops, fileOp{ts: t, path: m[1]})
 	}
 	return ops
 }
@@ -539,7 +638,7 @@ func referencedAny(ops []fileOp, after time.Time, files map[string]bool) bool {
 		if files == nil {
 			return true
 		}
-		if files[op.path] {
+		if fileHit(files, op.path) {
 			return true
 		}
 	}
@@ -550,12 +649,13 @@ func referencedAny(ops []fileOp, after time.Time, files map[string]bool) bool {
 
 var pathInWarningRe = regexp.MustCompile(`[A-Za-z0-9_\-./]+\.(go|js|ts|py|rs|java|rb|c|cpp|h|hpp|swift|kt|scala|css|html|vue|svelte|sql|sh|yaml|yml|toml|json|md)\b`)
 
-var writeTypes = map[string]bool{
-	"edit": true, "create": true, "delete": true, "rename": true, "append": true,
-}
-
-// buildM3 警告回避率：注入 warning 含可映射路径 → 注入后该 session 5 条 file_op 内
-// 是否对该路径发生写操作；未写=回避。不可映射路径记 unknown（不进分母）。
+// buildM3 警告回避率：注入的风险提示（warnings + actionItems，8/25 D2 修复——生产注入端
+// 把路径风险提示放在 actionItems：⚠️ 热点文件/阻塞提示，warnings 恒空）含可映射路径 →
+// 注入后该 session 是否对该路径
+// 发生写操作（窗口 = 注入 ts 至该 session 下一次注入 ts，8/25 修复：原 LIMIT 5 +
+// file_op 嵌套假设丢失 post_tool 写操作与第 6+ 条 → 回避率虚高；全窗口会让更晚的
+// 无关写也计入「未回避」，方向失真，故取近邻注入窗口）；未写=回避。
+// 不可映射路径记 unknown（不进分母）。
 func buildM3(d *sql.DB, sinceISO string) (M3Report, error) {
 	var rep M3Report
 	rows, err := d.Query(`SELECT session_id, ts, segments_json FROM inject_log WHERE ts >= ? AND segments_json != '{}'`, sinceISO)
@@ -568,6 +668,7 @@ func buildM3(d *sql.DB, sinceISO string) (M3Report, error) {
 		session  string
 		ts       string
 		warnings []string
+		actions  []string
 	}
 	var recs []warnRec
 	for rows.Next() {
@@ -580,14 +681,15 @@ func buildM3(d *sql.DB, sinceISO string) (M3Report, error) {
 			continue
 		}
 		var seg struct {
-			Warnings []string `json:"warnings"`
+			Warnings    []string `json:"warnings"`
+			ActionItems []string `json:"actionItems"`
 		}
 		_ = json.Unmarshal([]byte(segJSON), &seg)
-		recs = append(recs, warnRec{session: session, ts: ts, warnings: seg.Warnings})
+		recs = append(recs, warnRec{session: session, ts: ts, warnings: seg.Warnings, actions: seg.ActionItems})
 	}
 	rows.Close()
 	for _, r := range recs {
-		for _, w := range r.warnings {
+		for _, w := range append(append([]string{}, r.warnings...), r.actions...) {
 			path := pathInWarningRe.FindString(w)
 			if path == "" {
 				rep.Unknown++
@@ -605,30 +707,34 @@ func buildM3(d *sql.DB, sinceISO string) (M3Report, error) {
 	return rep, nil
 }
 
-// sessionWrotePath 注入 ts 后该 session 前 5 条 file_op 内是否对 path 写操作。
+// sessionWrotePath 注入 ts 后至该 session 下一次注入 ts 之间是否对 path 发生写操作
+// （多格式兼容；无下一次注入则到分析窗口末）。
 func sessionWrotePath(d *sql.DB, session, tsISO, path string) bool {
-	rows, err := d.Query(`SELECT metadata FROM discussion_log WHERE session_id = ? AND created_at > ? AND metadata LIKE '%file_op%' ORDER BY created_at ASC LIMIT 5`, session, tsISO)
+	var windowEnd string
+	if err := d.QueryRow(`SELECT COALESCE(MIN(ts),'') FROM inject_log WHERE session_id = ? AND ts > ?`, session, tsISO).Scan(&windowEnd); err != nil {
+		windowEnd = ""
+	}
+	q := `SELECT metadata FROM discussion_log WHERE session_id = ? AND created_at > ? AND metadata != ''`
+	args := []any{session, tsISO}
+	if windowEnd != "" {
+		q += ` AND created_at < ?`
+		args = append(args, windowEnd)
+	}
+	q += ` ORDER BY created_at ASC`
+	rows, err := d.Query(q, args...)
 	if err != nil {
 		return false
 	}
 	defer rows.Close()
-	type op struct{ Type, RelPath string }
 	for rows.Next() {
 		var md string
 		if err := rows.Scan(&md); err != nil {
 			continue
 		}
-		var wrapper struct {
-			FileOp struct {
-				Type    string `json:"type"`
-				RelPath string `json:"rel_path"`
-			} `json:"file_op"`
-		}
-		if json.Unmarshal([]byte(md), &wrapper) != nil {
-			continue
-		}
-		if writeTypes[wrapper.FileOp.Type] && wrapper.FileOp.RelPath == path {
-			return true
+		for _, p := range writeOpPaths(md) {
+			if pathsMatch(path, p) {
+				return true
+			}
 		}
 	}
 	return false

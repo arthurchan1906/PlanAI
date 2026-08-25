@@ -1,6 +1,7 @@
 package db
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -75,5 +76,51 @@ func TestInsertInjectLogMissingDBReturnsError(t *testing.T) {
 	err := InsertInjectLog(InjectLogEntry{ID: "inj-x", Agent: "codex-cli"})
 	if err == nil {
 		t.Fatal("expected error when db missing")
+	}
+}
+
+// retryBusy（8/25，C2 审核补测）：busy 错误重试至成功、非 busy 不重试、持续 busy 3 次放弃。
+func TestRetryBusyRetriesThenSucceeds(t *testing.T) {
+	n := 0
+	err := RetryBusy(func() error {
+		n++
+		if n < 3 {
+			return fmt.Errorf("SQLITE_BUSY: database is locked")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("retryBusy: %v", err)
+	}
+	if n != 3 {
+		t.Errorf("calls = %d, want 3（两次 busy 后成功）", n)
+	}
+}
+
+func TestRetryBusyNonBusyNoRetry(t *testing.T) {
+	n := 0
+	err := RetryBusy(func() error {
+		n++
+		return fmt.Errorf("boom")
+	})
+	if err == nil {
+		t.Fatal("want error")
+	}
+	if n != 1 {
+		t.Errorf("calls = %d, want 1（非 busy 错误不重试）", n)
+	}
+}
+
+func TestRetryBusyExhausts(t *testing.T) {
+	n := 0
+	err := RetryBusy(func() error {
+		n++
+		return fmt.Errorf("database is locked")
+	})
+	if err == nil {
+		t.Fatal("want error")
+	}
+	if n != 3 {
+		t.Errorf("calls = %d, want 3（持续 busy 3 次后放弃）", n)
 	}
 }

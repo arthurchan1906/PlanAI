@@ -9,27 +9,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	pmdb "aipmc/db"
 	"aipmc/u"
 )
 
-// retryOnBusy wraps a function with automatic retry on SQLITE_BUSY errors.
-// Uses exponential backoff: 100ms, 200ms, 400ms.
+// retryOnBusy wraps a function with automatic retry on SQLITE_BUSY errors
+// (exponential backoff: 100ms, 200ms, 400ms). 8/25 收敛到 db.RetryBusy（原双份同构实现）。
 func retryOnBusy(fn func() error) error {
-	var err error
-	for i := 0; i < 3; i++ {
-		err = fn()
-		if err == nil {
-			return nil
-		}
-		if !strings.Contains(err.Error(), "SQLITE_BUSY") && !strings.Contains(err.Error(), "database is locked") {
-			return err
-		}
-		time.Sleep(time.Duration(1<<uint(i)) * 100 * time.Millisecond)
-	}
-	return fmt.Errorf("still busy after 3 retries: %w", err)
+	return pmdb.RetryBusy(fn)
 }
 
 // ============================================================
@@ -462,6 +450,16 @@ func GetCommit(id string) (map[string]any, error) {
 // GetCommitFor reads a commit from a specific project's database;
 // empty projectPath resolves to the cwd project.
 func GetCommitFor(projectPath, id string) (map[string]any, error) {
+	var c map[string]any
+	err := retryOnBusy(func() error {
+		var e error
+		c, e = getCommitFor(projectPath, id)
+		return e
+	})
+	return c, err
+}
+
+func getCommitFor(projectPath, id string) (map[string]any, error) {
 	db, err := pmdb.OpenProject(projectPath)
 	if err != nil {
 		return nil, err
@@ -2645,6 +2643,16 @@ func ScanVisionRows(rows *sql.Rows) ([]map[string]any, error) {
 }
 
 func GetTask(id string) (map[string]any, error) {
+	var t map[string]any
+	err := retryOnBusy(func() error {
+		var e error
+		t, e = getTask(id)
+		return e
+	})
+	return t, err
+}
+
+func getTask(id string) (map[string]any, error) {
 	db, err := pmdb.Open()
 	if err != nil {
 		return nil, err
@@ -3066,6 +3074,16 @@ func ListGraphEdges(sourceID, targetID, edgeType string) ([]map[string]any, erro
 // ListGraphEdgesFor reads graph edges from a specific project's database;
 // empty projectPath resolves to the cwd project.
 func ListGraphEdgesFor(projectPath, sourceID, targetID, edgeType string) ([]map[string]any, error) {
+	var edges []map[string]any
+	err := retryOnBusy(func() error {
+		var e error
+		edges, e = listGraphEdgesFor(projectPath, sourceID, targetID, edgeType)
+		return e
+	})
+	return edges, err
+}
+
+func listGraphEdgesFor(projectPath, sourceID, targetID, edgeType string) ([]map[string]any, error) {
 	db, err := pmdb.OpenProject(projectPath)
 	if err != nil {
 		return nil, err
