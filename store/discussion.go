@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -70,6 +71,10 @@ func LogDiscussion(sessionID, role, source, content, metadataJSON string) (map[s
 	// 重试耗尽仍 BUSY：落盘 spool，宁可延迟补写也不静默丢事件。
 	// 返回成功（spooled），hook 侧不再报 write_err、不会被超时杀死丢数据。
 	if serr := spoolDiscussionFallback(sessionID, role, source, content, metadataJSON, eventAt, lastErr); serr != nil {
+		if errors.Is(serr, errSpoolFull) {
+			// 超限丢弃：如实暴露 dropped，避免「测量者谎报」（hook 以为已兜底实为丢失）。
+			return map[string]any{"status": "dropped"}, nil
+		}
 		return nil, fmt.Errorf("discussion spool fallback failed: %v (cause: %v)", serr, lastErr)
 	}
 	return map[string]any{"status": "spooled"}, nil
@@ -139,6 +144,10 @@ type spoolEntry struct {
 // 超过上限丢弃新条目并告警——宁可丢新事件也不让文件无限增长（需人工介入排查锁竞争）。
 const maxSpoolEntries = 10000
 
+// errSpoolFull 超限丢弃哨兵：调用方（LogDiscussion）据此返回 dropped 状态，
+// 使丢弃对 hook 可见（区别于 spooled 落盘成功）。
+var errSpoolFull = errors.New("discussion spool full: entry dropped")
+
 // countSpoolEntries 统计 spool 文件现有条目数（按行，块读避免大文件全量载入）。
 func countSpoolEntries(path string) (int, error) {
 	f, err := os.Open(path)
@@ -169,7 +178,7 @@ func spoolDiscussionFallback(sessionID, role, source, content, metadataJSON, now
 	path := discussionSpoolPath()
 	if n, err := countSpoolEntries(path); err == nil && n >= maxSpoolEntries {
 		u.LogShared("HOOK", "discussion spool full (%d >= %d): dropping event session=%s err=%v", n, maxSpoolEntries, sessionID, cause)
-		return nil
+		return errSpoolFull
 	}
 	e := spoolEntry{
 		ID:        u.Slug("disc"),

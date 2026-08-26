@@ -94,6 +94,14 @@ Claude 复核（disc-20260826-170542-473717 / 170846-fbbd10）：修复链认可
 ### 低危：spool 条目 id 语义 → 已注记
 `spoolEntry` 注释补注：落盘生成的是新 id（非原事件 id），补写行为一条新行；当前无引用该 id 的消费方（全文检索按 content 重建），仅作去重与溯源用。
 
+
+### S1【严重】TestSpoolDropsWhenFull 污染生产数据 → 已清理 + 已隔离（另一 codex 审核 17:25 实证）
+`ae8786c` 的 `TestSpoolDropsWhenFull` 漏加 `setupDailyDB(t)`，`discussionSpoolPath()` 解析到真实 `~/.aipmc/cache/`：测试删除真实 spool、写入 10000 行种子，活跃 agent 的 flush 把 `{"id":"seed"}` 当真实待补写条目处理。实证：`discussion_log` 插入 1 行 `id='seed'` 空数据、`fts5_index` 1 条 `entity_id='seed'`。**处理**：① 清理——备份 `/tmp/pmai_pre_seed_cleanup.db` 后 `DELETE` 两处（验证 0 行），真实 spool 文件已被 flush 清空（不存在）；② 隔离——测试补 `setupDailyDB(t)`（spool 路径全部指向 t.TempDir()）。**教训**：store 测试写 spool/DB 必须隔离 PMAI_HOME，与同文件 19/74 行对齐。
+### S2【中】丢弃语义失真 → 已修
+超限丢弃原返回 nil → `LogDiscussion` 谎报 `{"status":"spooled"}`（hook 以为已兜底实为丢失）。已改：`errSpoolFull` 哨兵 + 超限返回 `{"status":"dropped"}`，丢弃对 hook 可见（测量者诚实）；`TestSpoolDropsWhenFull` 断言 `errors.Is(err, errSpoolFull)`。
+### C2 复验（清理后）
+真实 spool 文件已不存在（0 行）、`discussion_log`/`fts5_index` 无 seed 残留——「修复后首跑 spool 0 行」声明在清理后重新成立。
+
 ## 7. 门禁结论
 
 - ✅ **判定一致率 82.4%（严格）≥ 80%**——P1 验收达标（薄线通过，根因已修，观察期复验）

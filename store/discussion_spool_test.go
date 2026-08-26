@@ -108,7 +108,10 @@ func TestSpoolEntrySkippedOnUniqueConflict(t *testing.T) {
 
 // TestSpoolDropsWhenFull: spool 达 maxSpoolEntries 上限后新事件被丢弃并告警
 // （Claude C3：防 flush 持续失败时 JSONL 无界膨胀），文件不增长。
+// 必须 setupDailyDB 隔离 PMAI_HOME——否则 discussionSpoolPath 解析到真实
+// ~/.aipmc/cache/，测试会删除/写入真实 spool 并污染生产库（S1 实证教训）。
 func TestSpoolDropsWhenFull(t *testing.T) {
+	setupDailyDB(t)
 	path := discussionSpoolPath()
 	_ = os.Remove(path)
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -121,8 +124,8 @@ func TestSpoolDropsWhenFull(t *testing.T) {
 		}
 	}
 	f.Close()
-	if err := spoolDiscussionFallback("sess-full", "assistant", "codex-cli", "超限事件", "", "2026-08-26T09:00:00Z", errBusyStub); err != nil {
-		t.Fatalf("超限应返回 nil（丢弃+告警）: %v", err)
+	if err := spoolDiscussionFallback("sess-full", "assistant", "codex-cli", "超限事件", "", "2026-08-26T09:00:00Z", errBusyStub); !errors.Is(err, errSpoolFull) {
+		t.Fatalf("超限应返回 errSpoolFull（丢弃+告警）: %v", err)
 	}
 	n, err := countSpoolEntries(path)
 	if err != nil {
