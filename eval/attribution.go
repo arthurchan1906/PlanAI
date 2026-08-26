@@ -36,15 +36,31 @@ type AttributionReport struct {
 
 var curProjectOnce sync.Once
 var curProject string
+var curProjectSet bool
 
-// currentProjectPath 当前项目根（M1a 对账过滤，8/26）：与 proxy 写库目标一致
-// （cwd 向上找 .pmai；proxy 侧日志 project= 也按 pmdb.FindPath 语义打标）。
+// currentProjectPath 当前项目根（M1a 对账过滤，8/26）：与 proxy 日志 project= 同源
+// （cwd 向上找 .pmai 的目录）；PMAI_HOME/PLANAI_HOME 兜底（与 pmdb.FindPath 一致）；
+// --db 指定其他库时由 main 用 SetProjectRoot 覆盖（8/26 C2）。
 func currentProjectPath() string {
+	if curProjectSet {
+		return curProject
+	}
 	curProjectOnce.Do(func() {
+		if dir := os.Getenv("PMAI_HOME"); dir != "" {
+			curProject = dir
+			curProjectSet = true
+			return
+		}
+		if dir := os.Getenv("PLANAI_HOME"); dir != "" {
+			curProject = dir
+			curProjectSet = true
+			return
+		}
 		if cwd, err := os.Getwd(); err == nil {
 			for dir := cwd; dir != "/" && dir != "."; {
 				if info, err := os.Stat(filepath.Join(dir, ".pmai")); err == nil && info.IsDir() {
 					curProject = dir
+					curProjectSet = true
 					return
 				}
 				parent := filepath.Dir(dir)
@@ -56,6 +72,31 @@ func currentProjectPath() string {
 		}
 	})
 	return curProject
+}
+
+// SetProjectRoot 由 main 在 --db 指定其他库时覆盖 M1a 过滤基准（8/26 C2）。
+func SetProjectRoot(root string) {
+	curProject = root
+	curProjectSet = true
+}
+
+// ProjectRootFromDBPath 从库路径推导项目根（--db 场景，8/26 C2）：
+// <proj>/.pmai/data/pmai.db → <proj>（向上找含 .pmai 目录的父）。
+func ProjectRootFromDBPath(dbPath string) string {
+	for dir := filepath.Dir(dbPath); dir != "/" && dir != "."; {
+		if filepath.Base(dir) == ".pmai" {
+			return filepath.Dir(dir)
+		}
+		if info, err := os.Stat(filepath.Join(dir, ".pmai")); err == nil && info.IsDir() {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return ""
 }
 
 // AgentM12 单个 agent 的 M1（注入覆盖率）与 M2（文件命中率）指标。
@@ -875,9 +916,13 @@ func parseSkipLine(ln string) (time.Time, string, string, string) {
 	return ts, agent, session, reason
 }
 
+// projFromLineRe 包级复用（8/26 C3：函数内每次 MustCompile 在数万行日志上重复编译）。
+// 注：路径含空格时截断（8/26 C4，本项目路径无空格；Windows 目录如需支持可改引号格式）。
+var projFromLineRe = regexp.MustCompile(`project=([^\s]+)`)
+
 // projectFromLine 从 [INJECT] 日志行提取 project= 值（8/26 起 proxy 打标；历史行无）。
 func projectFromLine(ln string) string {
-	if m := regexp.MustCompile(`project=([^\s]+)`).FindStringSubmatch(ln); m != nil {
+	if m := projFromLineRe.FindStringSubmatch(ln); m != nil {
 		return m[1]
 	}
 	return ""

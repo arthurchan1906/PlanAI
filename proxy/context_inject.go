@@ -105,16 +105,27 @@ func init() {
 	guidelinesCache.ttl = 10 * time.Minute
 }
 
-// injectProjectPath 当前注入写库目标项目根（M1a 对账，8/26）：写库用 pmdb.FindPath
-// （基于 cwd 向上找 .pmai），日志行同步打 project= 绝对路径，供 eval 侧按项目过滤——
-// 修复全局日志（~/.aipmc/logs/aipmc.log）混入其他项目注入行导致 M1a 分母跨项目污染。
+// injectProjectPath 当前注入项目根（M1a 对账，8/26）：从 cwd 向上找 .pmai 的目录，
+// 与 eval 侧 currentProjectPath 语义一致——修复全局日志混入其他项目注入行导致
+// M1a 分母跨项目污染。注：不能用 pmdb.FindPath 的 Dir² 推导（pmai.db 在 data/
+// 子目录，Dir² 会停在 <proj>/.pmai，与 eval 项目根不一致，8/26 实测）。
 var injectProjectOnce sync.Once
 var injectProjectPath string
 
 func currentInjectProject() string {
 	injectProjectOnce.Do(func() {
-		if p, err := pmdb.FindPath(); err == nil {
-			injectProjectPath = filepath.Dir(filepath.Dir(p))
+		if cwd, err := os.Getwd(); err == nil {
+			for dir := cwd; dir != "/" && dir != "."; {
+				if info, err := os.Stat(filepath.Join(dir, ".pmai")); err == nil && info.IsDir() {
+					injectProjectPath = dir
+					return
+				}
+				parent := filepath.Dir(dir)
+				if parent == dir {
+					break
+				}
+				dir = parent
+			}
 		}
 	})
 	return injectProjectPath

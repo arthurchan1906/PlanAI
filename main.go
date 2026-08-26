@@ -345,6 +345,12 @@ func main() {
 		since := time.Now().AddDate(0, 0, -sinceDays)
 		switch kind {
 		case "attribution":
+			// 8/26 C2：--db 指定其他库时，M1a 过滤基准用该库所在项目而非 cwd。
+			if dbPath != "" {
+				if root := eval.ProjectRootFromDBPath(dbPath); root != "" {
+					eval.SetProjectRoot(root)
+				}
+			}
 			rep, err := eval.BuildAttribution(db, logPath, since)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "eval attribution: %v\n", err)
