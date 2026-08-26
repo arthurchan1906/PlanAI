@@ -118,7 +118,7 @@ func (s *Server) Listen() error {
 	})
 
 	addr := fmt.Sprintf("%s:%d", s.host, s.port)
-	fmt.Printf("AIPM web server listening on http://%s\n", addr)
+	fmt.Printf("AIPMC web server listening on http://%s\n", addr)
 	if err := http.ListenAndServe(addr, wrapper); err != nil {
 		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
 		os.Exit(1)

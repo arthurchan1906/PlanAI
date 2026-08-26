@@ -377,3 +377,14 @@ func TestWriteInjectLogSuppressed(t *testing.T) {
 		t.Errorf("segments_json missing fileAssoc: %s", segJSON)
 	}
 }
+
+// currentInjectProject 不含 .pmai 后缀（8/26 实测 Dir² 少一层错值回归锁定）。
+func TestCurrentInjectProjectRoot(t *testing.T) {
+	got := currentInjectProject()
+	if got == "" {
+		t.Skip("非项目目录运行（无 .pmai 可推导）")
+	}
+	if strings.Contains(got, ".pmai") {
+		t.Errorf("currentInjectProject = %q, 不应含 .pmai 后缀", got)
+	}
+}

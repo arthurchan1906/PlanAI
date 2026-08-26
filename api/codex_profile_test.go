@@ -33,7 +33,7 @@ model_provider = "custom"
 model_reasoning_effort = "medium"
 
 [model_providers.custom]
-name = "AIPM Proxy"
+name = "AIPMC Proxy"
 base_url = "http://127.0.0.1:19530/v1"
 env_key_instructions = "not needed for local proxy"
 

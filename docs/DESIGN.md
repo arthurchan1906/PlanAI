@@ -1,4 +1,4 @@
-# AIPM 设计文档
+# AIPMC 设计文档
 
 > AI Project Manager — 连接 AI Coder 与产品经理的协作中枢
 
@@ -6,7 +6,7 @@
 
 ## 1. 项目定位
 
-AIPM 是一个独立于 Code Agent 之外的项目管理工具，其核心使命是**填补 Code Agent 微观执行与 PM 宏观决策之间的真空地带**。
+AIPMC 是一个独立于 Code Agent 之外的项目管理工具，其核心使命是**填补 Code Agent 微观执行与 PM 宏观决策之间的真空地带**。
 
 ### 时间尺度的断层
 
@@ -22,7 +22,7 @@ AIPM 是一个独立于 Code Agent 之外的项目管理工具，其核心使命
            │  "方向对不对？还要不要继续投入？"
 ```
 
-Code Agent 的上下文窗口天然是短视的——窗口之外的等于不存在。AIPM 作为外部中间层，**主动填补 Agent 的认知盲区**，同时为 PM 提供**经过提炼的结构化进度视图**。
+Code Agent 的上下文窗口天然是短视的——窗口之外的等于不存在。AIPMC 作为外部中间层，**主动填补 Agent 的认知盲区**，同时为 PM 提供**经过提炼的结构化进度视图**。
 
 ---
 
@@ -44,8 +44,8 @@ aipmc idea capture ──write──►      IdeasView 查看
 
 ### 2.2 核心问题
 
-1. **AIPM 是纯被动的**：不能拦、不能推、不能分析、不能告警
-2. **PM → AI 方向几乎没有能力**：PM 只能看，不能通过 AIPM 影响 Agent 的优先级和方向
+1. **AIPMC 是纯被动的**：不能拦、不能推、不能分析、不能告警
+2. **PM → AI 方向几乎没有能力**：PM 只能看，不能通过 AIPMC 影响 Agent 的优先级和方向
 3. **AI → PM 方向信息密度低**：`Task.blocked` 只是一个字符串，没有结构化原因
 4. **规则执行力为零**：`skill.go` 生成的提示词是软建议，Agent 可以选择忽略
 5. **缺少决策闭环**：PM 做了决策，Agent 不知道，继续按旧方案写代码
@@ -65,12 +65,12 @@ aipmc idea capture ──write──►      IdeasView 查看
 
 ### 3.1 核心原则
 
-> **AIPM 不需要自己变聪明，它需要变得擅长"让 Agent 变聪明"。**
+> **AIPMC 不需要自己变聪明，它需要变得擅长"让 Agent 变聪明"。**
 
-AIPM 不集成自己的 LLM，而是通过**精心构造的上下文**来引导 Code Agent 的 LLM 做出更好的决策。
+AIPMC 不集成自己的 LLM，而是通过**精心构造的上下文**来引导 Code Agent 的 LLM 做出更好的决策。
 
 ```
-AIPM 准备高质量上下文
+AIPMC 准备高质量上下文
   → 注入 Code Agent 的视野
   → Agent 的 LLM 自然做出正确决策
   → Agent 感觉是自己做的决策（事实上也是）
@@ -92,7 +92,7 @@ AI ──执行──►  Task → Commit → Bug     │  ← 记录
 PM ◄──查看──  Dashboard / 分析 / 告警 │  ← 增强
                     └─────────────────┘
 
-          AIPM 分析引擎（新增）
+          AIPMC 分析引擎（新增）
           ┌─────────────────────────┐
           │ 漂移检测 / 冲突发现      │
           │ 进度分析 / 决策影响追踪   │
@@ -114,7 +114,7 @@ PM ◄──查看──  Dashboard / 分析 / 告警 │  ← 增强
 
 ### 4.1 核心洞察
 
-独立的工具无法"干预" Agent。但可以**确保每次 Agent 与 AIPM 交互时，都获得一份精心准备的"情报简报"**。Agent 自己读了简报后做的决策，就是被 AIPM 影响的决策。
+独立的工具无法"干预" Agent。但可以**确保每次 Agent 与 AIPMC 交互时，都获得一份精心准备的"情报简报"**。Agent 自己读了简报后做的决策，就是被 AIPMC 影响的决策。
 
 ### 4.2 CLI vs MCP
 
@@ -170,7 +170,7 @@ Plan「用户认证重构」(plan-auth-01) → Task「实现 argon2 密码哈希
 
 ```
 Agent: 创建 commit
-AIPM 返回:
+AIPMC 返回:
   { "commit": {...},
     "reflection": "你修改了 session.go，但当前 task scope 只含 auth.go。
                    task-session-03 也在进行中。
@@ -188,7 +188,7 @@ AIPM 返回:
 
 ```
 ┌─────────────────────────────────────────────┐
-│                  AIPM                        │
+│                  AIPMC                        │
 │                                              │
 │  ┌──────────┐  ┌──────────┐  ┌───────────┐ │
 │  │ 数据层    │  │ 分析层    │  │ Prompt 层 │ │
@@ -313,10 +313,10 @@ ALTER TABLE commits ADD COLUMN scope_notes TEXT;  -- 超出 scope 的具体说�
 
 ### Decision 1：不内置 LLM
 
-**决策**：AIPM 本身不集成 LLM Agent。
+**决策**：AIPMC 本身不集成 LLM Agent。
 
 **理由**：
-- AIPM 没有执行权，分析出问题也无法干预 Agent
+- AIPMC 没有执行权，分析出问题也无法干预 Agent
 - Code Agent 的 LLM 能力天然可用，通过 prompt 工程引导比另起炉灶更有效
 - 节省 API 成本和复杂度
 - 分析引擎用硬编码规则 + SQL 查询即可覆盖大部分场景
@@ -341,7 +341,7 @@ ALTER TABLE commits ADD COLUMN scope_notes TEXT;  -- 超出 scope 的具体说�
 
 ### Decision 4：简报而非命令
 
-**决策**：AIPM 对 Agent 的输出永远是"简报"（信息 + 建议），而非"命令"。
+**决策**：AIPMC 对 Agent 的输出永远是"简报"（信息 + 建议），而非"命令"。
 
 **理由**：
 - Agent 的自主性是 Code Agent 的设计特征，不应破坏

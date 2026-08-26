@@ -303,7 +303,7 @@ model_provider = "custom"
 model_reasoning_effort = "%s"
 
 [model_providers.custom]
-name = "AIPM Proxy"
+name = "AIPMC Proxy"
 base_url = "%s/v1"
 env_key_instructions = "not needed for local proxy"
 
@@ -380,7 +380,7 @@ args = ["mcp"]
 
 	if !sawCustom {
 		out = append(out, "", "[model_providers.custom]",
-			`name = "AIPM Proxy"`,
+			`name = "AIPMC Proxy"`,
 			fmt.Sprintf("base_url = %q", proxyURL+"/v1"),
 			`env_key_instructions = "not needed for local proxy"`)
 	}
@@ -483,7 +483,7 @@ func launchInTerminal(cmd *exec.Cmd, envOverrides []string) error {
 		tmpFile.Close()
 
 		return exec.Command("cmd", "/c", "start",
-			fmt.Sprintf("AIPM Agent - %s", cmd.Args[0]), "cmd", "/c", tmpPath).Start()
+			fmt.Sprintf("AIPMC Agent - %s", cmd.Args[0]), "cmd", "/c", tmpPath).Start()
 	case "darwin":
 		cdDir := cmd.Dir
 		if cdDir == "" {

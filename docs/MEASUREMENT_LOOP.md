@@ -1,6 +1,6 @@
 ﻿# 行动测量反馈体系规格 v1（MEASUREMENT_LOOP）
 
-> 目的：把 PlanAI 从「记录 agent 行为的黑盒」变成「可验证、可归因、可反馈的测量体系」。
+> 目的：把 AIPMC 从「记录 agent 行为的黑盒」变成「可验证、可归因、可反馈的测量体系」。
 > 背景（8/15 三方共识）：项目代码 100% 由 code agent 完成，用户对「代码实际完成质量」与
 > 「harness 是否发挥作用」缺乏独立验证——现在的验证字段是 agent 自报的（`mcp.go:293` 工具
 > 描述明文教 agent 设 `test_status=passed` 过 done-gate）。本文档建立三层相互独立的证据通道，
@@ -150,7 +150,7 @@ CREATE INDEX IF NOT EXISTS idx_proxy_trace_session ON proxy_trace(session_id, ts
 
 ---
 
-## 7. 生产数据基线（2026-08-15 实测，`D:\projects\PlanAI\.pmai\data\pmai.db` + `~/.aipmc/logs/aipmc.log`）
+## 7. 生产数据基线（2026-08-15 实测，`D:\projects\AIPMC\.pmai\data\pmai.db` + `~/.aipmc/logs/aipmc.log`）
 
 > 本节数据是讨论从「设计假设」转向「现实依据」的锚点。测量体系上线前，先以本节为 S0 基线；
 > 后续所有 M 指标的首次运行值必须与本节对账。

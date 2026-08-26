@@ -37,7 +37,7 @@ func RunInfo(dbPath string) {
 }
 
 func PrintHelp() {
-	fmt.Println(`AIPM CLI — AI Project Manager
+	fmt.Println(`AIPMC CLI — AI Project Manager
 
 PRIMARY (infrastructure):
   aipmc init                     Initialize project + auto-configure MCP
