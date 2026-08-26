@@ -105,3 +105,30 @@ func TestSpoolEntrySkippedOnUniqueConflict(t *testing.T) {
 		t.Fatalf("UNIQUE 冲突条目应按已补写跳过并清空 spool，got: %q", string(left))
 	}
 }
+
+// TestSpoolDropsWhenFull: spool 达 maxSpoolEntries 上限后新事件被丢弃并告警
+// （Claude C3：防 flush 持续失败时 JSONL 无界膨胀），文件不增长。
+func TestSpoolDropsWhenFull(t *testing.T) {
+	path := discussionSpoolPath()
+	_ = os.Remove(path)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatalf("open spool: %v", err)
+	}
+	for i := 0; i < maxSpoolEntries; i++ {
+		if _, err := f.WriteString("{\"id\":\"seed\"}\n"); err != nil {
+			t.Fatalf("seed spool: %v", err)
+		}
+	}
+	f.Close()
+	if err := spoolDiscussionFallback("sess-full", "assistant", "codex-cli", "超限事件", "", "2026-08-26T09:00:00Z", errBusyStub); err != nil {
+		t.Fatalf("超限应返回 nil（丢弃+告警）: %v", err)
+	}
+	n, err := countSpoolEntries(path)
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != maxSpoolEntries {
+		t.Fatalf("spool entries = %d, want %d（不增长）", n, maxSpoolEntries)
+	}
+}

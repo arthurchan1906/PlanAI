@@ -1,9 +1,11 @@
 package store
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -121,6 +123,8 @@ func discussionSpoolPath() string {
 }
 
 // spoolEntry 一条待补写的讨论记录（id/created_at 在落盘时生成，补写时原样保留）。
+// 注记：落盘生成的是新 id（非原事件 id）——补写行为一条新行，与原事件行 id 不同；
+// 当前无引用该 id 的消费方（全文检索按 content 重建），仅作去重与溯源用。
 type spoolEntry struct {
 	ID        string `json:"id"`
 	SessionID string `json:"session_id"`
@@ -131,9 +135,42 @@ type spoolEntry struct {
 	CreatedAt string `json:"created_at"`
 }
 
+// maxSpoolEntries spool 总量上限（Claude C3）：flush 持续失败时防 JSONL 无界膨胀。
+// 超过上限丢弃新条目并告警——宁可丢新事件也不让文件无限增长（需人工介入排查锁竞争）。
+const maxSpoolEntries = 10000
+
+// countSpoolEntries 统计 spool 文件现有条目数（按行，块读避免大文件全量载入）。
+func countSpoolEntries(path string) (int, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	defer f.Close()
+	n := 0
+	buf := make([]byte, 32*1024)
+	for {
+		c, err := f.Read(buf)
+		n += bytes.Count(buf[:c], []byte{'\n'})
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return 0, err
+		}
+	}
+	return n, nil
+}
+
 // spoolDiscussionFallback 把写失败的事件追加到 spool 文件（防静默丢失）。
 func spoolDiscussionFallback(sessionID, role, source, content, metadataJSON, now string, cause error) error {
 	path := discussionSpoolPath()
+	if n, err := countSpoolEntries(path); err == nil && n >= maxSpoolEntries {
+		u.LogShared("HOOK", "discussion spool full (%d >= %d): dropping event session=%s err=%v", n, maxSpoolEntries, sessionID, cause)
+		return nil
+	}
 	e := spoolEntry{
 		ID:        u.Slug("disc"),
 		SessionID: sessionID,

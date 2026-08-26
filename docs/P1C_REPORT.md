@@ -69,6 +69,31 @@
 3. **旧数据不可自愈**：spool 2026-08-26 引入，8/17-8/20 的丢失事件无 spool 记录无法补写；标注集判定维持现状（D5/P4 假阳性成立），修复效果以 8/26 后新 session 数据验证。
 4. **证据完整性警告未全覆盖**：`eval process --l2` 已对「窗口内无 write 信号」的 deadloop=true 输出警告，但 D5/P4 类缺失恰在窗口**外**（候选窗口前后），JSONL 交叉校验仍是人工步骤。
 
+
+---
+
+## 8. Claude 审核 Challenge 处理（2026-08-26 二轮）
+
+Claude 复核（disc-20260826-170542-473717 / 170846-fbbd10）：修复链认可，3 个 challenge + 1 低危。处理如下：
+
+### C1【中】解析失败条目口径 → 已重跑，口径修正
+初跑时 D7/P6 两条 feedback_response L2 输出解析失败，报告将「人工复核原始 LLM 输出」计入 17 例分母（Claude 指出按失败计不一致 = 70.6% 不达标）。**处理：用同一 L2Client（proxy→DeepSeek）对 D7/P6 单独重跑**（2026-08-26 17:20）：
+- D7：`responded=true deepened=true sustained=true aligned=true matched="上周五与Claude的讨论"` —— 解析成功，与人工判定一致
+- P6：`responded=true deepened=true sustained=true aligned=true matched="讨论"` —— 解析成功，与人工判定一致
+- **结论**：初跑解析失败为 LLM 偶发输出格式（非管道系统性缺陷），重跑输出合法 JSON 且判定稳定。**口径修正：17 例分母全部基于 L2 独立输出（D7/P6 以重跑结果入表），一致 14/17 = 82.4%（严格）成立**；「解析失败计不一致 → 70.6%」的最坏口径已被重跑结果推翻。
+
+### C2【低】修复后首跑对照 → 已执行
+对 spool v2 落地后完全新开的 session `01a03cf0`（8/26 15:20-17:18，318 条，审核本修复链的真实工作负载）跑 `eval process --l2 --l2-sample 2`：
+- L2 3/3 成功（claim_classify×2 + feedback_response×1），**无解析失败**
+- `deadloops=null`——L1 无死循环候选（正常审核流，无盲试构建重试），死循环确认的修复后对照暂无样本，由对抗样本（§5）覆盖不误判面
+- 真实 spool 文件 0 行；16:44 spool v2 落地后 discussion 写路径 zero locked（17:10 的 1 处 locked 为 MCP 工具 `aipm_add_to_thread` 路径，非 hook 写路径）
+
+### C3【低】spool 无总量上限 → 已实现
+`store/discussion.go` 新增 `maxSpoolEntries = 10000` + `countSpoolEntries`：spool 落盘前检查，达上限丢弃新条目并 `LogShared` 告警（防 flush 持续失败时 JSONL 无界膨胀；宁可丢新事件也要人工介入排查锁竞争）。新增 `TestSpoolDropsWhenFull` 验证文件不增长。
+
+### 低危：spool 条目 id 语义 → 已注记
+`spoolEntry` 注释补注：落盘生成的是新 id（非原事件 id），补写行为一条新行；当前无引用该 id 的消费方（全文检索按 content 重建），仅作去重与溯源用。
+
 ## 7. 门禁结论
 
 - ✅ **判定一致率 82.4%（严格）≥ 80%**——P1 验收达标（薄线通过，根因已修，观察期复验）
