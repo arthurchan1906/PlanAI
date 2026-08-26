@@ -37,20 +37,25 @@ func LogDiscussion(sessionID, role, source, content, metadataJSON string) (map[s
 	if metadataJSON != "" && !json.Valid([]byte(metadataJSON)) {
 		u.LogShared("HOOK", "metadata_invalid src=%s role=%s", source, role)
 	}
+	// 事件时点：在重试/spool 之前捕获（重试期可能长达数秒，落盘时点会挪出原窗口）。
+	eventAt := u.NowISO()
 	// 先补写历史 spool（P0 捕获缺口兜底，bug-20260826-154305-941881）：
 	// 上次 DB 锁竞争期落盘的条目在新写入前重放，保证不静默丢失。
 	if err := flushDiscussionSpool(); err != nil {
 		u.LogShared("HOOK", "spool_flush_err src=%s err=%v", source, err)
 	}
 	var lastErr error
-	for attempt := 0; attempt < 15; attempt++ {
+	// 快速失败（P1 修正，bug-20260826-163617-217e96）：hook 生命周期有限，
+	// 15×busy_timeout(15s) 最坏阻塞 ~227s，事件在落 spool 前就被超时杀死。
+	// 收敛为 3 次短重试（专用连接 busy_timeout=2s）→ 最坏 ~6s 即落盘兜底。
+	for attempt := 0; attempt < 3; attempt++ {
 		if attempt > 0 {
 			time.Sleep(time.Duration(attempt*25) * time.Millisecond)
 		}
 		var result map[string]any
 		var err error
 		withDiscussionLogLock(func() {
-			result, err = logDiscussionOnce(sessionID, role, source, content, metadataJSON)
+			result, err = logDiscussionOnce(sessionID, role, source, content, metadataJSON, eventAt)
 		})
 		if err == nil {
 			return result, nil
@@ -62,10 +67,35 @@ func LogDiscussion(sessionID, role, source, content, metadataJSON string) (map[s
 	}
 	// 重试耗尽仍 BUSY：落盘 spool，宁可延迟补写也不静默丢事件。
 	// 返回成功（spooled），hook 侧不再报 write_err、不会被超时杀死丢数据。
-	if serr := spoolDiscussionFallback(sessionID, role, source, content, metadataJSON, lastErr); serr != nil {
+	if serr := spoolDiscussionFallback(sessionID, role, source, content, metadataJSON, eventAt, lastErr); serr != nil {
 		return nil, fmt.Errorf("discussion spool fallback failed: %v (cause: %v)", serr, lastErr)
 	}
 	return map[string]any{"status": "spooled"}, nil
+}
+
+// openDiscussionDB 讨论写入专用连接：busy_timeout 收敛到 2s。
+// 写路径要「快速失败→spool」，不能用全局 15s busy_timeout（长阻塞会被 hook 超时杀死）。
+func openDiscussionDB() (*sql.DB, error) {
+	dbPath, err := pmdb.FindPath()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("PMAI database not found: %s — run aipmc init first", dbPath)
+	}
+	d, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(2000)&_pragma=synchronous(NORMAL)")
+	if err != nil {
+		return nil, err
+	}
+	if err := d.Ping(); err != nil {
+		d.Close()
+		return nil, err
+	}
+	if err := pmdb.EnsureSchema(d); err != nil {
+		d.Close()
+		return nil, err
+	}
+	return d, nil
 }
 
 func discussionLogLockPath() string {
@@ -102,7 +132,7 @@ type spoolEntry struct {
 }
 
 // spoolDiscussionFallback 把写失败的事件追加到 spool 文件（防静默丢失）。
-func spoolDiscussionFallback(sessionID, role, source, content, metadataJSON string, cause error) error {
+func spoolDiscussionFallback(sessionID, role, source, content, metadataJSON, now string, cause error) error {
 	path := discussionSpoolPath()
 	e := spoolEntry{
 		ID:        u.Slug("disc"),
@@ -111,7 +141,7 @@ func spoolDiscussionFallback(sessionID, role, source, content, metadataJSON stri
 		Source:    source,
 		Content:   content,
 		Metadata:  metadataJSON,
-		CreatedAt: u.NowISO(),
+		CreatedAt: now,
 	}
 	line, err := json.Marshal(e)
 	if err != nil {
@@ -163,40 +193,46 @@ func flushDiscussionSpool() error {
 	if len(entries) == 0 {
 		return nil
 	}
+	// 整个 flush（读→补写→重写 spool）在锁内执行，避免多进程并发读改写互相覆盖。
 	var pending []spoolEntry
-	for i, e := range entries {
-		if i >= 200 {
-			pending = append(pending, entries[i:]...)
-			break
-		}
-		var ierr error
-		withDiscussionLogLock(func() {
-			db, derr := pmdb.Open()
+	withDiscussionLogLock(func() {
+		for i, e := range entries {
+			if i >= 200 {
+				pending = append(pending, entries[i:]...)
+				break
+			}
+			db, derr := openDiscussionDB()
 			if derr != nil {
-				ierr = derr
-				return
+				pending = append(pending, entries[i:]...)
+				break
 			}
-			defer db.Close()
-			_, ierr = db.Exec("INSERT INTO discussion_log (id, session_id, role, source, content, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+			_, ierr := db.Exec("INSERT INTO discussion_log (id, session_id, role, source, content, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
 				e.ID, e.SessionID, e.Role, e.Source, e.Content, e.Metadata, e.CreatedAt)
-			if ierr != nil {
-				return
-			}
-			_ = pmdb.SyncFTS5Entity(db, "discussion", e.ID, "["+e.Role+"]["+e.Source+"] "+previewSpool(e.Content), e.Content)
-		})
-		err := ierr
-		if err != nil {
-			if isSQLiteBusy(err) {
+			if ierr == nil {
+				_ = pmdb.SyncFTS5Entity(db, "discussion", e.ID, "["+e.Role+"]["+e.Source+"] "+previewSpool(e.Content), e.Content)
+			} else if isSQLiteBusy(ierr) {
 				// 锁竞争持续：保留剩余全部，下次再试
 				pending = append(pending, entries[i:]...)
+				db.Close()
+				break
+			} else if isUniqueConstraint(ierr) {
+				// UNIQUE 冲突 = 该条目已补写成功（并发 flush 双写）——按已写跳过
 			} else {
-				// 非 BUSY 错误（如 schema 未建）：保留单条，避免死循环
+				// 非 BUSY/非冲突错误：保留单条，避免死循环
 				pending = append(pending, e)
 			}
-			break
+			db.Close()
 		}
-	}
+	})
 	return rewriteDiscussionSpool(path, pending)
+}
+
+// isUniqueConstraint SQLite UNIQUE 冲突（SQLITE_CONSTRAINT 19）。
+func isUniqueConstraint(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "unique constraint failed")
 }
 
 // rewriteDiscussionSpool 原子重写 spool 文件（写临时文件再 rename）。
@@ -253,14 +289,13 @@ func withDiscussionLogLock(fn func()) {
 	fn()
 }
 
-func logDiscussionOnce(sessionID, role, source, content, metadataJSON string) (map[string]any, error) {
-	db, err := pmdb.Open()
+func logDiscussionOnce(sessionID, role, source, content, metadataJSON, now string) (map[string]any, error) {
+	db, err := openDiscussionDB()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
 	id := u.Slug("disc")
-	now := u.NowISO()
 	sid := sessionID
 	if sid == "" {
 		sid = "unknown"

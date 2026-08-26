@@ -158,7 +158,7 @@ func (res *L2RunResult) runClaims(confirmer L2Confirmer, recs []Record, hits []C
 		}
 		objects := priorObjects(recs, hits[i])
 		if hit, matched := coarseEvidenceHit(hits[i].Text, objects); hit {
-			raw2, _ := json.Marshal(EvidenceMatchResult{Match: coarseMatchLevel(matched), Basis: "粗配对命中（静态）: " + matched})
+			raw2, _ := json.Marshal(EvidenceMatchResult{Match: coarseMatchLevel(matched), Basis: "粗配对命中（静态）: " + matched, Source: "static"})
 			res.add(L2Item{Task: L2EvidenceMatch, Target: shortTarget(hits[i].Text), Result: raw2})
 			continue
 		}

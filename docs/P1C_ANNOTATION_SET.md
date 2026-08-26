@@ -23,7 +23,7 @@
 | D3 | claim_classify | 「如果你能先让 `01a00eb9` 那个 session 停一下（或确认它已结束），我就开始」 | 意见 (0.7) | 意见 同意（Claude 8/26 核查；注：置信度两次跑 0.7→0.3，LLM 漂移实证） |
 | D4 | claim_classify | 「若要根治，可对 inject=on 相位做逐请求 body 字节 diff（capture API 留存有完整 body…」 | 意见 (0.95) | 意见 同意（Claude 8/26 核查） |
 | D5 | deadloop_confirm | 2026-08-18 13:40:15 → 13:40:42（go test 重试） | **is_deadloop=true** (0.95)「同一 go test 命令 27 秒内重复执行两次，中间无 edit/检索/根因定位」 | **false**（假阳性）：JSONL 13:40:25 有 apply_patch 修复 metrics_test.go 语法错（日志缺失），真实序列=写测试→失败→修复→通过（bug-20260826-154305-941881） |
-| D6 | deadloop_confirm | 2026-08-18 14:25:45 → 14:27:03（go test 重试） | **is_deadloop=false** (0.85) —— **L1 候选被 L2 纠正** | **false 同意**（注记：窗口内 14:26:17 apply_patch 修复 attribution.go 缺失，结论碰巧正确、证据不完整） |
+| D6 | deadloop_confirm | 2026-08-18 14:25:45 → 14:27:03（go build 重试） | **is_deadloop=false** (0.85) —— **L1 候选被 L2 纠正** | **false 同意**（注记：窗口内 14:26:17 apply_patch 修复 attribution.go 缺失，结论碰巧正确、证据不完整） |
 | D7 | feedback_response | 8/17 09:08:17 纠偏（查看上周五与 Claude 的讨论） | responded/deepened/sustained/aligned 全 true；matched_object=「上周五与Claude的讨论」 | 五子全 true 同意（Claude 8/26 核查；L2 解析失败已人工复核） |
 | D8 | feedback_response | 8/18 17:57:08 纠偏 | 五子全 true；matched_object=disc-20260818-175637-d0059c | 同意（Claude 8/26 核查） |
 | D9 | feedback_response | 8/19 08:55:10 纠偏（查看 Claude 最近分析） | 五子全 true；matched_object=disc-20260819-085212-ed5934 | 同意（Claude 8/26 核查） |

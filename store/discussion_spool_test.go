@@ -24,10 +24,10 @@ func TestSpoolFallbackThenFlush(t *testing.T) {
 	path := discussionSpoolPath()
 	_ = os.Remove(path)
 
-	if err := spoolDiscussionFallback("sess-spool", "assistant", "codex-cli", "事件A apply_patch 修复 metrics_test.go", `{"type":"post_tool"}`, errBusyStub); err != nil {
+	if err := spoolDiscussionFallback("sess-spool", "assistant", "codex-cli", "事件A apply_patch 修复 metrics_test.go", `{"type":"post_tool"}`, "2026-08-18T05:40:25Z", errBusyStub); err != nil {
 		t.Fatalf("spool fallback 1: %v", err)
 	}
-	if err := spoolDiscussionFallback("sess-spool", "assistant", "codex-cli", "事件B 写测试", "", errBusyStub); err != nil {
+	if err := spoolDiscussionFallback("sess-spool", "assistant", "codex-cli", "事件B 写测试", "", "2026-08-18T05:40:26Z", errBusyStub); err != nil {
 		t.Fatalf("spool fallback 2: %v", err)
 	}
 	data, err := os.ReadFile(path)
@@ -58,17 +58,26 @@ func TestSpoolFallbackThenFlush(t *testing.T) {
 	if n != 2 {
 		t.Fatalf("flushed rows = %d, want 2", n)
 	}
+	// created_at 必须保留事件时点（补写不挪出原窗口，P1 修正）。
+	var firstAt string
+	if err := db.QueryRow("SELECT created_at FROM discussion_log WHERE session_id='sess-spool' ORDER BY created_at LIMIT 1").Scan(&firstAt); err != nil {
+		t.Fatalf("read created_at: %v", err)
+	}
+	if firstAt != "2026-08-18T05:40:25Z" {
+		t.Fatalf("created_at = %q, want 事件时点 2026-08-18T05:40:25Z", firstAt)
+	}
 }
 
-// TestSpoolEntryKeptOnFailedFlush: 补写失败（UNIQUE 冲突模拟）时条目保留在 spool，不丢。
-func TestSpoolEntryKeptOnFailedFlush(t *testing.T) {
+// TestSpoolEntrySkippedOnUniqueConflict: 补写遇 UNIQUE 冲突 = 条目已在库中（并发双写），
+// 按「已补写」跳过并从 spool 移除（P1 修正：此前永久楔住 spool 首位，每次 flush 卡死）。
+func TestSpoolEntrySkippedOnUniqueConflict(t *testing.T) {
 	setupDailyDB(t)
 	if _, err := ReadDiscussions(ReadDiscussionsOpts{LastN: 5}); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}
 	path := discussionSpoolPath()
 	_ = os.Remove(path)
-	if err := spoolDiscussionFallback("sess-dup", "assistant", "codex-cli", "待补写", "", errBusyStub); err != nil {
+	if err := spoolDiscussionFallback("sess-dup", "assistant", "codex-cli", "待补写", "", "2026-08-18T05:40:25Z", errBusyStub); err != nil {
 		t.Fatalf("spool fallback: %v", err)
 	}
 	// 读 spool 拿 id，然后预插同 id 行制造 UNIQUE 冲突。
@@ -91,11 +100,8 @@ func TestSpoolEntryKeptOnFailedFlush(t *testing.T) {
 	if err := FlushDiscussionSpool(); err != nil {
 		t.Fatalf("flush should not hard-fail: %v", err)
 	}
-	left, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("spool entry lost on failed flush: %v", err)
-	}
-	if !strings.Contains(string(left), e.ID) {
-		t.Fatalf("spool entry %s missing after failed flush: %q", e.ID, string(left))
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		left, _ := os.ReadFile(path)
+		t.Fatalf("UNIQUE 冲突条目应按已补写跳过并清空 spool，got: %q", string(left))
 	}
 }

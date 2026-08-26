@@ -121,6 +121,9 @@ func ParseClaimClassify(out string) (ClaimClassifyResult, error) {
 type EvidenceMatchResult struct {
 	Match string `json:"match"`
 	Basis string `json:"依据"`
+	// Source 结果来源：""（空）= LLM 细配对；"static" = 静态粗配对命中（§2.2 无命中
+	// 才触发 LLM；命中直接记录粗配对结果）。消费方（误报率统计/标注集）据此区分。
+	Source string `json:"source,omitempty"`
 }
 
 // BuildEvidenceMatchPrompt 证据细配对输入：事实断言 + 前序工具对象。
