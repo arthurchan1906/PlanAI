@@ -112,7 +112,7 @@ func OpenProject(projectPath string) (*sql.DB, error) {
 			d.Close()
 			return nil, err
 		}
-		if err := ensureSchemaIfNeeded(d); err != nil {
+		if err := EnsureSchemaIfNeeded(d); err != nil {
 			d.Close()
 			return nil, err
 		}
@@ -140,7 +140,7 @@ func Open() (*sql.DB, error) {
 		d.Close()
 		return nil, err
 	}
-	if err := ensureSchemaIfNeeded(d); err != nil {
+	if err := EnsureSchemaIfNeeded(d); err != nil {
 		d.Close()
 		return nil, err
 	}
@@ -202,12 +202,16 @@ func RetryBusy(fn func() error) error {
 	return fmt.Errorf("still busy after 3 retries: %w", err)
 }
 
-// ensureSchemaIfNeeded runs the schema DDL only when the database is not
-// already at the current SCHEMA_VERSION. On the hot path (every Open) this
-// is a single cheap PRAGMA read instead of 50+ DDL statements that each
-// take a SQLite write lock — which is what caused multi-agent write-lock
-// storms (bug-20260805-134225-4f214f).
-func ensureSchemaIfNeeded(d *sql.DB) error {
+// EnsureSchemaIfNeeded runs the schema DDL only when the database is not
+// already at the current SCHEMA_VERSION. On hot paths (every Open, the
+// discussion-log write connection) this is a single cheap PRAGMA read
+// instead of 50+ DDL statements that each take a SQLite write lock — which
+// is what caused multi-agent write-lock storms (bug-20260805-134225-4f214f)
+// and made discussion spooling degrade to minutes under contention
+// (bug-20260826-164859-0643c5). If the schema state cannot be read (DB
+// possibly locked), DDL is skipped and the actual query surfaces the lock
+// error — the caller then falls into its BUSY retry/spool path.
+func EnsureSchemaIfNeeded(d *sql.DB) error {
 	upToDate, err := schemaUpToDate(d)
 	if err != nil {
 		// Can't read schema state (DB possibly locked) — don't gamble on

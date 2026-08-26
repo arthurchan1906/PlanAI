@@ -91,7 +91,7 @@ func openDiscussionDB() (*sql.DB, error) {
 		d.Close()
 		return nil, err
 	}
-	if err := pmdb.EnsureSchema(d); err != nil {
+	if err := pmdb.EnsureSchemaIfNeeded(d); err != nil {
 		d.Close()
 		return nil, err
 	}
@@ -194,15 +194,18 @@ func flushDiscussionSpool() error {
 		return nil
 	}
 	// 整个 flush（读→补写→重写 spool）在锁内执行，避免多进程并发读改写互相覆盖。
+	// 复用单个连接：此前每条目一次 open（每次 open 全量 DDL），锁竞争期被放大到
+	// 分钟级（bug-20260826-164859-0643c5）。BUSY 即停，剩余条目下次再试。
 	var pending []spoolEntry
 	withDiscussionLogLock(func() {
+		db, derr := openDiscussionDB()
+		if derr != nil {
+			pending = append(pending, entries...)
+			return
+		}
+		defer db.Close()
 		for i, e := range entries {
 			if i >= 200 {
-				pending = append(pending, entries[i:]...)
-				break
-			}
-			db, derr := openDiscussionDB()
-			if derr != nil {
 				pending = append(pending, entries[i:]...)
 				break
 			}
@@ -213,7 +216,6 @@ func flushDiscussionSpool() error {
 			} else if isSQLiteBusy(ierr) {
 				// 锁竞争持续：保留剩余全部，下次再试
 				pending = append(pending, entries[i:]...)
-				db.Close()
 				break
 			} else if isUniqueConstraint(ierr) {
 				// UNIQUE 冲突 = 该条目已补写成功（并发 flush 双写）——按已写跳过
@@ -221,7 +223,6 @@ func flushDiscussionSpool() error {
 				// 非 BUSY/非冲突错误：保留单条，避免死循环
 				pending = append(pending, e)
 			}
-			db.Close()
 		}
 	})
 	return rewriteDiscussionSpool(path, pending)
