@@ -287,15 +287,24 @@ func l2RecordsBetween(turns []Turn, from, to time.Time) []Record {
 }
 
 // claimSentenceRe 声称句关键词（低精度高召回，L1 候选生成；L2 断言分类确认）。
-var claimSentenceRe = regexp.MustCompile(`(完成|修复|通过|定位|找到|原因|解决|搞定|验证|测过|成功|失败|实锤|已|确认|问题在|错误是|根因|提交)`)
+// Claude P1b 审核 C2：裸「已」命中率过高（正常句子「已」字极常见）→ 收窄为双字词组。
+var claimSentenceRe = regexp.MustCompile(`(完成|修复|通过|定位|找到|原因|解决|搞定|验证|测过|成功|失败|实锤|已(?:完成|修复|提交|实现|解决|定位|确认)|确认|问题在|错误是|根因|提交)`)
 
 // claimSplitRe 句子切分（中英文句末标点）。
 var claimSplitRe = regexp.MustCompile(`[。！？!?；;]`)
 
-// CandidateClaims 从 assistant 文本记录提取候选断言句（含声称关键词的完整句，去重）。
-// 供任务 1（断言分类）与任务 2（证据细配对）的 L1 候选生成。
-func CandidateClaims(recs []Record) []string {
-	var out []string
+// ClaimHit 候选断言命中（含记录定位，供 L2 断言分类取前序命令/对象）。
+type ClaimHit struct {
+	Text      string    `json:"text"`
+	At        time.Time `json:"at"`
+	RecordID  string    `json:"record_id,omitempty"`
+	RecordIdx int       `json:"record_idx"`
+}
+
+// CandidateClaimHits 从 assistant 文本记录提取候选断言句（含声称关键词的完整句，去重，
+// 带记录定位）。供任务 1（断言分类）与任务 2（证据细配对）的 L1 候选生成。
+func CandidateClaimHits(recs []Record) []ClaimHit {
+	var out []ClaimHit
 	seen := map[string]bool{}
 	for i := range recs {
 		r := &recs[i]
@@ -309,8 +318,18 @@ func CandidateClaims(recs []Record) []string {
 				continue
 			}
 			seen[s] = true
-			out = append(out, s)
+			out = append(out, ClaimHit{Text: s, At: r.CreatedAt, RecordID: r.ID, RecordIdx: i})
 		}
+	}
+	return out
+}
+
+// CandidateClaims 从 assistant 文本记录提取候选断言句（去重，无定位）。
+func CandidateClaims(recs []Record) []string {
+	hits := CandidateClaimHits(recs)
+	out := make([]string, len(hits))
+	for i, h := range hits {
+		out[i] = h.Text
 	}
 	return out
 }

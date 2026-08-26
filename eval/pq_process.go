@@ -12,22 +12,24 @@ import (
 
 // ProcessReport P0a1a 单 session 处理报告。
 type ProcessReport struct {
-	SessionID   string              `json:"session_id"`
-	Boundary    *SessionBoundary    `json:"boundary"`
-	CommitLink  *CommitLink         `json:"commit_link,omitempty"`
-	Feedback    []FeedbackCandidate `json:"feedback"`
-	Counts      FeedbackCounts      `json:"counts"`
-	Retrieval   RetrievalStats      `json:"retrieval"`
-	Deadloops   []DeadloopCandidate `json:"deadloops"`
+	SessionID  string              `json:"session_id"`
+	Boundary   *SessionBoundary    `json:"boundary"`
+	CommitLink *CommitLink         `json:"commit_link,omitempty"`
+	Feedback   []FeedbackCandidate `json:"feedback"`
+	Counts     FeedbackCounts      `json:"counts"`
+	Retrieval  RetrievalStats      `json:"retrieval"`
+	Deadloops  []DeadloopCandidate `json:"deadloops"`
 	// P1 形态 5-10 L1 候选（PROCESS_QUALITY_SPEC §2.1 形态分类学 A 轴，P1a 全库扫描）
-	Stagnation          []StagnationCandidate          `json:"stagnation,omitempty"`            // 形态 5
-	DirectionShifts     []DirectionShiftCandidate      `json:"direction_shifts,omitempty"`      // 形态 6
-	RepeatInvestigation []RepeatInvestigationCandidate `json:"repeat_investigation,omitempty"`  // 形态 7
-	SingleFocus         []SingleFocusCandidate         `json:"single_focus,omitempty"`          // 形态 8
-	VerifyLoops         []VerifyLoopCandidate          `json:"verify_loops,omitempty"`          // 形态 9
-	FakeProgress        []FakeProgressCandidate        `json:"fake_progress,omitempty"`         // 形态 10
-	Annotations []string            `json:"annotations,omitempty"`
-	GeneratedAt time.Time           `json:"generated_at"`
+	Stagnation          []StagnationCandidate          `json:"stagnation,omitempty"`           // 形态 5
+	DirectionShifts     []DirectionShiftCandidate      `json:"direction_shifts,omitempty"`     // 形态 6
+	RepeatInvestigation []RepeatInvestigationCandidate `json:"repeat_investigation,omitempty"` // 形态 7
+	SingleFocus         []SingleFocusCandidate         `json:"single_focus,omitempty"`         // 形态 8
+	VerifyLoops         []VerifyLoopCandidate          `json:"verify_loops,omitempty"`         // 形态 9
+	FakeProgress        []FakeProgressCandidate        `json:"fake_progress,omitempty"`        // 形态 10
+	// P1b L2 确认结果（§2.2 五任务编排输出；nil = L2 未运行）
+	L2          *L2RunResult `json:"l2,omitempty"`
+	Annotations []string     `json:"annotations,omitempty"`
+	GeneratedAt time.Time    `json:"generated_at"`
 }
 
 // BuildProcessReport T1-T5 聚合入口。
@@ -227,6 +229,34 @@ func FormatProcessHuman(rep *ProcessReport) string {
 	}
 	for _, a := range rep.Annotations {
 		fmt.Fprintf(&sb, "  ! %s\n", a)
+	}
+	if rep.L2 != nil {
+		fmt.Fprintf(&sb, "  L2 确认: %s\n", formatL2Human(rep.L2))
+	}
+	return sb.String()
+}
+
+// formatL2Human L2 编排结果人类可读输出。
+func formatL2Human(r *L2RunResult) string {
+	if !r.Ran {
+		return "未运行（" + r.Reason + "）"
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "候选 %d 个（成功 %d / 失败 %d）", r.Total, r.Succeeded, r.Failed)
+	if r.Reason != "" {
+		fmt.Fprintf(&sb, "；%s", r.Reason)
+	}
+	for _, it := range r.Items {
+		status := "✓"
+		if it.Error != "" {
+			status = "✗"
+		}
+		fmt.Fprintf(&sb, "\n    %s [%s] %s", status, it.Task, it.Target)
+		if it.Error != "" {
+			fmt.Fprintf(&sb, " — %s", it.Error)
+		} else if len(it.Result) > 0 {
+			fmt.Fprintf(&sb, " %s", string(it.Result))
+		}
 	}
 	return sb.String()
 }
