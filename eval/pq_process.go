@@ -19,6 +19,13 @@ type ProcessReport struct {
 	Counts      FeedbackCounts      `json:"counts"`
 	Retrieval   RetrievalStats      `json:"retrieval"`
 	Deadloops   []DeadloopCandidate `json:"deadloops"`
+	// P1 形态 5-10 L1 候选（PROCESS_QUALITY_SPEC §2.1 形态分类学 A 轴，P1a 全库扫描）
+	Stagnation          []StagnationCandidate          `json:"stagnation,omitempty"`            // 形态 5
+	DirectionShifts     []DirectionShiftCandidate      `json:"direction_shifts,omitempty"`      // 形态 6
+	RepeatInvestigation []RepeatInvestigationCandidate `json:"repeat_investigation,omitempty"`  // 形态 7
+	SingleFocus         []SingleFocusCandidate         `json:"single_focus,omitempty"`          // 形态 8
+	VerifyLoops         []VerifyLoopCandidate          `json:"verify_loops,omitempty"`          // 形态 9
+	FakeProgress        []FakeProgressCandidate        `json:"fake_progress,omitempty"`         // 形态 10
 	Annotations []string            `json:"annotations,omitempty"`
 	GeneratedAt time.Time           `json:"generated_at"`
 }
@@ -86,6 +93,15 @@ func BuildProcessReport(db *sql.DB, sessionID, fixHashPrefix string) (*ProcessRe
 	p := DefaultDeadloopParams()
 	p.Cutoff = cutoff
 	rep.Deadloops = FindDeadloops(turns, spontTs, passiveTs, commitTs, p)
+	// P1 形态 5-10 L1 扫描（P1a）：cutoff = T2 fix commit 时刻，之后的新问题时段
+	// （如 11:50:08 KSN bug）不属于本问题域（与 T5 Cutoff 同口径）。
+	scanTurns := truncateTurns(turns, cutoff)
+	rep.Stagnation = DetectStagnation(scanTurns, DefaultStagnationParams())
+	rep.DirectionShifts = DetectDirectionShifts(scanTurns, DefaultDirectionShiftParams())
+	rep.RepeatInvestigation = DetectRepeatInvestigation(scanTurns, DefaultRepeatInvestigationParams())
+	rep.SingleFocus = DetectSingleFocus(scanTurns, DefaultSingleFocusParams())
+	rep.VerifyLoops = DetectVerifyLoops(scanTurns, DefaultVerifyLoopParams())
+	rep.FakeProgress = DetectFakeProgress(scanTurns, DefaultFakeProgressParams())
 	if strings.HasPrefix(sessionID, "c0ad2534") {
 		// 对照物（§9.2 checkpoint）：死循环候选 ↔ §4.1 冻结小时表
 		rep.Annotations = append(rep.Annotations, FrozenDeadloopAnnotations(rep.Deadloops)...)
@@ -180,6 +196,34 @@ func FormatProcessHuman(rep *ProcessReport) string {
 			tsFmt(d.Start), tsFmt(d.End), d.Builds, d.Fails, d.UserMsgs, d.Edits, d.RootCause,
 			d.SpontRetr, d.Passive,
 			map[bool]string{true: "（" + d.Reason + "）", false: ""}[d.Excluded])
+	}
+	// P1 形态 5-10（P1a L1 候选）
+	for _, c := range rep.Stagnation {
+		from := "产出间隔"
+		if c.FromUser {
+			from = "用户消息后"
+		}
+		fmt.Fprintf(&sb, "  P1 形态5 静默停滞: %s → %s 无产出 %dmin（含休眠 %dmin，%s）恢复=%s\n",
+			tsFmt(c.Start), tsFmt(c.End), c.GapMin, c.SleepMin, from, c.Production)
+	}
+	for _, c := range rep.DirectionShifts {
+		fmt.Fprintf(&sb, "  P1 形态6 频繁换方案: 转向 %d 次 / 访问 %d，新对象占比 %.0f%%（<35%% 加深低）\n",
+			c.Switches, c.TotalAccess, c.NewRatio*100)
+	}
+	for _, c := range rep.RepeatInvestigation {
+		fmt.Fprintf(&sb, "  P1 形态7 重复调查: %s 重复读 %d 次（%s → %s），扩展率 %.0f%%，%dmin 无产出\n",
+			c.Object, c.Reads, tsFmt(c.FirstRead), tsFmt(c.LastRead), c.ExpandRatio*100, c.NoProdSpan)
+	}
+	for _, c := range rep.SingleFocus {
+		fmt.Fprintf(&sb, "  P1 形态8 单点死磕: %s×%d（占比 %.0f%%），扩展率 %.0f%%\n",
+			c.TopObject, c.TopCount, c.TopShare*100, c.ExpandRatio*100)
+	}
+	for _, c := range rep.VerifyLoops {
+		fmt.Fprintf(&sb, "  P1 形态9 验证循环: %s → %s 同命令重试 [%s]\n",
+			tsFmt(c.FailTime), tsFmt(c.RetryTime), c.FailSig)
+	}
+	for _, c := range rep.FakeProgress {
+		fmt.Fprintf(&sb, "  P1 形态10 伪进展: %s 打点改动 %d 次（无根因/commit）\n", c.File, c.Edits)
 	}
 	for _, a := range rep.Annotations {
 		fmt.Fprintf(&sb, "  ! %s\n", a)
