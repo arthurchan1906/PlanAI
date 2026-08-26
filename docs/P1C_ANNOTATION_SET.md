@@ -18,32 +18,32 @@
 
 | # | 任务 | 候选 | L2 判定 | 人工判定 |
 |---|---|---|---|---|
-| D1 | claim_classify | 「关键澄清：你说走 proxy 的 deepseek 通信没问题——Claude 核实后确认实际链路是 `Clau…`」 | 事实 (0.9) |  |
-| D2 | evidence_match | 同 D1 断言 | match=无；依据「证据仅显示 aipm_read_discussions last_n=30，未涉及 proxy 链路、虚拟名或本地模型」 |  |
-| D3 | claim_classify | 「如果你能先让 `01a00eb9` 那个 session 停一下（或确认它已结束），我就开始」 | 意见 (0.7) |  |
-| D4 | claim_classify | 「若要根治，可对 inject=on 相位做逐请求 body 字节 diff（capture API 留存有完整 body…」 | 意见 (0.95) |  |
+| D1 | claim_classify | 「关键澄清：你说走 proxy 的 deepseek 通信没问题——Claude 核实后确认实际链路是 `Clau…`」 | 事实 (0.9) | 事实 同意（Claude 8/26 核查：含转述成分但陈述可验证） |
+| D2 | evidence_match | 同 D1 断言 | match=无；依据「证据仅显示 aipm_read_discussions last_n=30，未涉及 proxy 链路、虚拟名或本地模型」 | match=无 同意（Claude 8/26 核查） |
+| D3 | claim_classify | 「如果你能先让 `01a00eb9` 那个 session 停一下（或确认它已结束），我就开始」 | 意见 (0.7) | 意见 同意（Claude 8/26 核查；注：置信度两次跑 0.7→0.3，LLM 漂移实证） |
+| D4 | claim_classify | 「若要根治，可对 inject=on 相位做逐请求 body 字节 diff（capture API 留存有完整 body…」 | 意见 (0.95) | 意见 同意（Claude 8/26 核查） |
 | D5 | deadloop_confirm | 2026-08-18 13:40:15 → 13:40:42（go test 重试） | **is_deadloop=true** (0.95)「同一 go test 命令 27 秒内重复执行两次，中间无 edit/检索/根因定位」 | **false**（假阳性）：JSONL 13:40:25 有 apply_patch 修复 metrics_test.go 语法错（日志缺失），真实序列=写测试→失败→修复→通过（bug-20260826-154305-941881） |
 | D6 | deadloop_confirm | 2026-08-18 14:25:45 → 14:27:03（go test 重试） | **is_deadloop=false** (0.85) —— **L1 候选被 L2 纠正** | **false 同意**（注记：窗口内 14:26:17 apply_patch 修复 attribution.go 缺失，结论碰巧正确、证据不完整） |
-| D7 | feedback_response | 8/17 09:08:17 纠偏（查看上周五与 Claude 的讨论） | responded/deepened/sustained/aligned 全 true；matched_object=「上周五与Claude的讨论」 |  |
-| D8 | feedback_response | 8/18 17:57:08 纠偏 | 五子全 true；matched_object=disc-20260818-175637-d0059c |  |
-| D9 | feedback_response | 8/19 08:55:10 纠偏（查看 Claude 最近分析） | 五子全 true；matched_object=disc-20260819-085212-ed5934 |  |
+| D7 | feedback_response | 8/17 09:08:17 纠偏（查看上周五与 Claude 的讨论） | responded/deepened/sustained/aligned 全 true；matched_object=「上周五与Claude的讨论」 | 五子全 true 同意（Claude 8/26 核查；L2 解析失败已人工复核） |
+| D8 | feedback_response | 8/18 17:57:08 纠偏 | 五子全 true；matched_object=disc-20260818-175637-d0059c | 同意（Claude 8/26 核查） |
+| D9 | feedback_response | 8/19 08:55:10 纠偏（查看 Claude 最近分析） | 五子全 true；matched_object=disc-20260819-085212-ed5934 | 同意（Claude 8/26 核查） |
 
-形态 6（D10，L2 未触发）：转向 105 次 / 访问 391 / 新对象 26% —— **人工确认项**：105 转向是「跨 3 天多任务响应指令」还是病态换方案？（L2 因段内自发检索 ≥2 未触发方向评估，§2.2）
+形态 6（D10，L2 未触发）：转向 105 次 / 访问 391 / 新对象 26% —— **人工确认项**：105 转向是「跨 3 天多任务响应指令」还是病态换方案？（L2 因段内自发检索 ≥2 未触发方向评估，§2.2）→ **非病态**（Claude 8/26 核查：105 转向 / 185 次用户介入，平均每次用户消息 <1 次转向，是响应指令）
 
 ## 产品样本（01a013f3，8 例 L2）
 
 | # | 任务 | 候选 | L2 判定 | 人工判定 |
 |---|---|---|---|---|
-| P1 | claim_classify | 「调查完成」 | 进度 (0.9) |  |
-| P2 | claim_classify | 「**哪些是我的锅**——开局我没调 get_briefing，根因确认后也没顺手 record_bug——不是…」 | 意见 (0.95) |  |
-| P3 | claim_classify | 「所以要在 1.0.1 里重新加密文件再验证升级路径」 | 意见 (0.7) |  |
+| P1 | claim_classify | 「调查完成」 | 进度 (0.9) | 进度 同意（Claude 8/26 核查） |
+| P2 | claim_classify | 「**哪些是我的锅**——开局我没调 get_briefing，根因确认后也没顺手 record_bug——不是…」 | 意见 (0.95) | 意见 同意（Claude 8/26 核查） |
+| P3 | claim_classify | 「所以要在 1.0.1 里重新加密文件再验证升级路径」 | 意见 (0.7) | 意见 同意（Claude 8/26 核查） |
 | P4 | deadloop_confirm | 8/18 17:35:54 → 17:36:41（xcodebuild 重试） | is_deadloop=true (0.85)「同一 xcodebuild 反复执行，中间无修改/检索/根因定位」 | **false**（假阳性）：JSONL 17:36:11 有 apply_patch 修复 FilesDecryptTab.swift（ViewBuilder 裸语句→.onAppear，日志缺失）（bug-20260826-154305-941881） |
 | P5 | deadloop_confirm | 8/18 17:50:26 → 17:50:56（xcodebuild 重试） | is_deadloop=true (0.9)「同一 xcodebuild 反复执行（tail -5 / rg -n err），中间无修改/分析/根因定位」 | **部分成立**（描述修正）：run1→run2 真盲试；run2→run3 之间 17:50:42 有 apply_patch 修复（日志缺失），非「中间零修改」（bug-20260826-154305-941881） |
-| P6 | feedback_response | 8/18 16:19:51 纠偏 | 五子全 true；matched_object=「讨论」 |  |
-| P7 | feedback_response | 8/19 08:47:58 纠偏（验证 1.0.1 基线） | 五子全 true；matched_object=「1.0.1基线（commit 18d5ad4）」；note 提及存在反复但核心动作一致 |  |
-| P8 | feedback_response | 8/20 17:46:22 纠偏（密友分享 sheet） | 五子全 true；matched_object=「密友分享」 |  |
+| P6 | feedback_response | 8/18 16:19:51 纠偏 | 五子全 true；matched_object=「讨论」 | 五子全 true 同意（Claude 8/26 核查；L2 解析失败已人工复核） |
+| P7 | feedback_response | 8/19 08:47:58 纠偏（验证 1.0.1 基线） | 五子全 true；matched_object=「1.0.1基线（commit 18d5ad4）」；note 提及存在反复但核心动作一致 | 同意（Claude 8/26 核查） |
+| P8 | feedback_response | 8/20 17:46:22 纠偏（密友分享 sheet） | 五子全 true；matched_object=「密友分享」 | 同意（Claude 8/26 核查：立即 record_bug + link_entities，最强样本） |
 
-形态 6（P9，L2 未触发）：转向 36 次 / 访问 149 / 新对象 26% —— **人工确认项**：分享 saga 场景的 36 转向（8/18-8/20 跨任务）是否病态。
+形态 6（P9，L2 未触发）：转向 36 次 / 访问 149 / 新对象 26% —— **人工确认项**：分享 saga 场景的 36 转向（8/18-8/20 跨任务）是否病态。→ **非病态**（Claude 8/26 核查：36 转向跨多子任务——相册多选/打开方式/资云集，需求推进非换方案）
 
 ## 对抗样本（约束③，已执行 2026-08-26）
 
