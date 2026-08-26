@@ -1,4 +1,4 @@
-# PlanAI Go 学习索引
+# AIPMC Go 学习索引
 
 > 面向 Python / C / C++ / JavaScript 开发者。本文件的完整学习内容已按主题拆分到
 > **[`docs/go-handbook/`](go-handbook/README.md)** 学习手册文件夹，这里是入口索引 + 速查。
@@ -27,7 +27,7 @@
 
 ## 最需要记住的 10 件事
 
-1. **Go 是编译语言**：`go build` 出单文件二进制，交叉编译 `GOOS=linux go build`。PlanAI 选 Go 就是因为编译产物即部署产物。
+1. **Go 是编译语言**：`go build` 出单文件二进制，交叉编译 `GOOS=linux go build`。AIPMC 选 Go 就是因为编译产物即部署产物。
 2. **没有类，没有继承**：struct + 方法，组合（embedding）代替继承，interface 隐式满足（不用 `implements`）。
 3. **错误是返回值，不是异常**：`result, err := f()`，`if err != nil`。没有 try/catch。
 4. **没有 `public`/`private`**：大写开头 = 导出，小写 = 包内私有，编译器强制。
