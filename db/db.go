@@ -60,6 +60,19 @@ func FindPath() (string, error) {
 	return filepath.Join(cwd, ".pmai", "data", "pmai.db"), nil
 }
 
+// ProjectRoot 从库路径推导项目根（M1a 对账，8/26 C2 单点统一——proxy 日志 project=
+// 与 eval 过滤基准同源 FindPath 结果）：
+// <proj>/.pmai/data/pmai.db → <proj>（Dir² 停在 <proj>/.pmai，Base==.pmai 取父）；
+// <PMAI_HOME>/data/pmai.db（env 模式，无 .pmai 层）→ <PMAI_HOME>。
+// 注：pmai.db 在 data/ 子目录，Dir² 推导会少一层停在 .pmai（8/26 实测错值根因）。
+func ProjectRoot(dbPath string) string {
+	dir := filepath.Dir(filepath.Dir(dbPath))
+	if filepath.Base(dir) == ".pmai" {
+		return filepath.Dir(dir)
+	}
+	return dir
+}
+
 // RuntimeDir locates the .pmai directory.
 func RuntimeDir() (string, error) {
 	if dir := os.Getenv("PMAI_HOME"); dir != "" {

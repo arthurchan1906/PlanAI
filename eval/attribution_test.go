@@ -271,6 +271,16 @@ func TestM1ReconcileFiltersOtherProject(t *testing.T) {
 	}
 }
 
+// SetProjectRoot 覆盖 M1a 过滤基准（8/26 C2，--db 场景）：基准应随覆盖值切换。
+func TestSetProjectRootOverridesFilterBase(t *testing.T) {
+	oldSet, oldProj := curProjectSet, curProject
+	defer func() { curProjectSet, curProject = oldSet, oldProj }()
+	SetProjectRoot("/tmp/other-proj")
+	if got := currentProjectPath(); got != "/tmp/other-proj" {
+		t.Errorf("currentProjectPath = %q, want %q（SetProjectRoot 覆盖）", got, "/tmp/other-proj")
+	}
+}
+
 // M1a 对账窗口：inject_log 启用前的历史 :148 日志行不参与对账（无对应表行，
 // 计入分母会造成系统性误报——8/18 实测 claude reconcile=0.005 根因）。
 func TestM1ReconcileWindowExcludesPreEnableLogs(t *testing.T) {

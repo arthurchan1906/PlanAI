@@ -15,12 +15,13 @@ import (
 	"fmt"
 	"os"
 	"path"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	pmdb "aipmc/db"
 )
 
 // AttributionReport 归因报告（HARNESS M1-M5）。
@@ -34,67 +35,38 @@ type AttributionReport struct {
 	Annotations []string            `json:"annotations,omitempty"` // 规格注记（HARNESS §2：准实验/含噪/口径边界）
 }
 
-var curProjectOnce sync.Once
+var curProjectMu sync.Mutex
 var curProject string
 var curProjectSet bool
 
-// currentProjectPath 当前项目根（M1a 对账过滤，8/26）：与 proxy 日志 project= 同源
-// （cwd 向上找 .pmai 的目录）；PMAI_HOME/PLANAI_HOME 兜底（与 pmdb.FindPath 一致）；
-// --db 指定其他库时由 main 用 SetProjectRoot 覆盖（8/26 C2）。
+// currentProjectPath 当前项目根（M1a 对账过滤，8/26 C2 单点统一）：与 proxy 日志
+// project= 同源 pmdb.FindPath + pmdb.ProjectRoot（正常 <proj>/.pmai/data/pmai.db 与
+// env PMAI_HOME 模式统一推导）；--db 指定其他库时由 main 用 SetProjectRoot 覆盖。
 func currentProjectPath() string {
-	if curProjectSet {
-		return curProject
+	curProjectMu.Lock()
+	defer curProjectMu.Unlock()
+	if !curProjectSet {
+		if p, err := pmdb.FindPath(); err == nil {
+			curProject = pmdb.ProjectRoot(p)
+		}
+		curProjectSet = true
 	}
-	curProjectOnce.Do(func() {
-		if dir := os.Getenv("PMAI_HOME"); dir != "" {
-			curProject = dir
-			curProjectSet = true
-			return
-		}
-		if dir := os.Getenv("PLANAI_HOME"); dir != "" {
-			curProject = dir
-			curProjectSet = true
-			return
-		}
-		if cwd, err := os.Getwd(); err == nil {
-			for dir := cwd; dir != "/" && dir != "."; {
-				if info, err := os.Stat(filepath.Join(dir, ".pmai")); err == nil && info.IsDir() {
-					curProject = dir
-					curProjectSet = true
-					return
-				}
-				parent := filepath.Dir(dir)
-				if parent == dir {
-					break
-				}
-				dir = parent
-			}
-		}
-	})
 	return curProject
 }
 
 // SetProjectRoot 由 main 在 --db 指定其他库时覆盖 M1a 过滤基准（8/26 C2）。
 func SetProjectRoot(root string) {
+	curProjectMu.Lock()
+	defer curProjectMu.Unlock()
 	curProject = root
 	curProjectSet = true
 }
 
 // ProjectRootFromDBPath 从库路径推导项目根（--db 场景，8/26 C2）：
-// <proj>/.pmai/data/pmai.db → <proj>（向上找含 .pmai 目录的父）。
+// <proj>/.pmai/data/pmai.db → <proj>；无 .pmai 结构（如 /tmp 副本）返回空（不过滤）。
 func ProjectRootFromDBPath(dbPath string) string {
-	for dir := filepath.Dir(dbPath); dir != "/" && dir != "."; {
-		if filepath.Base(dir) == ".pmai" {
-			return filepath.Dir(dir)
-		}
-		if info, err := os.Stat(filepath.Join(dir, ".pmai")); err == nil && info.IsDir() {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
+	if root := pmdb.ProjectRoot(dbPath); root != "/" {
+		return root
 	}
 	return ""
 }
@@ -377,7 +349,7 @@ func BuildAttribution(d *sql.DB, logFile string, since time.Time) (*AttributionR
 
 	// 规格注记（HARNESS §2 强制项：准实验/含噪/对照组语义，缺失会让输出被误读）
 	rep.Annotations = []string{
-		"M1a 对账口径（8/26）：日志全局共享（~/.aipmc/logs 混入其他项目注入行，8/19-24 实测跨项目污染致对账 12-14%）——8/26 起 proxy 日志带 project=，分母按当前项目过滤；历史无 project= 行不过滤，对账仅对单项目纯净窗口（8/18/8/25）有效",
+		"M1a 对账口径（8/26）：日志全局共享（~/.aipmc/logs 混入其他项目注入行，8/19-24 实测跨项目污染致对账 12-14%）——8/26 09:41 重启后 proxy 日志带 project=（单点推导 pmdb.FindPath+ProjectRoot），分母按当前项目过滤；历史无 project= 行不过滤，对账仅对单项目纯净窗口有效（8/18 87%/8/25 98.6%；8/26 09:41 起新基线首个窗口 100%，样本量小待积累）",
 		"M2 为观察性准实验（非随机对照）：注入/对照组差值反映关联而非因果",
 		"M2 命中判定（8/25 修订）：fileAssoc 注记串按 ' → ' 拆路径 + op 路径精确/basename/后缀三级匹配；写/读引用均计",
 		"M2 same_content 对照组基线=已见过（此前注入过同内容）：有注入历史时按已注入文件判定，无历史时降级为活跃基线（任意文件引用）",
