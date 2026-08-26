@@ -99,6 +99,11 @@ func evenlySample[T any](items []T, n int) []T {
 	if n <= 0 || len(items) <= n {
 		return items
 	}
+	// n=1 时 (n-1)=0 除零 → NaN；Go spec 对 int(NaN) 是 implementation-specific
+	// （当前平台返回 0，其他平台可能 min int64 → 负数索引 panic）——显式保护。
+	if n == 1 {
+		return items[:1]
+	}
 	out := make([]T, 0, n)
 	for i := 0; i < n; i++ {
 		pos := int(math.Round(float64(i) * float64(len(items)-1) / float64(n-1)))

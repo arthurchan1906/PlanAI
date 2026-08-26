@@ -171,6 +171,9 @@ func TestL2TimeoutErrorRecordedContinues(t *testing.T) {
 
 func TestEvenlySample(t *testing.T) {
 	items := []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+	if got := evenlySample(items, 1); len(got) != 1 || got[0] != 0 {
+		t.Fatalf("evenlySample(10,1) = %v, want [0]（n=1 除零保护）", got)
+	}
 	got := evenlySample(items, 3)
 	if len(got) != 3 || got[0] != 0 || got[2] != 9 {
 		t.Fatalf("evenlySample(10,3) = %v, want 首/末=0/9", got)
