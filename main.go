@@ -243,6 +243,10 @@ func main() {
 			}
 		}
 		loadCredentialsOnStartup(profile)
+		// 启动时补写 discussion spool（P0 捕获缺口兜底，bug-20260826-154305-941881）
+		if err := store.FlushDiscussionSpool(); err != nil {
+			fmt.Fprintf(os.Stderr, "discussion spool flush warning: %v\n", err)
+		}
 		gcfg := pmdb.LoadGlobalConfig()
 		if err := proxy.Run(proxy.Options{
 			Port:         gcfg.ProxyPort,

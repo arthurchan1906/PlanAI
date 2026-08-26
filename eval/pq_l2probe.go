@@ -41,8 +41,27 @@ func ProbeHealthyWindow(confirmer L2Confirmer, turns []Turn, start, end time.Tim
 	if runs <= 0 {
 		runs = 3
 	}
-	// 已知健康时段构造为死循环候选输入（Reason 标注对抗样本，供 prompt 上下文区分）
-	c := DeadloopCandidate{Start: start, End: end, Reason: "对抗样本（已知健康时段）: " + label}
+	// 已知健康时段构造为死循环候选输入（Reason 标注对抗样本，供 prompt 上下文区分）。
+	// 组合信号填窗口真实统计（P2 修正：此前全零与下方行为序列矛盾，L2 可能被误导）。
+	recs := l2RecordsBetween(turns, start, end)
+	builds, fails, edits, spont := 0, 0, 0, 0
+	for i := range recs {
+		r := &recs[i]
+		if isRealBuild(r.Tool.Command) {
+			builds++
+		}
+		if r.Tool.ExitCode != nil && *r.Tool.ExitCode != 0 {
+			fails++
+		}
+		if objKind(r) == "write" {
+			edits++
+		}
+		if isHistoryRetrieval(r.Tool) {
+			spont++
+		}
+	}
+	c := DeadloopCandidate{Start: start, End: end, Builds: builds, Fails: fails, Edits: edits, SpontRetr: spont,
+		Reason: fmt.Sprintf("对抗样本（已知健康时段）: %s", label)}
 	lines := l2CommandLines(l2RecordsBetween(turns, start, end), 0, 0)
 	res := &ProbeResult{Label: label, Start: start, End: end, Runs: runs}
 	trueN, okN := 0, 0

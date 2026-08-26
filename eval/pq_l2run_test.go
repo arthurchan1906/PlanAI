@@ -114,12 +114,51 @@ func TestRunL2ConfirmationsMaxPerTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 每类上限 1：断言分类 1（含其证据配对 1）、死循环 1、形态9 1、方向评估 1、反馈 1
-	if res.Total != 6 {
-		t.Fatalf("Total = %d, want 6（每类上限 1 + 事实断言引出的证据配对）", res.Total)
+	// 每类上限 1：断言分类 1（含其证据配对 1）、死循环确认 1（T5+形态9 共享计数）、
+	// 方向评估 1、反馈 1（P2 修正：形态9 不再独立计数 = 2×上限）
+	if res.Total != 5 {
+		t.Fatalf("Total = %d, want 5（每类上限 1，死循环 T5+形态9 共享）", res.Total)
 	}
 	if !strings.Contains(res.Reason, "上限") {
 		t.Errorf("应有上限跳过原因，got %q", res.Reason)
+	}
+}
+
+// TestProblemContextWindowBefore C6：候选窗口内无 user 消息时取「窗口开始前最近一条」，
+// 而不是回退 session 首条过时消息（Claude P1b 二轮审核 C6，P2 修正）。
+func TestProblemContextWindowBefore(t *testing.T) {
+	turns := []Turn{
+		pqTurn("u1", "首条：改 inject 分母", "2026-06-24T09:00:00"),
+		pqTurn("u2", "窗口前：重跑 metrics 测试", "2026-06-24T09:38:00"),
+		pqTurn("u3", "窗口后：确认通过", "2026-06-24T09:55:00"),
+	}
+	got := problemContext(turns, ts("2026-06-24T09:40:15"), ts("2026-06-24T09:40:42"))
+	if !strings.Contains(got, "窗口前") {
+		t.Fatalf("problemContext = %q, want 窗口开始前最近一条 user 消息", got)
+	}
+}
+
+// TestCoarseEvidenceHit §2.2：粗配对命中才跳过 LLM evidence_match；
+// 无命中（真无证据候选）才触发细配对。
+func TestCoarseEvidenceHit(t *testing.T) {
+	// 无命中 → 不触发任务 2（走 LLM 确认「真无证据」）
+	if hit, _ := coarseEvidenceHit("关键澄清：走 proxy 的 deepseek 链路没问题", []string{"aipm_read_discussions last_n=30"}); hit {
+		t.Fatal("无关对象不应粗配对命中")
+	}
+	// 断言含英文关键词 + 对象为命令文本 → 命中
+	if hit, m := coarseEvidenceHit("错误在 attribution.go", []string{"cd ... && sed -n 280,295p eval/attribution.go"}); !hit || !strings.Contains(m, "attribution.go") {
+		t.Fatalf("英文关键词应命中，got %v %q", hit, m)
+	}
+	// 断言含 CJK 关键词 + 对象为文件路径 → 命中
+	if hit, _ := coarseEvidenceHit("问题在 X 文件", []string{"X 文件"}); !hit {
+		t.Fatal("CJK 2-gram 应命中")
+	}
+	// 级别：直接文件路径引用 → 强；命令文本沾边 → 弱
+	if lvl := coarseMatchLevel("eval/attribution.go"); lvl != "强" {
+		t.Fatalf("文件路径级别 = %q, want 强", lvl)
+	}
+	if lvl := coarseMatchLevel("sed -n 280,295p eval/attribution.go"); lvl != "弱" {
+		t.Fatalf("命令文本级别 = %q, want 弱", lvl)
 	}
 }
 

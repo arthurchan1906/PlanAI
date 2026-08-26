@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -41,6 +42,12 @@ type L2RunResult struct {
 	Succeeded int      `json:"succeeded"`
 	Failed    int      `json:"failed"`
 	Items     []L2Item `json:"items"`
+	Warnings  []string `json:"warnings,omitempty"` // 证据完整性警告（bug-20260826-154305-941881）
+}
+
+// warn 追加一条证据完整性/质量警告。
+func (res *L2RunResult) warn(msg string) {
+	res.Warnings = append(res.Warnings, msg)
 }
 
 // RunL2Confirmations 编排 L2 五任务确认。
@@ -57,8 +64,11 @@ func RunL2Confirmations(confirmer L2Confirmer, rep *ProcessReport, turns []Turn,
 	all := allRecords(turns)
 
 	res.runClaims(confirmer, all, CandidateClaimHits(all), opts)
-	res.runDeadloops(confirmer, turns, rep.Deadloops, opts)
-	res.runVerifyLoops(confirmer, turns, rep.VerifyLoops, opts)
+	// 任务 3 死循环确认 = T5 候选 + 形态9 验证循环，共享 MaxPerTask 计数
+	// （P2：此前两个函数各自计数，实际上限 2×MaxPerTask，注释名不副实）。
+	deadloopN := 0
+	res.runDeadloops(confirmer, turns, rep.Deadloops, opts, &deadloopN)
+	res.runVerifyLoops(confirmer, turns, rep.VerifyLoops, opts, &deadloopN)
 	res.runDirectionEvals(confirmer, turns, rep, opts)
 	res.runFeedbackResponses(confirmer, turns, rep.Feedback, opts)
 	return res, nil
@@ -141,11 +151,17 @@ func (res *L2RunResult) runClaims(confirmer L2Confirmer, recs []Record, hits []C
 		res.add(L2Item{Task: L2ClaimClassify, Target: shortTarget(hits[i].Text), Result: raw})
 		n++
 		// 任务 2：只对「事实」断言做证据细配对（§2.2：粗配对无匹配才触发，这里以 L1
-		// 无对象命中近似——对象列表为空才确认「真无证据」的边界由 prompt 保证）。
+		// 对象关键词命中近似——命中即粗配对成立，直接记录粗配对结果，不再耗 LLM
+		// 覆判强证据；仅无命中才调 L2 确认「真无证据」，边界由 prompt 保证）。
 		if parsed.Type != "事实" {
 			continue
 		}
 		objects := priorObjects(recs, hits[i])
+		if hit, matched := coarseEvidenceHit(hits[i].Text, objects); hit {
+			raw2, _ := json.Marshal(EvidenceMatchResult{Match: coarseMatchLevel(matched), Basis: "粗配对命中（静态）: " + matched})
+			res.add(L2Item{Task: L2EvidenceMatch, Target: shortTarget(hits[i].Text), Result: raw2})
+			continue
+		}
 		p2 := BuildEvidenceMatchPrompt(hits[i].Text, objects)
 		out2, err := confirmer.Confirm(p2)
 		if err != nil {
@@ -165,14 +181,13 @@ func (res *L2RunResult) runClaims(confirmer L2Confirmer, recs []Record, hits []C
 // ── 任务 3：死循环确认 ──
 
 // runDeadloops T5 死循环候选（非 Excluded；near-miss 已排除不确认）。
-func (res *L2RunResult) runDeadloops(confirmer L2Confirmer, turns []Turn, cands []DeadloopCandidate, opts L2RunOptions) {
+func (res *L2RunResult) runDeadloops(confirmer L2Confirmer, turns []Turn, cands []DeadloopCandidate, opts L2RunOptions, n *int) {
 	cands = stratifiedSample(cands, func(c DeadloopCandidate) string { return c.Start.Format("2006-01-02") }, opts.SamplePerLayer)
-	n := 0
 	for i := range cands {
 		if cands[i].Excluded {
 			continue
 		}
-		if n >= opts.MaxPerTask {
+		if *n >= opts.MaxPerTask {
 			res.skip("死循环确认达上限（%d），剩余候选跳过", opts.MaxPerTask)
 			return
 		}
@@ -182,29 +197,31 @@ func (res *L2RunResult) runDeadloops(confirmer L2Confirmer, turns []Turn, cands 
 		out, err := confirmer.Confirm(p)
 		if err != nil {
 			res.add(L2Item{Task: L2DeadloopConfirm, Target: candTarget(c.Start, c.End), Error: fmt.Sprintf("LLM: %v", err)})
-			n++
+			(*n)++
 			continue
 		}
 		parsed, err := ParseDeadloopConfirm(out)
 		if err != nil {
 			res.add(L2Item{Task: L2DeadloopConfirm, Target: candTarget(c.Start, c.End), Error: fmt.Sprintf("解析: %v", err)})
-			n++
+			(*n)++
 			continue
+		}
+		if parsed.IsDeadloop {
+			res.warnDeadloopEvidence(turns, c.Start, c.End)
 		}
 		raw, _ := json.Marshal(parsed)
 		res.add(L2Item{Task: L2DeadloopConfirm, Target: candTarget(c.Start, c.End), Result: raw})
-		n++
+		(*n)++
 	}
 }
 
 // runVerifyLoops 形态 9 验证循环候选 → 任务 3（同命令重试 ≈ 死循环盲试语义）。
 // 注记（Claude P1b 二轮审核 C5）：Builds=2/Fails=1 是形态 9 三元组（失败→同命令重试）
 // 的近似组合信号，非实际统计——证据里另有 Reason 写明命令与 fail_sig，L2 按行为序列判定。
-func (res *L2RunResult) runVerifyLoops(confirmer L2Confirmer, turns []Turn, cands []VerifyLoopCandidate, opts L2RunOptions) {
+func (res *L2RunResult) runVerifyLoops(confirmer L2Confirmer, turns []Turn, cands []VerifyLoopCandidate, opts L2RunOptions, n *int) {
 	cands = stratifiedSample(cands, func(v VerifyLoopCandidate) string { return v.FailTime.Format("2006-01-02") }, opts.SamplePerLayer)
-	n := 0
 	for i := range cands {
-		if n >= opts.MaxPerTask {
+		if *n >= opts.MaxPerTask {
 			res.skip("形态 9 死循环确认达上限（%d），剩余候选跳过", opts.MaxPerTask)
 			return
 		}
@@ -221,19 +238,39 @@ func (res *L2RunResult) runVerifyLoops(confirmer L2Confirmer, turns []Turn, cand
 		out, err := confirmer.Confirm(p)
 		if err != nil {
 			res.add(L2Item{Task: L2DeadloopConfirm, Target: candTarget(v.FailTime, v.RetryTime), Error: fmt.Sprintf("LLM: %v", err)})
-			n++
+			(*n)++
 			continue
 		}
 		parsed, err := ParseDeadloopConfirm(out)
 		if err != nil {
 			res.add(L2Item{Task: L2DeadloopConfirm, Target: candTarget(v.FailTime, v.RetryTime), Error: fmt.Sprintf("解析: %v", err)})
-			n++
+			(*n)++
 			continue
+		}
+		if parsed.IsDeadloop {
+			res.warnDeadloopEvidence(turns, v.FailTime, v.RetryTime)
 		}
 		raw, _ := json.Marshal(parsed)
 		res.add(L2Item{Task: L2DeadloopConfirm, Target: candTarget(v.FailTime, v.RetryTime), Result: raw})
-		n++
+		(*n)++
 	}
+}
+
+// warnDeadloopEvidence 死循环确认为 true 且窗口内无 write 信号时，
+// 追加证据完整性警告（discussion_log 捕获缺口，bug-20260826-154305-941881）。
+func (res *L2RunResult) warnDeadloopEvidence(turns []Turn, from, to time.Time) {
+	writes := 0
+	for _, r := range l2RecordsBetween(turns, from, to) {
+		if objKind(&r) == "write" {
+			writes++
+		}
+	}
+	if writes > 0 {
+		return
+	}
+	res.warn(fmt.Sprintf("死循环确认 true 窗口 %s → %s 无 write/commit 信号——"+
+		"discussion_log 存在 apply_patch 捕获缺口（bug-20260826-154305-941881），建议 JSONL 交叉校验后再回填",
+		tsFmt(from), tsFmt(to)))
 }
 
 // ── 任务 4：方向评估 ──
@@ -385,6 +422,65 @@ func priorObjects(recs []Record, hit ClaimHit) []string {
 	return out
 }
 
+// coarseEvidenceHit §2.2 粗配对：断言关键词与前序对象（文件路径/命令）的子串命中。
+// 任一对象含 ≥1 个关键词即粗配对命中 → 任务 2 不再调 LLM（避免覆判强证据、省调用）；
+// 仅无命中才调 L2 确认「真无证据」。关键词口径：英文词（≥3 字母）+ CJK 2-gram。
+func coarseEvidenceHit(claim string, objects []string) (bool, string) {
+	kws := claimKeywords(claim)
+	for _, o := range objects {
+		lo := strings.ToLower(o)
+		for _, k := range kws {
+			if strings.Contains(lo, k) {
+				return true, o
+			}
+		}
+	}
+	return false, ""
+}
+
+// coarseMatchLevel 粗配对命中的确定性级别：直接文件路径引用（无空格、含路径分隔符）
+// → 强；命令文本沾边 → 弱。不判「操作内容相关性」——那是 L2 细配对职责。
+func coarseMatchLevel(matched string) string {
+	if !strings.ContainsAny(matched, " \t") &&
+		(strings.Contains(matched, "/") || strings.Contains(matched, "\\") ||
+			strings.HasPrefix(matched, "./") || strings.HasPrefix(matched, "../")) {
+		return "强"
+	}
+	return "弱"
+}
+
+var claimKeywordRe = regexp.MustCompile(`[a-zA-Z0-9_]{3,}`)
+
+// claimKeywords 从断言提取粗配对关键词（小写去重）：
+// 英文/数字词（≥3 字符）+ CJK 连续段 2-gram。低精度高召回，仅用于触发判定。
+func claimKeywords(s string) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(k string) {
+		k = strings.ToLower(strings.TrimSpace(k))
+		if k == "" || seen[k] {
+			return
+		}
+		seen[k] = true
+		out = append(out, k)
+	}
+	for _, w := range claimKeywordRe.FindAllString(s, -1) {
+		add(w)
+	}
+	runes := []rune(s)
+	for i := 0; i < len(runes)-1; i++ {
+		if isCJK(runes[i]) && isCJK(runes[i+1]) {
+			add(string(runes[i : i+2]))
+		}
+	}
+	return out
+}
+
+// isCJK CJK 统一表意文字 + 全角标点区间（粗配对 2-gram 切分用）。
+func isCJK(r rune) bool {
+	return (r >= 0x4E00 && r <= 0x9FFF) || (r >= 0x3400 && r <= 0x4DBF) || (r >= 0x3000 && r <= 0x303F)
+}
+
 // shortTarget 断言句截断（L2 条目 target 用，避免整句刷屏）。
 func shortTarget(s string) string {
 	r := []rune(strings.TrimSpace(s))
@@ -399,10 +495,12 @@ func candTarget(from, to time.Time) string {
 	return fmt.Sprintf("%s → %s", tsFmt(from), tsFmt(to))
 }
 
-// problemContext 问题上下文（任务 4 输入）：候选时段内最近一条 user 消息
-// （Claude P1b 二轮审核 C6：长 session 用首条消息当上下文会过时）；无则回退首条非空。
+// problemContext 问题上下文（任务 4 输入）：候选时段内最近一条 user 消息优先；
+// 窗口内无 user 消息（死循环候选窗口通常只有几十秒）则取窗口「开始前」最近一条，
+// 而非回退 session 首条过时消息（Claude P1b 二轮审核 C6，P2 修正）；再无则回退首条非空。
 func problemContext(turns []Turn, from, to time.Time) string {
 	var latest string
+	var beforeLatest string
 	for i := range turns {
 		s := strings.TrimSpace(turns[i].UserMsg)
 		if s == "" {
@@ -410,10 +508,15 @@ func problemContext(turns []Turn, from, to time.Time) string {
 		}
 		if !turns[i].Start.Before(from) && !turns[i].Start.After(to) {
 			latest = s
+		} else if !turns[i].Start.After(from) {
+			beforeLatest = s
 		}
 	}
 	if latest != "" {
 		return snippetOf(latest)
+	}
+	if beforeLatest != "" {
+		return snippetOf(beforeLatest)
 	}
 	for i := range turns {
 		if s := strings.TrimSpace(turns[i].UserMsg); s != "" {

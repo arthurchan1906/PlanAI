@@ -87,6 +87,33 @@ func TestExtractBashFileOpsSedAndFind(t *testing.T) {
 	}
 }
 
+// TestParseBashFileOpSedReadVsInPlace: sed 读取（-n/-e）归 read，显式 -i 才归 modify
+// （bug-20260826-154301-8366db：sed -n 曾被误标 modify → 📝 误导人工核查）。
+func TestParseBashFileOpSedReadVsInPlace(t *testing.T) {
+	cases := []struct {
+		cmd string
+		op  string
+	}{
+		{"cd /Users/dazsec/workspace/aipmc && sed -n 280,295p eval/attribution.go", "read"},
+		{"sed -n '1,10p' EncryptDrive/a.go", "read"},
+		{"sed -e 's/x/y/' EncryptDrive/a.go", "read"},
+		{"sed 's/old/new/' EncryptDrive/a.go", "read"},
+		{"sed -i 's/x/y/' EncryptDrive/a.go", "modify"},
+		{"sed -i'' 's/x/y/' EncryptDrive/a.go", "modify"},
+		{"sed -i.bak 's/x/y/' EncryptDrive/a.go", "modify"},
+		{"sed -n -i 's/x/y/' EncryptDrive/a.go", "modify"},
+	}
+	for _, c := range cases {
+		f := ParseBashFileOp(c.cmd)
+		if f == nil {
+			t.Fatalf("%q: parse = nil", c.cmd)
+		}
+		if f.Op != c.op {
+			t.Fatalf("%q: op = %q, want %q", c.cmd, f.Op, c.op)
+		}
+	}
+}
+
 func TestExtractBashFileOpsXcodebuild(t *testing.T) {
 	ops := extractBashFileOps("xcodebuild -project EncryptDrive.xcodeproj -scheme EncryptDrive build")
 	want := []BashFileOp{{Op: "read", File: "EncryptDrive.xcodeproj"}}

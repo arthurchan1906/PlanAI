@@ -751,14 +751,37 @@ func parseBashFileOp(cmd string) *fileOp {
 		}
 	}
 
-	// ----- Unix: sed -i 's/old/new/' file -----
+	// ----- Unix: sed -i 's/old/new/' file（仅显式 -i 才算修改）-----
+	// bug-20260826-154301-8366db：`sed -n 280,295p file` 等纯读取曾被误归 modify
+	// （📝 图标误导人工核查）。extractBashFileOps 已有正确 read 分类，这里对齐。
 	if strings.Contains(cmd, "sed ") {
 		if path := extractLastBare(cmd); path != "" {
-			return makeFileOp("modify", path)
+			if sedInPlace(cmd) {
+				return makeFileOp("modify", path)
+			}
+			return makeFileOp("read", path)
 		}
 	}
 
 	return nil
+}
+
+// sedInPlace 判断 sed 命令是否显式原地修改（-i / -i'' / -i.bak / -i's/..'）。
+// 无 -i 的 sed（-n/-e/地址打印）只是读取，文件 op 归类 read。
+func sedInPlace(cmd string) bool {
+	parts := strings.Fields(cmd)
+	for i, p := range parts {
+		if p != "sed" {
+			continue
+		}
+		for _, f := range parts[i+1:] {
+			if f == "-i" || f == "-i''" || f == "-i\"\"" ||
+				strings.HasPrefix(f, "-i'") || strings.HasPrefix(f, "-i\"") || strings.HasPrefix(f, "-i.") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // extractPSPath extracts the value of a PowerShell -ParamName from the command.

@@ -246,6 +246,9 @@ func formatL2Human(r *L2RunResult) string {
 	if r.Reason != "" {
 		fmt.Fprintf(&sb, "；%s", r.Reason)
 	}
+	for _, w := range r.Warnings {
+		fmt.Fprintf(&sb, "\n    ⚠️ %s", w)
+	}
 	for _, it := range r.Items {
 		status := "✓"
 		if it.Error != "" {
