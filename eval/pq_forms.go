@@ -555,8 +555,9 @@ func cmdFailed(rec *Record) (sig string, ok bool) {
 	return "", false
 }
 
-// gitCmdRe git 命令段（含 cd ... && git ... 前缀，实测 01a00d3c 8/20 窗口）。
-var gitCmdRe = regexp.MustCompile(`(^|&&\s*)git\s+`)
+// gitCmdRe git 命令段（含 cd ... && git ... 前缀，实测 01a00d3c 8/20 窗口；分号变体
+// `cd /path; git ...` 一并覆盖，Claude P1a 二轮审核 B3）。
+var gitCmdRe = regexp.MustCompile(`(^|&&\s*|;\s*)git\s+`)
 
 // isGitCmd git 产出/版本控制类命令（Claude P1a 审核 C1）：形态 9 目标 = build/test/run
 // 验证命令；git add/commit/push/checkout 失败→重试是正常工程行为（post-commit hook 失败、
@@ -697,8 +698,8 @@ func mergeSameFileInsts(times []time.Time, gapMin int) []time.Time {
 	for _, t := range times[1:] {
 		if t.Sub(prev) >= time.Duration(gapMin)*time.Minute {
 			out = append(out, t)
+			prev = t // 仅保留时更新基准：间隔始终相对「最后保留的改动」算（Claude P1a 二轮 B1）
 		}
-		prev = t
 	}
 	return out
 }

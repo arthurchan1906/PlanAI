@@ -282,6 +282,17 @@ func TestDetectVerifyLoopsGitExcluded(t *testing.T) {
 	if cands := DetectVerifyLoops([]Turn{tr2}, DefaultVerifyLoopParams()); len(cands) != 0 {
 		t.Fatalf("candidates = %d, want 0（cd && git 前缀也排除）", len(cands))
 	}
+
+	// 分号变体（Claude P1a 二轮审核 B3）
+	tr3 := pqTurn("u3", "提交", "2026-08-26T12:00:00")
+	fail3 := pqRec("bash", "cd /Users/x; git add a.go && git commit -m 'fix: z'", "2026-08-26T12:01:00")
+	ec3 := 1
+	fail3.Tool.ExitCode = &ec3
+	tr3.Records = append(tr3.Records, fail3)
+	tr3.Records = append(tr3.Records, pqRec("bash", "cd /Users/x; git add a.go && git commit -m 'fix: z'", "2026-08-26T12:02:00"))
+	if cands := DetectVerifyLoops([]Turn{tr3}, DefaultVerifyLoopParams()); len(cands) != 0 {
+		t.Fatalf("candidates = %d, want 0（cd ; git 分号变体也排除）", len(cands))
+	}
 }
 
 func TestDetectVerifyLoopsErrorWordInCommandExcluded(t *testing.T) {
@@ -393,6 +404,26 @@ func TestDetectFakeProgressProjectOutsideExcluded(t *testing.T) {
 	cands := DetectFakeProgress([]Turn{tr}, DefaultFakeProgressParams())
 	if len(cands) != 0 {
 		t.Fatalf("candidates = %d, want 0（/tmp 探针文件排除）", len(cands))
+	}
+}
+
+func TestDetectFakeProgressGapChainMerge(t *testing.T) {
+	// 间隔链 0/5/11min：0→5 不足 10min 不保留，但 11 相对最后保留的 0 为 11min ≥ 10min
+	// 应保留（Claude P1a 二轮审核 B1：原实现 prev 无条件更新，0→11 被 5 截断漏检为 1 次）
+	tr := pqTurn("u1", "排查", "2026-08-26T10:00:00")
+	tr.Records = append(tr.Records, applyPatch("eval/pq.go",
+		"*** Update File: eval/pq.go\n+\tprintln(\"a\")", "2026-08-26T10:00:00"))
+	tr.Records = append(tr.Records, applyPatch("eval/pq.go",
+		"*** Update File: eval/pq.go\n+\tprintln(\"b\")", "2026-08-26T10:05:00"))
+	tr.Records = append(tr.Records, applyPatch("eval/pq.go",
+		"*** Update File: eval/pq.go\n-\tprintln(\"a\")", "2026-08-26T10:11:00"))
+
+	cands := DetectFakeProgress([]Turn{tr}, DefaultFakeProgressParams())
+	if len(cands) != 1 {
+		t.Fatalf("candidates = %d, want 1（0→11min 两次保留改动）", len(cands))
+	}
+	if cands[0].Edits != 2 {
+		t.Errorf("edits = %d, want 2（保留 0 与 11，5 不保留）", cands[0].Edits)
 	}
 }
 
