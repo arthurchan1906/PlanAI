@@ -1213,6 +1213,10 @@ func handleOpenAIChatPassthrough(w http.ResponseWriter, r *http.Request) {
 	model, _ := reqBody["model"].(string)
 	stream, _ := reqBody["stream"].(bool)
 	agent := detectAgent(r.URL.Path)
+	// virtualModel 路由（8/26：/v1/chat/completions 此前恒 passthrough 到 upstream，
+	// 模型注册表路由未生效——aipmc 自身 AI 通道（SummarizeJSON）走此路径时会被打到
+	// 本地 upstream；传 model 让 resolveVirtualRoute 按注册表 + 凭据路由远程模型）。
+	virtualModel := model
 	rawBody = dedupeRequestBody(rawBody, agent)
 	sessionID := extractSessionID(rawBody)
 
@@ -1222,7 +1226,7 @@ func handleOpenAIChatPassthrough(w http.ResponseWriter, r *http.Request) {
 
 	if !stream {
 		// ── Non-streaming ──
-		respBytes, err := forwardToUpstream("chat/completions", reqBody, apiKey, "", agent, r)
+		respBytes, err := forwardToUpstream("chat/completions", reqBody, apiKey, virtualModel, agent, r)
 		if err != nil {
 			log.Printf("[OPENAICHAT] ERROR upstream: %v", err)
 			finishCapture(capID, http.StatusBadGateway, time.Since(startTime), nil, "", "")
@@ -1256,7 +1260,7 @@ func handleOpenAIChatPassthrough(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ── Streaming (SSE) ──
-	respBody, err := forwardToUpstreamStream("chat/completions", reqBody, apiKey, "", agent, r)
+	respBody, err := forwardToUpstreamStream("chat/completions", reqBody, apiKey, virtualModel, agent, r)
 	if err != nil {
 		log.Printf("[OPENAICHAT] ERROR upstream stream: %v", err)
 		finishCapture(capID, http.StatusBadGateway, time.Since(startTime), nil, "", "")
