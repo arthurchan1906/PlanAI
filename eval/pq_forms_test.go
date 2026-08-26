@@ -5,6 +5,7 @@ package eval
 // 休眠 + 死循环时段）、8/14 019ffdce（形态 10 8 处日志改动全撤销）。
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -242,7 +243,8 @@ func TestDetectVerifyLoopsHookWeak(t *testing.T) {
 	// hook 弱信号：tool_response 文本错误词（§2.1：L1 候选 + L2 确认）
 	tr := pqTurn("u1", "编译", "2026-08-26T10:00:00")
 	fail := pqRec("bash", "swift build", "2026-08-26T10:01:00")
-	fail.Content = "Build error: cannot find type 'Foo'"
+	// 弱信号只匹配输出段（「→ 」之后），不匹配命令本身/助手文本（Claude P1a 审核 C1）
+	fail.Content = "🔧 swift build\n  → Build error: cannot find type 'Foo'"
 	tr.Records = append(tr.Records, fail)
 	tr.Records = append(tr.Records, pqRec("bash", "swift build", "2026-08-26T10:02:00"))
 
@@ -252,6 +254,63 @@ func TestDetectVerifyLoopsHookWeak(t *testing.T) {
 	}
 	if cands[0].FailSig != "error_word" {
 		t.Errorf("fail_sig = %s, want error_word", cands[0].FailSig)
+	}
+}
+
+func TestDetectVerifyLoopsGitExcluded(t *testing.T) {
+	// git commit 失败→重试是正常工程行为（index.lock/hook 失败后必须重试成功），
+	// 非盲试验证循环（Claude P1a 审核 C1：01a00d3c 5/5 全误报根因）
+	tr := pqTurn("u1", "提交", "2026-08-26T10:00:00")
+	fail := pqRec("bash", "git add a.go && git commit -m 'fix: x'", "2026-08-26T10:01:00")
+	ec := 1
+	fail.Tool.ExitCode = &ec
+	tr.Records = append(tr.Records, fail)
+	tr.Records = append(tr.Records, pqRec("bash", "git add a.go && git commit -m 'fix: x'", "2026-08-26T10:02:00"))
+
+	cands := DetectVerifyLoops([]Turn{tr}, DefaultVerifyLoopParams())
+	if len(cands) != 0 {
+		t.Fatalf("candidates = %d, want 0（git 类命令排除）", len(cands))
+	}
+
+	// cd 前缀 + && git 段（实测 01a00d3c 8/20 17:41 窗口漏网场景）
+	tr2 := pqTurn("u2", "提交", "2026-08-26T11:00:00")
+	fail2 := pqRec("bash", "cd /Users/x && git add a.go && git commit -m 'fix: y'", "2026-08-26T11:01:00")
+	ec2 := 1
+	fail2.Tool.ExitCode = &ec2
+	tr2.Records = append(tr2.Records, fail2)
+	tr2.Records = append(tr2.Records, pqRec("bash", "cd /Users/x && git add a.go && git commit -m 'fix: y'", "2026-08-26T11:02:00"))
+	if cands := DetectVerifyLoops([]Turn{tr2}, DefaultVerifyLoopParams()); len(cands) != 0 {
+		t.Fatalf("candidates = %d, want 0（cd && git 前缀也排除）", len(cands))
+	}
+}
+
+func TestDetectVerifyLoopsErrorWordInCommandExcluded(t *testing.T) {
+	// 命令本身含 error 词（grep error）但无失败信号 → 不误报（弱信号只匹配输出段）
+	tr := pqTurn("u1", "查错误", "2026-08-26T10:00:00")
+	tr.Records = append(tr.Records, pqRec("bash", "grep error main.go", "2026-08-26T10:01:00"))
+	tr.Records = append(tr.Records, pqRec("bash", "grep error main.go", "2026-08-26T10:02:00"))
+
+	cands := DetectVerifyLoops([]Turn{tr}, DefaultVerifyLoopParams())
+	if len(cands) != 0 {
+		t.Fatalf("candidates = %d, want 0（命令文本 error 词非失败信号）", len(cands))
+	}
+}
+
+func TestDetectVerifyLoopsApplyPatchExcluded(t *testing.T) {
+	// 失败 → apply_patch 修改（codex 写操作经 bash，Tool=bash 但 objKind=write）→ 重试
+	// = 正常「修复→重试」流程，非盲试（实测 01a00d3c 17:23 窗口误报根因）
+	tr := pqTurn("u1", "修复", "2026-08-26T10:00:00")
+	fail := pqRec("bash", "CGO_ENABLED=0 go test -count=1 ./eval/ 2>&1", "2026-08-26T10:01:00")
+	ec := 1
+	fail.Tool.ExitCode = &ec
+	tr.Records = append(tr.Records, fail)
+	tr.Records = append(tr.Records, applyPatch("eval/parse.go",
+		"*** Update File: eval/parse.go\n@@\n-\treturn rec\n+\treturn rec\n", "2026-08-26T10:02:00"))
+	tr.Records = append(tr.Records, pqRec("bash", "CGO_ENABLED=0 go test -count=1 ./eval/ 2>&1", "2026-08-26T10:03:00"))
+
+	cands := DetectVerifyLoops([]Turn{tr}, DefaultVerifyLoopParams())
+	if len(cands) != 0 {
+		t.Fatalf("candidates = %d, want 0（中间有 apply_patch 修改 = 修复后重试）", len(cands))
 	}
 }
 
@@ -307,6 +366,54 @@ func TestDetectFakeProgressCommitExcluded(t *testing.T) {
 	cands := DetectFakeProgress([]Turn{tr}, DefaultFakeProgressParams())
 	if len(cands) != 0 {
 		t.Fatalf("candidates = %d, want 0（撤销后 30min 内 commit = 正当收尾）", len(cands))
+	}
+}
+
+func TestDetectFakeProgressSameSecondDedup(t *testing.T) {
+	// 同刻多次打点（单次 apply_patch 多匹配/多行）= 假「反复」，合并后不满足 MinEdits
+	// （Claude P1a 审核 C2：01a00d3c 6/6 全 first_edit==last_edit 误报根因）
+	tr := pqTurn("u1", "排查", "2026-08-26T10:00:00")
+	for i := 0; i < 4; i++ {
+		tr.Records = append(tr.Records, applyPatch("eval/pq.go",
+			"*** Update File: eval/pq.go\n+\tprintln(\"debug\")", "2026-08-26T10:01:00"))
+	}
+	cands := DetectFakeProgress([]Turn{tr}, DefaultFakeProgressParams())
+	if len(cands) != 0 {
+		t.Fatalf("candidates = %d, want 0（同秒 4 次合并为 1 次）", len(cands))
+	}
+}
+
+func TestDetectFakeProgressProjectOutsideExcluded(t *testing.T) {
+	// 项目外探针文件（/tmp/ed_*.go）不进入对象域（Claude P1a 审核 C4）
+	tr := pqTurn("u1", "排查", "2026-08-26T10:00:00")
+	tr.Records = append(tr.Records, applyPatch("/tmp/ed_probe.go",
+		"*** Update File: /tmp/ed_probe.go\n+\tprintln(\"debug\")", "2026-08-26T10:01:00"))
+	tr.Records = append(tr.Records, applyPatch("/tmp/ed_probe.go",
+		"*** Update File: /tmp/ed_probe.go\n-\tprintln(\"debug\")", "2026-08-26T11:00:00"))
+	cands := DetectFakeProgress([]Turn{tr}, DefaultFakeProgressParams())
+	if len(cands) != 0 {
+		t.Fatalf("candidates = %d, want 0（/tmp 探针文件排除）", len(cands))
+	}
+}
+
+// ── 形态 6：按用户消息分段 ──
+
+func TestDetectDirectionShiftsUserSegmented(t *testing.T) {
+	// 长 session 跨多任务：每次用户指令后换对象 = 响应指令，非病态换方案
+	// （Claude P1a 审核 C3：01a00d3c 介入 185 次、转向 202 全为响应）
+	var turns []Turn
+	for k := 0; k < 8; k++ {
+		tr := pqTurn(fmt.Sprintf("u%d", k), "任务 "+string(rune('A'+k)), "2026-08-26T10:00:00")
+		base := ts("2026-08-26T10:00:00").Add(time.Duration(k) * time.Hour)
+		for i := 0; i < 4; i++ {
+			tr.Records = append(tr.Records, readRecAt(string(rune('a'+k))+".go",
+				base.Add(time.Duration(i)*time.Minute).Format("2006-01-02T15:04:05")))
+		}
+		turns = append(turns, tr)
+	}
+	cands := DetectDirectionShifts(turns, DefaultDirectionShiftParams())
+	if len(cands) != 0 {
+		t.Fatalf("candidates = %d, want 0（段内无转向，跨段切换是响应指令）", len(cands))
 	}
 }
 

@@ -24,6 +24,18 @@ import (
 // objPathRe 命令级对象近似：命令字符串中的文件路径（legacy 无 rel_path 时降级，§2.1）。
 var objPathRe = regexp.MustCompile(`(?i)[\w./-]+\.(go|swift|mm?|hpp?|py|js|tsx?|json|md|c(?:pp|cc)?|sh|plist|entitlements|pbxproj|ya?ml|txt|sql|db|html?|css)`)
 
+// outsideProjectRe 项目外绝对路径前缀（Claude P1a 审核 C4，实测 01a00d3c 混入
+// /tmp/ed_*.go 探针文件）：对象域只保留项目内路径 + 相对路径。
+var outsideProjectRe = regexp.MustCompile(`^(/tmp/|/private/tmp/|/var/|/usr/|/System/|/Library/|/bin/|/etc/|/dev/|/opt/)`)
+
+// isProjectObject 对象是否属于项目域（相对路径或非系统目录绝对路径）。
+func isProjectObject(o string) bool {
+	if !strings.HasPrefix(o, "/") {
+		return true
+	}
+	return !outsideProjectRe.MatchString(o)
+}
+
 // validObjToken 命令级近似噪声过滤（实测 01a00d3c 大 session）：patch/命令中的代码引用
 // 如 regexp.M、db.C、s.m（单字母扩展 + 无路径分隔符）被 objPathRe 误捕为文件路径 →
 // 排除。有路径分隔符（foo/bar.m）或扩展 ≥2 字符（main.go）视为真实路径保留。
@@ -42,12 +54,18 @@ func validObjToken(s string) bool {
 // recordObjects 记录 → 对象集合：对象级（rel_path）优先；legacy bash 命令级路径近似。
 func recordObjects(rec *Record) []string {
 	if len(rec.Tool.Files) > 0 {
-		return rec.Tool.Files
+		var out []string
+		for _, f := range rec.Tool.Files {
+			if isProjectObject(f) {
+				out = append(out, f)
+			}
+		}
+		return out
 	}
 	if rec.Tool.Tool == "bash" && rec.Tool.Command != "" {
 		var out []string
 		for _, m := range objPathRe.FindAllString(rec.Tool.Command, -1) {
-			if validObjToken(m) {
+			if validObjToken(m) && isProjectObject(m) {
 				out = append(out, m)
 			}
 		}
@@ -86,6 +104,7 @@ type objectAccess struct {
 	Ts   time.Time
 	Kind string // write / read
 	Rec  int    // 记录序号（转向以记录为单位计数，避免同记录多 token 互切虚高）
+	Turn int    // 回合序号（用户消息分段：跨段切换是响应指令，不计入病态转向，C3）
 }
 
 // collectObjectAccesses 从回合流构建对象访问序列（edit/write + 读 + 历史检索 + 写 bash）。
@@ -104,7 +123,7 @@ func collectObjectAccesses(turns []Turn) []objectAccess {
 				if !seen[o] {
 					seen[o] = true
 				}
-				out = append(out, objectAccess{Obj: o, Ts: rec.CreatedAt, Kind: kind, Rec: recIdx})
+				out = append(out, objectAccess{Obj: o, Ts: rec.CreatedAt, Kind: kind, Rec: recIdx, Turn: i})
 			}
 			recIdx++
 		}
@@ -128,15 +147,16 @@ func computeAccessStats(accs []objectAccess) accessStats {
 	counts := map[string]int{}
 	prev := ""
 	prevRec := -1
+	prevTurn := -1
 	for _, a := range accs {
 		if !seen[a.Obj] {
 			seen[a.Obj] = true
 		}
 		counts[a.Obj]++
-		if prev != "" && a.Obj != prev && a.Rec != prevRec {
+		if prev != "" && a.Obj != prev && a.Rec != prevRec && a.Turn == prevTurn {
 			st.Switches++
 		}
-		prev, prevRec = a.Obj, a.Rec
+		prev, prevRec, prevTurn = a.Obj, a.Rec, a.Turn
 	}
 	st.Distinct = len(seen)
 	for o, c := range counts {
@@ -163,7 +183,7 @@ func productionTimes(turns []Turn) []time.Time {
 	for i := range turns {
 		for j := range turns[i].Records {
 			rec := &turns[i].Records[j]
-			if isWriteTool(rec.Tool.Tool) {
+			if objKind(rec) == "write" {
 				out = append(out, rec.CreatedAt)
 				continue
 			}
@@ -253,7 +273,7 @@ func DetectStagnation(turns []Turn, p StagnationParams) []StagnationCandidate {
 		for j := range turns[i].Records {
 			rec := &turns[i].Records[j]
 			switch {
-			case isWriteTool(rec.Tool.Tool):
+			case objKind(rec) == "write":
 				sigs = append(sigs, sig{ts: rec.CreatedAt, prod: "edit"})
 			case rec.Tool.Tool == "bash" && strings.Contains(strings.ToLower(rec.Tool.Command), "git commit"):
 				sigs = append(sigs, sig{ts: rec.CreatedAt, prod: "commit"})
@@ -507,18 +527,42 @@ type VerifyLoopCandidate struct {
 	Note      string    `json:"note"`
 }
 
-// toolErrorRe 形态 9 hook 弱信号：tool_response 文本错误词（§2.1：L1 候选 + L2 确认）。
-var toolErrorRe = regexp.MustCompile(`(?i)(error|failed|failure|exception|fatal|undefined symbol|not found|no such file|exit status|command not found|panic)`)
+// toolErrorRe 形态 9 hook 弱信号：tool_response 输出段错误词（§2.1：L1 候选 + L2 确认）。
+// 用词边界收窄（\berror\b 不命中 TestFooErrorHandling 类测试名）；Claude P1a 审核 C1：
+// 原实现匹配整段 Content（含命令本身/助手文本）导致 5/5 误报——只匹配输出段。
+var toolErrorRe = regexp.MustCompile(`(?i)(\berror\b|failed|fatal|FAIL|panic|undefined|not found|no such file|cannot|exit status|command not found)`)
 
-// cmdFailed 命令失败判定：legacy = exit_code 强信号；hook = 文本错误词弱信号。
+// toolErrText 失败弱信号文本来源：legacy = Tool.Output（结构化 stdout）；hook =
+// content 输出段（🔧 行「→ 」之后，post_tool 无 Output 字段）。不含命令本身与助手讨论文本。
+func toolErrText(rec *Record) string {
+	if rec.Tool.Output != "" {
+		return rec.Tool.Output
+	}
+	if i := strings.Index(rec.Content, "→ "); i >= 0 {
+		return rec.Content[i+len("→ "):]
+	}
+	return ""
+}
+
+// cmdFailed 命令失败判定：legacy = exit_code 强信号；hook = 输出段文本错误词弱信号。
 func cmdFailed(rec *Record) (sig string, ok bool) {
 	if rec.Tool.ExitCode != nil && *rec.Tool.ExitCode != 0 {
 		return "exit_code", true
 	}
-	if toolErrorRe.MatchString(rec.Content + " " + rec.Tool.Output) {
+	if toolErrorRe.MatchString(toolErrText(rec)) {
 		return "error_word", true
 	}
 	return "", false
+}
+
+// gitCmdRe git 命令段（含 cd ... && git ... 前缀，实测 01a00d3c 8/20 窗口）。
+var gitCmdRe = regexp.MustCompile(`(^|&&\s*)git\s+`)
+
+// isGitCmd git 产出/版本控制类命令（Claude P1a 审核 C1）：形态 9 目标 = build/test/run
+// 验证命令；git add/commit/push/checkout 失败→重试是正常工程行为（post-commit hook 失败、
+// index.lock/SQLITE_BUSY 后必须重试成功才能继续），非盲试验证循环。
+func isGitCmd(norm string) bool {
+	return gitCmdRe.MatchString(norm)
 }
 
 // logAnalysisRe 失败与重试之间的日志分析信号（读日志/查错误）——命中即排除（盲试 vs 有依据）。
@@ -532,7 +576,7 @@ func normCmd(cmd string) string {
 func noAnalysisBetween(recs []*Record, from, to int) bool {
 	for k := from; k <= to; k++ {
 		rec := recs[k]
-		if isWriteTool(rec.Tool.Tool) {
+		if objKind(rec) == "write" {
 			return false
 		}
 		if rec.Tool.Tool == "bash" && logAnalysisRe.MatchString(rec.Tool.Command) {
@@ -569,7 +613,7 @@ func DetectVerifyLoops(turns []Turn, p VerifyLoopParams) []VerifyLoopCandidate {
 			continue
 		}
 		norm := normCmd(f.Tool.Command)
-		if norm == "" {
+		if norm == "" || isGitCmd(norm) {
 			continue
 		}
 		seenBash := 0
@@ -603,11 +647,14 @@ func DetectVerifyLoops(turns []Turn, p VerifyLoopParams) []VerifyLoopCandidate {
 
 // FakeProgressParams 形态 10 参数：加日志/打点反复添加或撤销，无「根因定位 + 修复 commit」。
 type FakeProgressParams struct {
-	MinEdits int // 同一文件打点改动次数下限（默认 2 = 反复添加或撤销）
+	MinEdits   int // 同一文件打点改动次数下限（默认 2 = 反复添加或撤销）
+	MinGapMin  int // 同一文件两次打点改动的间隔下限（默认 10 分钟；同刻/短间隔 = 单次修改计 1 次）
 }
 
 // DefaultFakeProgressParams 默认参数。
-func DefaultFakeProgressParams() FakeProgressParams { return FakeProgressParams{MinEdits: 2} }
+func DefaultFakeProgressParams() FakeProgressParams {
+	return FakeProgressParams{MinEdits: 2, MinGapMin: 10}
+}
 
 // FakeProgressCandidate 形态 10 候选。
 type FakeProgressCandidate struct {
@@ -621,14 +668,49 @@ type FakeProgressCandidate struct {
 }
 
 // logInstrumentRe 打点/日志关键词（判别式：加日志/打点反复添加或撤销；8/14 019ffdce
-// 8 处日志改动全撤销为负例）。只匹配明确打点语法，避免 print/grep 等误捕。
-var logInstrumentRe = regexp.MustCompile(`(?i)(NSLog\(|print(?:ln|f)?\(|console\.log\(|debugPrint\(|printk\(|printf\(|log\.(?:debug|info|warn|error|trace)\(|logger\.\w+\(|加日志|打点|记录日志)`)
+// 8 处日志改动全撤销为负例）。只匹配明确打点语法；Claude P1a 审核 C2：去掉裸 print(
+// （正常代码 print(x) 常见），保留 println/printf 等调试特征。
+var logInstrumentRe = regexp.MustCompile(`(?i)(NSLog\(|println\(|printf\(|console\.log\(|debugPrint\(|printk\(|log\.(?:debug|info|warn|error|trace)\(|logger\.\w+\(|加日志|打点|记录日志)`)
+
+// recordWriteTargets 形态 10 写对象：只用 Tool.Files（edit/write 工具 + bash_heuristic
+// 标记的 apply_patch/sed 写，rel_path/file_path 权威）。命令级提取对形态 10 关闭——
+// heredoc/sed 命令全文中的代码路径（r.ts、/tmp/ed_*.go 引用）会被误捕（Claude P1a 审核 C2/C4）。
+func recordWriteTargets(rec *Record) []string {
+	var out []string
+	for _, f := range rec.Tool.Files {
+		if isProjectObject(f) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// mergeSameFileInsts 同文件打点改动按时间合并：相邻 inst 间隔 < MinGapMin 视为同一次
+// 修改（单次 apply_patch 多匹配/多行同刻计多次 = 假「反复」，Claude P1a 审核 C2）。
+func mergeSameFileInsts(times []time.Time, gapMin int) []time.Time {
+	if len(times) <= 1 {
+		return times
+	}
+	var out []time.Time
+	prev := times[0]
+	out = append(out, prev)
+	for _, t := range times[1:] {
+		if t.Sub(prev) >= time.Duration(gapMin)*time.Minute {
+			out = append(out, t)
+		}
+		prev = t
+	}
+	return out
+}
 
 // DetectFakeProgress 形态 10 L1 扫描：同文件打点改动 ≥ MinEdits 次，且跨度内无根因定位文本、
 // 撤销后 30min 宽限内无 commit → 候选（L2 确认「反复添加或撤销」语义）。
 func DetectFakeProgress(turns []Turn, p FakeProgressParams) []FakeProgressCandidate {
 	if p.MinEdits <= 0 {
 		p.MinEdits = 2
+	}
+	if p.MinGapMin <= 0 {
+		p.MinGapMin = 10
 	}
 	type inst struct {
 		ts   time.Time
@@ -645,7 +727,7 @@ func DetectFakeProgress(turns []Turn, p FakeProgressParams) []FakeProgressCandid
 			if !logInstrumentRe.MatchString(text) {
 				continue
 			}
-			for _, f := range recordObjects(rec) {
+			for _, f := range recordWriteTargets(rec) {
 				insts = append(insts, inst{ts: rec.CreatedAt, file: f})
 			}
 		}
@@ -668,12 +750,16 @@ func DetectFakeProgress(turns []Turn, p FakeProgressParams) []FakeProgressCandid
 	counts := map[string]int{}
 	first := map[string]time.Time{}
 	last := map[string]time.Time{}
+	// 同刻/短间隔去重后再计次数（「反复添加或撤销」需要时间分离）
+	byFile := map[string][]time.Time{}
 	for _, x := range insts {
-		counts[x.file]++
-		if first[x.file].IsZero() {
-			first[x.file] = x.ts
-		}
-		last[x.file] = x.ts
+		byFile[x.file] = append(byFile[x.file], x.ts)
+	}
+	for f, times := range byFile {
+		merged := mergeSameFileInsts(times, p.MinGapMin)
+		counts[f] = len(merged)
+		first[f] = merged[0]
+		last[f] = merged[len(merged)-1]
 	}
 	var out []FakeProgressCandidate
 	for f, n := range counts {
