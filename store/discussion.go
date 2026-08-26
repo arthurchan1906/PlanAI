@@ -69,15 +69,18 @@ func LogDiscussion(sessionID, role, source, content, metadataJSON string) (map[s
 		lastErr = err
 	}
 	// 重试耗尽仍 BUSY：落盘 spool，宁可延迟补写也不静默丢事件。
-	// 返回成功（spooled），hook 侧不再报 write_err、不会被超时杀死丢数据。
-	if serr := spoolDiscussionFallback(sessionID, role, source, content, metadataJSON, eventAt, lastErr); serr != nil {
+	// 返回成功（spooled）且带 id（spool 条目 id，调用方 r["id"] 不 panic），
+	// hook 侧不再报 write_err、不会被超时杀死丢数据。
+	if spoolID, serr := spoolDiscussionFallback(sessionID, role, source, content, metadataJSON, eventAt, lastErr); serr != nil {
 		if errors.Is(serr, errSpoolFull) {
 			// 超限丢弃：如实暴露 dropped，避免「测量者谎报」（hook 以为已兜底实为丢失）。
+			// 事件未捕获无 id 可给——消费方须安全提取（main.go/mcp.go）。
 			return map[string]any{"status": "dropped"}, nil
 		}
 		return nil, fmt.Errorf("discussion spool fallback failed: %v (cause: %v)", serr, lastErr)
+	} else {
+		return map[string]any{"id": spoolID, "status": "spooled"}, nil
 	}
-	return map[string]any{"status": "spooled"}, nil
 }
 
 // openDiscussionDB 讨论写入专用连接：busy_timeout 收敛到 2s。
@@ -173,12 +176,13 @@ func countSpoolEntries(path string) (int, error) {
 	return n, nil
 }
 
-// spoolDiscussionFallback 把写失败的事件追加到 spool 文件（防静默丢失）。
-func spoolDiscussionFallback(sessionID, role, source, content, metadataJSON, now string, cause error) error {
+// spoolDiscussionFallback 把写失败的事件追加到 spool 文件（防静默丢失），
+// 返回生成的 spool 条目 id（调用方 LogDiscussion 透传给消费方，避免 r["id"] panic）。
+func spoolDiscussionFallback(sessionID, role, source, content, metadataJSON, now string, cause error) (string, error) {
 	path := discussionSpoolPath()
 	if n, err := countSpoolEntries(path); err == nil && n >= maxSpoolEntries {
 		u.LogShared("HOOK", "discussion spool full (%d >= %d): dropping event session=%s err=%v", n, maxSpoolEntries, sessionID, cause)
-		return errSpoolFull
+		return "", errSpoolFull
 	}
 	e := spoolEntry{
 		ID:        u.Slug("disc"),
@@ -191,18 +195,18 @@ func spoolDiscussionFallback(sessionID, role, source, content, metadataJSON, now
 	}
 	line, err := json.Marshal(e)
 	if err != nil {
-		return err
+		return "", err
 	}
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer f.Close()
 	if _, err := f.Write(append(line, '\n')); err != nil {
-		return err
+		return "", err
 	}
 	u.LogShared("HOOK", "discussion spooled session=%s role=%s err=%v file=%s", sessionID, role, cause, path)
-	return nil
+	return e.ID, nil
 }
 
 // FlushDiscussionSpool 把 spool 中待补写条目写回 discussion_log（幂等，可重入）。

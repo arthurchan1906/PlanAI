@@ -165,7 +165,11 @@ func main() {
 		if len([]rune(preview)) > 80 {
 			preview = string([]rune(preview)[:80])
 		}
-		fmt.Printf("logged %s [%s][%s] %s\n", r["id"].(string), role, source, preview)
+		id, _ := r["id"].(string)
+		if id == "" {
+			id = "-" // spool 兜底 dropped 路径无 id（事件未捕获，4f65c89 实证 panic 修复）
+		}
+		fmt.Printf("logged %s [%s][%s] %s\n", id, role, source, preview)
 		return
 	case "embed":
 		n := 0

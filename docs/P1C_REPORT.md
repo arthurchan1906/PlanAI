@@ -102,6 +102,11 @@ Claude 复核（disc-20260826-170542-473717 / 170846-fbbd10）：修复链认可
 ### C2 复验（清理后）
 真实 spool 文件已不存在（0 行）、`discussion_log`/`fts5_index` 无 seed 残留——「修复后首跑 spool 0 行」声明在清理后重新成立。
 
+
+### P1（codex 二轮实证 17:34）：seed 再污染 + 兜底 id panic → 已修复
+- **清理不完整**：首轮 DELETE 后 spool 文件里的垃圾种子仍在，活跃 flush 把 `id='seed'` 再补写回表（DELETE 后验证 0 行成立的瞬间被重新污染）。spool 文件随后被 flush 逐批清空（absent），污染源消失后补 DELETE 两处 → 验证 0 行，保持干净。教训写入 `docs/PITFALLS.md`：清理 spool 污染必须先清文件再清表。
+- **兜底 id panic（存量+新增）**：`LogDiscussion` 兜底返回 `{"status":"spooled"/"dropped"}` 无 `id` 键，`main.go` 的 `r["id"].(string)` 强断言运行时 panic（spooled 为 f67931a 存量 bug，dropped 为 4f65c89 新增）。修复：`spoolDiscussionFallback` 返回 spool 条目 id 并透传；`main.go`/`mcp.go` 对缺失 id 安全降级为 `-`。教训写入 `docs/PITFALLS.md`。
+
 ## 7. 门禁结论
 
 - ✅ **判定一致率 82.4%（严格）≥ 80%**——P1 验收达标（薄线通过，根因已修，观察期复验）

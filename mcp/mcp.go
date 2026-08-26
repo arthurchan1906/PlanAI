@@ -2438,8 +2438,12 @@ func (s *mcpServer) handleLogDiscussion(args map[string]interface{}) mcpToolResu
 		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("记录讨论失败: %v", err)}}, IsError: true}
 	}
 
+	id, _ := res["id"].(string)
+	if id == "" {
+		id = "-" // spool 兜底 dropped 路径无 id
+	}
 	return mcpToolResult{
-		Content:        []mcpContent{{Type: "text", Text: fmt.Sprintf("✅ 讨论已记录 [%s]", res["id"])}},
+		Content:        []mcpContent{{Type: "text", Text: fmt.Sprintf("✅ 讨论已记录 [%s]", id)}},
 		RelatedContext: res,
 	}
 }

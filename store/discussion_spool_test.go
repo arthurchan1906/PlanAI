@@ -24,10 +24,10 @@ func TestSpoolFallbackThenFlush(t *testing.T) {
 	path := discussionSpoolPath()
 	_ = os.Remove(path)
 
-	if err := spoolDiscussionFallback("sess-spool", "assistant", "codex-cli", "事件A apply_patch 修复 metrics_test.go", `{"type":"post_tool"}`, "2026-08-18T05:40:25Z", errBusyStub); err != nil {
+	if _, err := spoolDiscussionFallback("sess-spool", "assistant", "codex-cli", "事件A apply_patch 修复 metrics_test.go", `{"type":"post_tool"}`, "2026-08-18T05:40:25Z", errBusyStub); err != nil {
 		t.Fatalf("spool fallback 1: %v", err)
 	}
-	if err := spoolDiscussionFallback("sess-spool", "assistant", "codex-cli", "事件B 写测试", "", "2026-08-18T05:40:26Z", errBusyStub); err != nil {
+	if _, err := spoolDiscussionFallback("sess-spool", "assistant", "codex-cli", "事件B 写测试", "", "2026-08-18T05:40:26Z", errBusyStub); err != nil {
 		t.Fatalf("spool fallback 2: %v", err)
 	}
 	data, err := os.ReadFile(path)
@@ -77,7 +77,7 @@ func TestSpoolEntrySkippedOnUniqueConflict(t *testing.T) {
 	}
 	path := discussionSpoolPath()
 	_ = os.Remove(path)
-	if err := spoolDiscussionFallback("sess-dup", "assistant", "codex-cli", "待补写", "", "2026-08-18T05:40:25Z", errBusyStub); err != nil {
+	if _, err := spoolDiscussionFallback("sess-dup", "assistant", "codex-cli", "待补写", "", "2026-08-18T05:40:25Z", errBusyStub); err != nil {
 		t.Fatalf("spool fallback: %v", err)
 	}
 	// 读 spool 拿 id，然后预插同 id 行制造 UNIQUE 冲突。
@@ -124,7 +124,7 @@ func TestSpoolDropsWhenFull(t *testing.T) {
 		}
 	}
 	f.Close()
-	if err := spoolDiscussionFallback("sess-full", "assistant", "codex-cli", "超限事件", "", "2026-08-26T09:00:00Z", errBusyStub); !errors.Is(err, errSpoolFull) {
+	if _, err := spoolDiscussionFallback("sess-full", "assistant", "codex-cli", "超限事件", "", "2026-08-26T09:00:00Z", errBusyStub); !errors.Is(err, errSpoolFull) {
 		t.Fatalf("超限应返回 errSpoolFull（丢弃+告警）: %v", err)
 	}
 	n, err := countSpoolEntries(path)
