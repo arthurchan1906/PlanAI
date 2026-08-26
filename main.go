@@ -289,6 +289,10 @@ func main() {
 		l2Max := 0
 		l2Timeout := 90 // 秒；单次 LLM 确认硬超时（Claude P1b 二轮审核：无超时 LLM 挂起会无限等待）
 		l2Sample := 0   // P1c 分层抽样：每层（按候选日期）抽样数，替代前 N 条
+		probeStart := ""
+		probeEnd := ""
+		probeLabel := ""
+		probeRuns := 3
 		raw := os.Args[2:]
 		// 位置参数 kind（aipmc eval process / acceptance）：与 --kind 等价（usage 声明形式）
 		if len(raw) > 0 && raw[0] != "--since" && raw[0] != "--kind" && raw[0] != "--log" && !strings.HasPrefix(raw[0], "--") {
@@ -339,6 +343,18 @@ func main() {
 				i++
 			case raw[i] == "--l2-sample" && i+1 < len(raw):
 				fmt.Sscanf(raw[i+1], "%d", &l2Sample)
+				i++
+			case raw[i] == "--start" && i+1 < len(raw):
+				probeStart = raw[i+1]
+				i++
+			case raw[i] == "--end" && i+1 < len(raw):
+				probeEnd = raw[i+1]
+				i++
+			case raw[i] == "--label" && i+1 < len(raw):
+				probeLabel = raw[i+1]
+				i++
+			case raw[i] == "--runs" && i+1 < len(raw):
+				fmt.Sscanf(raw[i+1], "%d", &probeRuns)
 				i++
 			}
 		}
@@ -503,8 +519,50 @@ func main() {
 			fmt.Println()
 			out, _ := json.MarshalIndent(rep, "", "  ")
 			fmt.Println(string(out))
+		case "l2-probe":
+			// P1c 对抗样本 + 稳定性探测（§2.3 约束③）：已知健康时段 → deadloop_confirm
+			// 跑 N 次，验证不误判 + LLM 判定漂移率。
+			// Usage: aipmc eval l2-probe --session <id> --start <ts> --end <ts> [--label 说明] [--runs 3] [--db <path>] [--l2-timeout 90]
+			if sessionID == "" || probeStart == "" || probeEnd == "" {
+				fmt.Fprintf(os.Stderr, "eval l2-probe: 需要 --session <id> --start <ts> --end <ts>\n")
+				os.Exit(1)
+			}
+			turns, err := eval.BuildTurns(db, sessionID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "eval l2-probe 回合化: %v\n", err)
+				os.Exit(1)
+			}
+			start, err1 := time.Parse("2006-01-02T15:04:05", probeStart)
+			end, err2 := time.Parse("2006-01-02T15:04:05", probeEnd)
+			if err1 != nil || err2 != nil {
+				fmt.Fprintf(os.Stderr, "eval l2-probe: 时间格式 YYYY-MM-DDTHH:MM:SS（err1=%v err2=%v）\n", err1, err2)
+				os.Exit(1)
+			}
+			projectPath, _ := os.Getwd()
+			if dbPath != "" {
+				if root := eval.ProjectRootFromDBPath(dbPath); root != "" {
+					projectPath = root
+				}
+			}
+			var confirmer eval.L2Confirmer
+			if s := application.SummarizerFor(projectPath); s != nil {
+				if c, ok := s.(interface {
+					SummarizeJSON(text, instruction string) (string, error)
+				}); ok {
+					confirmer = &eval.L2Client{Summarizer: c, Timeout: time.Duration(l2Timeout) * time.Second}
+				}
+			}
+			probe, err := eval.ProbeHealthyWindow(confirmer, turns, start, end, probeLabel, probeRuns)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "eval l2-probe: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Print(eval.FormatProbeHuman(probe))
+			fmt.Println()
+			out, _ := json.MarshalIndent(probe, "", "  ")
+			fmt.Println(string(out))
 		default:
-			fmt.Fprintf(os.Stderr, "eval: unknown kind %q (supported: attribution/process/acceptance/p0a2/p0b)\n", kind)
+			fmt.Fprintf(os.Stderr, "eval: unknown kind %q (supported: attribution/process/acceptance/p0a2/p0b/l2-probe)\n", kind)
 			os.Exit(1)
 		}
 		return
