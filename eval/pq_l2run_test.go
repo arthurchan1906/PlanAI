@@ -169,6 +169,75 @@ func TestL2TimeoutErrorRecordedContinues(t *testing.T) {
 	}
 }
 
+func TestEvenlySample(t *testing.T) {
+	items := []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+	got := evenlySample(items, 3)
+	if len(got) != 3 || got[0] != 0 || got[2] != 9 {
+		t.Fatalf("evenlySample(10,3) = %v, want 首/末=0/9", got)
+	}
+	if len(evenlySample(items, 0)) != 10 || len(evenlySample(items, 20)) != 10 {
+		t.Errorf("n<=0 或 n>=len 应返回全量")
+	}
+	// 确定性：两次结果一致
+	if len(evenlySample(items, 4)) != 4 {
+		t.Errorf("evenlySample(10,4) = %v", evenlySample(items, 4))
+	}
+}
+
+func TestStratifiedSamplePerDay(t *testing.T) {
+	// 3 天各 4 条 → perLayer=2 应每层取 2 个（共 6），首末保留
+	items := []string{
+		"d1-a", "d1-b", "d1-c", "d1-d",
+		"d2-a", "d2-b", "d2-c", "d2-d",
+		"d3-a", "d3-b", "d3-c", "d3-d",
+	}
+	key := func(s string) string { return s[:2] }
+	got := stratifiedSample(items, key, 2)
+	if len(got) != 6 {
+		t.Fatalf("len = %d, want 6（每层 2）: %v", len(got), got)
+	}
+	byDay := map[string]int{}
+	for _, s := range got {
+		byDay[s[:2]]++
+	}
+	for _, d := range []string{"d1", "d2", "d3"} {
+		if byDay[d] != 2 {
+			t.Errorf("层 %s 抽样 %d 个, want 2", d, byDay[d])
+		}
+	}
+	if got[0] != "d1-a" || got[len(got)-1] != "d3-d" {
+		t.Errorf("首末应保留: %v", got)
+	}
+	// perLayer>=len → 全量
+	if len(stratifiedSample(items, key, 0)) != 12 {
+		t.Error("perLayer<=0 应返回全量")
+	}
+}
+
+func TestRunL2SamplePerLayerCoversDays(t *testing.T) {
+	rep, turns := l2Fixture()
+	// fixture 断言在 09-24；再加 3 条不同日期的断言，验证抽样覆盖多天
+	tr := turns[0]
+	tr.Records = append(tr.Records,
+		Record{Role: "assistant", ID: "r5", Content: "8/25 已完成模块 A 验证。", Tool: ToolRecord{Tool: "unknown"}, CreatedAt: ts("2026-08-25T10:00:00")},
+		Record{Role: "assistant", ID: "r6", Content: "8/26 已修复模块 B 问题。", Tool: ToolRecord{Tool: "unknown"}, CreatedAt: ts("2026-08-26T10:00:00")},
+	)
+	res, err := RunL2Confirmations(l2StubConfirmer{}, rep, []Turn{tr}, L2RunOptions{SamplePerLayer: 1, MaxPerTask: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 断言分类应覆盖 3 个日期（每层 1）
+	claimCount := 0
+	for _, it := range res.Items {
+		if it.Task == L2ClaimClassify {
+			claimCount++
+		}
+	}
+	if claimCount != 3 {
+		t.Fatalf("断言分类 = %d, want 3（3 天各 1）: %v", claimCount, res.Items)
+	}
+}
+
 // l2ErrConfirmer 全任务失败的替身。
 type l2ErrConfirmer struct{}
 

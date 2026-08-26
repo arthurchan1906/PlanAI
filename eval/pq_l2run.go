@@ -11,6 +11,7 @@ package eval
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 )
@@ -19,6 +20,9 @@ import (
 type L2RunOptions struct {
 	// MaxPerTask 每类任务最多确认数（成本控制；<=0 用默认 5）。
 	MaxPerTask int
+	// SamplePerLayer P1c 分层抽样：每层（按候选日期）最多抽样数；>0 时替代「前 N 条」
+	// （Claude P1c 建议：492 条候选断言取前 N 条全是 8/17 开头噪音，需按天分层代表性抽样）。
+	SamplePerLayer int
 }
 
 // L2Item 单条 L2 确认记录（候选 → 结果；失败时 Error 保留，不伪装成功）。
@@ -60,10 +64,54 @@ func RunL2Confirmations(confirmer L2Confirmer, rep *ProcessReport, turns []Turn,
 	return res, nil
 }
 
+// ── P1c 分层抽样（候选→人工确认闭环的标注集生成）──
+
+// stratifiedSample 按层键分组、层内均匀抽样（首/末/中间均布点，确定性可复现）。
+// 替代「取前 N 条」：前 N 条往往集中在开头（如 3 天 session 的 492 条断言全是
+// 8/17 噪音），分层抽样保证每层（每天）都有代表。
+func stratifiedSample[T any](items []T, key func(T) string, perLayer int) []T {
+	if perLayer <= 0 || len(items) <= perLayer {
+		return items
+	}
+	type group struct {
+		items []T
+	}
+	var groups []group
+	idx := map[string]int{}
+	for _, it := range items {
+		k := key(it)
+		if gi, ok := idx[k]; ok {
+			groups[gi].items = append(groups[gi].items, it)
+		} else {
+			idx[k] = len(groups)
+			groups = append(groups, group{items: []T{it}})
+		}
+	}
+	var out []T
+	for _, g := range groups {
+		out = append(out, evenlySample(g.items, perLayer)...)
+	}
+	return out
+}
+
+// evenlySample 层内均匀抽样 n 个（首/末/中间均布；确定性）。
+func evenlySample[T any](items []T, n int) []T {
+	if n <= 0 || len(items) <= n {
+		return items
+	}
+	out := make([]T, 0, n)
+	for i := 0; i < n; i++ {
+		pos := int(math.Round(float64(i) * float64(len(items)-1) / float64(n-1)))
+		out = append(out, items[pos])
+	}
+	return out
+}
+
 // ── 任务 1/2：断言分类 + 证据细配对 ──
 
 // runClaims 任务 1（断言分类）→ 判「事实」的断言再跑任务 2（证据细配对）。
 func (res *L2RunResult) runClaims(confirmer L2Confirmer, recs []Record, hits []ClaimHit, opts L2RunOptions) {
+	hits = stratifiedSample(hits, func(h ClaimHit) string { return h.At.Format("2006-01-02") }, opts.SamplePerLayer)
 	n := 0
 	for i := range hits {
 		if n >= opts.MaxPerTask {
@@ -113,6 +161,7 @@ func (res *L2RunResult) runClaims(confirmer L2Confirmer, recs []Record, hits []C
 
 // runDeadloops T5 死循环候选（非 Excluded；near-miss 已排除不确认）。
 func (res *L2RunResult) runDeadloops(confirmer L2Confirmer, turns []Turn, cands []DeadloopCandidate, opts L2RunOptions) {
+	cands = stratifiedSample(cands, func(c DeadloopCandidate) string { return c.Start.Format("2006-01-02") }, opts.SamplePerLayer)
 	n := 0
 	for i := range cands {
 		if cands[i].Excluded {
@@ -147,6 +196,7 @@ func (res *L2RunResult) runDeadloops(confirmer L2Confirmer, turns []Turn, cands 
 // 注记（Claude P1b 二轮审核 C5）：Builds=2/Fails=1 是形态 9 三元组（失败→同命令重试）
 // 的近似组合信号，非实际统计——证据里另有 Reason 写明命令与 fail_sig，L2 按行为序列判定。
 func (res *L2RunResult) runVerifyLoops(confirmer L2Confirmer, turns []Turn, cands []VerifyLoopCandidate, opts L2RunOptions) {
+	cands = stratifiedSample(cands, func(v VerifyLoopCandidate) string { return v.FailTime.Format("2006-01-02") }, opts.SamplePerLayer)
 	n := 0
 	for i := range cands {
 		if n >= opts.MaxPerTask {
@@ -243,6 +293,7 @@ func (res *L2RunResult) addDirection(confirmer L2Confirmer, task L2Task, target,
 
 // runFeedbackResponses 纠偏/存疑反馈 → 反馈后 20min 行为序列（§2.2 五子信号）。
 func (res *L2RunResult) runFeedbackResponses(confirmer L2Confirmer, turns []Turn, cands []FeedbackCandidate, opts L2RunOptions) {
+	cands = stratifiedSample(cands, func(fb FeedbackCandidate) string { return fb.Ts.Format("2006-01-02") }, opts.SamplePerLayer)
 	n := 0
 	for i := range cands {
 		fb := cands[i]
