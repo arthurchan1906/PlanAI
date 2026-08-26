@@ -1,4 +1,6 @@
 # P1c 标注集（草案，待人工确认）
+> **配套门禁报告**：误报率报告 + 一致率验证 → `docs/P1C_REPORT.md`（2026-08-26，一致率 82.4% ≥80% 达标）
+
 
 > 生成：2026-08-26 · 工具：`aipmc eval process --session <id> --l2 --l2-sample 2 --l2-timeout 120` · 通道：proxy → DeepSeek
 > 约束落盘：PROCESS_QUALITY_SPEC §2.3 P1c 四件套（样本分层 / 观察者隔离 / 对抗验证 / 阈值观察期）
