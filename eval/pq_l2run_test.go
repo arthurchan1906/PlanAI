@@ -139,6 +139,36 @@ func TestRunL2ConfirmationsLLMErrorRecorded(t *testing.T) {
 	}
 }
 
+func TestProblemContextPrefersNearestUserMsg(t *testing.T) {
+	t1 := pqTurn("u1", "首条：iOS PalV2 密友跨平台不兼容", "2026-06-24T09:00:00")
+	t2 := pqTurn("u2", "候选时段内的最新指令：换用 ED 日志", "2026-06-24T09:30:00")
+	t3 := pqTurn("u3", "时段后的消息不应采用", "2026-06-24T10:00:00")
+	turns := []Turn{t1, t2, t3}
+	// 候选时段 09:20-09:40 → 应取 09:30 的 u2
+	got := problemContext(turns, ts("2026-06-24T09:20:00"), ts("2026-06-24T09:40:00"))
+	if !strings.Contains(got, "换用 ED 日志") {
+		t.Errorf("应取时段内最近 user 消息，got %q", got)
+	}
+	// 时段内无 user 消息 → 回退首条非空
+	got2 := problemContext(turns, ts("2026-06-24T08:00:00"), ts("2026-06-24T08:59:00"))
+	if !strings.Contains(got2, "首条") {
+		t.Errorf("应回退首条非空 user 消息，got %q", got2)
+	}
+}
+
+func TestL2TimeoutErrorRecordedContinues(t *testing.T) {
+	rep, turns := l2Fixture()
+	// 超时替身：全部调用超时报错（走 Timeout 路径由 L2Client 负责；这里验证编排层
+	// 把超时当失败条目记录并继续，不中断整轮）。
+	res, err := RunL2Confirmations(l2ErrConfirmer{}, rep, turns, L2RunOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Succeeded != 0 || res.Failed != res.Total {
+		t.Errorf("失败应全部记录: %d/%d", res.Succeeded, res.Failed)
+	}
+}
+
 // l2ErrConfirmer 全任务失败的替身。
 type l2ErrConfirmer struct{}
 

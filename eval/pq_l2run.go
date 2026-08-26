@@ -47,7 +47,7 @@ func RunL2Confirmations(confirmer L2Confirmer, rep *ProcessReport, turns []Turn,
 		return &L2RunResult{Ran: false, Reason: "L2 未配置（LLM 确认器不可用）：候选未确认，标注 L2 未运行，不伪造结果"}, nil
 	}
 	if opts.MaxPerTask <= 0 {
-		opts.MaxPerTask = 5
+		opts.MaxPerTask = 3 // Claude P1b 二轮审核：默认 5×5 任务成本过高，先跑通再放开
 	}
 	res := &L2RunResult{Ran: true}
 	all := allRecords(turns)
@@ -144,6 +144,8 @@ func (res *L2RunResult) runDeadloops(confirmer L2Confirmer, turns []Turn, cands 
 }
 
 // runVerifyLoops 形态 9 验证循环候选 → 任务 3（同命令重试 ≈ 死循环盲试语义）。
+// 注记（Claude P1b 二轮审核 C5）：Builds=2/Fails=1 是形态 9 三元组（失败→同命令重试）
+// 的近似组合信号，非实际统计——证据里另有 Reason 写明命令与 fail_sig，L2 按行为序列判定。
 func (res *L2RunResult) runVerifyLoops(confirmer L2Confirmer, turns []Turn, cands []VerifyLoopCandidate, opts L2RunOptions) {
 	n := 0
 	for i := range cands {
@@ -185,7 +187,6 @@ func (res *L2RunResult) runVerifyLoops(confirmer L2Confirmer, turns []Turn, cand
 // + 形态 6 方向转换候选（段内自发检索 < 2 视为「候选方向错」，§2.2 触发条件）。
 func (res *L2RunResult) runDirectionEvals(confirmer L2Confirmer, turns []Turn, rep *ProcessReport, opts L2RunOptions) {
 	n := 0
-	problem := problemContext(turns)
 	buildMin := DefaultDeadloopParams().BuildMin
 	for i := range rep.Deadloops {
 		d := rep.Deadloops[i]
@@ -197,6 +198,7 @@ func (res *L2RunResult) runDirectionEvals(confirmer L2Confirmer, turns []Turn, r
 			return
 		}
 		lines := l2CommandLines(l2RecordsBetween(turns, d.Start, d.End), 0, 0)
+		problem := problemContext(turns, d.Start, d.End)
 		p := BuildDirectionEvalPrompt(problem, lines, d.SpontRetr)
 		out, err := confirmer.Confirm(p)
 		target := fmt.Sprintf("%s → %s（死循环候选，build=%d 自发=%d）", tsFmt(d.Start), tsFmt(d.End), d.Builds, d.SpontRetr)
@@ -214,6 +216,7 @@ func (res *L2RunResult) runDirectionEvals(confirmer L2Confirmer, turns []Turn, r
 			return
 		}
 		lines := l2CommandLines(l2RecordsBetween(turns, c.Start, c.End), 0, 0)
+		problem := problemContext(turns, c.Start, c.End)
 		p := BuildDirectionEvalPrompt(problem, lines, spont)
 		out, err := confirmer.Confirm(p)
 		target := fmt.Sprintf("%s → %s（形态6 转向 %d 次，自发=%d）", tsFmt(c.Start), tsFmt(c.End), c.Switches, spont)
@@ -340,8 +343,22 @@ func candTarget(from, to time.Time) string {
 	return fmt.Sprintf("%s → %s", tsFmt(from), tsFmt(to))
 }
 
-// problemContext 问题上下文：首条非空 user 消息（任务 4 输入）。
-func problemContext(turns []Turn) string {
+// problemContext 问题上下文（任务 4 输入）：候选时段内最近一条 user 消息
+// （Claude P1b 二轮审核 C6：长 session 用首条消息当上下文会过时）；无则回退首条非空。
+func problemContext(turns []Turn, from, to time.Time) string {
+	var latest string
+	for i := range turns {
+		s := strings.TrimSpace(turns[i].UserMsg)
+		if s == "" {
+			continue
+		}
+		if !turns[i].Start.Before(from) && !turns[i].Start.After(to) {
+			latest = s
+		}
+	}
+	if latest != "" {
+		return snippetOf(latest)
+	}
 	for i := range turns {
 		if s := strings.TrimSpace(turns[i].UserMsg); s != "" {
 			return snippetOf(s)

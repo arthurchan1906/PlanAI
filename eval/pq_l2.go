@@ -38,10 +38,14 @@ type L2Confirmer interface {
 }
 
 // L2Client 基于 ai.Client.SummarizeJSON 的确认器实现。
+// Timeout > 0 时每次调用有硬超时（超时记 Error 继续，与「失败如实记录」一致）——
+// 无超时时 LLM 挂起会让 L2 编排无限等待（Claude P1b 二轮审核：本地模型实测 15-20min
+// 未完成，P1c 标注集在真实成本下跑不动）。
 type L2Client struct {
 	Summarizer interface {
 		SummarizeJSON(text, instruction string) (string, error)
 	}
+	Timeout time.Duration // 每调用超时（0 = 不限制；默认建议 90s，CLI --l2-timeout）
 }
 
 // Confirm 调用 LLM：System = 系统指令，Evidence = 用户侧证据文本。
@@ -49,7 +53,24 @@ func (c *L2Client) Confirm(p L2Prompt) (string, error) {
 	if p.Evidence == "" {
 		return "", fmt.Errorf("L2 %s: 证据上下文为空（prompt 三约束②）", p.Task)
 	}
-	return c.Summarizer.SummarizeJSON(p.Evidence, p.System)
+	if c.Timeout <= 0 {
+		return c.Summarizer.SummarizeJSON(p.Evidence, p.System)
+	}
+	type callResult struct {
+		out string
+		err error
+	}
+	ch := make(chan callResult, 1)
+	go func() {
+		out, err := c.Summarizer.SummarizeJSON(p.Evidence, p.System)
+		ch <- callResult{out, err}
+	}()
+	select {
+	case r := <-ch:
+		return r.out, r.err
+	case <-time.After(c.Timeout):
+		return "", fmt.Errorf("L2 %s: 调用超时（%s）", p.Task, c.Timeout)
+	}
 }
 
 // l2CommonConstraints prompt 三约束前缀（§2.2），每个任务系统指令共用。

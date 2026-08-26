@@ -287,6 +287,7 @@ func main() {
 		confirmSessions := ""
 		l2Mode := false
 		l2Max := 0
+		l2Timeout := 90 // 秒；单次 LLM 确认硬超时（Claude P1b 二轮审核：无超时 LLM 挂起会无限等待）
 		raw := os.Args[2:]
 		// 位置参数 kind（aipmc eval process / acceptance）：与 --kind 等价（usage 声明形式）
 		if len(raw) > 0 && raw[0] != "--since" && raw[0] != "--kind" && raw[0] != "--log" && !strings.HasPrefix(raw[0], "--") {
@@ -331,6 +332,9 @@ func main() {
 				l2Mode = true
 			case raw[i] == "--l2-max" && i+1 < len(raw):
 				fmt.Sscanf(raw[i+1], "%d", &l2Max)
+				i++
+			case raw[i] == "--l2-timeout" && i+1 < len(raw):
+				fmt.Sscanf(raw[i+1], "%d", &l2Timeout)
 				i++
 			}
 		}
@@ -412,7 +416,7 @@ func main() {
 					if c, ok := s.(interface {
 						SummarizeJSON(text, instruction string) (string, error)
 					}); ok {
-						confirmer = &eval.L2Client{Summarizer: c}
+						confirmer = &eval.L2Client{Summarizer: c, Timeout: time.Duration(l2Timeout) * time.Second}
 					}
 				}
 				rep.L2, err = eval.RunL2Confirmations(confirmer, rep, turns, eval.L2RunOptions{MaxPerTask: l2Max})

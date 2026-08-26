@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 // prompt 三约束断言（§2.2）：① 只基于证据 ② 证据必填 ③ JSON 强制
@@ -206,6 +207,28 @@ func TestL2ClientConfirmErrorPropagates(t *testing.T) {
 	c := &L2Client{Summarizer: stub}
 	if _, err := c.Confirm(BuildClaimClassifyPrompt("x", nil)); err == nil {
 		t.Error("LLM 错误应向上传播")
+	}
+}
+
+// blockingSummarizer 永不返回的替身（模拟 LLM 挂起）。
+type blockingSummarizer struct{}
+
+func (blockingSummarizer) SummarizeJSON(text, instruction string) (string, error) {
+	select {}
+}
+
+func TestL2ClientConfirmTimeout(t *testing.T) {
+	c := &L2Client{Summarizer: blockingSummarizer{}, Timeout: 50 * time.Millisecond}
+	start := time.Now()
+	_, err := c.Confirm(BuildClaimClassifyPrompt("已完成", []string{"10:01 bash go build"}))
+	if err == nil {
+		t.Fatal("超时应报错")
+	}
+	if !strings.Contains(err.Error(), "超时") {
+		t.Errorf("错误应含超时标注: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("超时未生效: 耗时 %v", elapsed)
 	}
 }
 
