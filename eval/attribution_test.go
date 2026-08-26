@@ -237,6 +237,40 @@ func TestM1ReconcileDetectsWriteLoss(t *testing.T) {
 	}
 }
 
+// M1a 跨项目污染过滤（8/26）：日志全局共享（~/.aipmc/logs 混入其他项目注入行），
+// project= 非当前项目的行不得计入分母；当前项目与历史无 project= 行照常计入。
+func TestM1ReconcileFiltersOtherProject(t *testing.T) {
+	d := fixtureDB(t)
+	mustExec(t, d, `INSERT INTO inject_log VALUES ('inj-1','codex-cli','sess-A','r1-1','2026-08-14T10:00:00','h1','','{}',100,0)`)
+	p := filepath.Join(t.TempDir(), "aipmc.log")
+	me := currentProjectPath()
+	other := "/Users/other/proj"
+	lines := ""
+	for i, proj := range []string{me, me, other, other, ""} {
+		ph := ""
+		if proj != "" {
+			ph = " project=" + proj
+		}
+		lines += fmt.Sprintf("[2026-08-14 10:0%d:00] [INJECT] agent=codex-cli%s session=sess-A req=r1-%d hash=h1 goals=0 warnings=0 actions=0 file_total=0 guidelines=0 guide_del=0 chars=100\n", i, ph, i)
+	}
+	if err := os.WriteFile(p, []byte(lines), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	since, _ := time.Parse("2006-01-02T15:04:05", "2026-08-14T00:00:00")
+	rep, err := BuildAttribution(d, p, since)
+	if err != nil {
+		t.Fatalf("BuildAttribution: %v", err)
+	}
+	a := rep.ByAgent["codex-cli"]
+	// 当前项目 2 行 + 历史无 project 1 行计入；其他项目 2 行过滤
+	if a.M1.LogInject != 3 {
+		t.Errorf("log_inject = %d, want 3（当前项目2 + 历史无project 1，其他项目过滤）", a.M1.LogInject)
+	}
+	if a.M1.Injected != 1 {
+		t.Errorf("injected = %d, want 1", a.M1.Injected)
+	}
+}
+
 // M1a 对账窗口：inject_log 启用前的历史 :148 日志行不参与对账（无对应表行，
 // 计入分母会造成系统性误报——8/18 实测 claude reconcile=0.005 根因）。
 func TestM1ReconcileWindowExcludesPreEnableLogs(t *testing.T) {

@@ -15,9 +15,11 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -30,6 +32,30 @@ type AttributionReport struct {
 	M4          M4Report            `json:"m4"`
 	M5          M5Report            `json:"m5"`
 	Annotations []string            `json:"annotations,omitempty"` // 规格注记（HARNESS §2：准实验/含噪/口径边界）
+}
+
+var curProjectOnce sync.Once
+var curProject string
+
+// currentProjectPath 当前项目根（M1a 对账过滤，8/26）：与 proxy 写库目标一致
+// （cwd 向上找 .pmai；proxy 侧日志 project= 也按 pmdb.FindPath 语义打标）。
+func currentProjectPath() string {
+	curProjectOnce.Do(func() {
+		if cwd, err := os.Getwd(); err == nil {
+			for dir := cwd; dir != "/" && dir != "."; {
+				if info, err := os.Stat(filepath.Join(dir, ".pmai")); err == nil && info.IsDir() {
+					curProject = dir
+					return
+				}
+				parent := filepath.Dir(dir)
+				if parent == dir {
+					break
+				}
+				dir = parent
+			}
+		}
+	})
+	return curProject
 }
 
 // AgentM12 单个 agent 的 M1（注入覆盖率）与 M2（文件命中率）指标。
@@ -177,6 +203,13 @@ func BuildAttribution(d *sql.DB, logFile string, since time.Time) (*AttributionR
 			if ts.IsZero() || ts.Before(since) || agent == "" {
 				continue
 			}
+			// 8/26 M1a 口径修复：日志全局共享（~/.aipmc/logs/aipmc.log 含所有项目的
+			// 注入行，8/19-8/24 实测 EncryptDrive 注入行混入分母致 aipmc 对账 12-14%）。
+			// 8/26 起 proxy 日志带 project= 绝对路径，分母只计当前项目；历史无
+			// project= 的行不过滤（8/18/8/25 纯净窗口对账正常，口径注记在规格）。
+			if proj := projectFromLine(ln); proj != "" && proj != currentProjectPath() {
+				continue
+			}
 			// 观测层启用前的历史 :148 行不参与对账（无对应表行）
 			if tableMinTS != "" && ts.Format("2006-01-02T15:04:05") < tableMinTS {
 				continue
@@ -303,6 +336,7 @@ func BuildAttribution(d *sql.DB, logFile string, since time.Time) (*AttributionR
 
 	// 规格注记（HARNESS §2 强制项：准实验/含噪/对照组语义，缺失会让输出被误读）
 	rep.Annotations = []string{
+		"M1a 对账口径（8/26）：日志全局共享（~/.aipmc/logs 混入其他项目注入行，8/19-24 实测跨项目污染致对账 12-14%）——8/26 起 proxy 日志带 project=，分母按当前项目过滤；历史无 project= 行不过滤，对账仅对单项目纯净窗口（8/18/8/25）有效",
 		"M2 为观察性准实验（非随机对照）：注入/对照组差值反映关联而非因果",
 		"M2 命中判定（8/25 修订）：fileAssoc 注记串按 ' → ' 拆路径 + op 路径精确/basename/后缀三级匹配；写/读引用均计",
 		"M2 same_content 对照组基线=已见过（此前注入过同内容）：有注入历史时按已注入文件判定，无历史时降级为活跃基线（任意文件引用）",
@@ -839,6 +873,14 @@ func parseSkipLine(ln string) (time.Time, string, string, string) {
 		reason = m[1]
 	}
 	return ts, agent, session, reason
+}
+
+// projectFromLine 从 [INJECT] 日志行提取 project= 值（8/26 起 proxy 打标；历史行无）。
+func projectFromLine(ln string) string {
+	if m := regexp.MustCompile(`project=([^\s]+)`).FindStringSubmatch(ln); m != nil {
+		return m[1]
+	}
+	return ""
 }
 
 func atoi(s string) int {

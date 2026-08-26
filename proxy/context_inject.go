@@ -105,6 +105,21 @@ func init() {
 	guidelinesCache.ttl = 10 * time.Minute
 }
 
+// injectProjectPath 当前注入写库目标项目根（M1a 对账，8/26）：写库用 pmdb.FindPath
+// （基于 cwd 向上找 .pmai），日志行同步打 project= 绝对路径，供 eval 侧按项目过滤——
+// 修复全局日志（~/.aipmc/logs/aipmc.log）混入其他项目注入行导致 M1a 分母跨项目污染。
+var injectProjectOnce sync.Once
+var injectProjectPath string
+
+func currentInjectProject() string {
+	injectProjectOnce.Do(func() {
+		if p, err := pmdb.FindPath(); err == nil {
+			injectProjectPath = filepath.Dir(filepath.Dir(p))
+		}
+	})
+	return injectProjectPath
+}
+
 // InjectSessionContext prepends recent session goals into the system message
 // of a proxy request. One injection per agent per unique content (content-hash
 // based deduplication). Content is capped at maxInjectChars.
@@ -130,10 +145,10 @@ func InjectSessionContext(body []byte, agent string) []byte {
 	reqID := fmt.Sprintf("r%d-%d", os.Getpid(), atomic.AddUint64(&injectReqSeq, 1))
 
 	if len(goals) == 0 && len(fileAssoc) == 0 && len(guidelines) > 0 {
-		u.LogShared("INJECT", "inject agent=%s session=%s req=%s source=guidelines_only", agent, sessionID, reqID)
+		u.LogShared("INJECT", "inject project=%s agent=%s session=%s req=%s source=guidelines_only", currentInjectProject(), agent, sessionID, reqID)
 	}
 	if len(goals) == 0 && len(fileAssoc) == 0 && len(guidelines) == 0 {
-		u.LogShared("INJECT", "skip agent=%s session=%s req=%s reason=no_summary_data", agent, sessionID, reqID)
+		u.LogShared("INJECT", "skip project=%s agent=%s session=%s req=%s reason=no_summary_data", currentInjectProject(), agent, sessionID, reqID)
 		return body
 	}
 
@@ -155,16 +170,16 @@ func InjectSessionContext(body []byte, agent string) []byte {
 		return result
 	}
 	injectTracker.Store(agent, injectState{lastAt: time.Now(), contentHash: fullHash})
-	u.LogShared("INJECT", "agent=%s session=%s req=%s hash=%s goals=%d warnings=%d actions=%d file_total=%d guidelines=%d guide_del=%d chars=%d",
-		agent, sessionID, reqID, fullHash[:8], len(goals), len(warnings), len(actionItems), len(fileAssoc), len(guidelines), sc.guidelinesDel, len(block))
+	u.LogShared("INJECT", "agent=%s project=%s session=%s req=%s hash=%s goals=%d warnings=%d actions=%d file_total=%d guidelines=%d guide_del=%d chars=%d",
+		agent, currentInjectProject(), sessionID, reqID, fullHash[:8], len(goals), len(warnings), len(actionItems), len(fileAssoc), len(guidelines), sc.guidelinesDel, len(block))
 	// suppressed 计数移到 shouldInject 之后：去重跳过（same_content/cooldown）的请求
 	// 不产出抑制记录——收紧 F2 口径（旧实现把未注入请求的抑制也算进去，虚高）。
 	// 8/18 修订（HARNESS §1.3）：char_limit 裁剪的请求已实际注入，仍写表，
 	// suppressed 如实记录（对应 :153）。same_content/no_summary 已在上方 return，
 	// 不写表——对照组从日志侧重建。
 	if sc.total() > 0 {
-		u.LogShared("INJECT", "suppressed=%d reason=char_limit cap=%d agent=%s session=%s req=%s segments=file_cut:%d warn:%d act:%d goals:%d guide:%d",
-			sc.total(), maxInjectChars, agent, sessionID, reqID, sc.fileAssoc, sc.warnings, sc.actionItems, sc.goals, sc.guidelines)
+		u.LogShared("INJECT", "suppressed=%d reason=char_limit cap=%d agent=%s project=%s session=%s req=%s segments=file_cut:%d warn:%d act:%d goals:%d guide:%d",
+			sc.total(), maxInjectChars, agent, currentInjectProject(), sessionID, reqID, sc.fileAssoc, sc.warnings, sc.actionItems, sc.goals, sc.guidelines)
 	}
 	// inject_log（HARNESS §1.3，8/18 修订写策略）：实际注入即写（含裁剪）。
 	source := ""
@@ -203,7 +218,7 @@ func writeInjectLog(agent, sessionID, reqID, source string, fullHash string, cha
 		Suppressed:   supp,
 	})
 	if err != nil {
-		u.LogShared("INJECT", "inject_log write_err=%v", err)
+		u.LogShared("INJECT", "inject_log project=%s write_err=%v", currentInjectProject(), err)
 	}
 }
 
@@ -214,7 +229,7 @@ func shouldInject(agent, sessionID, reqID, contentHash string) bool {
 	}
 	st := v.(injectState)
 	if st.contentHash == contentHash {
-		u.LogShared("INJECT", "skip agent=%s session=%s req=%s reason=same_content hash=%s", agent, sessionID, reqID, contentHash[:8])
+		u.LogShared("INJECT", "skip project=%s agent=%s session=%s req=%s reason=same_content hash=%s", currentInjectProject(), agent, sessionID, reqID, contentHash[:8])
 		return false
 	}
 	return true
