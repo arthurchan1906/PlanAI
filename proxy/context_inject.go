@@ -111,6 +111,10 @@ func init() {
 var injectProjectOnce sync.Once
 var injectProjectPath string
 
+// absPathRe 匹配绝对路径段（方法 2 通用遍历用）。包级编译：projectRootFromBody
+// 每个注入请求都会执行（proxy 热路径），避免函数体内重复 MustCompile。
+var absPathRe = regexp.MustCompile(`(?:^|[\s"'(<])(/[^\s"'<>()]+)`)
+
 func currentInjectProject() string {
 	injectProjectOnce.Do(func() {
 		if p, err := pmdb.FindPath(); err == nil {
@@ -118,6 +122,69 @@ func currentInjectProject() string {
 		}
 	})
 	return injectProjectPath
+}
+
+// injectProjectForRequest 按请求归因注入项目（C0，8/27）：优先从请求体绝对路径
+// 推导项目根（修复 F3 根因——sync.Once 进程级缓存一旦在首次请求时推错，整进程
+// 日志 project= 归属全部污染 :148/:151/:174/:182/:221/:232），找不到时回退到
+// 进程级 currentInjectProject（env/cwd 推导，保持 M1a 对账与 eval 过滤基准同源）。
+func injectProjectForRequest(body []byte) string {
+	if p := projectRootFromBody(body); p != "" {
+		return p
+	}
+	return currentInjectProject()
+}
+
+// projectRootFromBody 从请求文本找绝对路径，向上遍历找含 .pmai 的目录即项目根。
+// 优先精确命中 /.pmai/ 段直接截取（一次 Index+LastIndex），否则回退通用绝对路径
+// 正则逐层 Stat。env 模式（PMAI_HOME 指向 ~/.aipmc 等无 .pmai 层）自然不命中，
+// 由调用方回退 currentInjectProject。
+func projectRootFromBody(body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	text := string(body)
+	// 方法 1：精确命中 /.pmai/ 段直接截取项目根。注意: ① 必须过 os.Stat 验证
+	// 目录真实存在（与方法 2 一致，防请求文本提及不存在的 /.pmai/ 路径误判）；
+	// ② macOS 含空格路径会在空格处截断（start 回溯在分隔符停），含空格项目根
+	// 归因不到——已知限制，回退进程级推导。
+	if i := strings.Index(text, "/.pmai/"); i > 0 {
+		start := i
+		for start > 0 {
+			c := text[start-1]
+			if c == ' ' || c == '\t' || c == '"' || c == '\'' || c == '<' || c == '(' || c == '\n' || c == ',' {
+				break
+			}
+			start--
+		}
+		abs := text[start:i]
+		if strings.HasPrefix(abs, "/") && !strings.ContainsAny(abs, " \t") {
+			if info, err := os.Stat(filepath.Join(abs, ".pmai")); err == nil && info.IsDir() {
+				return abs
+			}
+		}
+	}
+	// 方法 2：通用绝对路径逐层 Stat 找 .pmai（含空格路径在此同样截断，见上注记）。
+	for _, m := range absPathRe.FindAllStringSubmatch(text, -1) {
+		if len(m) < 2 {
+			continue
+		}
+		p := strings.TrimRight(m[1], `"'<>(),`)
+		if p == "" || !strings.HasPrefix(p, "/") {
+			continue
+		}
+		for dir := p; dir != "/" && dir != "."; {
+			if info, err := os.Stat(filepath.Join(dir, ".pmai")); err == nil && info.IsDir() {
+				return dir
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+		}
+	}
+	return ""
 }
 
 // InjectSessionContext prepends recent session goals into the system message
@@ -138,6 +205,8 @@ func InjectSessionContext(body []byte, agent string) []byte {
 	// File awareness is computed per-request — must NOT be inside the
 	// 5-minute session cache, or it returns nil on every cache hit.
 	fileAssoc := resolveFileContext(body, agent)
+	// C0（8/27）：按请求归因 project=，一次计算全请求日志点复用。
+	proj := injectProjectForRequest(body)
 	// W1（8/13）：session/req 标识进 inject/suppressed 日志，供可见性漏斗按
 	// (agent, session, req, ts) 对齐注入与事件处理记录。
 	sessionID := extractSessionID(body)
@@ -145,10 +214,10 @@ func InjectSessionContext(body []byte, agent string) []byte {
 	reqID := fmt.Sprintf("r%d-%d", os.Getpid(), atomic.AddUint64(&injectReqSeq, 1))
 
 	if len(goals) == 0 && len(fileAssoc) == 0 && len(guidelines) > 0 {
-		u.LogShared("INJECT", "inject project=%s agent=%s session=%s req=%s source=guidelines_only", currentInjectProject(), agent, sessionID, reqID)
+		u.LogShared("INJECT", "inject project=%s agent=%s session=%s req=%s source=guidelines_only", proj, agent, sessionID, reqID)
 	}
 	if len(goals) == 0 && len(fileAssoc) == 0 && len(guidelines) == 0 {
-		u.LogShared("INJECT", "skip project=%s agent=%s session=%s req=%s reason=no_summary_data", currentInjectProject(), agent, sessionID, reqID)
+		u.LogShared("INJECT", "skip project=%s agent=%s session=%s req=%s reason=no_summary_data", proj, agent, sessionID, reqID)
 		return body
 	}
 
@@ -164,14 +233,14 @@ func InjectSessionContext(body []byte, agent string) []byte {
 	// 注入块，字节实证 09:53:39/09:53:57）。正确语义：内容未变时重新注入同一
 	// block（排序后内容逐字节稳定），SP 全程一致、缓存连续。shouldInject 仅
 	// 保留 same_content 观测点，跳过 tracker 更新与 inject 明细日志。
-	sameContent := !shouldInject(agent, sessionID, reqID, fullHash)
+	sameContent := !shouldInject(agent, sessionID, reqID, fullHash, proj)
 	result := injectIntoPrompt(body, block, agent)
 	if sameContent {
 		return result
 	}
 	injectTracker.Store(agent, injectState{lastAt: time.Now(), contentHash: fullHash})
 	u.LogShared("INJECT", "agent=%s project=%s session=%s req=%s hash=%s goals=%d warnings=%d actions=%d file_total=%d guidelines=%d guide_del=%d chars=%d",
-		agent, currentInjectProject(), sessionID, reqID, fullHash[:8], len(goals), len(warnings), len(actionItems), len(fileAssoc), len(guidelines), sc.guidelinesDel, len(block))
+		agent, proj, sessionID, reqID, fullHash[:8], len(goals), len(warnings), len(actionItems), len(fileAssoc), len(guidelines), sc.guidelinesDel, len(block))
 	// suppressed 计数移到 shouldInject 之后：去重跳过（same_content/cooldown）的请求
 	// 不产出抑制记录——收紧 F2 口径（旧实现把未注入请求的抑制也算进去，虚高）。
 	// 8/18 修订（HARNESS §1.3）：char_limit 裁剪的请求已实际注入，仍写表，
@@ -179,21 +248,21 @@ func InjectSessionContext(body []byte, agent string) []byte {
 	// 不写表——对照组从日志侧重建。
 	if sc.total() > 0 {
 		u.LogShared("INJECT", "suppressed=%d reason=char_limit cap=%d agent=%s project=%s session=%s req=%s segments=file_cut:%d warn:%d act:%d goals:%d guide:%d",
-			sc.total(), maxInjectChars, agent, currentInjectProject(), sessionID, reqID, sc.fileAssoc, sc.warnings, sc.actionItems, sc.goals, sc.guidelines)
+			sc.total(), maxInjectChars, agent, proj, sessionID, reqID, sc.fileAssoc, sc.warnings, sc.actionItems, sc.goals, sc.guidelines)
 	}
 	// inject_log（HARNESS §1.3，8/18 修订写策略）：实际注入即写（含裁剪）。
 	source := ""
 	if len(goals) == 0 && len(fileAssoc) == 0 && len(guidelines) > 0 {
 		source = "guidelines_only"
 	}
-	writeInjectLog(agent, sessionID, reqID, source, fullHash, len(block), sc.total() > 0, goals, warnings, actionItems, fileAssoc, guidelines)
+	writeInjectLog(proj, agent, sessionID, reqID, source, fullHash, len(block), sc.total() > 0, goals, warnings, actionItems, fileAssoc, guidelines)
 	return result
 }
 
 // writeInjectLog records one actual injection into inject_log. Failure must
 // not break the injection hot path — log and continue. suppressed=1 表示本次
 // 注入有内容被 cap 裁剪（对应 :153），提取器按此分层（8/18 修订，HARNESS §1.3）。
-func writeInjectLog(agent, sessionID, reqID, source string, fullHash string, chars int, suppressed bool, goals, warnings, actionItems, fileAssoc []string, guidelines string) {
+func writeInjectLog(project, agent, sessionID, reqID, source string, fullHash string, chars int, suppressed bool, goals, warnings, actionItems, fileAssoc []string, guidelines string) {
 	segments := map[string]any{
 		"fileAssoc":   fileAssoc,
 		"warnings":    warnings,
@@ -218,18 +287,18 @@ func writeInjectLog(agent, sessionID, reqID, source string, fullHash string, cha
 		Suppressed:   supp,
 	})
 	if err != nil {
-		u.LogShared("INJECT", "inject_log project=%s write_err=%v", currentInjectProject(), err)
+		u.LogShared("INJECT", "inject_log project=%s write_err=%v", project, err)
 	}
 }
 
-func shouldInject(agent, sessionID, reqID, contentHash string) bool {
+func shouldInject(agent, sessionID, reqID, contentHash, project string) bool {
 	v, ok := injectTracker.Load(agent)
 	if !ok {
 		return true
 	}
 	st := v.(injectState)
 	if st.contentHash == contentHash {
-		u.LogShared("INJECT", "skip project=%s agent=%s session=%s req=%s reason=same_content hash=%s", currentInjectProject(), agent, sessionID, reqID, contentHash[:8])
+		u.LogShared("INJECT", "skip project=%s agent=%s session=%s req=%s reason=same_content hash=%s", project, agent, sessionID, reqID, contentHash[:8])
 		return false
 	}
 	return true

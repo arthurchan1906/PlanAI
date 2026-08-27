@@ -358,7 +358,7 @@ func TestWriteInjectLogSuppressed(t *testing.T) {
 	if _, err := pmdb.Bootstrap(); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
-	writeInjectLog("codex", "sess-C", "r1-3", "", "12345678", 90, true, nil, nil, nil, []string{"a.go"}, "")
+	writeInjectLog("/proj", "codex", "sess-C", "r1-3", "", "12345678", 90, true, nil, nil, nil, []string{"a.go"}, "")
 
 	db, err := pmdb.Open()
 	if err != nil {
@@ -386,5 +386,65 @@ func TestCurrentInjectProjectRoot(t *testing.T) {
 	}
 	if strings.Contains(got, ".pmai") {
 		t.Errorf("currentInjectProject = %q, 不应含 .pmai 后缀", got)
+	}
+}
+
+// C0（8/27）：按请求归因——请求体含 /.pmai/ 绝对路径时，project= 取该路径
+// 的项目根（须真实存在，方法 1 Stat 验证），不再被进程级 sync.Once 缓存锁定
+// （F3 根因回归锁定）。
+func TestInjectProjectForRequestFromBodyPaths(t *testing.T) {
+	proj := filepath.Join(t.TempDir(), "projB")
+	if err := os.MkdirAll(filepath.Join(proj, ".pmai", "data"), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	body := []byte(fmt.Sprintf(`{"messages":[{"content":"请修复 %s/.pmai/data/pmai.db 的归属问题"}]}`, proj))
+	got := injectProjectForRequest(body)
+	if got != proj {
+		t.Errorf("injectProjectForRequest = %q, want %q", got, proj)
+	}
+}
+
+// C0（8/27）：方法 1 必须过 Stat 验证——请求文本提及不存在的 /.pmai/ 路径时
+// 不得误判为项目根（响应 Claude 审核问题 3）。
+func TestProjectRootFromBodyRejectsNonexistent(t *testing.T) {
+	body := []byte(`{"messages":[{"content":"参考 /Users/dazsec/projects/NotExist/.pmai/guidelines.md 的做法"}]}`)
+	if got := projectRootFromBody(body); got != "" {
+		t.Errorf("projectRootFromBody = %q, want \"\" (不存在的 /.pmai/ 路径不命中)", got)
+	}
+}
+
+// C0（8/27）：无路径请求回退进程级推导（env/cwd），与 M1a 对账基准同源。
+func TestInjectProjectForRequestFallback(t *testing.T) {
+	body := []byte(`{"messages":[{"content":"继续昨天的讨论"}]}`)
+	want := currentInjectProject()
+	if got := injectProjectForRequest(body); got != want {
+		t.Errorf("injectProjectForRequest = %q, want fallback %q", got, want)
+	}
+}
+
+// C0（8/27）：方法 2 通用绝对路径遍历——目录真实存在带 .pmai 时按 Stat 命中。
+func TestProjectRootFromBodyStatPath(t *testing.T) {
+	proj := filepath.Join(t.TempDir(), "projA")
+	if err := os.MkdirAll(filepath.Join(proj, ".pmai", "data"), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	body := []byte(fmt.Sprintf(`{"messages":[{"content":"改一下 %s/src/main.go"}]}`, proj))
+	got := projectRootFromBody(body)
+	if got != proj {
+		t.Errorf("projectRootFromBody = %q, want %q", got, proj)
+	}
+}
+
+// C0（8/27）：env 模式（PMAI_HOME 指向无 .pmai 层目录）时按请求归因不命中，
+// 必须回退进程级推导——防止把 ~/.aipmc 误判为项目根。
+func TestInjectProjectForRequestEnvMode(t *testing.T) {
+	envDir := t.TempDir()
+	body := []byte(fmt.Sprintf(`{"messages":[{"content":"查一下 %s/data/pmai.db"}]}`, envDir))
+	if got := projectRootFromBody(body); got != "" {
+		t.Errorf("projectRootFromBody = %q, want \"\" (env 模式无 .pmai 层不命中)", got)
+	}
+	// 回退必须是进程级 currentInjectProject（本测试环境 PMAI_HOME 已由 TestMain 指向临时目录）
+	if got := injectProjectForRequest(body); got != currentInjectProject() {
+		t.Errorf("injectProjectForRequest = %q, want fallback %q", got, currentInjectProject())
 	}
 }
