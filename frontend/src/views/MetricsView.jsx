@@ -23,7 +23,7 @@ const INJECTION_TARGETS = [
   { key: "emerge_events_total", label: "emerge_events_total", target: "↓", upGood: false },
   { key: "action_items", label: "action_items", target: "≤10", upGood: false },
   { key: "inject_chars", label: "inject_chars 均值", target: "≤800", upGood: false },
-  { key: "inject_reach_rate", label: "inject_reach_rate (到达率)", target: "↑ 对照", upGood: true },
+  { key: "inject_reach_rate", label: "inject_reach_rate（注入内容到达率·排除去重/无数据设计行为）", target: "↑ 对照", upGood: true },
 ];
 
 function fmtRate(v) { return `${(v * 100).toFixed(1)}%`; }
@@ -100,8 +100,8 @@ export default function MetricsView() {
     { title: "calls", dataIndex: "calls", align: "right" },
     { title: "in_tok", dataIndex: "in_tok", align: "right" },
     { title: "out_tok", dataIndex: "out_tok", align: "right" },
-    { title: "avg_lat", dataIndex: "avg_lat", align: "right" },
-    { title: "p95_lat", dataIndex: "p95_lat", align: "right" },
+    { title: "avg_lat(s)", dataIndex: "avg_lat", align: "right" },
+    { title: "p95_lat(s)", dataIndex: "p95_lat", align: "right" },
     { title: "cache_hit", dataIndex: "cache_hit_rate", align: "right" },
     { title: "injected(尝试)", dataIndex: "injected_rate", align: "right" },
   ];
@@ -135,7 +135,7 @@ export default function MetricsView() {
           style={{ marginTop: 8 }}
           type="info"
           showIcon
-          message="injected_rate 是「请求带注入尝试的比例」，非到达率——对照 inject_reach_rate 看通道健康（8/27 口径标注）。"
+          message="injected_rate = 请求带注入尝试的比例（非到达率）；inject_reach_rate = 注入内容到达率（排除 skip 去重/no_summary 设计行为，8/27 口径标注）——两者对照看通道健康，勿把尝试率 100% 误读为通道畅通。"
         />
       </Card>
 
