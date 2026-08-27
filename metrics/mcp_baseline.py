@@ -8,8 +8,11 @@ P1a 决策 decision-20260827-131338-c95787：aipm 精确计数以 [MCP] 日志�
   total_calls      窗口内 [MCP] tool= 行数（排除 panic 等非 tool 行）
   retrieval_ratio  读/查类调用 / 全部 aipm_* 调用（检索占比）
   diversity        唯一工具数（含 Shannon 熵）
-  proactive_ratio  深度查证类调用 / 全部 aipm_* 调用（自发率口径 v1：
-                   为结论/行动主动查证 AIPM 依据的信号，区别于 read/list 枚举）
+  deep_verify_ratio 深度查证工具调用占比（= 深度查证类 / 全部 aipm_* 调用）。
+                   注意：这是「深度查证工具使用占比」的如实描述，不是「自发率」——
+                   D1 自发率需 50-100 条人工标注 ≥80% 一致性后才可上（Claude 8/27
+                   审核 Challenge 1：工具类别 ≠ 自发意图，8/27 的 get_decision 多为
+                   任务驱动）
 
 基线窗口 8/14-8/26（8/27 点破日单独列出，供反事实对比）。
 输出：metrics/mcp_baseline_<date>.json + 控制台表格。
@@ -30,7 +33,7 @@ RETRIEVAL = {
     "aipm_list_bugs", "aipm_list_decisions", "aipm_daily_review", "aipm_analyze",
     "aipm_suggest_threads",
 }
-# 深度查证类（自发率分子：为结论/决策查依据）
+# 深度查证类（深度查证占比分子：为结论/决策查依据；≠自发意图）
 PROACTIVE = {
     "aipm_search_context", "aipm_smart_search", "aipm_get_decision",
     "aipm_get_plan", "aipm_get_bug", "aipm_get_task", "aipm_get_commit",
@@ -71,7 +74,7 @@ def window_stats(calls, label):
         "retrieval_ratio": round(retr / total, 4) if total else 0,
         "diversity_unique_tools": len(by_tool),
         "diversity_shannon": round(shannon(by_tool), 3),
-        "proactive_ratio": round(proact / total, 4) if total else 0,
+        "deep_verify_ratio": round(proact / total, 4) if total else 0,
         "vision_calls": sum(1 for c in calls if c["tool"] == "aipmc_vision"),
         "test_tool_calls": sum(1 for c in calls if c["tool"] == "test_tool"),
     }
@@ -103,7 +106,7 @@ def main():
     for w in ("baseline", "point_day"):
         s = stats[w]
         print(f"{s['window']}: 总调用={s['total_calls']} 检索占比={s['retrieval_ratio']:.1%} "
-              f"多样性={s['diversity_unique_tools']}工具(H={s['diversity_shannon']}) 自发率={s['proactive_ratio']:.1%}")
+              f"多样性={s['diversity_unique_tools']}工具(H={s['diversity_shannon']}) 深度查证占比={s['deep_verify_ratio']:.1%}")
     print("按天:", json.dumps(stats["by_day"]))
     print(f"日志缺口日(无任何活动记录): {stats['log_gap_days']}  8/12-13(窗口外): {stats['pre_window_8-12_8-13_calls']}")
     print(f"基线有数据日: {stats['baseline_active_days']} 天, 日均(按活跃日): {stats['baseline_daily_avg_active_days']}")
