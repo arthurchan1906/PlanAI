@@ -41,7 +41,8 @@ func initSharedLogger() {
 	}
 	logsDir := filepath.Join(dir, "logs")
 	if err := os.MkdirAll(logsDir, 0755); err != nil {
-		// Fallback to stderr if we can't create the log directory
+		// r19388（8/27）：静默 fallback 会掩盖日志丢失——显式告警到 stderr。
+		fmt.Fprintf(os.Stderr, "[aipmc-log] WARN cannot create %s: %v — fallback stderr\n", logsDir, err)
 		logLogger = log.New(os.Stderr, "[aipmc] ", 0)
 		return
 	}
@@ -49,7 +50,8 @@ func initSharedLogger() {
 	path := filepath.Join(logsDir, "aipmc.log")
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		// Fallback to stderr if we can't open the log file
+		// r19388（8/27）：显式告警，不再静默降级。
+		fmt.Fprintf(os.Stderr, "[aipmc-log] WARN cannot open %s: %v — fallback stderr\n", path, err)
 		logLogger = log.New(os.Stderr, "[aipmc] ", 0)
 		return
 	}
@@ -100,6 +102,18 @@ func sanitizeLog(s string) string {
 func maybeRotate() {
 	if logFile == nil {
 		return
+	}
+	// r19388（8/27）加固：外部进程删除/重建日志文件（rm 而非 rename）时，
+	// 本进程 fd 仍指向已删除 inode——写入进黑洞（8/26 18:09→8/27 08:58
+	// 整段晚间日志 0 行而库有 290 行活动的疑似根因）。每次写前比对
+	// 路径当前 inode，不一致（被替换/删除）即重新打开路径跟随新文件。
+	if st, err := os.Stat(logFile.Name()); err == nil {
+		if fi, err2 := logFile.Stat(); err2 == nil && !os.SameFile(fi, st) {
+			reopenLogFile()
+		}
+	} else if os.IsNotExist(err) {
+		// 路径已被删除 → 重新创建（reopen 的 OpenFile 带 O_CREATE）。
+		reopenLogFile()
 	}
 	fi, err := logFile.Stat()
 	if err != nil || fi.Size() < maxLogBytes {
