@@ -1,8 +1,12 @@
-# 反馈镜子快照设计稿 v1（讨论稿，未实施）
+# 反馈镜子快照设计稿 v1（8/27 已实施：`aipmc snapshot`）
 
 > 关联：`idea-20260807-110145-5d428d`「Agent 反馈镜子 — Q5 评估方案」
 > 状态：设计讨论稿 v1（8/7）。消费者 = 修改 AIPMC 的 Agent；不自动、不引入 cron/pipeline。
 > 触发方式（8/7 共识）：`aipmc snapshot` 手动命令 + **按时间窗口回算**（`--since/--until` 从现有日志/DB 计算历史窗口），解决"修复前基线事后可补"。
+
+> 8/27 落地：`snapshot.go` 实现 v1（默认近 24h 窗口，`--since/--until` 覆盖，`--diff a.json b.json`
+> 对比）；DB 质量指标复用 `metrics_shared.go` 共享查询（与 `aipmc metrics` 同口径，防分叉）；
+> 方案 A 落盘 `.pmai/data/snapshots/latest.json`，`web/snapshot` 只读消费（P5 重启第一步）。
 
 ## 1. 目标与边界
 

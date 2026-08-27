@@ -673,6 +673,9 @@ func main() {
 		cli.PrintJSON(analyze.RunFullAnalysis())
 	case "metrics":
 		dispatchMetrics(cli.ParseArgs(os.Args[2:]))
+	case "snapshot":
+		// 反馈镜子快照（METRICS_SPEC v1）：手动命令 + 窗口回算 + --diff 对比。
+		dispatchSnapshot(cli.ParseArgs(os.Args[2:]), os.Args[2:])
 	case "review":
 		reviewSub := subcmd
 		reviewRaw := rawArgs

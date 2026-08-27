@@ -91,10 +91,31 @@ func (s *Server) handleWebRoutes(w http.ResponseWriter, method, path string, bod
 		web.SendJSON(w, map[string]any{"events": tentative})
 	case "web/bootstrap":
 		s.handleBootstrap(w)
+	case "web/snapshot":
+		web.SendJSON(w, readSnapshotPayload())
+		return true
 	default:
 		return false
 	}
 	return true
+}
+
+// readSnapshotPayload 返回最新反馈镜子快照（方案 A：落盘 + 只读，不做实时计算；
+// 快照由 `aipmc snapshot` 手动生成到 .pmai/data/snapshots/latest.json）。
+func readSnapshotPayload() map[string]any {
+	dir, err := pmdb.RuntimeDir()
+	if err != nil {
+		return map[string]any{"ok": false, "error": "no runtime dir"}
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "data", "snapshots", "latest.json"))
+	if err != nil {
+		return map[string]any{"ok": false, "error": "快照不存在：先运行 aipmc snapshot"}
+	}
+	var v any
+	if err := json.Unmarshal(data, &v); err != nil {
+		return map[string]any{"ok": false, "error": "快照解析失败: " + err.Error()}
+	}
+	return map[string]any{"ok": true, "snapshot": v}
 }
 
 // readGuidelines reads .pmai/guidelines.md and returns {content: "..."}.

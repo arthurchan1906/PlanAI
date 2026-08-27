@@ -66,67 +66,18 @@ func dispatchMetrics(args *cli.Args) {
 	// ── DB class (current project) ──
 	db, err := pmdb.Open()
 	if err == nil {
-		var total, withL2, nested, mdBlock int
-		// B1 分母口径（8/12 修正，写死）：分母=discussion_log 去重 session_id
-		// （排除空/unknown）；分子=这些 session 中至少有一条非空 summary 的 session 数
-		// （JOIN discussion_log 保证分子属于分母宇宙）。旧口径用 session_summaries 行数
-		// 作分母会高估覆盖率（ED 实测 58% vs 真实 34%——session_summaries 只收录
-		// 跑过 pipeline 的 session）。
-		db.QueryRow(`SELECT
-			(SELECT COUNT(DISTINCT session_id) FROM discussion_log WHERE session_id!='' AND session_id!='unknown'),
-			(SELECT COUNT(DISTINCT s.session_id) FROM session_summaries s JOIN discussion_log d ON d.session_id=s.session_id WHERE s.summary!='' AND d.session_id!='' AND d.session_id!='unknown')`).Scan(&total, &withL2)
-		// B2 双口径：nested_goal = goal 值本身是嵌套 JSON；md_block = 摘要含 ```json 代码块（不同缺陷，分开统计）。
-		db.QueryRow("SELECT COUNT(*) FROM session_summaries WHERE summary LIKE '%\"goal\":\"{%'").Scan(&nested)
-		db.QueryRow("SELECT COUNT(*) FROM session_summaries WHERE summary LIKE '%```json%'").Scan(&mdBlock)
-		var evTotal, evProcessed int
-		evWhere := ""
-		var evArgs []any
-		if dbSince != "" {
-			evWhere = " WHERE created_at >= ?"
-			evArgs = dbSinceArgs
+		total, withL2, err := summaryCoverageStats(db)
+		if err != nil {
+			fmt.Printf("⚠ summary_coverage 查询失败: %v\n", err)
 		}
-		db.QueryRow("SELECT COUNT(*), COALESCE(SUM(processed_by_agent),0) FROM events"+evWhere, evArgs...).Scan(&evTotal, &evProcessed)
-		var evUnique int
-		db.QueryRow("SELECT COUNT(DISTINCT type || '|' || entity_type || '|' || entity_id) FROM events"+evWhere, evArgs...).Scan(&evUnique)
-		// F1 事件→动作漏斗（W2 8/13）：三口径拆分 + 按类型处理分布。
-		// 免处理 = 生成即完成使命（创建通知/低置信建议）；可行动 = 需 agent 响应；
-		// 诊断问题：处理分布是否集中于单一类型（8/13 实测 19 个已处理全为 commit_orphan）。
-		type evTypeStat struct {
-			typ       string
-			total     int
-			processed int
+		nested, mdBlock, err := l2NestedStats(db)
+		if err != nil {
+			fmt.Printf("⚠ l2_nested 查询失败: %v\n", err)
 		}
-		var evStats []evTypeStat
-		if evRows, err := db.Query("SELECT type, COUNT(*), COALESCE(SUM(processed_by_agent),0) FROM events"+evWhere+" GROUP BY type ORDER BY COUNT(*) DESC", evArgs...); err == nil {
-			for evRows.Next() {
-				var es evTypeStat
-				if err := evRows.Scan(&es.typ, &es.total, &es.processed); err == nil {
-					evStats = append(evStats, es)
-				}
-			}
-			evRows.Close()
-		}
-		// F1/D2 三口径（W2 8/13 + 8/26 统一）：免处理（生成即完成使命，不要求响应）/
-		// 可行动（需 agent 响应）/已处理。D2 指标用**可行动**口径——参考性事件
-		// （hotspot_untracked/tentative_link）设计上不要求处理动作，计入分母会
-		// 虚假拉低处理率（8/26 讨论：低处理率≠管道堵，须区分必须处理类型）。
-		evFree, evAction, evActionProc := 0, 0, 0
-		freeNames := map[string]bool{"tentative_link": true, "task_created": true, "plan_created": true}
-		actionNames := map[string]bool{"commit_orphan": true, "mcp_error": true, "hotspot_untracked": true}
-		var actionDist []string
-		for _, es := range evStats {
-			switch {
-			case freeNames[es.typ]:
-				evFree += es.total
-			case actionNames[es.typ]:
-				evAction += es.total
-				evActionProc += es.processed
-				actionDist = append(actionDist, fmt.Sprintf("%s %d/%d", es.typ, es.processed, es.total))
-			}
-		}
-		actionRate := 0.0
-		if evAction > 0 {
-			actionRate = float64(evActionProc) / float64(evAction)
+		ev, err := collectEventStats(db, since)
+		if err != nil {
+			fmt.Printf("⚠ event 统计查询失败: %v\n", err)
+			ev = &eventStats{}
 		}
 		// H2 metadata 健康（8/10 T2）：空串（对话消息本应空）与非法 JSON 分开统计；
 		// valid_rate 分母排除空串——口径固定，防止与 tool role 缺失混为一谈。
@@ -222,8 +173,8 @@ func dispatchMetrics(args *cli.Args) {
 			l2 = float64(withL2) / float64(total)
 		}
 		dup := 0.0
-		if evTotal > 0 {
-			dup = 1.0 - float64(evUnique)/float64(evTotal)
+		if ev.total > 0 {
+			dup = 1.0 - float64(ev.unique)/float64(ev.total)
 		}
 		// B1 改名 summary_coverage（8/27 口径统一，8/26 讨论总结动作 2）：
 		// 原名 l2_coverage 与「L2 确认器」（P1b LLM 判定器）共用「L2」造成
@@ -233,10 +184,10 @@ func dispatchMetrics(args *cli.Args) {
 		printRow("B2  l2_nested_goal", fmt.Sprint(nested), "=0", nested == 0)
 		printRow("B2  l2_md_block", fmt.Sprint(mdBlock), "=0", mdBlock == 0)
 		printRow("B6  event_dup_rate", pct(dup), "<10%", dup < 0.10)
-		printRow("D2  event_processed_rate(可行动)", pct(actionRate)+fmt.Sprintf(" (%d/%d)", evActionProc, evAction), "≥40%", actionRate >= 0.40)
-		fmt.Printf("F1  事件→动作漏斗: 免处理=%d 可行动=%d 已处理=%d (%.1f%%)\n", evFree, evAction, evActionProc, actionRate*100)
-		if len(actionDist) > 0 {
-			fmt.Printf("     可行动处理分布: %s\n", strings.Join(actionDist, " · "))
+		printRow("D2  event_processed_rate(可行动)", pct(ev.actionRate)+fmt.Sprintf(" (%d/%d)", ev.actionProc, ev.action), "≥40%", ev.actionRate >= 0.40)
+		fmt.Printf("F1  事件→动作漏斗: 免处理=%d 可行动=%d 已处理=%d (%.1f%%)\n", ev.free, ev.action, ev.actionProc, ev.actionRate*100)
+		if len(ev.actionDist) > 0 {
+			fmt.Printf("     可行动处理分布: %s\n", strings.Join(ev.actionDist, " · "))
 		}
 		wfAvg := 0.0
 		if wfScored > 0 {
