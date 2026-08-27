@@ -18,6 +18,7 @@ export const NAV_GROUPS = [
     label: "Project",
     children: [
       { key: "activity", label: "Activity" },
+      { key: "metrics", label: "Metrics" },
       { key: "decisions", label: "Governance" },
       { key: "planning", label: "Plans & Tasks" },
       { key: "commits", label: "Commits" },

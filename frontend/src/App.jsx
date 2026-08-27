@@ -51,6 +51,7 @@ import AgentsView from "./views/AgentsView";
 import AuditView from "./views/AuditView";
 import DiscussionsView from "./views/DiscussionsView";
 import ActivityView from "./views/ActivityView";
+import MetricsView from "./views/MetricsView";
 import SettingsView from "./views/SettingsView";
 import ChatView from "./views/ChatView";
 
@@ -397,6 +398,7 @@ function ConsoleApp() {
           {view === "agents" && <AgentsView agents={agents} loading={loading} loadAll={loadAll} busy={busy} />}
           {view === "audit" && <AuditView auditLogs={auditLogs} loading={loading} loadAll={loadAll} />}
           {view === "activity" && <ActivityView />}
+          {view === "metrics" && <MetricsView />}
         {view === "discussions" && <DiscussionsView />}
           {view === "chat" && <ChatView />}
           {view === "settings" && <SettingsView />}
