@@ -21,8 +21,14 @@ import (
 // decision/plan/bug 引用未查询是「下结论但没查依据」的高价值信号。
 var highValueTypes = map[string]bool{"decision": true, "plan": true, "bug": true}
 
-// FeedbackBackfillRef session_summaries.entity_refs 中的反馈条目（对象形态，
-// 与 L2 写入的 []string 形态区分——briefing 消费按形态过滤）。
+// FeedbackBackfillRef session_summaries.entity_refs 中的对象形态条目。
+//
+// entity_refs 两层语义（Claude 8/27 审核标注，防未来消费端踩坑）：
+//  1. 引用记录：L2 历史 []string 与规范化后的 {type,id} 对象（ref_text 可为
+//     空、无 missing_queries）——表示 session 引用过该实体，计数语义；
+//  2. 反馈信号：missing_queries 非空的对象（决策/计划/bug 强漏查回填写入）
+//     ——表示「引用但未查询」的反馈。消费方区分用 len(missing_queries)>0
+//     （ref_text 非空但无 mq 的高价值对象为引用记录，如 bug 标题上下文）。
 type FeedbackBackfillRef struct {
 	Type           string   `json:"type"`
 	ID             string   `json:"id"`
