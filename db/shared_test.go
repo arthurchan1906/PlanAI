@@ -65,3 +65,19 @@ func TestSharedSeparatePaths(t *testing.T) {
 	}
 	ResetSharedForTest()
 }
+
+// Claude 8/27 16:01 审核 Challenge 1：SharedProject 缺 not-exist 检查时，
+// sqlite 惰性创建会在错误路径静默建空库——必须返回明确错误（与 OpenProject 一致）。
+func TestSharedProjectMissingDBReturnsError(t *testing.T) {
+	ResetSharedForTest()
+	dir := t.TempDir() // 无 .pmai/data/pmai.db
+	_, err := SharedProject(dir)
+	if err == nil {
+		t.Fatalf("SharedProject(不存在库) 应返回错误，不得静默创建空库")
+	}
+	// 确认没有静默创建空库文件
+	if _, statErr := os.Stat(filepath.Join(dir, ".pmai", "data", "pmai.db")); statErr == nil {
+		t.Fatalf("错误路径下静默创建了空库文件")
+	}
+	ResetSharedForTest()
+}

@@ -142,6 +142,12 @@ func SharedProject(projectPath string) (*sql.DB, error) {
 }
 
 func sharedAt(dbPath string) (*sql.DB, error) {
+	// Claude 8/27 16:01 审核：SharedProject 此前缺 not-exist 检查——sqlite
+	// 的 sql.Open 对不存在路径惰性创建，Ping 成功会静默建空库，错误被掩盖。
+	// 与 Open/OpenProject 的 Stat 检查对齐：路径不存在返回明确错误。
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("PMAI database not found: %s — run aipmc init first", dbPath)
+	}
 	sharedMu.Lock()
 	defer sharedMu.Unlock()
 	if d, ok := sharedDBs[dbPath]; ok {
@@ -219,6 +225,10 @@ type InjectLogEntry struct {
 // injection hot path — callers log the error and continue.
 func InsertInjectLog(e InjectLogEntry) error {
 	// A 方案（8/27）：高频热路径改用进程内共享连接，去掉每请求 Open/Close。
+	// 库语义（Claude 8/27 16:01 审核澄清）：inject_log 为单库多项目——
+	// 统一写 cwd 推导库（Open() 同语义），e.Project 记录 C0 按请求归因的项目，
+	// 消费方（eval/attribution M1a）从单库读取后按 project 列过滤。若改为按
+	// e.Project 写对应项目库，消费方需改多库读，破坏既有口径；本函数不改库选择。
 	d, err := Shared()
 	if err != nil {
 		return err
