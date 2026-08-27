@@ -301,6 +301,7 @@ func main() {
 		probeEnd := ""
 		probeLabel := ""
 		probeRuns := 3
+		limit := 10
 		raw := os.Args[2:]
 		// 位置参数 kind（aipmc eval process / acceptance）：与 --kind 等价（usage 声明形式）
 		if len(raw) > 0 && raw[0] != "--since" && raw[0] != "--kind" && raw[0] != "--log" && !strings.HasPrefix(raw[0], "--") {
@@ -363,6 +364,9 @@ func main() {
 				i++
 			case raw[i] == "--runs" && i+1 < len(raw):
 				fmt.Sscanf(raw[i+1], "%d", &probeRuns)
+				i++
+			case raw[i] == "--limit" && i+1 < len(raw):
+				fmt.Sscanf(raw[i+1], "%d", &limit)
 				i++
 			}
 		}
@@ -527,6 +531,25 @@ func main() {
 			fmt.Println()
 			out, _ := json.MarshalIndent(rep, "", "  ")
 			fmt.Println(string(out))
+		case "feedback":
+			// B 线 P0（8/27 v13.1）：事后反馈检测器——实体引用未查询（F5 类强漏查）
+			// + 数据源引用规范性，纯正则零语义，输出走 C2 线回填。
+			// Usage: aipmc eval feedback [--since 30d] [--limit 10] [--db <path>]
+			gaps, err := eval.DetectFeedbackGaps(db, since.Format("2006-01-02T15:04:05"), limit)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "eval feedback: %v\n", err)
+				os.Exit(1)
+			}
+			out, _ := json.MarshalIndent(gaps, "", "  ")
+			fmt.Println(string(out))
+			refs, misses, ds := 0, 0, 0
+			for _, g := range gaps {
+				refs += len(g.EntityRefs)
+				misses += len(g.MissingQueries)
+				ds += len(g.DataSourceRefs)
+			}
+			fmt.Printf("feedback: sessions=%d entity_refs=%d strong_missing_queries=%d data_source_refs=%d\n",
+				len(gaps), refs, misses, ds)
 		case "l2-probe":
 			// P1c 对抗样本 + 稳定性探测（§2.3 约束③）：已知健康时段 → deadloop_confirm
 			// 跑 N 次，验证不误判 + LLM 判定漂移率。
@@ -570,7 +593,7 @@ func main() {
 			out, _ := json.MarshalIndent(probe, "", "  ")
 			fmt.Println(string(out))
 		default:
-			fmt.Fprintf(os.Stderr, "eval: unknown kind %q (supported: attribution/process/acceptance/p0a2/p0b/l2-probe)\n", kind)
+			fmt.Fprintf(os.Stderr, "eval: unknown kind %q (supported: attribution/process/acceptance/p0a2/p0b/l2-probe/feedback)\n", kind)
 			os.Exit(1)
 		}
 		return
