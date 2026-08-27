@@ -1087,7 +1087,13 @@ func CreateDecision(projectPath string, title, background, decision, status stri
 	}
 	defer db.Close()
 	id := u.Slug("decision")
-	_, err = db.Exec("INSERT INTO decisions (id, title, date, status, background, decision_text, impact_json, alternatives_json, related_tasks_json, updates_canon) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, title, u.Today(), status, background, decision, "[]", "[]", "[]", 0)
+	// C2 产出物 2（8/27）：裸 Exec 补 BUSY 重试（8/25 D 线诊断：store 裸调用
+	// 无 retry，多 agent 并发写决策时 SQLITE_BUSY 直接失败）。retryOnBusy 委托
+	// pmdb.RetryBusy（100/200/400ms 指数退避，BUSY_RECOVERY 需调用方重试）。
+	err = retryOnBusy(func() error {
+		_, err := db.Exec("INSERT INTO decisions (id, title, date, status, background, decision_text, impact_json, alternatives_json, related_tasks_json, updates_canon) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, title, u.Today(), status, background, decision, "[]", "[]", "[]", 0)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}

@@ -22,7 +22,7 @@ import (
 // SQLite's PRAGMA user_version. Every time the schema or migrations
 // change, bump this — connections with user_version >= this skip the
 // (expensive, write-lock-acquiring) EnsureSchema DDL entirely.
-const SCHEMA_VERSION = 4
+const SCHEMA_VERSION = 5
 
 // schemaUpToDate reports whether the database at d already has the
 // current schema version, so we can skip the DDL pass on hot paths.
@@ -163,6 +163,7 @@ type InjectLogEntry struct {
 	SegmentsJSON string // 实际注入的 segments（提取器重建「注入了什么」的唯一来源）
 	Chars        int    // 注入块字节数
 	Suppressed   int    // 1 = 本次请求有内容被 cap 裁剪（对应 :153）
+	Project      string // 请求归因项目（C0/C2 schema v5，8/27；writeInjectLog 已按请求归因）
 }
 
 // InsertInjectLog appends one inject_log row. Write failure must not break the
@@ -174,8 +175,8 @@ func InsertInjectLog(e InjectLogEntry) error {
 	}
 	defer d.Close()
 	return RetryBusy(func() error {
-		_, err := d.Exec(`INSERT INTO inject_log (id, agent, session_id, req_id, ts, hash, source, segments_json, chars, suppressed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			e.ID, e.Agent, e.SessionID, e.ReqID, e.TS, e.Hash, e.Source, e.SegmentsJSON, e.Chars, e.Suppressed)
+		_, err := d.Exec(`INSERT INTO inject_log (id, agent, session_id, req_id, ts, hash, source, segments_json, chars, suppressed, project) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			e.ID, e.Agent, e.SessionID, e.ReqID, e.TS, e.Hash, e.Source, e.SegmentsJSON, e.Chars, e.Suppressed, e.Project)
 		return err
 	})
 }
@@ -317,7 +318,7 @@ var schemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, type TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, summary TEXT NOT NULL, created_at TEXT NOT NULL, consumed_by_agent INTEGER NOT NULL DEFAULT 0, processed_by_agent INTEGER NOT NULL DEFAULT 0)`,
 	`CREATE TABLE IF NOT EXISTS threads (id TEXT PRIMARY KEY, title TEXT NOT NULL, summary TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active', source TEXT NOT NULL DEFAULT 'manual', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS thread_items (thread_id TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, added_at TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', PRIMARY KEY (thread_id, entity_type, entity_id), FOREIGN KEY(thread_id) REFERENCES threads(id))`,
-	`CREATE TABLE IF NOT EXISTS inject_log (id TEXT PRIMARY KEY, agent TEXT NOT NULL, session_id TEXT NOT NULL, req_id TEXT NOT NULL, ts TEXT NOT NULL, hash TEXT NOT NULL, source TEXT NOT NULL DEFAULT '', segments_json TEXT NOT NULL DEFAULT '{}', chars INTEGER NOT NULL DEFAULT 0, suppressed INTEGER NOT NULL DEFAULT 0)`,
+	`CREATE TABLE IF NOT EXISTS inject_log (id TEXT PRIMARY KEY, agent TEXT NOT NULL, session_id TEXT NOT NULL, req_id TEXT NOT NULL, ts TEXT NOT NULL, hash TEXT NOT NULL, source TEXT NOT NULL DEFAULT '', segments_json TEXT NOT NULL DEFAULT '{}', chars INTEGER NOT NULL DEFAULT 0, suppressed INTEGER NOT NULL DEFAULT 0, project TEXT NOT NULL DEFAULT '')`,
 	`CREATE VIRTUAL TABLE IF NOT EXISTS fts5_index USING fts5(content, entity_type UNINDEXED, entity_id UNINDEXED, title, tokenize='unicode61')`,
 	`CREATE TABLE IF NOT EXISTS agent_profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'coder', capabilities TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS agent_status (session_id TEXT PRIMARY KEY, source TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL, explicit INTEGER NOT NULL DEFAULT 0)`,
@@ -354,6 +355,7 @@ func migrate(d *sql.DB) error {
 		{"bugs", "root_cause", "ALTER TABLE bugs ADD COLUMN root_cause TEXT NOT NULL DEFAULT ''"},
 		{"bugs", "fix", "ALTER TABLE bugs ADD COLUMN fix TEXT NOT NULL DEFAULT ''"},
 		{"bugs", "tags", "ALTER TABLE bugs ADD COLUMN tags TEXT NOT NULL DEFAULT ''"},
+		{"inject_log", "project", "ALTER TABLE inject_log ADD COLUMN project TEXT NOT NULL DEFAULT ''"},
 	}
 	for _, m := range migrations {
 		if ColumnExists(d, m.table, m.column) {

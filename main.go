@@ -303,6 +303,7 @@ func main() {
 		probeRuns := 3
 		limit := 10
 		shadowPath := ""
+		backfillPath := ""
 		raw := os.Args[2:]
 		// 位置参数 kind（aipmc eval process / acceptance）：与 --kind 等价（usage 声明形式）
 		if len(raw) > 0 && raw[0] != "--since" && raw[0] != "--kind" && raw[0] != "--log" && !strings.HasPrefix(raw[0], "--") {
@@ -371,6 +372,9 @@ func main() {
 				i++
 			case raw[i] == "--shadow" && i+1 < len(raw):
 				shadowPath = raw[i+1]
+				i++
+			case raw[i] == "--backfill" && i+1 < len(raw):
+				backfillPath = raw[i+1]
 				i++
 			}
 		}
@@ -538,8 +542,9 @@ func main() {
 		case "feedback":
 			// B 线 P0（8/27 v13.1）：事后反馈检测器——实体引用未查询（F5 类强漏查）
 			// + 数据源引用规范性，纯正则零语义，输出走 C2 线回填。
-			// Usage: aipmc eval feedback [--since 30d] [--limit 10] [--db <path>] [--shadow <jsonl>]
-			//   --shadow: 追加写入 C2 契约 shadow JSONL（session_id+timestamp 去重，P3 T2 shadow 接线）
+			// Usage: aipmc eval feedback [--since 30d] [--limit 10] [--db <path>] [--shadow <jsonl>] [--backfill <jsonl>]
+			//   --shadow:  追加写入 C2 契约 shadow JSONL（session_id+timestamp 去重，P3 T2 shadow 接线）
+			//   --backfill: 消费 shadow JSONL → 高价值强漏查（decision/plan/bug）回填 session_summaries（C2）
 			gaps, err := eval.DetectFeedbackGaps(db, since.Format("2006-01-02T15:04:05"), limit)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "eval feedback: %v\n", err)
@@ -562,6 +567,14 @@ func main() {
 					os.Exit(1)
 				}
 				fmt.Printf("feedback shadow: %s written=%d skipped_dup=%d\n", shadowPath, written, skipped)
+			}
+			if backfillPath != "" {
+				sessions, refs, berr := eval.BackfillFeedback(backfillPath)
+				if berr != nil {
+					fmt.Fprintf(os.Stderr, "eval feedback backfill: %v\n", berr)
+					os.Exit(1)
+				}
+				fmt.Printf("feedback backfill: sessions=%d refs=%d (高价值 decision/plan/bug 强漏查 → session_summaries)\n", sessions, refs)
 			}
 		case "l2-probe":
 			// P1c 对抗样本 + 稳定性探测（§2.3 约束③）：已知健康时段 → deadloop_confirm

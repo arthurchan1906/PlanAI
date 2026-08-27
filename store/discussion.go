@@ -531,8 +531,18 @@ func ListRecentDiscussions(source, typeFilter, sessionID, projectPath, since str
 
 	q := "SELECT id, session_id, role, source, content, metadata, created_at FROM discussion_log " + where + " ORDER BY created_at DESC, rowid DESC LIMIT ?"
 	args = append(args, lastN)
-	rows, err := db.Query(q, args...)
-	if err != nil {
+	// C2 产出物 2（8/27）：读路径补 BUSY 重试——8/18-8/24 实测读讨论也命中
+	// database is locked（WAL 读 + 多进程写竞争），此前直接返回 err 导致 MCP
+	// 调用方读讨论失败。RetryBusy 对 SQLITE_BUSY/BUSY_RECOVERY 做 3 次退避重试。
+	var rows *sql.Rows
+	if err := pmdb.RetryBusy(func() error {
+		r, err := db.Query(q, args...)
+		if err != nil {
+			return err
+		}
+		rows = r
+		return nil
+	}); err != nil {
 		return nil, err
 	}
 	defer rows.Close()
@@ -649,8 +659,18 @@ func ReadDiscussions(opts ReadDiscussionsOpts) ([]map[string]any, error) {
 	}
 	defer db.Close()
 
-	rows, err := db.Query(q, args...)
-	if err != nil {
+	// C2 产出物 2（8/27）：读路径补 BUSY 重试——8/18-8/24 实测读讨论也命中
+	// database is locked（WAL 读 + 多进程写竞争），此前直接返回 err 导致 MCP
+	// 调用方读讨论失败。RetryBusy 对 SQLITE_BUSY/BUSY_RECOVERY 做 3 次退避重试。
+	var rows *sql.Rows
+	if err := pmdb.RetryBusy(func() error {
+		r, err := db.Query(q, args...)
+		if err != nil {
+			return err
+		}
+		rows = r
+		return nil
+	}); err != nil {
 		return nil, err
 	}
 	defer rows.Close()
@@ -935,8 +955,18 @@ func ListActiveSessions(projectPath, source, since string, limit int) ([]AgentSt
 	q += " ORDER BY s.last_seen DESC LIMIT ?"
 	args = append(args, limit)
 
-	rows, err := db.Query(q, args...)
-	if err != nil {
+	// C2 产出物 2（8/27）：读路径补 BUSY 重试——8/18-8/24 实测读讨论也命中
+	// database is locked（WAL 读 + 多进程写竞争），此前直接返回 err 导致 MCP
+	// 调用方读讨论失败。RetryBusy 对 SQLITE_BUSY/BUSY_RECOVERY 做 3 次退避重试。
+	var rows *sql.Rows
+	if err := pmdb.RetryBusy(func() error {
+		r, err := db.Query(q, args...)
+		if err != nil {
+			return err
+		}
+		rows = r
+		return nil
+	}); err != nil {
 		return nil, err
 	}
 	defer rows.Close()

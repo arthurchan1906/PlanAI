@@ -285,6 +285,7 @@ func writeInjectLog(project, agent, sessionID, reqID, source string, fullHash st
 		SegmentsJSON: u.JsonStr(segments),
 		Chars:        chars,
 		Suppressed:   supp,
+		Project:      project,
 	})
 	if err != nil {
 		u.LogShared("INJECT", "inject_log project=%s write_err=%v", project, err)

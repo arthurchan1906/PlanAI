@@ -1413,6 +1413,11 @@ func BuildBriefingLevel(aiClient *ai.Client, graphSection, level string) (string
 		b.WriteString(fmt.Sprintf("  → 建议: 用 aipmc thread add 确认或创建\n\n"))
 	}
 
+	if fb := buildFeedbackBriefSection(false); fb != "" {
+		b.WriteString("## 🔍 引用未查询反馈\n\n")
+		b.WriteString(fb)
+	}
+
 	// ── Layer 3: 💡 参考 ──
 	hasReference := false
 	if len(threadStatus) > 0 {
@@ -1656,6 +1661,12 @@ func buildBriefingSummary() (string, []string) {
 	if len(info) > 0 {
 		b.WriteString("### 风险/参考\n")
 		b.WriteString("- " + strings.Join(info, "；") + "\n\n")
+	}
+
+	if fb := buildFeedbackBriefSection(true); fb != "" {
+		b.WriteString("## 🔍 引用未查询反馈\n\n")
+		b.WriteString(fb)
+		hasImmediate = true
 	}
 
 	if !hasImmediate && len(tasks) == 0 && len(info) == 0 {
