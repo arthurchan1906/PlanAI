@@ -88,17 +88,30 @@ func backfillOne(e FeedbackShadowEntry) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	existingRefs, seen := parseExistingRefs(existing, e.SessionID)
+	existingRefs, _, changed := parseExistingRefs(existing, e.SessionID)
+	idx := make(map[string]int, len(existingRefs))
+	for i, r := range existingRefs {
+		idx[r.ID] = i
+	}
 	added := 0
 	for _, r := range refs {
-		if seen[r.ID] {
+		if i, ok := idx[r.ID]; ok {
+			// 已存在但 shadow 携带更多反馈信息（mq/ref_text）→ 补全替换
+			// （如上次写坏成空壳、或 L2 无 mq 的引用被检测器补全）。
+			if richer(r, existingRefs[i]) {
+				existingRefs[i] = r
+				changed = true
+				added++
+			}
 			continue
 		}
-		seen[r.ID] = true
+		idx[r.ID] = len(existingRefs)
 		existingRefs = append(existingRefs, r)
 		added++
 	}
-	if added == 0 {
+	// 无新增但存量形态需要修复（L2 双前缀/脏对象规范化）也写回——
+	// 写库端保持干净，消费端不再兜底（Claude 8/27 审核 Challenge 1/2）。
+	if added == 0 && !changed {
 		return 0, nil
 	}
 	merged, _ := json.Marshal(existingRefs)
@@ -142,11 +155,15 @@ func typeMissingQueries(typ string, all []string) []string {
 }
 
 // parseExistingRefs 解析既有 entity_refs（兼容 L2 []string 与既往反馈对象），
-// 返回合并后的 ref 切片 + 已见 id 集合（幂等去重）。
-func parseExistingRefs(existing *store.SessionSummary, sid string) ([]FeedbackBackfillRef, map[string]bool) {
+// 返回合并用的 ref 切片 + 已见 id 集合（幂等去重）+ 是否发生规范化变更。
+// 规范化：L2 双前缀 id（"task:task-xxx"）拆成 {Type:"task", ID:"task-xxx"}，
+// 对象形态 type 空但 id 带前缀的脏对象同样拆补——统一 id 去前缀形态，
+// 与回填写入的反馈对象一致（Claude 8/27 审核 Challenge 1/2：写库端不产生
+// type:"" 脏对象、id 双形态不去重失效）。
+func parseExistingRefs(existing *store.SessionSummary, sid string) ([]FeedbackBackfillRef, map[string]bool, bool) {
 	seen := map[string]bool{}
 	if existing == nil || strings.TrimSpace(existing.EntityRefs) == "" {
-		return []FeedbackBackfillRef{}, seen
+		return []FeedbackBackfillRef{}, seen, false
 	}
 	raw := []byte(existing.EntityRefs)
 	// L2 形态：[]string（实体 ID）
@@ -154,26 +171,69 @@ func parseExistingRefs(existing *store.SessionSummary, sid string) ([]FeedbackBa
 	if err := json.Unmarshal(raw, &strRefs); err == nil {
 		var out []FeedbackBackfillRef
 		for _, id := range strRefs {
-			if id == "" || seen[id] {
+			if id == "" {
 				continue
 			}
-			seen[id] = true
-			out = append(out, FeedbackBackfillRef{ID: id})
-		}
-		return out, seen
-	}
-	// 反馈形态：[]FeedbackBackfillRef（对象）
-	var objRefs []FeedbackBackfillRef
-	if err := json.Unmarshal(raw, &objRefs); err == nil {
-		var out []FeedbackBackfillRef
-		for _, r := range objRefs {
+			r := normalizeRef(FeedbackBackfillRef{ID: id})
 			if r.ID == "" || seen[r.ID] {
 				continue
 			}
 			seen[r.ID] = true
 			out = append(out, r)
 		}
-		return out, seen
+		return out, seen, true // L2 → 对象形态转换本身即规范化变更
 	}
-	return []FeedbackBackfillRef{}, seen
+	// 反馈形态：[]FeedbackBackfillRef（对象）
+	var objRefs []FeedbackBackfillRef
+	if err := json.Unmarshal(raw, &objRefs); err == nil {
+		var out []FeedbackBackfillRef
+		idx := map[string]int{} // 规范化 id → out 下标
+		changed := false
+		for _, r := range objRefs {
+			norm := normalizeRef(r)
+			if norm.Type != r.Type || norm.ID != r.ID {
+				changed = true
+			}
+			if norm.ID == "" {
+				continue
+			}
+			if i, ok := idx[norm.ID]; ok {
+				// id 冲突（L2 拆前缀空壳 vs feedback 对象）：信息更全者胜，
+				// feedback（ref_text/missing_queries）优先于空壳——否则
+				// 规范化会把已回填的高价值反馈对象踢掉（8/27 实测数据丢失）。
+				if richer(norm, out[i]) {
+					out[i] = norm
+					changed = true
+				}
+				continue
+			}
+			idx[norm.ID] = len(out)
+			out = append(out, norm)
+		}
+		for i := range out {
+			seen[out[i].ID] = true
+		}
+		return out, seen, changed
+	}
+	return []FeedbackBackfillRef{}, seen, false
+}
+
+// richer 报告 a 是否比 b 携带更多反馈信息（有 ref_text 或 missing_queries 者胜）。
+func richer(a, b FeedbackBackfillRef) bool {
+	aInfo := a.RefText != "" || len(a.MissingQueries) > 0
+	bInfo := b.RefText != "" || len(b.MissingQueries) > 0
+	return aInfo && !bInfo
+}
+
+// normalizeRef 把 type 空但 id 带 "prefix:" 前缀的 ref 拆成完整形态。
+// L2/脏对象 id 形如 "task:task-20260615-..."，拆第一个冒号后与回填反馈对象
+// （Type="task", ID="task-20260615-..."）形态一致。
+func normalizeRef(r FeedbackBackfillRef) FeedbackBackfillRef {
+	if r.Type != "" {
+		return r
+	}
+	if i := strings.Index(r.ID, ":"); i > 0 {
+		return FeedbackBackfillRef{Type: r.ID[:i], ID: r.ID[i+1:], RefText: r.RefText}
+	}
+	return r
 }

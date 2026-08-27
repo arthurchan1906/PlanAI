@@ -21,8 +21,17 @@ func TestParseFeedbackRefs(t *testing.T) {
 	if got := parseFeedbackRefs(`[{"type":"decision","id":"decision-x","ref_text":"约束"}]`); len(got) != 1 {
 		t.Fatalf("对象形态应识别 1 条, got %d", len(got))
 	}
-	if got := parseFeedbackRefs(`[{"type":"","id":"task:task-x"},{"type":"decision","id":"decision-x"}]`); len(got) != 1 {
-		t.Fatalf("type 空的对象（回填合并的 L2 旧形态）应忽略, got %d", len(got))
+	if got := parseFeedbackRefs(`[{"type":"","id":"task:task-x"},{"type":"decision","id":"decision-x"}]`); len(got) != 0 {
+		t.Fatalf("type 空或仅 id 的对象（L2 旧形态/引用计数）应忽略, got %d", len(got))
+	}
+	// L2 规范化对象（type 非空但无 ref_text/missing_queries）只是引用计数，
+	// 不是"引用未查询"反馈，应忽略。
+	if got := parseFeedbackRefs(`[{"type":"task","id":"task-x","ref_text":""},{"type":"decision","id":"decision-x","ref_text":""}]`); len(got) != 0 {
+		t.Fatalf("无反馈特征的规范化 L2 对象应忽略, got %d", len(got))
+	}
+	// commit/task 高价值之外的类型即使带 ref_text 也不进反馈段
+	if got := parseFeedbackRefs(`[{"type":"commit","id":"commit-x","ref_text":"git log"}]`); len(got) != 0 {
+		t.Fatalf("commit 低价值不应进反馈段, got %d", len(got))
 	}
 	if got := parseFeedbackRefs(`["decision-x","task-y"]`); len(got) != 0 {
 		t.Fatalf("L2 []string 形态应忽略, got %d", len(got))

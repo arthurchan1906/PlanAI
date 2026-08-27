@@ -13,6 +13,10 @@ import (
 	"aipmc/store"
 )
 
+// feedbackHighValueTypes briefing 反馈段只展示的高价值类型（与回填过滤一致，
+// B 线审核要求②：commit/task 降级为计数不告警）。
+var feedbackHighValueTypes = map[string]bool{"decision": true, "plan": true, "bug": true}
+
 // feedbackBriefWindow 反馈展示窗口（最近 48h 活跃的 session 回填）。
 const feedbackBriefWindow = "48h"
 
@@ -58,8 +62,12 @@ func parseFeedbackRefs(entityRefsJSON string) []map[string]any {
 	for _, o := range objs {
 		typ, _ := o["type"].(string)
 		id, _ := o["id"].(string)
-		// 只收反馈对象（type+id 非空；回填合并产生的 type:"" 旧 L2 形态忽略）。
-		if typ != "" && id != "" {
+		refText, _ := o["ref_text"].(string)
+		mqs, _ := o["missing_queries"].([]any)
+		// 只收反馈对象：高价值类型 + 携带反馈特征（ref_text/missing_queries）。
+		// 规范化后的 L2 引用（type 非空但 ref_text/mq 为空）只是"引用"计数，
+		// 不是"引用未查询"信号——不展示（Claude 8/27 审核要求②）。
+		if id != "" && feedbackHighValueTypes[typ] && (refText != "" || len(mqs) > 0) {
 			out = append(out, o)
 		}
 	}
