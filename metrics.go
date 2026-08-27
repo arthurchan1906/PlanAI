@@ -28,7 +28,8 @@ func dispatchMetrics(args *cli.Args) {
 	// 避免历史污染（ED 547 空 hash、aipmc 历史孤儿）淹没告警信号。
 	// --since all 看全表（存量状态）；--since 2026-08-01 自定义窗口。
 	since := args.Str("since", "2026-08-07T14:00:00")
-	// F1/F4 DB 类窗口（W3 8/13）：--since 仅作用于验收/诊断类行（D2 events、H2 rel_path），
+	// F1/F4/E5 DB 类窗口（W3 8/13）：--since 仅作用于验收/诊断/行为类行（D2 events、
+	// H2 rel_path、E5 update_status 显式率），
 	// 其他 DB 行保持全表=机制健康现状——不静默改变已有指标语义。
 	dbSince := ""
 	var dbSinceArgs []any
@@ -56,7 +57,7 @@ func dispatchMetrics(args *cli.Args) {
 	}
 	fmt.Println("AIPM 评估指标 — 目标值来自 docs/EVALUATION.md")
 	fmt.Println("DB 类指标: 当前项目 point-in-time；日志类指标: ~/.aipmc/logs/aipmc.log（serve 行带 project= 标签，proxy/hook 行无；已按 20MB 归档，只扫当前文件）")
-	fmt.Printf("窗口: since=%s（--since all 看全表；F1/F4 验收诊断行随窗口，其余 DB 行保持全表=机制健康现状）\n", since)
+	fmt.Printf("窗口: since=%s（--since all 看全表；F1/F4/E5 验收/诊断/行为行随窗口，其余 DB 行保持全表=机制健康现状）\n", since)
 	if hasCutoff {
 		fmt.Printf("日志窗口: %s（截止 %s）\n", window, cutoff.Format("2006-01-02 15:04:05"))
 	}
@@ -580,14 +581,18 @@ func dispatchMetrics(args *cli.Args) {
 		}
 		fmt.Println()
 	}
-	// 协作感知（L1）：agent_status 显式声明采纳率 — explicit=1 的行占比。
-	// 今天 0 次显式声明=行为尚未养成，指标用于盯采纳进度（数据源是 store 不是日志）。
-	if exp, total, err := store.CountExplicitStatuses(""); err == nil {
+	// 协作感知（L1）：update_status 显式声明采纳率 — B0.5 重定义（8/27 口径统一，
+	// Claude 审核背书）：分子=窗口内显式声明 session（explicit=1），分母=窗口活跃
+	// session（users>0，同 ListActiveSessions 宇宙）。旧行级口径（explicit 行/全部
+	// agent_status 行，如 2/158）被陈旧注册 session 稀释，低估采纳也夸大"从不声明"。
+	// 已知边界：8/24 上午 7 次 [MCP] update_status 调用未落 explicit 库（观测缺口，
+	// 记入 M 线度量口径注意点），分子暂只计已落库的显式声明。
+	if expS, actS, err := store.CountExplicitStatusRate("", since); err == nil {
 		rate := "—"
-		if total > 0 {
-			rate = fmt.Sprintf("%d/%d (%.0f%%)", exp, total, float64(exp)/float64(total)*100)
+		if actS > 0 {
+			rate = fmt.Sprintf("%d/%d (%.1f%%)", expS, actS, float64(expS)/float64(actS)*100)
 		}
-		printRow("E5  update_status 显式率", rate, "参考", true)
+		printRow("E5  update_status 显式率(窗口)", rate, "参考", true)
 	} else {
 		printRow("E5  update_status 显式率", "无数据", "参考", true)
 	}

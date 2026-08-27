@@ -209,6 +209,43 @@ func TestCountExplicitStatuses(t *testing.T) {
 	}
 }
 
+// CountExplicitStatusRate must report the B0.5 redefined caliber: explicit
+// declaration sessions over window-active sessions (not raw agent_status rows).
+func TestCountExplicitStatusRate(t *testing.T) {
+	setupDailyDB(t)
+	if _, err := ReadDiscussions(ReadDiscussionsOpts{LastN: 5}); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+
+	// Three auto-registered active sessions, plus one active session that
+	// explicitly declared its status via aipm_update_status.
+	for _, sid := range []string{"auto-1", "auto-2", "auto-3"} {
+		if _, err := LogDiscussion(sid, "user", "codex-cli", "处理任务", ""); err != nil {
+			t.Fatalf("log user %s: %v", sid, err)
+		}
+	}
+	if _, err := LogDiscussion("explicit-1", "user", "codex-cli", "继续", ""); err != nil {
+		t.Fatalf("log user explicit-1: %v", err)
+	}
+	if err := UpdateAgentStatus("codex-cli", "explicit-1", "审核 L0/L1 代码", ""); err != nil {
+		t.Fatalf("UpdateAgentStatus: %v", err)
+	}
+
+	// Window covers all rows (created_at = now); old row-based caliber would
+	// say 1/4, window caliber must say 1/4 too here — the difference shows up
+	// when stale agent_status rows exist outside the window.
+	exp, act, err := CountExplicitStatusRate("", "1970-01-01T00:00:00")
+	if err != nil {
+		t.Fatalf("CountExplicitStatusRate: %v", err)
+	}
+	if act != 4 {
+		t.Errorf("activeSessions = %d, want 4", act)
+	}
+	if exp != 1 {
+		t.Errorf("explicitSessions = %d, want 1", exp)
+	}
+}
+
 func TestReadDiscussionsByID(t *testing.T) {
 	setupDailyDB(t)
 	if _, err := ReadDiscussions(ReadDiscussionsOpts{LastN: 5}); err != nil {

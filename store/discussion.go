@@ -916,6 +916,38 @@ func CountExplicitStatuses(projectPath string) (explicit, total int, err error) 
 	return explicit, total, nil
 }
 
+// CountExplicitStatusRate returns (explicitSessions, activeSessions) for the
+// L1 adoption metric after the B0.5 caliber redefinition (8/27): numerator =
+// distinct sessions with an explicit=1 declaration that are active within the
+// window; denominator = distinct sessions with user activity since the cutoff
+// (same universe as ListActiveSessions). The old row-based caliber
+// (explicit rows / all agent_status rows, e.g. 2/158) diluted the rate with
+// stale registered sessions and read as "agents never declare" — the redefined
+// rate answers "among window-active sessions, how many declared explicitly".
+// since=="" or "all" disables the window (full table).
+func CountExplicitStatusRate(projectPath, since string) (explicitSessions, activeSessions int, err error) {
+	db, err := openOrCurrentDB(projectPath)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer db.Close()
+	if since == "" || since == "all" {
+		since = "1970-01-01T00:00:00"
+	}
+	q := `SELECT
+		(SELECT COUNT(DISTINCT a.session_id) FROM agent_status a
+		 JOIN discussion_log d ON d.session_id = a.session_id
+		 WHERE a.explicit = 1 AND d.created_at >= ? AND d.session_id != '' AND d.session_id != 'unknown'),
+		(SELECT COUNT(*) FROM (
+			SELECT session_id FROM discussion_log
+			WHERE created_at >= ? AND session_id != '' AND session_id != 'unknown' AND source != ''
+			GROUP BY session_id HAVING COUNT(CASE WHEN role = 'user' THEN 1 END) > 0))`
+	if err := db.QueryRow(q, since, since).Scan(&explicitSessions, &activeSessions); err != nil {
+		return 0, 0, err
+	}
+	return explicitSessions, activeSessions, nil
+}
+
 // ListActiveSessions returns sessions with activity since the cutoff, joined
 // with their registered current status (agent_status). This is the public
 // "who is doing what right now" query that lets an agent tell apart
