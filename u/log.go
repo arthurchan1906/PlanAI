@@ -41,22 +41,43 @@ func initSharedLogger() {
 	}
 	logsDir := filepath.Join(dir, "logs")
 	if err := os.MkdirAll(logsDir, 0755); err != nil {
-		// r19388（8/27）：静默 fallback 会掩盖日志丢失——显式告警到 stderr。
-		fmt.Fprintf(os.Stderr, "[aipmc-log] WARN cannot create %s: %v — fallback stderr\n", logsDir, err)
-		logLogger = log.New(os.Stderr, "[aipmc] ", 0)
+		// r19388 二次加固（Claude 8/27 15:43 审核）：告警不能只写 stderr——
+		// 根因场景恰是 stderr 被后台进程丢弃，写 stderr 等于没写。多路 writer
+		// （stderr + os.TempDir() 固定文件）保证降级期日志有第二条落点可查。
+		w := fallbackLogWriter()
+		fmt.Fprintf(w, "[aipmc-log] WARN cannot create %s: %v — fallback %s\n", logsDir, err, fallbackLogPath())
+		logLogger = log.New(w, "[aipmc] ", 0)
 		return
 	}
 
 	path := filepath.Join(logsDir, "aipmc.log")
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		// r19388（8/27）：显式告警，不再静默降级。
-		fmt.Fprintf(os.Stderr, "[aipmc-log] WARN cannot open %s: %v — fallback stderr\n", path, err)
-		logLogger = log.New(os.Stderr, "[aipmc] ", 0)
+		// r19388 二次加固：同多路 writer，不依赖 stderr 通道存活。
+		w := fallbackLogWriter()
+		fmt.Fprintf(w, "[aipmc-log] WARN cannot open %s: %v — fallback %s\n", path, err, fallbackLogPath())
+		logLogger = log.New(w, "[aipmc] ", 0)
 		return
 	}
 	logFile = f
 	logLogger = log.New(f, "", 0)
+}
+
+// fallbackLogPath 返回降级期日志的第二物理路径（os.TempDir() 下固定文件）。
+// 不用 ~/.aipmc/logs/fallback.log：fallback 触发条件之一就是该目录创建失败。
+func fallbackLogPath() string {
+	return filepath.Join(os.TempDir(), "aipmc-log-fallback.log")
+}
+
+// fallbackLogWriter 返回 stderr + fallback 文件的多路 writer。
+// 8/26 晚间日志静默丢失的根因场景 = stderr 被后台进程丢弃；降级日志必须
+// 有独立于 stderr 的物理落点，否则修复与故障在同一路径上（Claude 8/27 审核）。
+func fallbackLogWriter() io.Writer {
+	writers := []io.Writer{os.Stderr}
+	if f, err := os.OpenFile(fallbackLogPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
+		writers = append(writers, f)
+	}
+	return io.MultiWriter(writers...)
 }
 
 func pmaiRuntimeDir() string {

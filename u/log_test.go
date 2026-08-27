@@ -100,3 +100,45 @@ func TestMaybeRotateReopensAfterExternalDelete(t *testing.T) {
 		t.Fatalf("重建后文件内容 %q，应为 after-delete 行（旧句柄写入必须落到新文件）", got)
 	}
 }
+
+// r19388 二次加固（Claude 8/27 15:43 审核）：fallback 不能只写 stderr——
+// 根因场景恰是 stderr 被后台进程丢弃，告警写 stderr 等于没写。多路 writer
+// 必须把降级期日志落到 os.TempDir() 下的固定文件（第二物理路径）。
+func TestFallbackLogWriterWritesSecondPath(t *testing.T) {
+	path := fallbackLogPath()
+	// 清理测试残留
+	_ = os.Remove(path)
+
+	w := fallbackLogWriter()
+	msg := "fallback-probe-write\n"
+	if _, err := w.Write([]byte(msg)); err != nil {
+		t.Fatalf("fallback write: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("fallback 文件未写入: %v", err)
+	}
+	if string(got) != msg {
+		t.Fatalf("fallback 内容 %q, want %q", got, msg)
+	}
+	// 清理测试产物，避免污染 /tmp
+	_ = os.Remove(path)
+}
+
+// r19388 二次加固：正常路径打开成功时不应创建 fallback 文件（仅降级期使用）。
+func TestNormalPathNoFallbackFile(t *testing.T) {
+	path := fallbackLogPath()
+	_ = os.Remove(path)
+	// 触发一次正常 init（AIPMC_LOG 非 off 且 ~/.aipmc/logs 可写时走正常路径）；
+	// 若 logLogger 已初始化则跳过（幂等保护）。
+	if logLogger == nil && os.Getenv("AIPMC_LOG") != "off" {
+		initSharedLogger()
+	}
+	if _, err := os.Stat(path); err == nil {
+		// 正常路径不应创建 fallback 文件；但若本进程此前已进入过 fallback
+		// 状态则文件可能已存在——仅当 logFile 非 nil（正常状态）时断言。
+		if logFile != nil {
+			t.Fatalf("正常路径不应创建 fallback 文件 %s", path)
+		}
+	}
+}
