@@ -17,6 +17,8 @@ package eval
 
 import (
 	"database/sql"
+	"encoding/json"
+	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -69,6 +71,7 @@ type FeedbackGap struct {
 	EntityRefs     []EntityRef     `json:"entity_refs"`
 	MissingQueries []string        `json:"missing_queries"` // 强漏查：引用类型对应的期望查询工具全部未调用
 	DataSourceRefs []DataSourceRef `json:"data_source_refs"`
+	DataSources    []string        `json:"data_sources,omitempty"` // 会话中实际引用的来源词（C2 契约字段）
 }
 
 // DetectFeedbackGaps 扫描 since 之后活跃（至少 1 条非 tool 消息）的 session，
@@ -130,7 +133,9 @@ func detectSessionGap(db *sql.DB, src, sid, lastSeen, since string) (*FeedbackGa
 		EntityRefs:     []EntityRef{},
 		MissingQueries: []string{},
 		DataSourceRefs: []DataSourceRef{},
+		DataSources:    []string{},
 	}
+	srcSeen := map[string]bool{}
 	rows, err := db.Query(
 		`SELECT id, role, content, created_at FROM discussion_log
 		 WHERE session_id = ? AND created_at >= ? ORDER BY created_at ASC, rowid ASC`,
@@ -185,9 +190,16 @@ func detectSessionGap(db *sql.DB, src, sid, lastSeen, since string) (*FeedbackGa
 			if hi > len(content) {
 				hi = len(content)
 			}
+			matched := matchedSourceWords(content[lo:hi])
+			for _, w := range matched {
+				if !srcSeen[w] {
+					srcSeen[w] = true
+					gap.DataSources = append(gap.DataSources, w)
+				}
+			}
 			gap.DataSourceRefs = append(gap.DataSourceRefs, DataSourceRef{
 				Claim:     m,
-				HasSource: hasSourceWord(content[lo:hi]),
+				HasSource: len(matched) > 0,
 				MsgID:     id,
 			})
 		}
@@ -216,6 +228,7 @@ func detectSessionGap(db *sql.DB, src, sid, lastSeen, since string) (*FeedbackGa
 	}
 	sort.Strings(gap.MissingQueries)
 	gap.MissingQueries = dedupStrings(gap.MissingQueries)
+	sort.Strings(gap.DataSources)
 	return gap, nil
 }
 
@@ -247,13 +260,107 @@ func refContext(content, id string) string {
 	return ""
 }
 
-// hasSourceWord 窗口内是否含任一来源词（小写比较）。
+// hasSourceWord 窗口内是否含任一来源词（小写比较，P1a 前旧语义保留给调用方）。
 func hasSourceWord(window string) bool {
+	return len(matchedSourceWords(window)) > 0
+}
+
+// matchedSourceWords 返回窗口内命中的来源词（去重，顺序按 sourceWords 声明）。
+func matchedSourceWords(window string) []string {
 	w := strings.ToLower(window)
+	var out []string
+	seen := map[string]bool{}
 	for _, s := range sourceWords {
-		if strings.Contains(w, s) {
-			return true
+		if !seen[s] && strings.Contains(w, s) {
+			seen[s] = true
+			out = append(out, s)
 		}
 	}
-	return false
+	return out
+}
+
+// ---- P3 T2 shadow 接线（8/27）：检测器输出 → C2 契约 shadow 落盘 ----
+//
+// 回填链路（C2 线接口契约）: {session_id, entity_refs[{type,id,ref_text}],
+// data_sources[], timestamp, agent} → 回填 session_summaries → briefing 消费。
+// 本函数是链路 codex 侧：把 DetectFeedbackGaps 输出变换为 C2 契约并追加写入
+// JSONL shadow 文件（按 session_id+timestamp 去重，可重入），供 C2 线消费。
+
+// ShadowEntityRef C2 契约的实体引用条目（ref_text=引用行，同 EntityRef.Context）。
+type ShadowEntityRef struct {
+	Type    string `json:"type"`
+	ID      string `json:"id"`
+	RefText string `json:"ref_text"`
+}
+
+// FeedbackShadowEntry C2 契约 shadow 条目。
+type FeedbackShadowEntry struct {
+	SessionID      string            `json:"session_id"`
+	Agent          string            `json:"agent"`
+	Timestamp      string            `json:"timestamp"`
+	EntityRefs     []ShadowEntityRef `json:"entity_refs"`
+	DataSources    []string          `json:"data_sources"`
+	MissingQueries []string          `json:"missing_queries,omitempty"`
+	DataSourceRefs []DataSourceRef   `json:"data_source_refs,omitempty"`
+}
+
+// WriteFeedbackShadow 把 gaps 变换为 C2 契约条目并追加到 path（JSONL）。
+// 返回 (新写入数, 跳过重复数, error)。去重键 = session_id|timestamp；
+// 已有 shadow 文件的条目视为已落盘（幂等，修复重跑不产生重复）。
+func WriteFeedbackShadow(path string, gaps []FeedbackGap) (written, skipped int, err error) {
+	seen := map[string]bool{}
+	if b, rerr := os.ReadFile(path); rerr == nil {
+		for _, line := range strings.Split(string(b), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			var e FeedbackShadowEntry
+			if json.Unmarshal([]byte(line), &e) == nil {
+				seen[e.SessionID+"|"+e.Timestamp] = true
+			}
+		}
+	} else if !os.IsNotExist(rerr) {
+		return 0, 0, rerr
+	}
+
+	var lines []string
+	for _, g := range gaps {
+		key := g.SessionID + "|" + g.Timestamp
+		if seen[key] {
+			skipped++
+			continue
+		}
+		seen[key] = true
+		refs := make([]ShadowEntityRef, 0, len(g.EntityRefs))
+		for _, r := range g.EntityRefs {
+			refs = append(refs, ShadowEntityRef{Type: r.Type, ID: r.ID, RefText: r.Context})
+		}
+		e := FeedbackShadowEntry{
+			SessionID:      g.SessionID,
+			Agent:          g.Source,
+			Timestamp:      g.Timestamp,
+			EntityRefs:     refs,
+			DataSources:    g.DataSources,
+			MissingQueries: g.MissingQueries,
+			DataSourceRefs: g.DataSourceRefs,
+		}
+		b, _ := json.Marshal(e)
+		lines = append(lines, string(b))
+		written++
+	}
+	if len(lines) == 0 {
+		return written, skipped, nil
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer f.Close()
+	for _, l := range lines {
+		if _, err := f.WriteString(l + "\n"); err != nil {
+			return 0, 0, err
+		}
+	}
+	return written, skipped, nil
 }

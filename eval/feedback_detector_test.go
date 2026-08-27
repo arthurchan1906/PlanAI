@@ -2,6 +2,9 @@ package eval
 
 import (
 	"database/sql"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -240,5 +243,81 @@ func TestFeedbackTaskParamNotMiss(t *testing.T) {
 		if strings.HasPrefix(r.Context, "📡") {
 			t.Errorf("EntityRef 来自 📡 摘要行: %+v", r)
 		}
+	}
+}
+
+// ---- P3 T2 shadow 接线测试 ----
+
+// 契约变换：FeedbackGap → C2 契约（entity_refs{type,id,ref_text} + data_sources + agent）。
+func TestFeedbackShadowContractTransform(t *testing.T) {
+	db := newFeedbackTestDB(t)
+	defer db.Close()
+	insertRow(t, db, "m1", "S1", "assistant", "codex",
+		"参考 decision-20260826-172138-fb48b1 处理，实测 3 次均失败", "2026-08-27T10:00:00")
+	gaps, err := DetectFeedbackGaps(db, "2026-08-01T00:00:00", 10)
+	if err != nil || len(gaps) != 1 {
+		t.Fatalf("Detect: gaps=%d err=%v, want 1", len(gaps), err)
+	}
+	path := filepath.Join(t.TempDir(), "shadow.jsonl")
+	written, skipped, err := WriteFeedbackShadow(path, gaps)
+	if err != nil || written != 1 || skipped != 0 {
+		t.Fatalf("Write: written=%d skipped=%d err=%v", written, skipped, err)
+	}
+	b, _ := os.ReadFile(path)
+	var e FeedbackShadowEntry
+	if err := json.Unmarshal(b, &e); err != nil {
+		t.Fatalf("unmarshal shadow: %v (raw=%s)", err, b)
+	}
+	if e.SessionID != "S1" || e.Agent != "codex" || e.Timestamp != "2026-08-27T10:00:00" {
+		t.Errorf("head fields = %+v", e)
+	}
+	if len(e.EntityRefs) != 1 || e.EntityRefs[0].Type != "decision" ||
+		e.EntityRefs[0].ID != "decision-20260826-172138-fb48b1" {
+		t.Errorf("EntityRefs = %+v, want 1 decision ref with ref_text", e.EntityRefs)
+	}
+	if e.EntityRefs[0].RefText == "" {
+		t.Errorf("RefText empty, want 引用行")
+	}
+	if len(e.DataSources) != 1 || e.DataSources[0] != "实测" {
+		t.Errorf("DataSources = %v, want [实测]", e.DataSources)
+	}
+	if len(e.DataSourceRefs) != 1 || !e.DataSourceRefs[0].HasSource {
+		t.Errorf("DataSourceRefs = %+v, want 1 claim with source", e.DataSourceRefs)
+	}
+}
+
+// 去重幂等：同 session+timestamp 重跑 → skipped，不产生重复行。
+func TestFeedbackShadowDedupAppend(t *testing.T) {
+	db := newFeedbackTestDB(t)
+	defer db.Close()
+	insertRow(t, db, "m1", "S1", "assistant", "claude",
+		"decision-20260826-172138-fb48b1 约束 A", "2026-08-27T10:00:00")
+	gaps, err := DetectFeedbackGaps(db, "2026-08-01T00:00:00", 10)
+	if err != nil || len(gaps) != 1 {
+		t.Fatalf("Detect: %d %v", len(gaps), err)
+	}
+	path := filepath.Join(t.TempDir(), "shadow.jsonl")
+	// 首次写
+	if w, s, err := WriteFeedbackShadow(path, gaps); err != nil || w != 1 || s != 0 {
+		t.Fatalf("first write w=%d s=%d err=%v", w, s, err)
+	}
+	// 重跑同一批 → 全 skipped
+	if w, s, err := WriteFeedbackShadow(path, gaps); err != nil || w != 0 || s != 1 {
+		t.Fatalf("rerun w=%d s=%d err=%v", w, s, err)
+	}
+	// 新增 session → append 1 行
+	insertRow(t, db, "m2", "S2", "assistant", "codex",
+		"task-20260827-111105-3f6872 引用", "2026-08-27T11:00:00")
+	gaps2, err := DetectFeedbackGaps(db, "2026-08-01T00:00:00", 10)
+	if err != nil {
+		t.Fatalf("Detect2: %v", err)
+	}
+	if w, s, err := WriteFeedbackShadow(path, gaps2); err != nil || w != 1 || s != 1 {
+		t.Fatalf("append w=%d s=%d err=%v", w, s, err)
+	}
+	b, _ := os.ReadFile(path)
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("lines = %d, want 2 (dedup)", len(lines))
 	}
 }

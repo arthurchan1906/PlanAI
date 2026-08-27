@@ -302,6 +302,7 @@ func main() {
 		probeLabel := ""
 		probeRuns := 3
 		limit := 10
+		shadowPath := ""
 		raw := os.Args[2:]
 		// 位置参数 kind（aipmc eval process / acceptance）：与 --kind 等价（usage 声明形式）
 		if len(raw) > 0 && raw[0] != "--since" && raw[0] != "--kind" && raw[0] != "--log" && !strings.HasPrefix(raw[0], "--") {
@@ -367,6 +368,9 @@ func main() {
 				i++
 			case raw[i] == "--limit" && i+1 < len(raw):
 				fmt.Sscanf(raw[i+1], "%d", &limit)
+				i++
+			case raw[i] == "--shadow" && i+1 < len(raw):
+				shadowPath = raw[i+1]
 				i++
 			}
 		}
@@ -534,7 +538,8 @@ func main() {
 		case "feedback":
 			// B 线 P0（8/27 v13.1）：事后反馈检测器——实体引用未查询（F5 类强漏查）
 			// + 数据源引用规范性，纯正则零语义，输出走 C2 线回填。
-			// Usage: aipmc eval feedback [--since 30d] [--limit 10] [--db <path>]
+			// Usage: aipmc eval feedback [--since 30d] [--limit 10] [--db <path>] [--shadow <jsonl>]
+			//   --shadow: 追加写入 C2 契约 shadow JSONL（session_id+timestamp 去重，P3 T2 shadow 接线）
 			gaps, err := eval.DetectFeedbackGaps(db, since.Format("2006-01-02T15:04:05"), limit)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "eval feedback: %v\n", err)
@@ -550,6 +555,14 @@ func main() {
 			}
 			fmt.Printf("feedback: sessions=%d entity_refs=%d strong_missing_queries=%d data_source_refs=%d\n",
 				len(gaps), refs, misses, ds)
+			if shadowPath != "" {
+				written, skipped, serr := eval.WriteFeedbackShadow(shadowPath, gaps)
+				if serr != nil {
+					fmt.Fprintf(os.Stderr, "eval feedback shadow: %v\n", serr)
+					os.Exit(1)
+				}
+				fmt.Printf("feedback shadow: %s written=%d skipped_dup=%d\n", shadowPath, written, skipped)
+			}
 		case "l2-probe":
 			// P1c 对抗样本 + 稳定性探测（§2.3 约束③）：已知健康时段 → deadloop_confirm
 			// 跑 N 次，验证不误判 + LLM 判定漂移率。
