@@ -248,3 +248,42 @@ func TestParseMcpTool(t *testing.T) {
 		t.Errorf("post_tool + tool 字段 = %q, want unknown（无 tool_name 的 post_tool 兜底）", r.Tool)
 	}
 }
+
+// T3b：hook default 分支修复后，mcp__aipm__* 工具行以 post_tool 格式落地，
+// 必须从 unknown 归入 mcp_aipm_*（此前空 metadata → 33% S2-claude 盲区）。
+func TestParsePostToolMcpAipm(t *testing.T) {
+	md := `{"_type":"post_tool","tool_name":"mcp__aipm__aipm_read_discussions","tool_input":{"query":"T3b","limit":10}}`
+	r := ParseToolRecord("claude-code", md)
+	if r.Tool != "mcp_aipm_read" {
+		t.Errorf("tool = %q, want mcp_aipm_read（read_discussions 为例行读取）", r.Tool)
+	}
+	md2 := `{"_type":"post_tool","tool_name":"mcp__aipm__aipm_search_context","tool_input":{"query":"T3b"}}`
+	r2 := ParseToolRecord("claude-code", md2)
+	if r2.Tool != "mcp_aipm_search" {
+		t.Errorf("tool = %q, want mcp_aipm_search（历史检索信号）", r2.Tool)
+	}
+	// 无 tool_input 时（历史回填降级形态）仍可按 tool_name 分类。
+	md3 := `{"_type":"post_tool","tool_name":"mcp__aipm__aipm_get_task"}`
+	r3 := ParseToolRecord("claude-code", md3)
+	if r3.Tool != "mcp_aipm_get" {
+		t.Errorf("tool = %q, want mcp_aipm_get", r3.Tool)
+	}
+	// WebSearch / Agent / kill 等 default 工具：保持原 tool 名（有信号即非盲区）。
+	md4 := `{"_type":"post_tool","tool_name":"WebSearch"}`
+	r4 := ParseToolRecord("claude-code", md4)
+	if r4.Tool != "WebSearch" {
+		t.Errorf("tool = %q, want WebSearch", r4.Tool)
+	}
+}
+
+// T3b：回填 read 行 metadata 可被 parseClaudeFileOp 归入 read（含 file_path）。
+func TestParseBackfilledRead(t *testing.T) {
+	md := `{"type":"read","file_path":"/Users/dazsec/workspace/aipmc/hook/hook_claude.go","rel_path":"hook/hook_claude.go","source":"backfill"}`
+	r := ParseToolRecord("claude-code", md)
+	if r.Tool != "read" {
+		t.Errorf("tool = %q, want read", r.Tool)
+	}
+	if len(r.Files) != 1 || r.Files[0] != "/Users/dazsec/workspace/aipmc/hook/hook_claude.go" {
+		t.Errorf("files = %v", r.Files)
+	}
+}

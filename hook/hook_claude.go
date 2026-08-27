@@ -46,7 +46,11 @@ func ProcessClaudeHook() {
 		Prompt               string `json:"prompt"`
 		LastAssistantMessage string `json:"last_assistant_message"`
 		ToolName             string `json:"tool_name"`
-		ToolInput            struct {
+		// ToolInput 仅解析常用字段；ToolInputRaw 保留完整原始输入，
+		// 供 default 分支（mcp__aipm__*、WebSearch、ask* 等）以 post_tool
+		// 格式写入 metadata（T3b：claude tool 行空 metadata 33% → <10%）。
+		ToolInputRaw json.RawMessage `json:"tool_input"`
+		ToolInput    struct {
 			Command   string `json:"command"`
 			FilePath  string `json:"file_path"`
 			Content   string `json:"content"`
@@ -256,8 +260,21 @@ func ProcessClaudeHook() {
 			if ti.Command != "" {
 				desc = "🔍 " + ti.Command
 			}
+			// T3b：Grep 此前只写 desc 不写 metadata → 空串率贡献项。
+			// 以 post_tool 格式落 tool_name+command，供 ParseToolRecord 分类。
+			metadataJSON = postToolMetaJSON(raw.ToolName, raw.ToolInputRaw)
 		default:
 			desc = "🛠 " + raw.ToolName
+			// T3b 核心缺口：default 工具（mcp__aipm__*、WebSearch、ask*、
+			// Agent、kill 等）此前只写 🛠 行无 metadata → S2-claude 33% 盲区。
+			// 写完整 tool_input（截断至 2KB，超长降级为仅 tool_name，保证合法 JSON）。
+			metadataJSON = postToolMetaJSON(raw.ToolName, raw.ToolInputRaw)
+		}
+
+		// 兜底：Write/Edit/Bash/Read 在入参缺失等条件下可能未写 metadata，
+		// 统一补 post_tool 骨架，确保任何工具行都带可解析 metadata（T3b）。
+		if metadataJSON == "" {
+			metadataJSON = postToolMetaJSON(raw.ToolName, raw.ToolInputRaw)
 		}
 
 		if desc != "" {
@@ -425,4 +442,23 @@ func (t *toolResponse) UnmarshalJSON(b []byte) error {
 	}
 	*t = toolResponse(p)
 	return nil
+}
+
+// postToolMetaJSON 生成 ParseToolRecord 可识别的 post_tool 格式 metadata
+// （T3b：与 codex-cli 通用工具调用格式对齐，tool_name 经 classifyToolInput
+// 归一为 read/edit/bash/mcp_aipm_* 等，替代此前的 unknown 盲区）。
+// tool_input 保留完整原始 JSON；超过 2KB 时降级为仅 tool_name，保证合法 JSON。
+func postToolMetaJSON(toolName string, toolInput json.RawMessage) string {
+	meta := struct {
+		Type     string          `json:"_type"`
+		ToolName string          `json:"tool_name"`
+		ToolInput json.RawMessage `json:"tool_input,omitempty"`
+	}{Type: "post_tool", ToolName: toolName}
+	if len(toolInput) > 0 && len(toolInput) <= 2048 && json.Valid(toolInput) {
+		meta.ToolInput = toolInput
+	}
+	if b, err := json.Marshal(meta); err == nil {
+		return string(b)
+	}
+	return ""
 }

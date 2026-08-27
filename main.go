@@ -201,6 +201,15 @@ func main() {
 	case "hook-post-commit":
 		hook.ProcessPostCommitHook()
 		return
+	case "hook-backfill-meta":
+		// T3b 数据地基A：回填 claude tool 行历史空 metadata（H4-A 空串率 <10%）。
+		updated, skipped, err := hook.BackfillClaudeToolMetadata()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "hook-backfill-meta: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("hook-backfill-meta: updated=%d skipped=%d (claude tool 行空 metadata 回填)\n", updated, skipped)
+		return
 	case "hook":
 		if len(os.Args) < 3 {
 			fmt.Println("usage: aipmc hook <install|uninstall>")
