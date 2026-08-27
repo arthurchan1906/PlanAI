@@ -22,9 +22,9 @@
 |------|------|:--:|
 | calls | 窗口内 [LLM] 行数 | — |
 | in_tok / out_tok | 各 agent 求和 | ↓ |
-| avg_lat / p95_lat | 各 agent 均值/分位 | ↓ |
+| avg_lat / p95_lat | 各 agent 均值/分位（**单位：秒**，源自 [LLM] 行 lat= 字段） | ↓ |
 | cache_hit_rate | cache_hit/(cache_hit+cache_create)，仅统计含 cache_hit 的行（87.7% 覆盖，responses 路径缺口记录在备注） | ↑ |
-| injected_rate | injected=Y 占比 | ↑ |
+| injected_rate | [LLM] 行 injected=Y 占比 = **请求带注入尝试的比例**，非到达率（8/27 Claude 审核补口径标注：注入内容被裁剪时该值仍可 100%，须对照 inject_reach_rate） | ↑ |
 
 ### 2.2 质量类（来源 DB）
 | 指标 | 计算 | 方向 |
@@ -42,6 +42,7 @@
 | emerge_events_total | 窗口内最后一次 emerge_events 的 total | ↓ |
 | action_items | 窗口内最后一次 emerge_events 的 items | ↓（≤10） |
 | inject_chars | [INJECT] 行 chars 均值 | ≤800 |
+| inject_reach_rate | **注入内容实际到达率** = 成功注入行（[INJECT] agent=/inject 前缀，未 suppressed）/（成功注入行 + suppressed 行）；skip（去重）与 no_summary_data（无数据）是设计行为不计分母（8/27 补，对照 injected_rate，防通道健康误读） | ↑ |
 
 ## 3. JSON schema v1
 
@@ -62,7 +63,7 @@
       "summary_coverage": 0.54, "l2_nested_goal": 0, "event_processed_rate": 0.36,
       "event_unconsumed": 20, "workflow_completed_rate": 0.20, "correction_signals": 2
     },
-    "injection": {"emerge_events_total": 20, "action_items": 7, "inject_chars": 679}
+    "injection": {"emerge_events_total": 20, "action_items": 7, "inject_chars": 679, "inject_reach_rate": 0.51}
   },
   "notes": {"cache_hit_coverage": 0.877}
 }

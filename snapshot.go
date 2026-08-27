@@ -49,10 +49,10 @@ type agentConsumption struct {
 	Calls        int     `json:"calls"`
 	InTok        int64   `json:"in_tok"`
 	OutTok       int64   `json:"out_tok"`
-	AvgLat       float64 `json:"avg_lat"`
-	P95Lat       float64 `json:"p95_lat"`
+	AvgLat       float64 `json:"avg_lat"`  // 单位：秒（[LLM] 行 lat= 字段）
+	P95Lat       float64 `json:"p95_lat"`  // 单位：秒
 	CacheHitRate float64 `json:"cache_hit_rate"`
-	InjectedRate float64 `json:"injected_rate"`
+	InjectedRate float64 `json:"injected_rate"` // 注入尝试率（请求带注入的比例），非到达率
 }
 
 type snapshotQuality struct {
@@ -65,9 +65,14 @@ type snapshotQuality struct {
 }
 
 type snapshotInjection struct {
-	EmergeEventsTotal int `json:"emerge_events_total"`
-	ActionItems       int `json:"action_items"`
-	InjectCharsAvg    int `json:"inject_chars"`
+	EmergeEventsTotal int     `json:"emerge_events_total"`
+	ActionItems       int     `json:"action_items"`
+	InjectCharsAvg    int     `json:"inject_chars"`
+	// InjectReachRate 注入内容实际到达率（8/27 Claude 审核补的对照指标）：
+	// 成功注入行 / (成功注入行 + suppressed 行)。skip（去重）与 no_summary_data
+	// （无数据可注）是设计行为，不计入分母——防 injected_rate 100% 被误读为
+	// "注入通道健康"（注入预算裁剪 8/26 实测 ~49%）。
+	InjectReachRate float64 `json:"inject_reach_rate"`
 }
 
 func dispatchSnapshot(args *cli.Args, raw []string) {
@@ -326,6 +331,7 @@ func correctionSignals(db *sql.DB, since, until time.Time) int {
 func snapshotInjectionFromLog(since, until time.Time) snapshotInjection {
 	inj := snapshotInjection{}
 	var charsSum, charsN int
+	var okLines, supLines int
 	scanLog(func(line string) bool {
 		if !strings.Contains(line, "[INJECT]") {
 			return true
@@ -335,9 +341,17 @@ func snapshotInjectionFromLog(since, until time.Time) snapshotInjection {
 			inj.ActionItems = parseFieldInt(line, "items=")
 			return true
 		}
+		if strings.Contains(line, "suppressed=") {
+			supLines++
+			return true
+		}
 		if strings.HasPrefix(line, "[") {
 			rest := line[strings.Index(line, "]")+1:]
-			if strings.HasPrefix(strings.TrimSpace(rest), "[INJECT] agent=") {
+			rest = strings.TrimSpace(rest)
+			// 成功注入 = 正常注入行（agent= 前缀）或 guidelines_only（inject 前缀），
+			// 与 metrics C1 inject_coverage 的分子口径一致。
+			if strings.HasPrefix(rest, "[INJECT] agent=") || strings.HasPrefix(rest, "[INJECT] inject ") {
+				okLines++
 				if v := parseField(line, "chars="); v != "" {
 					charsSum += atoi(v)
 					charsN++
@@ -348,6 +362,9 @@ func snapshotInjectionFromLog(since, until time.Time) snapshotInjection {
 	}, since, until)
 	if charsN > 0 {
 		inj.InjectCharsAvg = charsSum / charsN
+	}
+	if okLines+supLines > 0 {
+		inj.InjectReachRate = float64(okLines) / float64(okLines+supLines)
 	}
 	return inj
 }
