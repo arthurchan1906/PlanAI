@@ -20,6 +20,19 @@ func retryOnBusy(fn func() error) error {
 	return pmdb.RetryBusy(fn)
 }
 
+// execBusy 是带 BUSY 重试的 db.Exec 封装（D 线决策 B：retry 全覆盖，
+// decision-20260827-144909-c3d06b）。SQLITE_BUSY_RECOVERY(261) busy handler
+// 不等待，需调用方重试——store 写操作统一走此入口，避免裸 Exec 并发失败。
+func execBusy(db *sql.DB, query string, args ...any) (sql.Result, error) {
+	var res sql.Result
+	err := retryOnBusy(func() error {
+		var e error
+		res, e = db.Exec(query, args...)
+		return e
+	})
+	return res, err
+}
+
 // ============================================================
 // Tasks
 // ============================================================
@@ -110,7 +123,7 @@ func CreateTask(projectPath string, title, priority, status, phase, planID strin
 		// "plan not found" (bug-20260805-134225-085427).
 		return nil, fmt.Errorf("plan '%s' lookup failed: %w", planID, err)
 	}
-	_, err = db.Exec("INSERT INTO tasks (id, title, status, priority, phase, plan_id, acceptance_json, related_docs_json, related_decisions_json, last_note, updated_at, roadmap_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, title, status, priority, phase, planID, accJSON, "[]", "[]", "", u.Today(), roadmapID, now)
+	_, err = execBusy(db, "INSERT INTO tasks (id, title, status, priority, phase, plan_id, acceptance_json, related_docs_json, related_decisions_json, last_note, updated_at, roadmap_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, title, status, priority, phase, planID, accJSON, "[]", "[]", "", u.Today(), roadmapID, now)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +141,7 @@ func CreateTask(projectPath string, title, priority, status, phase, planID strin
 		json.Unmarshal([]byte(taskIDsJSON), &ids)
 		ids = append(ids, id)
 		newJSON, _ := json.Marshal(ids)
-		db.Exec("UPDATE plans SET task_ids_json = ?, updated_at = ? WHERE id = ?", string(newJSON), u.NowISO(), planID)
+		execBusy(db, "UPDATE plans SET task_ids_json = ?, updated_at = ? WHERE id = ?", string(newJSON), u.NowISO(), planID)
 	}
 	return GetTaskSimple(id)
 }
@@ -151,7 +164,7 @@ func UpdateTask(projectPath string, id, status, note string, allowWithoutCommit,
 	if status != oldStatus {
 		noteID := u.Slug("task-note")
 		if err := retryOnBusy(func() error {
-			_, e := db.Exec("INSERT INTO task_notes (id, task_id, content, mode, created_at) VALUES (?, ?, ?, ?, ?)", noteID, id, fmt.Sprintf("Status changed from %s to %s", oldStatus, status), "system", u.NowISO())
+			_, e := execBusy(db, "INSERT INTO task_notes (id, task_id, content, mode, created_at) VALUES (?, ?, ?, ?, ?)", noteID, id, fmt.Sprintf("Status changed from %s to %s", oldStatus, status), "system", u.NowISO())
 			return e
 		}); err != nil {
 			return nil, err
@@ -176,7 +189,7 @@ func UpdateTask(projectPath string, id, status, note string, allowWithoutCommit,
 		}
 	}
 	if err := retryOnBusy(func() error {
-		_, e := db.Exec("UPDATE tasks SET status = ?, last_note = ?, updated_at = ? WHERE id = ?", status, nextNote, u.Today(), id)
+		_, e := execBusy(db, "UPDATE tasks SET status = ?, last_note = ?, updated_at = ? WHERE id = ?", status, nextNote, u.Today(), id)
 		return e
 	}); err != nil {
 		return nil, fmt.Errorf("update tasks %s: %w", id, err)
@@ -206,7 +219,7 @@ func UpdateTask(projectPath string, id, status, note string, allowWithoutCommit,
 		}
 		noteID := u.Slug("task-note")
 		if err := retryOnBusy(func() error {
-			_, e := db.Exec("INSERT INTO task_notes (id, task_id, content, mode, created_at) VALUES (?, ?, ?, ?, ?)", noteID, id, note, mode, u.NowISO())
+			_, e := execBusy(db, "INSERT INTO task_notes (id, task_id, content, mode, created_at) VALUES (?, ?, ?, ?, ?)", noteID, id, note, mode, u.NowISO())
 			return e
 		}); err != nil {
 			return nil, err
@@ -236,13 +249,13 @@ func AppendTaskNote(projectPath string, taskID, content string) (map[string]any,
 	}
 	noteID := u.Slug("task-note")
 	if err := retryOnBusy(func() error {
-		_, e := db.Exec("INSERT INTO task_notes (id, task_id, content, mode, created_at) VALUES (?, ?, ?, ?, ?)", noteID, taskID, content, "append", u.NowISO())
+		_, e := execBusy(db, "INSERT INTO task_notes (id, task_id, content, mode, created_at) VALUES (?, ?, ?, ?, ?)", noteID, taskID, content, "append", u.NowISO())
 		return e
 	}); err != nil {
 		return nil, err
 	}
 	if err := retryOnBusy(func() error {
-		_, e := db.Exec("UPDATE tasks SET last_note = ?, updated_at = ? WHERE id = ?", nextNote, u.Today(), taskID)
+		_, e := execBusy(db, "UPDATE tasks SET last_note = ?, updated_at = ? WHERE id = ?", nextNote, u.Today(), taskID)
 		return e
 	}); err != nil {
 		return nil, err
@@ -283,7 +296,7 @@ func PlanTask(taskID string, steps []string) (map[string]any, error) {
 	for i, s := range steps {
 		items[i] = map[string]any{"text": s, "done": false}
 	}
-	db.Exec("UPDATE tasks SET acceptance_json = ?, updated_at = ? WHERE id = ?", u.JsonStr(items), u.Today(), taskID)
+	execBusy(db, "UPDATE tasks SET acceptance_json = ?, updated_at = ? WHERE id = ?", u.JsonStr(items), u.Today(), taskID)
 	return GetTaskSimple(taskID)
 }
 
@@ -308,7 +321,7 @@ func UpdateTaskCheckpoint(taskID string, index int, done bool) (map[string]any, 
 		acc[index] = map[string]any{}
 	}
 	acc[index]["done"] = done
-	db.Exec("UPDATE tasks SET acceptance_json = ?, updated_at = ? WHERE id = ?", u.JsonStr(acc), u.Today(), taskID)
+	execBusy(db, "UPDATE tasks SET acceptance_json = ?, updated_at = ? WHERE id = ?", u.JsonStr(acc), u.Today(), taskID)
 	return GetTaskSimple(taskID)
 }
 
@@ -523,7 +536,7 @@ func CreateCommit(projectPath string, title, summary, evidenceSummary, reviewNot
 		filesJSON = u.JsonStr(files)
 	}
 	err = retryOnBusy(func() error {
-		_, derr := db.Exec("INSERT INTO commits (id, title, summary, evidence_summary, review_notes, branch, commit_hash, task_id, decision_id, status, test_status, review_status, files_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, title, summary, evidenceSummary, reviewNotes, branch, commitHash, taskID, decisionID, status, testStatus, reviewStatus, filesJSON, now, now)
+		_, derr := execBusy(db, "INSERT INTO commits (id, title, summary, evidence_summary, review_notes, branch, commit_hash, task_id, decision_id, status, test_status, review_status, files_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, title, summary, evidenceSummary, reviewNotes, branch, commitHash, taskID, decisionID, status, testStatus, reviewStatus, filesJSON, now, now)
 		return derr
 	})
 	if err != nil {
@@ -687,7 +700,7 @@ func StoreGitCommit(projectPath, title, commitHash, date string, files []string)
 		var existingFiles string
 		db.QueryRow("SELECT files_json FROM commits WHERE id = ?", existingID).Scan(&existingFiles)
 		if existingFiles == "" || existingFiles == "[]" || existingFiles == "null" {
-			if _, err := db.Exec("UPDATE commits SET files_json = ?, commit_hash = ?, updated_at = ? WHERE id = ?",
+			if _, err := execBusy(db, "UPDATE commits SET files_json = ?, commit_hash = ?, updated_at = ? WHERE id = ?",
 				filesJSON, commitHash, u.NowISO(), existingID); err != nil {
 				return nil, err
 			}
@@ -698,7 +711,7 @@ func StoreGitCommit(projectPath, title, commitHash, date string, files []string)
 	// Insert new
 	id := u.Slug("commit")
 	now := u.NowISO()
-	_, err = db.Exec("INSERT INTO commits (id, title, summary, evidence_summary, review_notes, branch, commit_hash, task_id, decision_id, status, test_status, review_status, files_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+	_, err = execBusy(db, "INSERT INTO commits (id, title, summary, evidence_summary, review_notes, branch, commit_hash, task_id, decision_id, status, test_status, review_status, files_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		id, title, "", "", "", "", commitHash, "", "", "committed", "auto", "auto", filesJSON, date, now)
 	if err != nil {
 		return nil, err
@@ -759,7 +772,7 @@ func UpdateCommitFor(projectPath, id string, payload map[string]any) (map[string
 	setParts = append(setParts, "updated_at = ?")
 	args = append(args, u.NowISO())
 	args = append(args, id)
-	_, err = db.Exec(fmt.Sprintf("UPDATE commits SET %s WHERE id = ?", strings.Join(setParts, ", ")), args...)
+	_, err = execBusy(db, fmt.Sprintf("UPDATE commits SET %s WHERE id = ?", strings.Join(setParts, ", ")), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -821,7 +834,7 @@ func BackfillCommitTask(projectPath, id, taskID, title string, files []string) (
 	}
 	setParts = append(setParts, "updated_at = ?")
 	args = append(args, u.NowISO(), id)
-	if _, err := db.Exec(fmt.Sprintf("UPDATE commits SET %s WHERE id = ?", strings.Join(setParts, ", ")), args...); err != nil {
+	if _, err := execBusy(db, fmt.Sprintf("UPDATE commits SET %s WHERE id = ?", strings.Join(setParts, ", ")), args...); err != nil {
 		return BackfillNoop, err
 	}
 	if existingTask == "" && taskID != "" {
@@ -889,7 +902,7 @@ func CreatePlan(title, goal, roadmapID, visionID, priority, status string, scope
 	defer db.Close()
 	id := u.Slug("plan")
 	now := u.NowISO()
-	_, err = db.Exec("INSERT INTO plans (id, roadmap_id, vision_id, title, goal, status, priority, scope_json, risks_json, assumptions_json, task_ids_json, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, roadmapID, visionID, title, goal, status, priority, u.JsonStr(scope), u.JsonStr(risks), u.JsonStr(assumptions), u.JsonStr(taskIDs), "manual", now, now)
+	_, err = execBusy(db, "INSERT INTO plans (id, roadmap_id, vision_id, title, goal, status, priority, scope_json, risks_json, assumptions_json, task_ids_json, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, roadmapID, visionID, title, goal, status, priority, u.JsonStr(scope), u.JsonStr(risks), u.JsonStr(assumptions), u.JsonStr(taskIDs), "manual", now, now)
 	if err != nil {
 		return nil, err
 	}
@@ -921,7 +934,7 @@ func UpdatePlan(id string, payload map[string]any) (map[string]any, error) {
 	setParts = append(setParts, "updated_at = ?")
 	args = append(args, u.NowISO())
 	args = append(args, id)
-	_, err = db.Exec(fmt.Sprintf("UPDATE plans SET %s WHERE id = ?", strings.Join(setParts, ", ")), args...)
+	_, err = execBusy(db, fmt.Sprintf("UPDATE plans SET %s WHERE id = ?", strings.Join(setParts, ", ")), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1007,7 +1020,7 @@ func CreateBug(projectPath string, title, description, severity, status, commitI
 	}
 	id := u.Slug("bug")
 	now := u.NowISO()
-	_, err = db.Exec("INSERT INTO bugs (id, title, description, severity, status, commit_id, error, files, root_cause, fix, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, title, description, severity, status, commitID, errMsg, files, rootCause, fix, tags, now, now)
+	_, err = execBusy(db, "INSERT INTO bugs (id, title, description, severity, status, commit_id, error, files, root_cause, fix, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, title, description, severity, status, commitID, errMsg, files, rootCause, fix, tags, now, now)
 	if err != nil {
 		return nil, err
 	}
@@ -1041,7 +1054,7 @@ func UpdateBug(id string, payload map[string]any) (map[string]any, error) {
 	setParts = append(setParts, "updated_at = ?")
 	args = append(args, u.NowISO())
 	args = append(args, id)
-	_, err = db.Exec(fmt.Sprintf("UPDATE bugs SET %s WHERE id = ?", strings.Join(setParts, ", ")), args...)
+	_, err = execBusy(db, fmt.Sprintf("UPDATE bugs SET %s WHERE id = ?", strings.Join(setParts, ", ")), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1091,7 +1104,7 @@ func CreateDecision(projectPath string, title, background, decision, status stri
 	// 无 retry，多 agent 并发写决策时 SQLITE_BUSY 直接失败）。retryOnBusy 委托
 	// pmdb.RetryBusy（100/200/400ms 指数退避，BUSY_RECOVERY 需调用方重试）。
 	err = retryOnBusy(func() error {
-		_, err := db.Exec("INSERT INTO decisions (id, title, date, status, background, decision_text, impact_json, alternatives_json, related_tasks_json, updates_canon) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, title, u.Today(), status, background, decision, "[]", "[]", "[]", 0)
+		_, err := execBusy(db, "INSERT INTO decisions (id, title, date, status, background, decision_text, impact_json, alternatives_json, related_tasks_json, updates_canon) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, title, u.Today(), status, background, decision, "[]", "[]", "[]", 0)
 		return err
 	})
 	if err != nil {
@@ -1107,7 +1120,7 @@ func UpdateDecisionStatus(id, status string) (map[string]any, error) {
 		return nil, err
 	}
 	defer db.Close()
-	db.Exec("UPDATE decisions SET status = ? WHERE id = ?", status, id)
+	execBusy(db, "UPDATE decisions SET status = ? WHERE id = ?", status, id)
 	return GetDecision(id)
 }
 
@@ -1172,7 +1185,7 @@ func CreateIdea(title, summary, impact, source string, canonConflict bool, curre
 	if canonConflict {
 		cc = 1
 	}
-	_, err = db.Exec("INSERT INTO ideas (id, title, summary, impact, source, status, canon_conflict, current_summary, main_question, recommended_next_action, updated_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, title, summary, impact, source, "new", cc, currentSummary, mainQuestion, recommendedNextAction, now, now)
+	_, err = execBusy(db, "INSERT INTO ideas (id, title, summary, impact, source, status, canon_conflict, current_summary, main_question, recommended_next_action, updated_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, title, summary, impact, source, "new", cc, currentSummary, mainQuestion, recommendedNextAction, now, now)
 	if err != nil {
 		return nil, err
 	}
@@ -1200,7 +1213,7 @@ func UpdateIdea(id string, payload map[string]any) (map[string]any, error) {
 		return GetIdea(id)
 	}
 	args = append(args, id)
-	_, err = db.Exec(fmt.Sprintf("UPDATE ideas SET %s WHERE id = ?", strings.Join(setParts, ", ")), args...)
+	_, err = execBusy(db, fmt.Sprintf("UPDATE ideas SET %s WHERE id = ?", strings.Join(setParts, ", ")), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1213,9 +1226,9 @@ func ReviewIdea(id, status, note string) (map[string]any, error) {
 		return nil, err
 	}
 	defer db.Close()
-	db.Exec("UPDATE ideas SET status = ?, updated_at = ? WHERE id = ?", status, u.NowISO(), id)
+	execBusy(db, "UPDATE ideas SET status = ?, updated_at = ? WHERE id = ?", status, u.NowISO(), id)
 	if note != "" {
-		db.Exec("INSERT INTO idea_comments (id, idea_id, author_type, author_name, kind, content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", u.Slug("ic"), id, "human", "reviewer", "review", note, u.NowISO())
+		execBusy(db, "INSERT INTO idea_comments (id, idea_id, author_type, author_name, kind, content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", u.Slug("ic"), id, "human", "reviewer", "review", note, u.NowISO())
 	}
 	return GetIdea(id)
 }
@@ -1228,7 +1241,7 @@ func CreateIdeaComment(ideaID, content, kind, authorType, authorName string) (ma
 	defer db.Close()
 	id := u.Slug("ic")
 	now := u.NowISO()
-	db.Exec("INSERT INTO idea_comments (id, idea_id, author_type, author_name, kind, content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", id, ideaID, authorType, authorName, kind, content, now)
+	execBusy(db, "INSERT INTO idea_comments (id, idea_id, author_type, author_name, kind, content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", id, ideaID, authorType, authorName, kind, content, now)
 	return map[string]any{"id": id, "idea_id": ideaID, "kind": kind, "content": content, "created_at": now}, nil
 }
 
@@ -1330,7 +1343,7 @@ func CreateRoadmap(title, targetDate, visionID, status, priority string) (map[st
 	defer db.Close()
 	id := u.Slug("rdm")
 	now := u.NowISO()
-	_, err = db.Exec("INSERT INTO roadmap (id, vision_id, title, target_date, status, priority, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", id, visionID, title, targetDate, status, priority, now, now)
+	_, err = execBusy(db, "INSERT INTO roadmap (id, vision_id, title, target_date, status, priority, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", id, visionID, title, targetDate, status, priority, now, now)
 	if err != nil {
 		return nil, err
 	}
@@ -1360,7 +1373,7 @@ func UpdateRoadmap(id string, payload map[string]any) (map[string]any, error) {
 	setParts = append(setParts, "updated_at = ?")
 	args = append(args, u.NowISO())
 	args = append(args, id)
-	_, err = db.Exec(fmt.Sprintf("UPDATE roadmap SET %s WHERE id = ?", strings.Join(setParts, ", ")), args...)
+	_, err = execBusy(db, fmt.Sprintf("UPDATE roadmap SET %s WHERE id = ?", strings.Join(setParts, ", ")), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1422,7 +1435,7 @@ func CreatePrinciple(title, summary, kind, status string) (map[string]any, error
 	defer db.Close()
 	id := u.Slug("prncpl")
 	now := u.NowISO()
-	_, err = db.Exec("INSERT INTO principles (id, title, summary, kind, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", id, title, summary, kind, status, now, now)
+	_, err = execBusy(db, "INSERT INTO principles (id, title, summary, kind, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", id, title, summary, kind, status, now, now)
 	if err != nil {
 		return nil, err
 	}
@@ -1452,7 +1465,7 @@ func UpdatePrinciple(id string, payload map[string]any) (map[string]any, error) 
 	setParts = append(setParts, "updated_at = ?")
 	args = append(args, u.NowISO())
 	args = append(args, id)
-	_, err = db.Exec(fmt.Sprintf("UPDATE principles SET %s WHERE id = ?", strings.Join(setParts, ", ")), args...)
+	_, err = execBusy(db, fmt.Sprintf("UPDATE principles SET %s WHERE id = ?", strings.Join(setParts, ", ")), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1578,7 +1591,7 @@ func DeleteLink(id string) error {
 		return err
 	}
 	defer db.Close()
-	_, err = db.Exec("DELETE FROM links WHERE id = ?", id)
+	_, err = execBusy(db, "DELETE FROM links WHERE id = ?", id)
 	return err
 }
 
@@ -1656,7 +1669,7 @@ func UpdateDocRecord(path string, payload map[string]any) (map[string]any, error
 		return nil, fmt.Errorf("nothing to update")
 	}
 	args = append(args, path)
-	_, err = db.Exec(fmt.Sprintf("UPDATE doc_records SET %s WHERE path = ?", strings.Join(setParts, ", ")), args...)
+	_, err = execBusy(db, fmt.Sprintf("UPDATE doc_records SET %s WHERE path = ?", strings.Join(setParts, ", ")), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1855,7 +1868,7 @@ func CreateVision(title, summary, status, horizon string) (map[string]any, error
 	defer db.Close()
 	id := u.Slug("vision")
 	now := u.NowISO()
-	db.Exec("INSERT INTO visions (id, title, summary, status, horizon, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", id, title, summary, status, horizon, now, now)
+	execBusy(db, "INSERT INTO visions (id, title, summary, status, horizon, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", id, title, summary, status, horizon, now, now)
 	_ = pmdb.SyncFTS5Entity(db, "vision", id, title, title+" "+summary)
 	return GetVision(id)
 }
@@ -1882,7 +1895,7 @@ func UpdateVision(id string, payload map[string]any) (map[string]any, error) {
 	setParts = append(setParts, "updated_at = ?")
 	args = append(args, u.NowISO())
 	args = append(args, id)
-	_, err = db.Exec(fmt.Sprintf("UPDATE visions SET %s WHERE id = ?", strings.Join(setParts, ", ")), args...)
+	_, err = execBusy(db, fmt.Sprintf("UPDATE visions SET %s WHERE id = ?", strings.Join(setParts, ", ")), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1947,21 +1960,21 @@ func UpdateCanon(decisionID, productGoal, engFocus, arch string, addScope, addAv
 	}
 	defer db.Close()
 	now := u.NowISO()
-	if _, err := db.Exec("INSERT OR REPLACE INTO canon (id, updated_at, product_goal, engineering_focus, architecture) VALUES (1, ?, ?, ?, ?)", now, productGoal, engFocus, arch); err != nil {
+	if _, err := execBusy(db, "INSERT OR REPLACE INTO canon (id, updated_at, product_goal, engineering_focus, architecture) VALUES (1, ?, ?, ?, ?)", now, productGoal, engFocus, arch); err != nil {
 		return nil, err
 	}
 	// Read side (GetCanon) exposes these as version_scope / avoid_now.
 	// Older writes used "scope"/"avoid" which nothing ever read — clean them up.
-	if _, err := db.Exec("DELETE FROM canon_items WHERE item_type IN ('scope', 'avoid')"); err != nil {
+	if _, err := execBusy(db, "DELETE FROM canon_items WHERE item_type IN ('scope', 'avoid')"); err != nil {
 		return nil, err
 	}
 	for i, s := range addScope {
-		if _, err := db.Exec("INSERT OR REPLACE INTO canon_items (item_type, position, value) VALUES (?, ?, ?)", "version_scope", i, s); err != nil {
+		if _, err := execBusy(db, "INSERT OR REPLACE INTO canon_items (item_type, position, value) VALUES (?, ?, ?)", "version_scope", i, s); err != nil {
 			return nil, err
 		}
 	}
 	for i, s := range addAvoid {
-		if _, err := db.Exec("INSERT OR REPLACE INTO canon_items (item_type, position, value) VALUES (?, ?, ?)", "avoid_now", i, s); err != nil {
+		if _, err := execBusy(db, "INSERT OR REPLACE INTO canon_items (item_type, position, value) VALUES (?, ?, ?)", "avoid_now", i, s); err != nil {
 			return nil, err
 		}
 	}
@@ -2065,7 +2078,7 @@ func CreateThread(title, summary, source string) (map[string]any, error) {
 	if source == "" {
 		source = "manual"
 	}
-	_, err = db.Exec("INSERT INTO threads (id, title, summary, status, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", id, title, summary, "active", source, now, now)
+	_, err = execBusy(db, "INSERT INTO threads (id, title, summary, status, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", id, title, summary, "active", source, now, now)
 	if err != nil {
 		return nil, err
 	}
@@ -2095,7 +2108,7 @@ func UpdateThread(id string, payload map[string]any) (map[string]any, error) {
 	setParts = append(setParts, "updated_at = ?")
 	args = append(args, u.NowISO())
 	args = append(args, id)
-	_, err = db.Exec(fmt.Sprintf("UPDATE threads SET %s WHERE id = ?", strings.Join(setParts, ", ")), args...)
+	_, err = execBusy(db, fmt.Sprintf("UPDATE threads SET %s WHERE id = ?", strings.Join(setParts, ", ")), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -2108,8 +2121,8 @@ func DeleteThread(id string) error {
 		return err
 	}
 	defer db.Close()
-	db.Exec("DELETE FROM thread_items WHERE thread_id = ?", id)
-	_, err = db.Exec("DELETE FROM threads WHERE id = ?", id)
+	execBusy(db, "DELETE FROM thread_items WHERE thread_id = ?", id)
+	_, err = execBusy(db, "DELETE FROM threads WHERE id = ?", id)
 	return err
 }
 
@@ -2147,11 +2160,11 @@ func AddToThread(threadID, entityType, entityID, note string) (map[string]any, e
 	}
 	defer db.Close()
 	now := u.NowISO()
-	_, err = db.Exec("INSERT OR REPLACE INTO thread_items (thread_id, entity_type, entity_id, added_at, note) VALUES (?, ?, ?, ?, ?)", threadID, entityType, entityID, now, note)
+	_, err = execBusy(db, "INSERT OR REPLACE INTO thread_items (thread_id, entity_type, entity_id, added_at, note) VALUES (?, ?, ?, ?, ?)", threadID, entityType, entityID, now, note)
 	if err != nil {
 		return nil, err
 	}
-	db.Exec("UPDATE threads SET updated_at = ? WHERE id = ?", now, threadID)
+	execBusy(db, "UPDATE threads SET updated_at = ? WHERE id = ?", now, threadID)
 	return GetThread(threadID)
 }
 
@@ -2161,7 +2174,7 @@ func RemoveFromThread(threadID, entityType, entityID string) error {
 		return err
 	}
 	defer db.Close()
-	_, err = db.Exec("DELETE FROM thread_items WHERE thread_id = ? AND entity_type = ? AND entity_id = ?", threadID, entityType, entityID)
+	_, err = execBusy(db, "DELETE FROM thread_items WHERE thread_id = ? AND entity_type = ? AND entity_id = ?", threadID, entityType, entityID)
 	return err
 }
 
@@ -2699,7 +2712,7 @@ func DeleteTask(id string) error {
 		return err
 	}
 	defer db.Close()
-	_, err = db.Exec("DELETE FROM tasks WHERE id = ?", id)
+	_, err = execBusy(db, "DELETE FROM tasks WHERE id = ?", id)
 	return err
 }
 
@@ -2709,7 +2722,7 @@ func DeletePlan(id string) error {
 		return err
 	}
 	defer db.Close()
-	_, err = db.Exec("DELETE FROM plans WHERE id = ?", id)
+	_, err = execBusy(db, "DELETE FROM plans WHERE id = ?", id)
 	return err
 }
 
@@ -2719,7 +2732,7 @@ func DeleteBug(id string) error {
 		return err
 	}
 	defer db.Close()
-	_, err = db.Exec("DELETE FROM bugs WHERE id = ?", id)
+	_, err = execBusy(db, "DELETE FROM bugs WHERE id = ?", id)
 	return err
 }
 
@@ -2741,7 +2754,7 @@ func CreateEventFor(projectPath, typ, entityType, entityID, summary string) (map
 	defer db.Close()
 	id := u.Slug("evt")
 	now := u.NowISO()
-	_, err = db.Exec("INSERT INTO events (id, type, entity_type, entity_id, summary, created_at, consumed_by_agent) VALUES (?, ?, ?, ?, ?, ?, 0)", id, typ, entityType, entityID, summary, now)
+	_, err = execBusy(db, "INSERT INTO events (id, type, entity_type, entity_id, summary, created_at, consumed_by_agent) VALUES (?, ?, ?, ?, ?, ?, 0)", id, typ, entityType, entityID, summary, now)
 	if err != nil {
 		return nil, err
 	}
@@ -2808,7 +2821,7 @@ func MarkEventProcessed(typ, entityID string) (int64, error) {
 	var res sql.Result
 	err = retryOnBusy(func() error {
 		var e error
-		res, e = db.Exec("UPDATE events SET processed_by_agent = 1 WHERE type = ? AND entity_id = ? AND processed_by_agent = 0", typ, entityID)
+		res, e = execBusy(db, "UPDATE events SET processed_by_agent = 1 WHERE type = ? AND entity_id = ? AND processed_by_agent = 0", typ, entityID)
 		return e
 	})
 	if err != nil {
@@ -2858,7 +2871,7 @@ func MarkEventsConsumed() error {
 		return err
 	}
 	defer db.Close()
-	_, err = db.Exec("UPDATE events SET consumed_by_agent = 1 WHERE consumed_by_agent = 0")
+	_, err = execBusy(db, "UPDATE events SET consumed_by_agent = 1 WHERE consumed_by_agent = 0")
 	if err != nil {
 		return err
 	}
@@ -2916,7 +2929,7 @@ func CreateAgentProfile(name, role, capabilities string) (map[string]any, error)
 	if capabilities == "" {
 		capabilities = "[]"
 	}
-	_, err = db.Exec("INSERT INTO agent_profiles (id, name, role, capabilities, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'active', ?, ?)", id, name, role, capabilities, now, now)
+	_, err = execBusy(db, "INSERT INTO agent_profiles (id, name, role, capabilities, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'active', ?, ?)", id, name, role, capabilities, now, now)
 	if err != nil {
 		return nil, err
 	}
@@ -3004,7 +3017,7 @@ func UpdateAgentProfile(id string, payload map[string]any) (map[string]any, erro
 	setParts = append(setParts, "updated_at = ?")
 	args = append(args, u.NowISO())
 	args = append(args, id)
-	_, err = db.Exec("UPDATE agent_profiles SET "+strings.Join(setParts, ", ")+" WHERE id = ?", args...)
+	_, err = execBusy(db, "UPDATE agent_profiles SET "+strings.Join(setParts, ", ")+" WHERE id = ?", args...)
 	if err != nil {
 		return nil, err
 	}
@@ -3068,7 +3081,7 @@ func CreateGraphEdgeFor(projectPath, sourceType, sourceID, edgeType, targetType,
 	id := u.Slug("gedge")
 	now := u.NowISO()
 	evJSON := u.JsonStr(evidence)
-	_, err = db.Exec("INSERT OR IGNORE INTO graph_edges (id, source_type, source_id, edge_type, target_type, target_id, weight, evidence_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+	_, err = execBusy(db, "INSERT OR IGNORE INTO graph_edges (id, source_type, source_id, edge_type, target_type, target_id, weight, evidence_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		id, sourceType, sourceID, edgeType, targetType, targetID, weight, evJSON, now)
 	return err
 }

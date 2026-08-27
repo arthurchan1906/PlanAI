@@ -259,7 +259,7 @@ func flushDiscussionSpool() error {
 				pending = append(pending, entries[i:]...)
 				break
 			}
-			_, ierr := db.Exec("INSERT INTO discussion_log (id, session_id, role, source, content, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+			_, ierr := execBusy(db, "INSERT INTO discussion_log (id, session_id, role, source, content, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
 				e.ID, e.SessionID, e.Role, e.Source, e.Content, e.Metadata, e.CreatedAt)
 			if ierr == nil {
 				_ = pmdb.SyncFTS5Entity(db, "discussion", e.ID, "["+e.Role+"]["+e.Source+"] "+previewSpool(e.Content), e.Content)
@@ -360,7 +360,7 @@ func logDiscussionOnce(sessionID, role, source, content, metadataJSON, now strin
 		}
 	}
 
-	_, err = db.Exec("INSERT INTO discussion_log (id, session_id, role, source, content, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", id, sid, role, source, content, metadataJSON, now)
+	_, err = execBusy(db, "INSERT INTO discussion_log (id, session_id, role, source, content, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", id, sid, role, source, content, metadataJSON, now)
 	if err != nil {
 		return nil, err
 	}
@@ -402,7 +402,7 @@ func touchAgentStatus(db *sql.DB, source, sessionID, status string, explicit boo
 			ON CONFLICT(session_id) DO UPDATE SET source=excluded.source, status=excluded.status, updated_at=excluded.updated_at
 			WHERE agent_status.explicit = 0`
 	}
-	_, err := db.Exec(q, sessionID, source, status, u.NowISO())
+	_, err := execBusy(db, q, sessionID, source, status, u.NowISO())
 	return err
 }
 
@@ -1383,7 +1383,7 @@ func UpdateDiscussionSessionIDFor(projectPath, id, sessionID string) error {
 		return err
 	}
 	defer db.Close()
-	_, err = db.Exec("UPDATE discussion_log SET session_id=? WHERE id=? AND (session_id='' OR session_id='unknown')", sessionID, id)
+	_, err = execBusy(db, "UPDATE discussion_log SET session_id=? WHERE id=? AND (session_id='' OR session_id='unknown')", sessionID, id)
 	return err
 }
 

@@ -39,7 +39,7 @@ func UpsertSessionSummaryFor(projectPath string, row SessionSummary) error {
 	if row.CreatedAt == "" {
 		row.CreatedAt = now
 	}
-	_, err = db.Exec(`
+	_, err = execBusy(db, `
 		INSERT INTO session_summaries
 			(session_id, source, review_json, summary, intent, entity_refs, quality_score, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -192,7 +192,7 @@ func EnsureSessionSummariesTableFor(projectPath string) error {
 		return err
 	}
 	defer db.Close()
-	_, err = db.Exec(`
+	_, err = execBusy(db, `
 		CREATE TABLE IF NOT EXISTS session_summaries (
 			session_id TEXT PRIMARY KEY,
 			source TEXT NOT NULL DEFAULT '',
