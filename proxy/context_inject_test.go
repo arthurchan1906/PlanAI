@@ -448,3 +448,56 @@ func TestInjectProjectForRequestEnvMode(t *testing.T) {
 		t.Errorf("injectProjectForRequest = %q, want fallback %q", got, currentInjectProject())
 	}
 }
+
+// E 线（8/27）：guidelines 满 600 时高优段（warnings/actionItems）不被挤掉。
+// 背景数据：8/27 日志实测 1047/1047 次注入被 char_limit 裁剪（0 次完整注入），
+// 段裁剪 file_cut=9404 / warn=7631 / act=4800 / goals=3113 / guide=1017——
+// guidelines(600B)+fileAssoc 把 written 顶过 750 后 warn/act guard 恒真、全被挤掉。
+// 预算重排：guidelines 计算 avail 时扣除 warnActReserve，warn/act 稳定获得保留空间。
+// 回归断言：高优段到达条数显著提升且 block 不超 cap。
+func TestBuildContextBlockWarnActReserve(t *testing.T) {
+	gl := strings.Repeat("g", guidelinesBudget)
+	// 5 条 warn，每条 ≈55B（贴近真实 blind_edit_loop/frustration 单条长度）
+	warns := make([]string, 5)
+	for i := range warns {
+		warns[i] = fmt.Sprintf("w%d-%s", i, strings.Repeat("x", 52))
+	}
+	// 8/27 常见 file_total≈6 场景（fileAssoc 3 条占 ≈117B）
+	files := []string{
+		"a.go → task-1111111111 (in_progress, P0)",
+		"b.go → task-2222222222 (done, P1)",
+		"c.go → task-3333333333 (todo, P2)",
+	}
+	block, sc := buildContextBlock(nil, warns, nil, files, gl)
+	// 旧实现（无 reserve）：written=93+600+20=713，warn guard 773>750 → 5 条全裁。
+	// 新实现：avail=min(600,750-93-200)=457，written=570，warn 至少到 3 条（裁 ≤2）。
+	if sc.warnings > 2 {
+		t.Fatalf("warnings suppressed %d, want ≤2 (reserve must protect high-priority)", sc.warnings)
+	}
+	for _, mark := range []string{"w0-", "w1-", "w2-"} {
+		if !strings.Contains(block, mark) {
+			t.Fatalf("warn %q must survive guidelines: %s", mark, block)
+		}
+	}
+	if len(block) > maxInjectChars {
+		t.Fatalf("block %d exceeds cap %d", len(block), maxInjectChars)
+	}
+}
+
+// E 线（8/27）：actionItems 段在 guidelines 满 600 时同样不被挤掉（v1.13 §4:
+// actionItems ceil 内优先级 3，高于 fileAssoc/goals）。
+func TestBuildContextBlockActionItemsSurvive(t *testing.T) {
+	gl := strings.Repeat("g", guidelinesBudget)
+	warns := []string{strings.Repeat("w", 55)}
+	acts := []string{"⚠️ 修复: aipm_record_commit(task_id=\"?\", title=\"...\")\n  → 详情: aipm_get_commit(\"task-0000000000\")"}
+	block, sc := buildContextBlock(nil, warns, acts, nil, gl)
+	if sc.actionItems != 0 {
+		t.Fatalf("actionItems suppressed %d, want 0", sc.actionItems)
+	}
+	if !strings.Contains(block, "aipm_record_commit") {
+		t.Fatalf("actionItem hint must survive guidelines: %s", block)
+	}
+	if len(block) > maxInjectChars {
+		t.Fatalf("block %d exceeds cap %d", len(block), maxInjectChars)
+	}
+}

@@ -30,7 +30,16 @@ const (
 	sessionTTL       = 48 * time.Hour // ignore sessions older than this
 	actionItemCeil   = 10             // 2.1: safety ceiling for formatted action items
 	perTypeCap       = 5              // 2.1: max individual items per event type
+	warnActReserve   = 200            // E 线（8/27）：warnings+actionItems 保留预算（字节）
 )
+
+// E 线预算重排说明（8/27，数据依据见 METRICS_BASELINE 与注入日志）：
+// 8/27 当日 1047/1047 次注入被 char_limit 裁剪（0 次完整注入），段裁剪条数
+// file_cut=9404 / warn=7631 / act=4800 / goals=3113 / guide=1017——guidelines(600B)
+// 与 fileAssoc 把 written 顶过 750 后，warnings/actionItems 的 guard 恒真、全被挤掉。
+// 预算重排：buildContextBlock 计算 guidelines 可用预算时扣除 warnActReserve，
+// 高优段（warnings+actionItems）稳定获得 ≈180B（≈2-3 条）到达空间，不被规范文本挤占。
+// 对齐 v1.13 §4 验收：guidelines 满 600 时高优段不被挤掉。
 
 // isEmergeEvent checks if an event type should be surfaced as an actionable item.
 func isEmergeEvent(typ string) bool {
@@ -64,8 +73,9 @@ var (
 )
 
 // segCounts 按 source_segment 统计被 cap 裁剪的条目数（W1 8/13，F2 数据源）。
-// 优先级顺序即注入顺序：fileAssoc > warnings > actionItems > goals——
-// 若裁剪集中在 goals（低优先级）属设计行为；若伤及 fileAssoc/warnings 才是问题。
+// 实际写序：fileAssoc → guidelines → warnings → actionItems → goals（Vision tip 最后）。
+// E 线（8/27）：guidelines 计算 avail 时扣除 warnActReserve，warn/act 稳定获得保留空间；
+// 裁剪仍应集中在 goals/guidelines（低优先），伤及 warn/act/fileAssoc 才是问题。
 type segCounts struct {
 	fileAssoc     int
 	warnings      int
@@ -572,9 +582,16 @@ func buildContextBlock(goals, warnings, actionItems, fileAssoc []string, guideli
 	}
 
 	// ── Guidelines (dedicated budget, truncated to remaining headroom) ──
+	// E 线（8/27）：avail 扣除 warnActReserve——guidelines 满 600 时也必须给
+	// warnings/actionItems 留保留空间（8/27 实测 warn 7631 条/日全被挤掉）；
+	// 无高优段时 reserve=0，guidelines 不浪费让渡空间（保持旧行为）。
 	if guidelines != "" {
 		buf.WriteString("\n[项目编码规范]\n")
-		avail := min(len(guidelines), guidelinesBudget, maxInjectChars-50-written)
+		reserve := 0
+		if len(warnings) > 0 || len(actionItems) > 0 {
+			reserve = warnActReserve
+		}
+		avail := min(len(guidelines), guidelinesBudget, maxInjectChars-50-written-reserve)
 		if avail < 0 {
 			avail = 0
 		}
