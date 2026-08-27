@@ -1,0 +1,72 @@
+{
+  "generated_at": "2026-08-27T14:40:00+08:00",
+  "source": "[MCP] 日志（aipmc.log + 归档）",
+  "baseline": {
+    "window": "8/14-8/26",
+    "total_calls": 2297,
+    "retrieval_ratio": 0.6448,
+    "diversity_unique_tools": 43,
+    "diversity_shannon": 4.278,
+    "proactive_ratio": 0.1715,
+    "vision_calls": 14,
+    "test_tool_calls": 41
+  },
+  "point_day": {
+    "window": "8/27",
+    "total_calls": 367,
+    "retrieval_ratio": 0.654,
+    "diversity_unique_tools": 28,
+    "diversity_shannon": 3.987,
+    "proactive_ratio": 0.1935,
+    "vision_calls": 8,
+    "test_tool_calls": 0
+  },
+  "by_day": {
+    "2026-08-12": 37,
+    "2026-08-13": 240,
+    "2026-08-14": 618,
+    "2026-08-17": 236,
+    "2026-08-18": 256,
+    "2026-08-19": 140,
+    "2026-08-20": 286,
+    "2026-08-24": 272,
+    "2026-08-25": 175,
+    "2026-08-26": 355,
+    "2026-08-27": 367
+  },
+  "log_gap_days": [
+    "2026-08-15",
+    "2026-08-16",
+    "2026-08-21",
+    "2026-08-22",
+    "2026-08-23"
+  ],
+  "pre_window_8-12_8-13_calls": 277,
+  "baseline_daily_avg_active_days": 287.1,
+  "baseline_active_days": 8,
+  "by_tool_top": {
+    "aipm_read_discussions": 746,
+    "aipm_search_discussions": 215,
+    "aipm_search_context": 209,
+    "aipm_update_commit": 201,
+    "aipm_record_commit": 157,
+    "aipm_append_task_note": 116,
+    "aipm_get_task": 115,
+    "aipm_create_task": 100,
+    "aipm_update_task_status": 95,
+    "aipm_list_commits": 83,
+    "aipm_list_tasks": 81,
+    "aipm_list_sessions": 76,
+    "aipm_update_bug": 63,
+    "aipm_get_bug": 61,
+    "aipm_list_plans": 53
+  },
+  "by_src": {
+    "codex-cli": 2245,
+    "claude-code": 737
+  },
+  "by_status": {
+    "OK": 2929,
+    "ERR": 53
+  }
+}
