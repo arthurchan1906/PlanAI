@@ -105,6 +105,28 @@ func dispatchMetrics(args *cli.Args) {
 			}
 			evRows.Close()
 		}
+		// F1/D2 三口径（W2 8/13 + 8/26 统一）：免处理（生成即完成使命，不要求响应）/
+		// 可行动（需 agent 响应）/已处理。D2 指标用**可行动**口径——参考性事件
+		// （hotspot_untracked/tentative_link）设计上不要求处理动作，计入分母会
+		// 虚假拉低处理率（8/26 讨论：低处理率≠管道堵，须区分必须处理类型）。
+		evFree, evAction, evActionProc := 0, 0, 0
+		freeNames := map[string]bool{"tentative_link": true, "task_created": true, "plan_created": true}
+		actionNames := map[string]bool{"commit_orphan": true, "mcp_error": true, "hotspot_untracked": true}
+		var actionDist []string
+		for _, es := range evStats {
+			switch {
+			case freeNames[es.typ]:
+				evFree += es.total
+			case actionNames[es.typ]:
+				evAction += es.total
+				evActionProc += es.processed
+				actionDist = append(actionDist, fmt.Sprintf("%s %d/%d", es.typ, es.processed, es.total))
+			}
+		}
+		actionRate := 0.0
+		if evAction > 0 {
+			actionRate = float64(evActionProc) / float64(evAction)
+		}
 		// H2 metadata 健康（8/10 T2）：空串（对话消息本应空）与非法 JSON 分开统计；
 		// valid_rate 分母排除空串——口径固定，防止与 tool role 缺失混为一谈。
 		var dlTotal, dlValid, dlEmpty, dlInvalid int
@@ -198,38 +220,19 @@ func dispatchMetrics(args *cli.Args) {
 		if total > 0 {
 			l2 = float64(withL2) / float64(total)
 		}
-		proc := 0.0
-		if evTotal > 0 {
-			proc = float64(evProcessed) / float64(evTotal)
-		}
 		dup := 0.0
 		if evTotal > 0 {
 			dup = 1.0 - float64(evUnique)/float64(evTotal)
 		}
-		printRow("B1  l2_coverage", pct(l2)+fmt.Sprintf(" (%d/%d sessions)", withL2, total), "≥85%", l2 >= 0.85)
+		// B1 改名 summary_coverage（8/27 口径统一，8/26 讨论总结动作 2）：
+		// 原名 l2_coverage 与「L2 确认器」（P1b LLM 判定器）共用「L2」造成
+		// 命名歧义（40.1% vs 52.8% 打架一部分源于此）。本指标实为 session_summaries
+		// 摘要覆盖率（理解层产物覆盖），非 EVAL L2 语义覆盖——改名消歧。
+		printRow("B1  summary_coverage", pct(l2)+fmt.Sprintf(" (%d/%d sessions)", withL2, total), "≥85%", l2 >= 0.85)
 		printRow("B2  l2_nested_goal", fmt.Sprint(nested), "=0", nested == 0)
 		printRow("B2  l2_md_block", fmt.Sprint(mdBlock), "=0", mdBlock == 0)
 		printRow("B6  event_dup_rate", pct(dup), "<10%", dup < 0.10)
-		printRow("D2  event_processed_rate", pct(proc), "≥40%", proc >= 0.40)
-		// F1 三口径（W2 8/13）：免处理/可行动/已处理 + 可行动分布诊断。
-		evFree, evAction, evActionProc := 0, 0, 0
-		freeNames := map[string]bool{"tentative_link": true, "task_created": true, "plan_created": true}
-		actionNames := map[string]bool{"commit_orphan": true, "mcp_error": true, "hotspot_untracked": true}
-		var actionDist []string
-		for _, es := range evStats {
-			switch {
-			case freeNames[es.typ]:
-				evFree += es.total
-			case actionNames[es.typ]:
-				evAction += es.total
-				evActionProc += es.processed
-				actionDist = append(actionDist, fmt.Sprintf("%s %d/%d", es.typ, es.processed, es.total))
-			}
-		}
-		actionRate := 0.0
-		if evAction > 0 {
-			actionRate = float64(evActionProc) / float64(evAction)
-		}
+		printRow("D2  event_processed_rate(可行动)", pct(actionRate)+fmt.Sprintf(" (%d/%d)", evActionProc, evAction), "≥40%", actionRate >= 0.40)
 		fmt.Printf("F1  事件→动作漏斗: 免处理=%d 可行动=%d 已处理=%d (%.1f%%)\n", evFree, evAction, evActionProc, actionRate*100)
 		if len(actionDist) > 0 {
 			fmt.Printf("     可行动处理分布: %s\n", strings.Join(actionDist, " · "))

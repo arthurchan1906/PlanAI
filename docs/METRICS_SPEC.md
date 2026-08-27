@@ -25,9 +25,9 @@
 ### 2.2 质量类（来源 DB）
 | 指标 | 计算 | 方向 |
 |------|------|:--:|
-| l2_coverage | session_summaries 有摘要数 / 总数 | ↑（≥85%） |
+| summary_coverage | 有讨论活动的 distinct session 中有摘要的占比（分母=discussion_log 去重 session_id，排除空/unknown；8/12 修正，原 l2_coverage 改名消歧——与「L2 确认器」共用 L2 造成命名歧义，8/26 讨论总结动作 2） | ↑（≥85%） |
 | l2_nested_goal | summary 列嵌套 goal 数（B2 口径） | ↓（=0） |
-| event_processed_rate | events processed_by_agent=1 / 总数（D2） | ↑ |
+| event_processed_rate | 可行动事件 processed_by_agent=1 / 可行动总数（D2 8/27 统一口径：commit_orphan/mcp_error/hotspot_untracked；免处理参考事件 tentative_link/task_created/plan_created 不计入分母，防虚假拉低） | ↑（≥40%） |
 | event_unconsumed | consumed=0 AND processed=0 数（当前注入池） | ↓ |
 | workflow_completed_rate | review_json workflow_completed=true / L2 数 | ↑ |
 | correction_signals | detectUserFrustration 关键词在窗口内 user 消息命中数 | ↓（辅助信号） |
@@ -55,7 +55,7 @@
       "totals": {"calls": 140, "in_tok": 17500000, "out_tok": 38000}
     },
     "quality": {
-      "l2_coverage": 0.54, "l2_nested_goal": 0, "event_processed_rate": 0.36,
+      "summary_coverage": 0.54, "l2_nested_goal": 0, "event_processed_rate": 0.36,
       "event_unconsumed": 20, "workflow_completed_rate": 0.20, "correction_signals": 2
     },
     "injection": {"emerge_events_total": 20, "action_items": 7, "inject_chars": 679}
@@ -73,7 +73,7 @@
 action_items          42            7             -83%       ✅ 改善
 emerge_events_total   44            20            -55%       ✅ 改善
 inject_chars          —             679           ≤800       ✅ 达标
-l2_coverage           0.54          0.54          0          ⚪ 未变（待配 key）
+summary_coverage     0.54          0.54          0          ⚪ 未变（待配 key）
 ```
 
 规则：每项标注 ✅/❌/⚪（对照方向与目标值），输出最后附一句总结。
@@ -81,7 +81,7 @@ l2_coverage           0.54          0.54          0          ⚪ 未变（待配
 ## 5. 回算可行性（已验证）
 
 - [LLM] 25,953 行：agent/model/in_tok/out_tok/cache_hit(88%)/injected/lat 均可按时间戳窗口聚合
-- DB：l2_coverage（65 条中 35 有摘要=53.8%）、event_processed_rate（394 中 140=35.5%）、workflow_completed（13/65=20%）、correction_signals（关键词命中）均现成可算
+- DB：summary_coverage（8/27 实测 65/166=39.2%；旧口径 53.8% 用 session_summaries 行数作分母会高估——8/12 修正为 discussion_log 去重 session 分母）、event_processed_rate（8/27 实测 88/297=29.6%，可行动口径；旧全量口径 16.7% 计入免处理参考事件被拉低）、workflow_completed（13/65=20%）、correction_signals（关键词命中）均现成可算
 - 注入类：emerge_events 日志 13:03 起为新格式（含 perTypeCap/ceil），旧格式（cap=3）可兼容解析
 
 ## 6. 未决/备注
