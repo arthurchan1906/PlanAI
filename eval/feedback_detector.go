@@ -29,6 +29,10 @@ var (
 	entityIDRe = regexp.MustCompile(`(?i)\b(decision|task|bug|commit|plan|thread|idea)-\d{8}-\d{6}-[0-9a-f]{6}\b`)
 	// mcpCallRe 匹配 hook 写入的工具调用行：🛠 mcp__aipm__aipm_get_decision
 	mcpCallRe = regexp.MustCompile(`(?i)mcp__aipm__aipm_([a-z_]+)`)
+	// dishCallRe 匹配 📡 摘要行的 aipm 工具名（codex/claude 通道 hook 写入，role=assistant）
+	dishCallRe = regexp.MustCompile(`📡\s*aipm_([a-z_]+)`)
+	// metaToolRe 匹配 metadata 中 mcp_tool 记录的 tool 字段（codex mcp_tool 行，role=assistant）
+	metaToolRe = regexp.MustCompile(`(?i)"tool"\s*:\s*"aipm_([a-z_]+)"`)
 	// numClaimRe 数字声明：N 次/条/行/天/个/%/倍/小时
 	numClaimRe = regexp.MustCompile(`\d+(?:\.\d+)?\s*(?:次|条|行|天|个|%|倍|小时)`)
 	// sourceWords 数据源来源词（权威口径词 + 通用来源词）。
@@ -137,7 +141,7 @@ func detectSessionGap(db *sql.DB, src, sid, lastSeen, since string) (*FeedbackGa
 	}
 	srcSeen := map[string]bool{}
 	rows, err := db.Query(
-		`SELECT id, role, content, created_at FROM discussion_log
+		`SELECT id, role, content, metadata, created_at FROM discussion_log
 		 WHERE session_id = ? AND created_at >= ? ORDER BY created_at ASC, rowid ASC`,
 		sid, since)
 	if err != nil {
@@ -147,17 +151,21 @@ func detectSessionGap(db *sql.DB, src, sid, lastSeen, since string) (*FeedbackGa
 
 	called := map[string]bool{} // 已调用的 aipm 工具（aipm_ 前缀）
 	for rows.Next() {
-		var id, role, content, createdAt string
-		if err := rows.Scan(&id, &role, &content, &createdAt); err != nil {
+		var id, role, content, metadata, createdAt string
+		if err := rows.Scan(&id, &role, &content, &metadata, &createdAt); err != nil {
 			continue
 		}
 		if role == "tool" {
-			for _, m := range mcpCallRe.FindAllStringSubmatch(content, -1) {
-				if len(m) > 1 {
-					called["aipm_"+strings.ToLower(m[1])] = true
-				}
-			}
+			collectCalled(called, mcpCallRe.FindAllStringSubmatch(content, -1))
 			continue
+		}
+		// assistant 行：metadata（mcp_tool 行）+ 📡 摘要行均可识别 codex 查询调用。
+		// 8/27 P3 修复：此前只收 role=tool 的 🛠 行（仅 claude），codex 的查询（📡/mcp_tool
+		// 均 role=assistant）从未入 called → codex 会话引用任何实体都判强漏查（系统性假阳性）。
+		// 📡 引用/转述行仅可能多记（→ 少判漏查，保守方向），无害。
+		collectCalled(called, metaToolRe.FindAllStringSubmatch(metadata, -1))
+		if strings.HasPrefix(content, "📡") {
+			collectCalled(called, dishCallRe.FindAllStringSubmatch(content, -1))
 		}
 		if role != "assistant" {
 			continue // 只检 agent 自身行为，user 引用不算漏查信号
@@ -230,6 +238,21 @@ func detectSessionGap(db *sql.DB, src, sid, lastSeen, since string) (*FeedbackGa
 	gap.MissingQueries = dedupStrings(gap.MissingQueries)
 	sort.Strings(gap.DataSources)
 	return gap, nil
+}
+
+// collectCalled 把正则命中的工具名写入 called（统一加 aipm_ 前缀）。
+func collectCalled(called map[string]bool, matches [][]string) {
+	for _, m := range matches {
+		if len(m) > 1 {
+			name := strings.ToLower(m[1])
+			// 各正则捕获组形态不一：mcpCallRe/metaToolRe 捕获 aipm_ 之后的部分，
+			// dishCallRe 历史上捕获完整名——统一保证 called 键为 aipm_ 前缀（幂等防双前缀）。
+			if !strings.HasPrefix(name, "aipm_") {
+				name = "aipm_" + name
+			}
+			called[name] = true
+		}
+	}
 }
 
 // dedupStrings 去重并保持输入顺序（MissingQueries 跨实体类型会重复输出公共工具）。

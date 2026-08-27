@@ -321,3 +321,59 @@ func TestFeedbackShadowDedupAppend(t *testing.T) {
 		t.Fatalf("lines = %d, want 2 (dedup)", len(lines))
 	}
 }
+
+// P3 修复回归：codex 会话的查询以 📡 摘要行（role=assistant）记录，
+// 若 called 只收 role=tool 🛠 行则 codex 引用任何实体都判强漏查（系统性假阳性）。
+// 修复后：📡 行中的查询工具应计入 called → 不再误判。
+func TestFeedbackCodexDishQueriesNoFalseMiss(t *testing.T) {
+	db := newFeedbackTestDB(t)
+	defer db.Close()
+	// codex 会话：引用了 decision，且确实用 📡 形式查询过决策类工具
+	insertRow(t, db, "m1", "S1", "assistant", "codex",
+		"参考 decision-20260826-172138-fb48b1 处理", "2026-08-27T10:00:00")
+	insertRow(t, db, "m2", "S1", "assistant", "codex",
+		"📡 aipm_get_decision ✅", "2026-08-27T10:00:01")
+	gaps, err := DetectFeedbackGaps(db, "2026-08-01T00:00:00", 10)
+	if err != nil || len(gaps) != 1 {
+		t.Fatalf("Detect: gaps=%d err=%v", len(gaps), err)
+	}
+	if len(gaps[0].MissingQueries) != 0 {
+		t.Fatalf("codex 已查询却被判强漏查: %v", gaps[0].MissingQueries)
+	}
+}
+
+// 对照组：codex 会话引用 decision 但从未查询 → 强漏查保持（修复不破坏检测能力）。
+func TestFeedbackCodexDishNoQueryStillMiss(t *testing.T) {
+	db := newFeedbackTestDB(t)
+	defer db.Close()
+	insertRow(t, db, "m1", "S1", "assistant", "codex",
+		"参考 decision-20260826-172138-fb48b1 处理", "2026-08-27T10:00:00")
+	gaps, err := DetectFeedbackGaps(db, "2026-08-01T00:00:00", 10)
+	if err != nil || len(gaps) != 1 {
+		t.Fatalf("Detect: gaps=%d err=%v", len(gaps), err)
+	}
+	want := []string{"aipm_get_decision", "aipm_list_decisions", "aipm_search_context", "aipm_smart_search"}
+	if !equalStrings(gaps[0].MissingQueries, want) {
+		t.Errorf("MissingQueries = %v, want %v", gaps[0].MissingQueries, want)
+	}
+}
+
+// codex mcp_tool metadata 行（role=assistant, metadata 含 tool 字段）也应计入 called。
+func TestFeedbackCodexMetaToolQueries(t *testing.T) {
+	db := newFeedbackTestDB(t)
+	defer db.Close()
+	insertRow(t, db, "m1", "S1", "assistant", "codex",
+		"参考 task-20260827-111105-3f6872 处理", "2026-08-27T10:00:00")
+	if _, err := db.Exec(`INSERT INTO discussion_log VALUES (?,?,?,?,?,?,?)`,
+		"m2", "S1", "assistant", "codex", "📡 aipm_get_task ✅",
+		`{"type":"mcp_tool","tool":"aipm_get_task"}`, "2026-08-27T10:00:01"); err != nil {
+		t.Fatalf("insert meta row: %v", err)
+	}
+	gaps, err := DetectFeedbackGaps(db, "2026-08-01T00:00:00", 10)
+	if err != nil || len(gaps) != 1 {
+		t.Fatalf("Detect: gaps=%d err=%v", len(gaps), err)
+	}
+	if len(gaps[0].MissingQueries) != 0 {
+		t.Fatalf("codex mcp_tool 已查询却被判强漏查: %v", gaps[0].MissingQueries)
+	}
+}
