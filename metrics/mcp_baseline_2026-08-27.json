@@ -13,11 +13,11 @@
   },
   "point_day": {
     "window": "8/27",
-    "total_calls": 375,
-    "retrieval_ratio": 0.656,
-    "diversity_unique_tools": 28,
-    "diversity_shannon": 3.995,
-    "deep_verify_ratio": 0.192,
+    "total_calls": 407,
+    "retrieval_ratio": 0.6511,
+    "diversity_unique_tools": 29,
+    "diversity_shannon": 4.056,
+    "deep_verify_ratio": 0.199,
     "vision_calls": 8,
     "test_tool_calls": 0
   },
@@ -32,7 +32,7 @@
     "2026-08-24": 272,
     "2026-08-25": 175,
     "2026-08-26": 355,
-    "2026-08-27": 375
+    "2026-08-27": 407
   },
   "log_gap_days": [
     "2026-08-15",
@@ -45,28 +45,66 @@
   "baseline_daily_avg_active_days": 287.1,
   "baseline_active_days": 8,
   "by_tool_top": {
-    "aipm_read_discussions": 748,
-    "aipm_search_discussions": 215,
-    "aipm_search_context": 210,
-    "aipm_update_commit": 202,
+    "aipm_read_discussions": 752,
+    "aipm_search_discussions": 217,
+    "aipm_search_context": 213,
+    "aipm_update_commit": 206,
     "aipm_record_commit": 157,
-    "aipm_append_task_note": 117,
-    "aipm_get_task": 115,
-    "aipm_create_task": 100,
-    "aipm_update_task_status": 95,
-    "aipm_list_commits": 84,
-    "aipm_list_tasks": 82,
+    "aipm_append_task_note": 119,
+    "aipm_get_task": 117,
+    "aipm_create_task": 101,
+    "aipm_update_task_status": 97,
+    "aipm_list_commits": 87,
+    "aipm_list_tasks": 83,
     "aipm_list_sessions": 76,
-    "aipm_update_bug": 63,
-    "aipm_get_bug": 61,
+    "aipm_update_bug": 64,
+    "aipm_get_bug": 62,
     "aipm_list_plans": 54
   },
   "by_src": {
-    "codex-cli": 2252,
-    "claude-code": 738
+    "codex-cli": 2282,
+    "claude-code": 740
   },
   "by_status": {
-    "OK": 2937,
+    "OK": 2969,
     "ERR": 53
-  }
+  },
+  "by_error_type": {
+    "busy": 12,
+    "no_rows": 13,
+    "not_found": 17,
+    "other": 11
+  },
+  "err_sample": [
+    {
+      "date": "2026-08-27",
+      "tool": "aipm_read_discussions",
+      "type": "busy",
+      "err": "读取讨论失败: database is locked (5) (SQLITE_BUSY)"
+    },
+    {
+      "date": "2026-08-14",
+      "tool": "aipm_get_decision",
+      "type": "busy",
+      "err": "查询 decision 失败: database is locked (5) (SQLITE_BUSY)"
+    },
+    {
+      "date": "2026-08-14",
+      "tool": "aipm_list_plans",
+      "type": "busy",
+      "err": "查询 plans 失败: database is locked (261)"
+    },
+    {
+      "date": "2026-08-14",
+      "tool": "aipm_get_commit",
+      "type": "no_rows",
+      "err": "查询 commit 失败: sql: no rows in result set"
+    },
+    {
+      "date": "2026-08-14",
+      "tool": "aipm_update_task_status",
+      "type": "no_rows",
+      "err": "更新失败: sql: no rows in result set"
+    }
+  ]
 }

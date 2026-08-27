@@ -21,7 +21,12 @@
 | 深度查证工具调用占比 | **17.2%** | **19.2%** | 深度查证类（search_context/smart_search/get_decision/get_plan/get_bug/get_task/get_commit）/ 全部。**这是"深度查证工具使用占比"的如实描述，不是"自发率"**（见 §5） |
 | aipmc_vision | 296 次（全期） | — | 视觉分析工具，非决策查询，单独标注 |
 
-按 agent（8/14-8/27 全量 tool 行）：`codex-cli` 2252、`claude-code` 738。状态：OK 2937 / **ERR 53（1.8%）**。
+按 agent（8/14-8/27 全量 tool 行）：`codex-cli` 2282、`claude-code` 740。状态：OK 2969 / **ERR 53（1.8%）**。
+
+**MCP-ERR 错误类型分层**（[MCP-ERR] 行 error= 字段分类，Claude 8/27 审核建议 2）：
+- `busy`（SQLITE_BUSY）：**12** 条——8/14=2、8/17=1、8/20=1、8/24=1、8/25=4、8/26=2、8/27=1（最后一条 8/27 10:21 `read_discussions`，恰为 C2 读路径 retry 覆盖场景，14:00 修复生效后 **0**）
+- `no_rows`（sql: no rows）：13 条——查询/更新目标不存在，属业务/索引问题，**非 BUSY**，归零验收不盯
+- `not_found`：17 条、`other`：11 条——同理非 BUSY
 
 Top 工具：`aipm_read_discussions` 748、`aipm_search_discussions` 215、`aipm_search_context` 210、`aipm_update_commit` 202、`aipm_record_commit` 157、`aipm_append_task_note` 117、`aipm_get_task` 115。
 

@@ -41,8 +41,23 @@ PROACTIVE = {
 
 MCP_RE = re.compile(r"\[(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})\] \[MCP\] tool=(\S+) status=(\S+) src=(\S+)")
 
+ERR_RE = re.compile(r"\[(\d{4}-\d{2}-\d{2}) \d{2}:\d{2}:\d{2}\] \[MCP-ERR\] tool=(\S+) .*?error=(.+)$")
+
+def err_type(err):
+    e = err.lower()
+    if "busy" in e or "locked" in e:
+        return "busy"
+    if "no rows" in e:
+        return "no_rows"
+    if "business" in err:
+        return "business_reject"
+    if "未找到" in err or "not found" in e:
+        return "not_found"
+    return "other"
+
 def load_calls():
     calls = []
+    errs = []
     files = sorted(LOGS_DIR.glob("aipmc.log*"))
     for f in files:
         if f.name.endswith(".log") or ".log." in f.name:
@@ -54,7 +69,11 @@ def load_calls():
                             "date": m.group(1), "time": m.group(2),
                             "tool": m.group(3), "status": m.group(4), "src": m.group(5),
                         })
-    return calls
+                    em = ERR_RE.search(line)
+                    if em:
+                        errs.append({"date": em.group(1), "tool": em.group(2),
+                                     "type": err_type(em.group(3)), "err": em.group(3)[:80]})
+    return calls, errs
 
 def shannon(counts):
     total = sum(counts.values())
@@ -80,7 +99,7 @@ def window_stats(calls, label):
     }
 
 def main():
-    calls = load_calls()
+    calls, errs = load_calls()
     base = [c for c in calls if c["date"] <= "2026-08-26" and c["date"] >= "2026-08-14"]
     point = [c for c in calls if c["date"] == "2026-08-27"]
     stats = {
@@ -100,6 +119,10 @@ def main():
     stats["by_tool_top"] = dict(Counter(c["tool"] for c in calls).most_common(15))
     stats["by_src"] = dict(Counter(c["src"] for c in calls))
     stats["by_status"] = dict(Counter(c["status"] for c in calls))
+    # MCP-ERR 错误类型分层（Claude 8/27 审核建议 2：BUSY vs 其他分开，
+    # 归零验收只盯 busy；no_rows/business_reject 属另一类问题）
+    stats["by_error_type"] = dict(Counter(e["type"] for e in errs))
+    stats["err_sample"] = [e for e in errs if e["type"] == "busy"][-3:] + [e for e in errs if e["type"] == "no_rows"][-2:]
 
     OUT.write_text(json.dumps(stats, ensure_ascii=False, indent=2))
     print("== M 线基线（[MCP] 日志口径）==")
@@ -112,6 +135,8 @@ def main():
     print(f"基线有数据日: {stats['baseline_active_days']} 天, 日均(按活跃日): {stats['baseline_daily_avg_active_days']}")
     print("按 src:", json.dumps(stats["by_src"]))
     print("按 status:", json.dumps(stats["by_status"]))
+    print("MCP-ERR 错误类型分层:", json.dumps(stats["by_error_type"]))
+    print("错误样例:", json.dumps(stats["err_sample"], ensure_ascii=False))
     print("Top 工具:", json.dumps(stats["by_tool_top"], ensure_ascii=False))
     print("输出:", OUT)
 
