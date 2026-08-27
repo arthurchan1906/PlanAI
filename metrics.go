@@ -514,15 +514,15 @@ func dispatchMetrics(args *cli.Args) {
 	printRow("C1  inject_coverage", pct(covRate)+fmt.Sprintf(" (注入%d+去重%d)", injOK+injGuidelines, injSame), "≥80%", covRate >= 0.80)
 	printRow("C2  file_parse_ok_rate", pct(faRate), "≥90%", faRate >= 0.90)
 	printRow("C3  suppressed(char_limit)", fmt.Sprintf("%d/%d", supChar, supTotal+skipTotal)+" 次", "<30%", supRate < 0.30)
+	aiVal, aiOk := "无日志", false
 	if haveLatest {
+		aiVal = fmt.Sprintf("%d/%d", latestItems, latestTotal)
 		if latestAt != "" {
-			printRow("C3  action_items(最新emerge)", fmt.Sprintf("%d/%d @%s", latestItems, latestTotal, latestAt), "≤10", latestItems <= 10)
-		} else {
-			printRow("C3  action_items(最新emerge)", fmt.Sprintf("%d/%d", latestItems, latestTotal), "≤10", latestItems <= 10)
+			aiVal += " @" + latestAt
 		}
-	} else {
-		printRow("C3  action_items(最新emerge)", "无日志", "≤10", false)
+		aiOk = latestItems <= 10
 	}
+	printRow("C3  action_items(最新emerge)", aiVal, "≤10", aiOk)
 	// MCP 指标：结构化 [MCP] 日志（tool=/status=），总量不依赖 src=（serve 重启前旧行无 src）。
 	mcpRate := 0.0
 	if mcpTotal > 0 {
@@ -587,15 +587,11 @@ func dispatchMetrics(args *cli.Args) {
 	// agent_status 行，如 2/158）被陈旧注册 session 稀释，低估采纳也夸大"从不声明"。
 	// 已知边界：8/24 上午 7 次 [MCP] update_status 调用未落 explicit 库（观测缺口，
 	// 记入 M 线度量口径注意点），分子暂只计已落库的显式声明。
-	if expS, actS, err := store.CountExplicitStatusRate("", since); err == nil {
-		rate := "—"
-		if actS > 0 {
-			rate = fmt.Sprintf("%d/%d (%.1f%%)", expS, actS, float64(expS)/float64(actS)*100)
-		}
-		printRow("E5  update_status 显式率(窗口)", rate, "参考", true)
-	} else {
-		printRow("E5  update_status 显式率", "无数据", "参考", true)
+	rate := "无数据"
+	if expS, actS, err := store.CountExplicitStatusRate("", since); err == nil && actS > 0 {
+		rate = fmt.Sprintf("%d/%d (%.1f%%)", expS, actS, float64(expS)/float64(actS)*100)
 	}
+	printRow("E5  update_status 显式率(窗口)", rate, "参考", true)
 	// E8 pipeline 健康度：L3 session 处理量 = 运行频率参考；reconcile 成功率为健康主指标。
 	reconTotal := pipeReconDone + pipeReconErr
 	reconRate := 0.0
