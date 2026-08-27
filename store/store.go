@@ -3103,11 +3103,11 @@ func ListGraphEdgesFor(projectPath, sourceID, targetID, edgeType string) ([]map[
 }
 
 func listGraphEdgesFor(projectPath, sourceID, targetID, edgeType string) ([]map[string]any, error) {
-	db, err := pmdb.OpenProject(projectPath)
+	// A 方案（8/27）：file_assoc 高频读改用进程内共享连接，去掉每请求 Open/Close。
+	db, err := pmdb.SharedProject(projectPath)
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
 	q := "SELECT id, source_type, source_id, edge_type, target_type, target_id, weight, evidence_json, created_at FROM graph_edges WHERE 1=1"
 	var args []any
 	if sourceID != "" {

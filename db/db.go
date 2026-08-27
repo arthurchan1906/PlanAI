@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"aipmc/u"
@@ -104,34 +105,68 @@ func OpenProject(projectPath string) (*sql.DB, error) {
 		if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 			return nil, fmt.Errorf("PMAI database not found: %s — run aipmc init first", dbPath)
 		}
-		d, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(15000)&_pragma=synchronous(NORMAL)")
-		if err != nil {
-			return nil, err
-		}
-		if err := d.Ping(); err != nil {
-			d.Close()
-			return nil, err
-		}
-		if err := EnsureSchemaIfNeeded(d); err != nil {
-			d.Close()
-			return nil, err
-		}
-		return d, nil
+		return openAt(dbPath)
 	}
 	return Open()
 }
 
-// ── Open / Bootstrap ──────────────────────────────────────────────────
+// ── Shared（进程内连接复用，D 线决策 A 方案，2026-08-27）────────────
+// 高频热路径（inject_log 写、file_assoc 读 edges）此前每次调用 Open/Close，
+// 每请求重复 sql.Open+Ping+EnsureSchemaIfNeeded 抖动。Shared 按 dbPath
+// 进程内缓存连接，database/sql 自带连接池，进程生命周期内复用。单例不
+// 解决跨进程写竞争（决策 B retry 为主，A 仅降本）。按 dbPath 缓存天然满足
+// 测试隔离（不同 TempDir → 不同连接）。
 
-// Open opens the main SQLite database.
-func Open() (*sql.DB, error) {
+var (
+	sharedMu  sync.Mutex
+	sharedDBs = map[string]*sql.DB{}
+)
+
+// Shared returns a process-wide cached connection for the cwd project.
+func Shared() (*sql.DB, error) {
 	dbPath, err := FindPath()
 	if err != nil {
 		return nil, err
 	}
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("PMAI database not found: %s — run aipmc init first", dbPath)
+	return sharedAt(dbPath)
+}
+
+// SharedProject returns a process-wide cached connection for a specific
+// project path; empty projectPath falls back to Shared.
+func SharedProject(projectPath string) (*sql.DB, error) {
+	if projectPath == "" {
+		return Shared()
 	}
+	dbPath := filepath.Join(projectPath, ".pmai", "data", "pmai.db")
+	return sharedAt(dbPath)
+}
+
+func sharedAt(dbPath string) (*sql.DB, error) {
+	sharedMu.Lock()
+	defer sharedMu.Unlock()
+	if d, ok := sharedDBs[dbPath]; ok {
+		return d, nil
+	}
+	d, err := openAt(dbPath)
+	if err != nil {
+		return nil, err
+	}
+	sharedDBs[dbPath] = d
+	return d, nil
+}
+
+// ResetSharedForTest clears cached connections (test-only helper).
+func ResetSharedForTest() {
+	sharedMu.Lock()
+	defer sharedMu.Unlock()
+	for _, d := range sharedDBs {
+		d.Close()
+	}
+	sharedDBs = map[string]*sql.DB{}
+}
+
+// openAt opens a connection at the given dbPath with schema check.
+func openAt(dbPath string) (*sql.DB, error) {
 	d, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(15000)&_pragma=synchronous(NORMAL)")
 	if err != nil {
 		return nil, err
@@ -145,6 +180,20 @@ func Open() (*sql.DB, error) {
 		return nil, err
 	}
 	return d, nil
+}
+
+// ── Open / Bootstrap ──────────────────────────────────────────────────
+
+// Open opens the main SQLite database.
+func Open() (*sql.DB, error) {
+	dbPath, err := FindPath()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("PMAI database not found: %s — run aipmc init first", dbPath)
+	}
+	return openAt(dbPath)
 }
 
 // ── inject_log（HARNESS_ROADMAP §1.3：注入点捕获 v1）──────────────
@@ -169,11 +218,11 @@ type InjectLogEntry struct {
 // InsertInjectLog appends one inject_log row. Write failure must not break the
 // injection hot path — callers log the error and continue.
 func InsertInjectLog(e InjectLogEntry) error {
-	d, err := Open()
+	// A 方案（8/27）：高频热路径改用进程内共享连接，去掉每请求 Open/Close。
+	d, err := Shared()
 	if err != nil {
 		return err
 	}
-	defer d.Close()
 	return RetryBusy(func() error {
 		_, err := d.Exec(`INSERT INTO inject_log (id, agent, session_id, req_id, ts, hash, source, segments_json, chars, suppressed, project) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			e.ID, e.Agent, e.SessionID, e.ReqID, e.TS, e.Hash, e.Source, e.SegmentsJSON, e.Chars, e.Suppressed, e.Project)
