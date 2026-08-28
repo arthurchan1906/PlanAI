@@ -227,3 +227,25 @@ deny 层验证（状态驱动触发；claude 侧）→ POC-1 收尾验证
 - v1.13 的 T1/T2/T3（硬前提）已完成；T3b/T4/Phase 1c 的「待数据裁决」在本文给出裁决。
 - v1.13 §7 的「对称注入 peer 段」路线**被决策 53/54/55 取代**：不搞对称注入，先编排台 + 按角色查询。
 - POC-1（v1.13 §6）从「1c-A 前必做」降级为「deny 层 verify + 收尾验证」（决策 53）。
+
+---
+
+## 附录 A：机制 1（read_discussions 附带相关实体）验证协议（8/28 落档）
+
+**背景**：8/27 分工 claude 实现机制 1（commit 8a804e9：`store/discussion_entities.go` 正则提取 7 类型 + `mcp/mcp.go` 返回 `related_entities`）。8/28 codex 审核定位协议此前仅在会话中口头定义、未落档，本附录固定验收口径。
+
+**协议**（原「30 条双标 precision≥90%」，8/28 落档）：
+- 样本：30 条真实实质讨论（`ReadDiscussions` substantive 过滤后，user + 非工具 assistant 消息）
+- 双标：两个独立 agent 各自提取实体引用，比对一致（不一致的条目标注分歧，由人工裁决）
+- 指标：precision = 被提取且真实存在于库的引用 / 全部被提取引用，**≥90%**
+- recall 不设硬指标（零语义提取以 precision 为准，宁缺毋滥）
+
+**当前状态（8/28）**：
+- 单标初步样本 6 引用 6/6 存在（precision 100%，codex 复核 5/5，时间差合理）
+- **未达协议**：无第二标注人、样本 6 < 30 → task-20260828-084351-dc1b69 保持 in_progress
+- 后续：样本积累到 30 条后双标验收；同步复验 read:search 比例（8/20 达 8:1）是否因机制 1 下降
+
+**8/28 codex 审核修复（commit 待填）**：
+- Ch1：fetch 查询统一 `fetchEntityTitle`（BUSY 重试，D 线决策 B）；真失败记 `[MCP] related_entity query failed` warn，`sql: no rows` 静默（实体不存在属正常）
+- Ch2：查询/集成测试改独立临时库（PMAI_HOME 隔离），不再碰生产库
+- Ch3：mcp 接线 `OpenProject` → `SharedProject`（D 线决策 A 连接复用，热路径不再每次 Open/Close）

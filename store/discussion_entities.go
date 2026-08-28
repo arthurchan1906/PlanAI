@@ -14,8 +14,12 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"regexp"
 	"strings"
+
+	pmdb "aipmc/db"
+	"aipmc/u"
 )
 
 // entityRefRe 匹配 AIPM 实体 ID：<type>-YYYYMMDD-HHMMSS-xxxxxx（容忍大小写）。
@@ -51,6 +55,8 @@ func ExtractRelatedEntities(contents []string) []string {
 // FetchRelatedEntities 查询实体 ID 列表的标题+状态。
 // 按类型路由到对应表；找不到的实体静默跳过（引用可能已删除/过期）。
 // 返回顺序与输入 ids 一致（去重后的）。
+// 8/28 codex 审核 Ch1：查询统一走 fetchEntityTitle（BUSY 重试，D 线决策 B）；
+// 查询失败记录 warn 日志（零告警原则），实体不存在（title 空）属正常跳过。
 func FetchRelatedEntities(db *sql.DB, ids []string) []RelatedEntity {
 	var out []RelatedEntity
 	for _, id := range ids {
@@ -59,27 +65,19 @@ func FetchRelatedEntities(db *sql.DB, ids []string) []RelatedEntity {
 		if typ == "" {
 			continue
 		}
-		var title, status string
-		var err error
-		switch typ {
-		case "decision":
-			title, status, err = fetchDecision(db, lower)
-		case "task":
-			title, status, err = fetchTask(db, lower)
-		case "bug":
-			title, status, err = fetchBug(db, lower)
-		case "plan":
-			title, status, err = fetchPlan(db, lower)
-		case "thread":
-			title, status, err = fetchThread(db, lower)
-		case "idea":
-			title, status, err = fetchIdea(db, lower)
-		case "commit":
-			title, status, err = fetchCommit(db, lower)
-		default:
+		table := entityTable(typ)
+		if table == "" {
 			continue
 		}
-		if err != nil || title == "" {
+		title, status, err := fetchEntityTitle(db, table, lower)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				continue // 实体不存在（已删除/过期）→ 正常跳过，不记日志
+			}
+			u.LogShared("MCP", "related_entity query failed type=%s id=%s err=%v", typ, lower, err)
+			continue
+		}
+		if title == "" {
 			continue // 不存在/查询失败 → 跳过
 		}
 		out = append(out, RelatedEntity{Type: typ, ID: lower, Title: title, Status: status})
@@ -96,46 +94,38 @@ func entityType(id string) string {
 	return ""
 }
 
-func fetchDecision(db *sql.DB, id string) (string, string, error) {
-	var t, s string
-	err := db.QueryRow("SELECT title, status FROM decisions WHERE id = ?", id).Scan(&t, &s)
-	return t, s, err
+// entityTable 实体类型 → 表名（包内常量映射，无外部输入，无注入面）。
+func entityTable(typ string) string {
+	switch typ {
+	case "decision":
+		return "decisions"
+	case "task":
+		return "tasks"
+	case "bug":
+		return "bugs"
+	case "plan":
+		return "plans"
+	case "thread":
+		return "threads"
+	case "idea":
+		return "ideas"
+	case "commit":
+		return "commits"
+	}
+	return ""
 }
 
-func fetchTask(db *sql.DB, id string) (string, string, error) {
-	var t, s string
-	err := db.QueryRow("SELECT title, status FROM tasks WHERE id = ?", id).Scan(&t, &s)
-	return t, s, err
-}
-
-func fetchBug(db *sql.DB, id string) (string, string, error) {
-	var t, s string
-	err := db.QueryRow("SELECT title, status FROM bugs WHERE id = ?", id).Scan(&t, &s)
-	return t, s, err
-}
-
-func fetchPlan(db *sql.DB, id string) (string, string, error) {
-	var t, s string
-	err := db.QueryRow("SELECT title, status FROM plans WHERE id = ?", id).Scan(&t, &s)
-	return t, s, err
-}
-
-func fetchThread(db *sql.DB, id string) (string, string, error) {
-	var t, s string
-	err := db.QueryRow("SELECT title, status FROM threads WHERE id = ?", id).Scan(&t, &s)
-	return t, s, err
-}
-
-func fetchIdea(db *sql.DB, id string) (string, string, error) {
-	var t, s string
-	err := db.QueryRow("SELECT title, status FROM ideas WHERE id = ?", id).Scan(&t, &s)
-	return t, s, err
-}
-
-func fetchCommit(db *sql.DB, id string) (string, string, error) {
-	var t, s string
-	err := db.QueryRow("SELECT title, status FROM commits WHERE id = ?", id).Scan(&t, &s)
-	return t, s, err
+// fetchEntityTitle 查询实体标题+状态，带 BUSY 重试（D 线决策 B：读路径
+// retry 全覆盖，decision-20260827-144909-c3d06b）。QueryRow 的延迟错误由
+// Scan 返回，RetryBusy 对 SQLITE_BUSY 做 3 次指数退避（100/200/400ms）。
+// 8/28 codex 审核 Ch1：原实现为裸 QueryRow，read_discussions 热路径在并发
+// 写下会随机命中 BUSY 被静默跳过，机制 1 功能间歇失效且无观测。
+func fetchEntityTitle(db *sql.DB, table, id string) (string, string, error) {
+	var title, status string
+	err := pmdb.RetryBusy(func() error {
+		return db.QueryRow("SELECT title, status FROM "+table+" WHERE id = ?", id).Scan(&title, &status)
+	})
+	return title, status, err
 }
 
 // RelatedEntitiesFromRows 从 discussion 行提取并查询相关实体。

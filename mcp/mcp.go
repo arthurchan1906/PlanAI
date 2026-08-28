@@ -2156,11 +2156,13 @@ func (s *mcpServer) handleReadDiscussions(args map[string]interface{}) mcpToolRe
 	// 机制 1（8/28）：从返回的讨论内容提取被引用的实体并附带其标题+状态——
 	// agent 读到讨论时自动看到被引用实体的当前状态（如 decision-X accepted），
 	// 无需再手动 search。失败不影响主流程（只跳过相关实体）。
+	// Ch3（8/28 codex 审核）：改 SharedProject 复用进程内连接（D 线决策 A），
+	// 避免热路径每次 Open/Close 重复 sql.Open+Ping；Shared 连接由连接池管理，
+	// 不 Close（与 OpenProject 的借还语义不同）。
 	relatedEntities := []store.RelatedEntity{}
 	if len(rows) > 0 {
-		if db, err := pmdb.OpenProject(projectPath); err == nil {
+		if db, err := pmdb.SharedProject(projectPath); err == nil {
 			relatedEntities = store.RelatedEntitiesFromRows(db, rows)
-			db.Close()
 		}
 	}
 
