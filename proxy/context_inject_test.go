@@ -98,6 +98,33 @@ func TestExtractFilePathsMessagesUserFirst(t *testing.T) {
 	t.Fatalf("expected build.sh from assistant message, got %v", got)
 }
 
+// Claude Challenge (8/28, low/non-blocking): messages 多轮时 Pass 1 把所有
+// role=user 按数组顺序提取（历史在前）。防御性覆盖两类：①历史 user "继续"
+// 无路径不产生 file path、不污染排序；②历史 user 含旧路径时按数组顺序排在
+// 当前操作路径前（已知边界，severity 低——当前操作消息通常更大更具体）。
+func TestExtractFilePathsMessagesHistoricalUser(t *testing.T) {
+	// ① 历史 user 无路径（"继续"）→ 只提取当前 user 的实际路径。
+	body1 := []byte(`{"messages":[{"role":"user","content":"继续"},{"role":"assistant","content":"收到"},{"role":"user","content":"implement store/discussion_entities.go"}]}`)
+	got1 := extractFilePaths(body1, "claude")
+	if len(got1) != 1 || got1[0] != "store/discussion_entities.go" {
+		t.Fatalf("history '继续' must not pollute paths, got %v", got1)
+	}
+
+	// ② 历史 user 含旧路径 → 按数组顺序历史在前（固化已知边界）。当前操作路径
+	// 仍被提取；若未来改为最新 user 优先，此断言需同步调整。
+	body2 := []byte(`{"messages":[{"role":"user","content":"fix store/discussion.go"},{"role":"user","content":"now implement mcp/mcp.go"}]}`)
+	got2 := extractFilePaths(body2, "claude")
+	want2 := []string{"store/discussion.go", "mcp/mcp.go"}
+	if len(got2) != len(want2) {
+		t.Fatalf("history old-path got %v, want %v", got2, want2)
+	}
+	for i := range want2 {
+		if got2[i] != want2[i] {
+			t.Fatalf("history old-path got[%d]=%q, want %q (full %v)", i, got2[i], want2[i], got2)
+		}
+	}
+}
+
 // Anthropic messages format must keep working (claude path).
 func TestExtractFilePathsAnthropicMessages(t *testing.T) {
 	body := []byte(`{"messages":[{"role":"user","content":[{"type":"text","text":"touch web/frontend.tsx"}]}]}`)
