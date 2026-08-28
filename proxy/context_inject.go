@@ -82,6 +82,7 @@ var (
 // 裁剪仍应集中在 goals/guidelines（低优先），伤及 warn/act/fileAssoc 才是问题。
 type segCounts struct {
 	fileAssoc     int
+	anchor        int
 	warnings      int
 	actionItems   int
 	goals         int
@@ -90,7 +91,7 @@ type segCounts struct {
 }
 
 func (s segCounts) total() int {
-	return s.fileAssoc + s.warnings + s.actionItems + s.goals + s.guidelines
+	return s.fileAssoc + s.anchor + s.warnings + s.actionItems + s.goals + s.guidelines
 }
 
 // extractSessionID 尽力从请求体取 session（codex 在 client_metadata.session_id；
@@ -226,11 +227,13 @@ func InjectSessionContext(body []byte, agent string) []byte {
 	sessionID := extractSessionID(body)
 	// req 标识带 pid：跨进程/重启后不冲突（P3，8/13 审核）。
 	reqID := fmt.Sprintf("r%d-%d", os.Getpid(), atomic.AddUint64(&injectReqSeq, 1))
+	// 开工状态锚点（机制 6，8/28）：session 首请求快照 in_progress task。
+	anchor := resolveAnchorContext(sessionID)
 
-	if len(goals) == 0 && len(fileAssoc) == 0 && len(guidelines) > 0 {
+	if len(goals) == 0 && len(fileAssoc) == 0 && len(anchor) == 0 && len(guidelines) > 0 {
 		u.LogShared("INJECT", "inject project=%s agent=%s session=%s req=%s source=guidelines_only", proj, agent, sessionID, reqID)
 	}
-	if len(goals) == 0 && len(fileAssoc) == 0 && len(guidelines) == 0 {
+	if len(goals) == 0 && len(fileAssoc) == 0 && len(anchor) == 0 && len(guidelines) == 0 {
 		u.LogShared("INJECT", "skip project=%s agent=%s session=%s req=%s reason=no_summary_data", proj, agent, sessionID, reqID)
 		return body
 	}
@@ -239,7 +242,7 @@ func InjectSessionContext(body []byte, agent string) []byte {
 	// trigger re-injection even when session data is unchanged.
 	fullHash := hashString(fmt.Sprintf("%s%v%s", blockHash, fileAssoc, guidelines))
 
-	block, sc := buildContextBlock(goals, warnings, actionItems, fileAssoc, guidelines)
+	block, sc := buildContextBlock(goals, warnings, actionItems, fileAssoc, anchor, guidelines)
 
 	// Content-hash based dedup（8/18 修正）：same_content 跳过时不能直接返回
 	// 未注入的 body——每个请求对客户端都是全新 body，注入块不随会话保留；返回
@@ -253,8 +256,8 @@ func InjectSessionContext(body []byte, agent string) []byte {
 		return result
 	}
 	injectTracker.Store(agent, injectState{lastAt: time.Now(), contentHash: fullHash})
-	u.LogShared("INJECT", "agent=%s project=%s session=%s req=%s hash=%s goals=%d warnings=%d actions=%d file_total=%d guidelines=%d guide_del=%d chars=%d",
-		agent, proj, sessionID, reqID, fullHash[:8], len(goals), len(warnings), len(actionItems), len(fileAssoc), len(guidelines), sc.guidelinesDel, len(block))
+	u.LogShared("INJECT", "agent=%s project=%s session=%s req=%s hash=%s goals=%d warnings=%d actions=%d file_total=%d anchor=%d guidelines=%d guide_del=%d chars=%d",
+		agent, proj, sessionID, reqID, fullHash[:8], len(goals), len(warnings), len(actionItems), len(fileAssoc), len(anchor), len(guidelines), sc.guidelinesDel, len(block))
 	// suppressed 计数移到 shouldInject 之后：去重跳过（same_content/cooldown）的请求
 	// 不产出抑制记录——收紧 F2 口径（旧实现把未注入请求的抑制也算进去，虚高）。
 	// 8/18 修订（HARNESS §1.3）：char_limit 裁剪的请求已实际注入，仍写表，
@@ -269,16 +272,17 @@ func InjectSessionContext(body []byte, agent string) []byte {
 	if len(goals) == 0 && len(fileAssoc) == 0 && len(guidelines) > 0 {
 		source = "guidelines_only"
 	}
-	writeInjectLog(proj, agent, sessionID, reqID, source, fullHash, len(block), sc.total() > 0, goals, warnings, actionItems, fileAssoc, guidelines)
+	writeInjectLog(proj, agent, sessionID, reqID, source, fullHash, len(block), sc.total() > 0, goals, warnings, actionItems, fileAssoc, anchor, guidelines)
 	return result
 }
 
 // writeInjectLog records one actual injection into inject_log. Failure must
 // not break the injection hot path — log and continue. suppressed=1 表示本次
 // 注入有内容被 cap 裁剪（对应 :153），提取器按此分层（8/18 修订，HARNESS §1.3）。
-func writeInjectLog(project, agent, sessionID, reqID, source string, fullHash string, chars int, suppressed bool, goals, warnings, actionItems, fileAssoc []string, guidelines string) {
+func writeInjectLog(project, agent, sessionID, reqID, source string, fullHash string, chars int, suppressed bool, goals, warnings, actionItems, fileAssoc, anchor []string, guidelines string) {
 	segments := map[string]any{
 		"fileAssoc":   fileAssoc,
+		"anchor":      anchor,
 		"warnings":    warnings,
 		"actionItems": actionItems,
 		"goals":       goals,
@@ -554,7 +558,7 @@ func eventTypeBreakdown(events []map[string]any) string {
 	return strings.Join(parts, " ")
 }
 
-func buildContextBlock(goals, warnings, actionItems, fileAssoc []string, guidelines string) (string, segCounts) {
+func buildContextBlock(goals, warnings, actionItems, fileAssoc, anchor []string, guidelines string) (string, segCounts) {
 	var buf bytes.Buffer
 	var written int
 	// write 统一计费：written = 实际 block 字节数（含段头/Vision tip）。
@@ -588,6 +592,26 @@ func buildContextBlock(goals, warnings, actionItems, fileAssoc []string, guideli
 			}
 			write(line)
 			faWritten += len(line)
+		}
+		write("\n")
+	}
+
+	// ── 开工状态锚点 (机制 6, 8/28) ──
+	// 纯 status 的 in_progress task 快照，独立小预算，复用 write 精确计费。
+	// 不进 fullHash（Claude 8/28）：辅助信息非核心内容，不影响去重键；session
+	// 首请求快照由 resolveAnchorContext 缓存，session 内稳定不破 cache。
+	// guard 同时用 maxInjectChars：预算紧张时锚点让位（fileAssoc/guidelines 优先）。
+	if len(anchor) > 0 {
+		write("\n[当前进行任务]")
+		aw := 0
+		for _, a := range anchor {
+			line := "\n" + a
+			if aw+len(line) > anchorBudget || written+len(line) > maxInjectChars {
+				sc.anchor++
+				continue
+			}
+			write(line)
+			aw += len(line)
 		}
 		write("\n")
 	}
@@ -795,6 +819,51 @@ func resolveFileContext(body []byte, agent string) []string {
 		u.LogShared("INJECT", "file_assoc files=%d matches=%d", len(paths), len(assoc))
 	}
 	return assoc
+}
+
+// ── 开工状态锚点 (机制 6，8/28) ────────────────────────────────────
+// 防「把 done 当 todo 重建」：注入纯 status 的 in_progress task 列表（零语义、
+// 纯 SQL status='in_progress'），作为 agent 开工时的「该聚焦什么」锚点。
+// 设计（Claude 8/28 确认）：① 内容纯 status 快照，不做「相关性」语义判断——
+// 避免 L2 语义依赖（l2_coverage 40% 地基）；防重做价值由 fileAssoc 承担。
+// ② 独立段 + 独立预算（复用 buildContextBlock 精确计费），不挤占 chars≤800。
+// ③ 不进 fullHash——session 首请求快照后缓存，session 内稳定，不破 8/18 cache。
+const anchorBudget = 180
+const anchorTasksCap = 3
+
+var anchorCache sync.Map // sessionID → []string (session 首请求快照)
+
+// resolveAnchorContext 返回当前 in_progress task 列表（≤cap，按 task ID 排序
+// 确定性）。session 首请求计算后缓存：同一 session 内复用首请求快照，避免
+// in_progress 状态变化导致 block 每请求变化而断裂 prefix cache。sessionID 为空
+// （健康检查/测探）不返回锚点，保持无 session 请求稳定。
+func resolveAnchorContext(sessionID string) []string {
+	if sessionID == "" {
+		return nil
+	}
+	if v, ok := anchorCache.Load(sessionID); ok {
+		lines, _ := v.([]string)
+		return lines
+	}
+	tasks, err := store.ListTasks("in_progress", "")
+	if err != nil {
+		u.LogShared("INJECT", "anchor list_err=%v session=%s", err, sessionID)
+		anchorCache.Store(sessionID, []string(nil))
+		return nil
+	}
+	var lines []string
+	for i, t := range tasks {
+		if i >= anchorTasksCap {
+			break
+		}
+		line := fmt.Sprintf("- %s (%s) %s", t.ID, t.Priority, u.TruncateStr(t.Title, 40))
+		lines = append(lines, line)
+	}
+	if lines == nil {
+		lines = []string(nil)
+	}
+	anchorCache.Store(sessionID, lines)
+	return lines
 }
 
 // buildFileAssoc converts the file→task index into a deterministic list of

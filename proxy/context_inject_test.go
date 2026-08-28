@@ -192,7 +192,7 @@ func TestBuildContextBlockSegCounts(t *testing.T) {
 	long := strings.Repeat("x", 300)
 	block, sc := buildContextBlock(
 		[]string{long, long, long},
-		nil, nil, nil, "")
+		nil, nil, nil, nil, "")
 	if sc.goals != 1 {
 		t.Fatalf("goals suppressed: got %d want 1", sc.goals)
 	}
@@ -203,7 +203,7 @@ func TestBuildContextBlockSegCounts(t *testing.T) {
 		t.Fatal("block should not be empty")
 	}
 	// 全部放得下 → 零裁剪
-	if _, sc2 := buildContextBlock([]string{"short"}, nil, nil, nil, ""); sc2.total() != 0 {
+	if _, sc2 := buildContextBlock([]string{"short"}, nil, nil, nil, nil, ""); sc2.total() != 0 {
 		t.Fatalf("no suppression expected, got %d", sc2.total())
 	}
 }
@@ -215,7 +215,7 @@ func TestBuildContextBlockGuidelinesCountBug(t *testing.T) {
 	gl := strings.Repeat("g", 1622)
 	files := []string{"a.go → task (in_progress, P0) task-1234567890"}
 	goals := []string{"short goal"}
-	block, sc := buildContextBlock(goals, nil, nil, files, gl)
+	block, sc := buildContextBlock(goals, nil, nil, files, nil, gl)
 	if sc.fileAssoc != 0 {
 		t.Fatalf("fileAssoc suppressed: got %d want 0 (count bug would trim all)", sc.fileAssoc)
 	}
@@ -249,7 +249,7 @@ func TestBuildContextBlockFileAssocSubBudget(t *testing.T) {
 	for i := range files {
 		files[i] = strings.Repeat("x", 30)
 	}
-	block, sc := buildContextBlock(nil, nil, nil, files, "")
+	block, sc := buildContextBlock(nil, nil, nil, files, nil, "")
 	if sc.fileAssoc != 4 {
 		t.Fatalf("fileAssoc suppressed: got %d want 4 (500B dynamic budget fits 16 of 20)", sc.fileAssoc)
 	}
@@ -517,7 +517,7 @@ func TestWriteInjectLogSuppressed(t *testing.T) {
 	if _, err := pmdb.Bootstrap(); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
-	writeInjectLog("/proj", "codex", "sess-C", "r1-3", "", "12345678", 90, true, nil, nil, nil, []string{"a.go"}, "")
+	writeInjectLog("/proj", "codex", "sess-C", "r1-3", "", "12345678", 90, true, nil, nil, nil, []string{"a.go"}, nil, "")
 
 	db, err := pmdb.Open()
 	if err != nil {
@@ -627,7 +627,7 @@ func TestBuildContextBlockWarnActReserve(t *testing.T) {
 		"b.go → task-2222222222 (done, P1)",
 		"c.go → task-3333333333 (todo, P2)",
 	}
-	block, sc := buildContextBlock(nil, warns, nil, files, gl)
+	block, sc := buildContextBlock(nil, warns, nil, files, nil, gl)
 	// 旧实现（无 reserve）：written=93+600+20=713，warn guard 773>750 → 5 条全裁。
 	// 新实现：avail=min(600,750-93-200)=457，written=570，warn 至少到 3 条（裁 ≤2）。
 	if sc.warnings > 2 {
@@ -649,7 +649,7 @@ func TestBuildContextBlockActionItemsSurvive(t *testing.T) {
 	gl := strings.Repeat("g", guidelinesBudget)
 	warns := []string{strings.Repeat("w", 55)}
 	acts := []string{"⚠️ 修复: aipm_record_commit(task_id=\"?\", title=\"...\")\n  → 详情: aipm_get_commit(\"task-0000000000\")"}
-	block, sc := buildContextBlock(nil, warns, acts, nil, gl)
+	block, sc := buildContextBlock(nil, warns, acts, nil, nil, gl)
 	if sc.actionItems != 0 {
 		t.Fatalf("actionItems suppressed %d, want 0", sc.actionItems)
 	}
@@ -681,8 +681,128 @@ func TestBuildContextBlockNeverExceedsCap(t *testing.T) {
 		goals[i] = strings.Repeat("g", 60)
 	}
 	gl := strings.Repeat("spec", 300)
-	block, sc := buildContextBlock(goals, warns, acts, files, gl)
+	block, sc := buildContextBlock(goals, warns, acts, files, nil, gl)
 	if len(block) > maxInjectChars {
 		t.Fatalf("block %d exceeds cap %d (sc=%+v)", len(block), maxInjectChars, sc)
+	}
+}
+
+// 机制 6（8/28）：buildContextBlock anchor 段——[当前进行任务] 写入、line 送达、
+// sc.anchor 零裁剪、block 不超 cap。纯 status 快照，与 goals/fileAssoc 段独立。
+func TestBuildContextBlockAnchor(t *testing.T) {
+	anchor := []string{
+		"- task-a (P0) Fix the thing",
+		"- task-b (P1) Another task",
+	}
+	block, sc := buildContextBlock(nil, nil, nil, nil, anchor, "")
+	if !strings.Contains(block, "[当前进行任务]") {
+		t.Fatalf("anchor section header missing: %s", block)
+	}
+	if !strings.Contains(block, "- task-a (P0) Fix the thing") {
+		t.Fatalf("anchor line missing: %s", block)
+	}
+	if !strings.Contains(block, "- task-b (P1) Another task") {
+		t.Fatalf("second anchor line missing: %s", block)
+	}
+	if sc.anchor != 0 {
+		t.Fatalf("anchor suppressed: got %d want 0", sc.anchor)
+	}
+	if sc.total() != 0 {
+		t.Fatalf("total suppressed: got %d want 0", sc.total())
+	}
+	if len(block) > maxInjectChars {
+		t.Fatalf("block %d exceeds cap %d", len(block), maxInjectChars)
+	}
+}
+
+// 机制 6：anchor 超独立预算（anchorBudget=180）时被裁剪计入 sc.anchor，但首行
+// 必须送达、block 仍严格 ≤ maxInjectChars（复用 write 精确计费）。
+func TestBuildContextBlockAnchorTrim(t *testing.T) {
+	anchor := make([]string, 10)
+	for i := range anchor {
+		anchor[i] = fmt.Sprintf("- task-%d %s", i, strings.Repeat("x", 50))
+	}
+	block, sc := buildContextBlock(nil, nil, nil, nil, anchor, "")
+	if sc.anchor == 0 {
+		t.Fatalf("expected anchor trimming under tight budget, got 0 (block=%q)", block)
+	}
+	if !strings.Contains(block, "task-0") {
+		t.Fatalf("first anchor line must survive trim: %s", block)
+	}
+	if len(block) > maxInjectChars {
+		t.Fatalf("block %d exceeds cap %d", len(block), maxInjectChars)
+	}
+	// anchorBudget 独立——锚点不会挤掉同函数内其他高优段（此处无其他段）。
+	if sc.total() != sc.anchor {
+		t.Fatalf("total %d != anchor %d（anchor 段独立计费）", sc.total(), sc.anchor)
+	}
+}
+
+// 机制 6（8/28）：resolveAnchorContext——空 session 不注入；in_progress ≤ cap；
+// 同 session 首请求快照缓存（后续状态变化不破 session 稳定性）。
+func TestResolveAnchorContextDeterministic(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PMAI_HOME", dir)
+	if _, err := pmdb.Bootstrap(); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+	// 空 session（健康检查/测探）直接返回 nil，不触发库查询。
+	if got := resolveAnchorContext(""); got != nil {
+		t.Fatalf("empty session: got %v want nil", got)
+	}
+
+	sessionID := "sess-anchor-deterministic"
+	anchorCache.Delete(sessionID) // 包内共享，防跨测试污染
+
+	db, err := pmdb.Open()
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+	// 直接插 4 条 in_progress（Mock 库，无需 plan 关联）。
+	now := "2026-08-28T12:00:00Z"
+	ids := []string{"task-anchor-0001", "task-anchor-0002", "task-anchor-0003", "task-anchor-0004"}
+	for _, id := range ids {
+		if _, err := db.Exec(`INSERT INTO tasks (id, title, status, priority, phase, acceptance_json, related_docs_json, related_decisions_json, last_note, updated_at, created_at) VALUES (?, ?, 'in_progress', 'P1', 'general', '[]', '[]', '[]', '', ?, ?)`, id, "任务 "+id, now, now); err != nil {
+			t.Fatalf("insert task %s: %v", id, err)
+		}
+	}
+
+	first := resolveAnchorContext(sessionID)
+	if len(first) != anchorTasksCap {
+		t.Fatalf("first resolve: got %d lines want %d (cap)", len(first), anchorTasksCap)
+	}
+	for _, line := range first {
+		if !strings.HasPrefix(line, "- task-anchor-") || !strings.Contains(line, "(P1)") {
+			t.Fatalf("anchor line format wrong: %q", line)
+		}
+	}
+	// 删掉一条「已出现在首快照」的 in_progress 后再读——缓存命中，快照不变
+	// （session 内稳定，不破 prefix cache）。
+	var victim string
+	joined := strings.Join(first, "\n")
+	for _, id := range ids {
+		if strings.Contains(joined, id) {
+			victim = id
+			break
+		}
+	}
+	if victim == "" {
+		t.Fatalf("no victim id found in first snapshot: %v", first)
+	}
+	if _, err := db.Exec(`DELETE FROM tasks WHERE id = ?`, victim); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	second := resolveAnchorContext(sessionID)
+	if len(second) != len(first) {
+		t.Fatalf("cache unstable: len %d vs %d", len(second), len(first))
+	}
+	for i := range first {
+		if first[i] != second[i] {
+			t.Fatalf("cache unstable line %d: %q vs %q", i, first[i], second[i])
+		}
+	}
+	if !strings.Contains(strings.Join(second, "\n"), victim) {
+		t.Fatalf("cache must preserve deleted task %s snapshot: %v", victim, second)
 	}
 }
