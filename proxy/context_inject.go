@@ -25,7 +25,11 @@ import (
 )
 
 const (
-	maxInjectChars   = 800            // hard cap to prevent context explosion
+	// maxInjectChars 是注入块硬上限（含段头/Vision tip，防 context 爆炸）。
+	// 8/28 精确计费约定：buildContextBlock 每个 guard 必须留 ≥1B 余量
+	// （"…" 追加、段头、结尾换行等），改写后必须重跑 TestBuildContextBlockNeverExceedsCap
+	// 证明 block 严格 ≤本上限（Claude 8/28 Residual 观察 1，防未来加段手滑）。
+	maxInjectChars   = 800
 	guidelinesBudget = 600            // dedicated char budget for guidelines.md
 	sessionTTL       = 48 * time.Hour // ignore sessions older than this
 	actionItemCeil   = 10             // 2.1: safety ceiling for formatted action items
