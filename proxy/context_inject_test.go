@@ -191,10 +191,11 @@ func TestInjectSwitchDisabled(t *testing.T) {
 	}
 }
 
-// Regression (8/18 cache 命中率调查): buildFileAssoc 的输出必须确定且有序。
+// Regression (8/18 cache 命中率调查): buildFileAssoc 的输出必须确定。
 // Go map range 顺序随机，未排序时 fullHash 每请求变化 → 每请求重新注入 →
 // deepseek prefix cache 在 system prompt 末尾断裂（观测断点 4480/4608）。
-// 排序同时稳定 fullHash 与 buildContextBlock 的子预算截断选择。
+// 输出按「paths 出现顺序」为主序、每文件内 task ID 排序为次序，同时稳定
+// fullHash 与 buildContextBlock 的子预算截断选择。
 func TestBuildFileAssocDeterministic(t *testing.T) {
 	fileTasks := map[string]map[string]string{
 		"a.go": {
@@ -208,6 +209,7 @@ func TestBuildFileAssocDeterministic(t *testing.T) {
 	}
 	var first []string
 	for i := 0; i < 100; i++ {
+		// paths 顺序 = b.go 先、a.go 后 → 输出主序必须 b.go 在前。
 		got := buildFileAssoc([]string{"b.go", "a.go"}, fileTasks)
 		if i == 0 {
 			first = got
@@ -222,17 +224,86 @@ func TestBuildFileAssocDeterministic(t *testing.T) {
 			}
 		}
 	}
-	if !sort.StringsAreSorted(first) {
-		t.Fatalf("assoc must be sorted, got %v", first)
+	want := []string{
+		"b.go → task-4 (done, P1) task-4",
+		"a.go → task-1 (done, P0) task-1",
+		"a.go → task-2 (in_progress, P1) task-2",
+		"a.go → task-3 (todo, P2) task-3",
 	}
-	if len(first) != 4 {
-		t.Fatalf("want 4 associations, got %v", first)
+	if len(first) != len(want) {
+		t.Fatalf("want %d associations, got %v", len(want), first)
+	}
+	for i := range want {
+		if first[i] != want[i] {
+			t.Fatalf("assoc[%d] = %q, want %q", i, first[i], want[i])
+		}
 	}
 	// fullHash 必须随相同 fileAssoc 稳定（same_content 才能命中）。
 	h1 := hashString(fmt.Sprintf("%s%v%s", "block", first, "guidelines"))
 	h2 := hashString(fmt.Sprintf("%s%v%s", "block", first, "guidelines"))
 	if h1 != h2 {
 		t.Fatalf("fullHash unstable for identical fileAssoc: %s vs %s", h1, h2)
+	}
+}
+
+// Challenge 3 (Claude 09:51): 原全局字母序排序会裁掉关键文件——例如
+// store/discussion_entities.go 这类字母序靠后的路径在 buildContextBlock 的
+// 子预算截断中被裁掉，而 agent 正在实际操作它。修复后主序 = paths 出现顺序，
+// 因此请求里先出现的文件优先写入；每文件关联数 ≤ fileAssocPerFileCap，防单
+// 文件历史噪音（如 main.go 关联 16 个 done task）挤占预算。
+func TestBuildFileAssocRelevanceOrder(t *testing.T) {
+	// 构造 >cap 的 task 绑定到同一个文件，验证 cap 生效。
+	manyTasks := map[string]string{}
+	for i := 0; i < 10; i++ {
+		tid := fmt.Sprintf("task-%02d", i)
+		manyTasks[tid] = fmt.Sprintf("%s (done, P1)", tid)
+	}
+	fileTasks := map[string]map[string]string{
+		// 字母序靠后，但请求里先出现。
+		"store/discussion_entities.go": manyTasks,
+		"build.sh":                     {"task-99": "task-99 (in_progress, P1)"},
+		"aipmc/mcp.go":                 {"task-88": "task-88 (in_progress, P0)"},
+	}
+	// paths 顺序: store/... 最先，build.sh 其次，aipmc/mcp.go 最后。
+	got := buildFileAssoc([]string{"store/discussion_entities.go", "build.sh", "aipmc/mcp.go"}, fileTasks)
+
+	if len(got) == 0 || !strings.HasPrefix(got[0], "store/discussion_entities.go → ") {
+		t.Fatalf("relevance: first assoc must be store/discussion_entities.go, got %v", got)
+	}
+
+	// store 文件关联数必须 ≤ cap。
+	storeCount := 0
+	for _, a := range got {
+		if strings.HasPrefix(a, "store/discussion_entities.go → ") {
+			storeCount++
+		}
+	}
+	if storeCount != fileAssocPerFileCap {
+		t.Fatalf("per-file cap = %d, got %d: %v", fileAssocPerFileCap, storeCount, got)
+	}
+
+	// store 文件的 task ID 必须按升序输出（确定性）。
+	prevTid := ""
+	for _, a := range got {
+		if !strings.HasPrefix(a, "store/discussion_entities.go → ") {
+			continue
+		}
+		tidPart := strings.TrimSpace(a[strings.LastIndex(a, " ")+1:])
+		if prevTid != "" && tidPart < prevTid {
+			t.Fatalf("store tasks not sorted: %q after %q in %v", tidPart, prevTid, got)
+		}
+		prevTid = tidPart
+	}
+
+	// build.sh 与 aipmc/mcp.go 在 store 组之后，且按 paths 顺序分别保留。
+	if len(got) < storeCount+2 {
+		t.Fatalf("expected store(%d)+build.sh+aipmc/mcp.go, got %v", storeCount, got)
+	}
+	if !strings.HasPrefix(got[storeCount], "build.sh → ") {
+		t.Fatalf("build.sh should be right after store group, got %v", got)
+	}
+	if !strings.HasPrefix(got[storeCount+1], "aipmc/mcp.go → ") {
+		t.Fatalf("aipmc/mcp.go should follow build.sh, got %v", got)
 	}
 }
 

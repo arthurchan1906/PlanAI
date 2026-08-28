@@ -784,11 +784,12 @@ func resolveFileContext(body []byte, agent string) []string {
 		}
 	}
 
-	// Match extracted paths against file→task index. buildFileAssoc sorts the
-	// result so both fullHash and buildContextBlock's sub-budget truncation stay
-	// deterministic across requests (Go map range order is randomized — 8/18
-	// cache 命中率调查: 未排序时每请求重新注入，deepseek prefix cache 在
-	// system prompt 末尾断裂，观测断点 4480/4608 token)。
+	// Match extracted paths against file→task index. buildFileAssoc orders by
+	// relevance — primary = paths appearance order, secondary = task ID sort
+	// within each file — so both fullHash and buildContextBlock's sub-budget
+	// truncation stay deterministic across requests (Go map range order is
+	// randomized — 8/18 命中率调查: 未排序时每请求重新注入，deepseek prefix cache
+	// 在 system prompt 末尾断裂，观测断点 4480/4608 token)。
 	assoc := buildFileAssoc(paths, fileTasks)
 	if len(assoc) > 0 {
 		u.LogShared("INJECT", "file_assoc files=%d matches=%d", len(paths), len(assoc))
@@ -796,12 +797,24 @@ func resolveFileContext(body []byte, agent string) []string {
 	return assoc
 }
 
-// buildFileAssoc converts the file→task index into a sorted list of
-// association lines. Sorting is REQUIRED (8/18): the slice feeds both fullHash
-// (order-sensitive %v) and buildContextBlock's sub-budget truncation. An
-// unsorted slice varies per request because Go map range order is randomized,
+// buildFileAssoc converts the file→task index into a deterministic list of
+// association lines ordered by relevance:
+//   - Primary order = paths 出现顺序 (extractFilePaths preserves request order,
+//     stable within a request).
+//   - Within a file, task IDs sorted lexicographically (deterministic).
+//
+// Sorting within each file is REQUIRED (8/18): the slice feeds both fullHash
+// (order-sensitive %v) and buildContextBlock's sub-budget truncation. A bare
+// range over a map is randomized, so an unsorted slice varies per request,
 // which re-injects every request and breaks the deepseek prefix cache at the
 // system-prompt end (observed 4480/4608 token breakpoints).
+//
+// We intentionally do NOT sort globally by task status/priority: those are
+// dynamic attributes — an agent flipping a task changes its sort position,
+// changes fullHash, and re-triggers the 8/18 cache break. status is kept only
+// as label content, never as a sort key.
+const fileAssocPerFileCap = 5
+
 func buildFileAssoc(paths []string, fileTasks map[string]map[string]string) []string {
 	var assoc []string
 	seen := map[string]bool{}
@@ -810,16 +823,28 @@ func buildFileAssoc(paths []string, fileTasks map[string]map[string]string) []st
 		if !ok {
 			continue
 		}
-		for tid, tag := range tasks {
+		// Sort task IDs deterministically within the file. Go map range order
+		// is randomized, so iterate a sorted slice instead of the map directly.
+		tids := make([]string, 0, len(tasks))
+		for tid := range tasks {
+			tids = append(tids, tid)
+		}
+		sort.Strings(tids)
+		// Cap per-file associations: keeps single-file historical noise (e.g. a
+		// heavily-touched file with 16 done tasks) from crowding out other paths
+		// in the sub-budget truncation budget.
+		if len(tids) > fileAssocPerFileCap {
+			tids = tids[:fileAssocPerFileCap]
+		}
+		for _, tid := range tids {
 			key := p + tid
 			if seen[key] {
 				continue
 			}
 			seen[key] = true
-			assoc = append(assoc, fmt.Sprintf("%s → %s %s", p, tag, u.TruncateStr(tid, 20)))
+			assoc = append(assoc, fmt.Sprintf("%s → %s %s", p, tasks[tid], u.TruncateStr(tid, 20)))
 		}
 	}
-	sort.Strings(assoc)
 	return assoc
 }
 
