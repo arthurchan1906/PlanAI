@@ -50,7 +50,7 @@ func handleResponsesPassthrough(w http.ResponseWriter, r *http.Request) {
 
 	agent := "codex"
 	body = dedupeRequestBody(body, agent)
-	sessionID := extractSessionID(body)
+	sessionID := extractSessionID(body, r.Header)
 	capID := startCapture(agent, r.Method, r.URL.Path, effectiveModelName, body, copyHeaders(r), nil)
 	startTime := time.Now()
 
@@ -134,7 +134,7 @@ func isStreamingResponses(body []byte) bool {
 // handleResponsesPassthroughStream 字节级 SSE 透传 streaming 响应。
 func handleResponsesPassthroughStream(w http.ResponseWriter, r *http.Request, body []byte, targetURL, apiKey, capID string, model string, startTime time.Time, agent string) {
 	body = dedupeRequestBody(body, agent)
-	sessionID := extractSessionID(body)
+	sessionID := extractSessionID(body, r.Header)
 	proxyReq, err := http.NewRequest(r.Method, targetURL, bytes.NewReader(body))
 	if err != nil {
 		finishCapture(capID, http.StatusInternalServerError, time.Since(startTime), nil, err.Error(), "")

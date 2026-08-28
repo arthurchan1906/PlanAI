@@ -43,7 +43,7 @@ func tryModelCommand(w http.ResponseWriter, r *http.Request, agent string, body 
 
 	// Pass the caller's own session ID (codex provides it via client_metadata;
 	// other agents may not) so the sessions board can mark "current session".
-	result := executeModelCommand(cmd, agent, extractSessionID(body))
+	result := executeModelCommand(cmd, agent, extractSessionID(body, r.Header))
 
 	capID := startCapture(agent, r.Method, r.URL.Path, "", body, copyHeaders(r), nil)
 	finishCapture(capID, http.StatusOK, time.Duration(0), nil, result, "")

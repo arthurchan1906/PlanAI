@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -181,9 +182,74 @@ func TestExtractSessionID(t *testing.T) {
 		{"invalid json", `not-json`, ""},
 	}
 	for _, c := range cases {
-		if got := extractSessionID([]byte(c.body)); got != c.want {
+		if got := extractSessionID([]byte(c.body), nil); got != c.want {
 			t.Fatalf("%s: got %q want %q", c.name, got, c.want)
 		}
+	}
+}
+
+// 8/28: claude /v1/messages 请求体无 session，但从 header X-Claude-Code-Session-Id
+// 可稳定提取（真实 cap_ 实证）。body 优先：codex 的 body session 不被 header 覆盖。
+func TestExtractSessionIDClaudeHeader(t *testing.T) {
+	h := http.Header{}
+	h.Set("X-Claude-Code-Session-Id", "5afa6827-c902-4812-8ae8-05c476f32cbf")
+	// claude：body 无 session，header 兜底
+	if got := extractSessionID([]byte(`{"model":"claude-3","messages":[]}`), h); got != "5afa6827-c902-4812-8ae8-05c476f32cbf" {
+		t.Fatalf("claude header: got %q", got)
+	}
+	// body 优先：codex client_metadata.session_id 存在时 header 不覆盖
+	if got := extractSessionID([]byte(`{"client_metadata":{"session_id":"body_ses"},"session_id":"top"}`), h); got != "body_ses" {
+		t.Fatalf("body priority: got %q", got)
+	}
+	// 顶层 body session 也优先于 header
+	if got := extractSessionID([]byte(`{"session_id":"top_ses"}`), h); got != "top_ses" {
+		t.Fatalf("top-level priority: got %q", got)
+	}
+	// header nil / 无该字段 → 空
+	if got := extractSessionID([]byte(`{"foo":1}`), nil); got != "" {
+		t.Fatalf("nil header: got %q", got)
+	}
+	if got := extractSessionID([]byte(`{"foo":1}`), http.Header{}); got != "" {
+		t.Fatalf("empty header: got %q", got)
+	}
+}
+
+// 8/28 集成：claude /v1/messages + X-Claude-Code-Session-Id header ——
+// InjectSessionContext 应注入且 inject_log 记录 header 解析出的 session（不再恒空）。
+func TestInjectSessionContextClaudeHeader(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "guidelines.md"), []byte("claude guideline\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PMAI_HOME", dir)
+	t.Setenv("AIPMC_INJECT", "1")
+	if _, err := pmdb.Bootstrap(); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+	guidelinesCache.mu.Lock()
+	guidelinesCache.updatedAt = time.Time{}
+	guidelinesCache.content = ""
+	guidelinesCache.mu.Unlock()
+	injectTracker.Delete("claude")
+
+	h := http.Header{}
+	h.Set("X-Claude-Code-Session-Id", "5afa6827-c902-4812-8ae8-05c476f32cbf")
+	body := []byte(`{"model":"claude-3-5-sonnet","messages":[{"role":"user","content":"hello"}]}`)
+	out := InjectSessionContext(body, "claude", h)
+	if bytes.Equal(out, body) {
+		t.Fatal("claude request must be injected")
+	}
+	db, err := pmdb.Open()
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+	var sessionID string
+	if err := db.QueryRow(`SELECT session_id FROM inject_log WHERE agent='claude' ORDER BY ts DESC LIMIT 1`).Scan(&sessionID); err != nil {
+		t.Fatalf("SELECT session: %v", err)
+	}
+	if sessionID != "5afa6827-c902-4812-8ae8-05c476f32cbf" {
+		t.Fatalf("inject_log session = %q, want header session", sessionID)
 	}
 }
 
@@ -265,7 +331,7 @@ func TestInjectSwitchDisabled(t *testing.T) {
 	// A/B 开关：AIPMC_INJECT=0 时必须原样透传，不触碰 DB。
 	body := []byte(`{"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"看下 proxy/discussion_dedup.go"}]}],"instructions":"You are a coding agent"}`)
 	t.Setenv("AIPMC_INJECT", "0")
-	if out := InjectSessionContext(body, "codex"); !bytes.Equal(out, body) {
+	if out := InjectSessionContext(body, "codex", nil); !bytes.Equal(out, body) {
 		t.Fatal("AIPMC_INJECT=0: body must pass through unchanged")
 	}
 	if injectSwitchState() != "off" {
@@ -415,14 +481,14 @@ func TestInjectSameContentStillInjectsBlock(t *testing.T) {
 	injectTracker.Delete("codex")
 
 	body := []byte(`{"input":[{"type":"message","role":"user","content":"hello"}],"instructions":"You are a coding agent"}`)
-	first := InjectSessionContext(body, "codex")
+	first := InjectSessionContext(body, "codex", nil)
 	if bytes.Equal(first, body) {
 		t.Fatal("first call must inject the block")
 	}
 	if !bytes.Contains(first, []byte("[项目编码规范]")) {
 		t.Fatal("first call block missing guidelines section")
 	}
-	second := InjectSessionContext(body, "codex")
+	second := InjectSessionContext(body, "codex", nil)
 	if !bytes.Equal(second, first) {
 		t.Fatalf("same_content skip must still inject the identical block")
 	}
@@ -450,7 +516,7 @@ func TestInjectWritesInjectLog(t *testing.T) {
 	injectTracker.Delete("codex")
 
 	body := []byte(`{"input":[{"type":"message","role":"user","content":"hello"}],"instructions":"You are a coding agent"}`)
-	first := InjectSessionContext(body, "codex")
+	first := InjectSessionContext(body, "codex", nil)
 	if bytes.Equal(first, body) {
 		t.Fatal("first call must inject the block")
 	}
@@ -460,7 +526,7 @@ func TestInjectWritesInjectLog(t *testing.T) {
 		t.Fatalf("inject_log rows after first call = %d, want 1", count)
 	}
 	// 第二次 same_content → 注入同一 block，但不写表
-	second := InjectSessionContext(body, "codex")
+	second := InjectSessionContext(body, "codex", nil)
 	if !bytes.Equal(second, first) {
 		t.Fatal("same_content skip must still inject the identical block")
 	}

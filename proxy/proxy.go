@@ -355,7 +355,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 
 	if !intercepted {
 		origLen := len(body)
-		body = InjectSessionContext(body, agent)
+		body = InjectSessionContext(body, agent, r.Header)
 		if len(body) != origLen {
 			r = r.WithContext(context.WithValue(r.Context(), ctxInjected, true))
 		}
@@ -926,7 +926,7 @@ func handleUnifiedNonStream(w http.ResponseWriter, r *http.Request, adapter Prot
 	r.Body.Close()
 	rawBody = dedupeRequestBody(rawBody, detectAgent(r.URL.Path))
 	r.Body = io.NopCloser(strings.NewReader(string(rawBody)))
-	sessionID := extractSessionID(rawBody)
+	sessionID := extractSessionID(rawBody, r.Header)
 
 	req, err := adapter.ParseRequest(r)
 	if err != nil {
@@ -1060,7 +1060,7 @@ func handleUnifiedStream(w http.ResponseWriter, r *http.Request, adapter Protoco
 	r.Body.Close()
 	rawBody = dedupeRequestBody(rawBody, detectAgent(r.URL.Path))
 	r.Body = io.NopCloser(strings.NewReader(string(rawBody)))
-	sessionID := extractSessionID(rawBody)
+	sessionID := extractSessionID(rawBody, r.Header)
 
 	req, err := adapter.ParseRequest(r)
 	if err != nil {
@@ -1218,7 +1218,7 @@ func handleOpenAIChatPassthrough(w http.ResponseWriter, r *http.Request) {
 	// 本地 upstream；传 model 让 resolveVirtualRoute 按注册表 + 凭据路由远程模型）。
 	virtualModel := model
 	rawBody = dedupeRequestBody(rawBody, agent)
-	sessionID := extractSessionID(rawBody)
+	sessionID := extractSessionID(rawBody, r.Header)
 
 	// ── Capture (for Proxy Inspector) ──
 	capID := startCapture(agent, r.Method, r.URL.Path, model, rawBody, copyHeaders(r), nil)

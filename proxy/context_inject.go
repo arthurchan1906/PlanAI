@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -94,15 +95,18 @@ func (s segCounts) total() int {
 	return s.fileAssoc + s.anchor + s.warnings + s.actionItems + s.goals + s.guidelines
 }
 
-// extractSessionID 尽力从请求体取 session（codex 在 client_metadata.session_id；
-// claude/gemini 可能无，留空——漏斗按 agent+时间窗兜底对齐）。
-func extractSessionID(body []byte) string {
+// extractSessionID 尽力从请求体/请求头取 session。body 优先（codex 在
+// client_metadata.session_id；兼容顶层字段）；body 取不到再读 header——Claude
+// Code 的 /v1/messages 请求体不带 session（8/17 M0 缺口），但其 HTTP header 带
+// X-Claude-Code-Session-Id（8/28 实证 claude 三样本），故 claude 也能稳定取到。
+// codex 的 body 逻辑零改动（body 优先，header 仅兜底）。
+func extractSessionID(body []byte, header http.Header) string {
 	if len(body) == 0 {
-		return ""
+		return sessionIDFromHeader(header)
 	}
 	var m map[string]any
 	if err := json.Unmarshal(body, &m); err != nil {
-		return ""
+		return sessionIDFromHeader(header)
 	}
 	if md, ok := m["client_metadata"].(map[string]any); ok {
 		if sid, ok := md["session_id"].(string); ok && sid != "" {
@@ -110,6 +114,19 @@ func extractSessionID(body []byte) string {
 		}
 	}
 	if sid, ok := m["session_id"].(string); ok && sid != "" {
+		return sid
+	}
+	return sessionIDFromHeader(header)
+}
+
+// sessionIDFromHeader 从请求头提取稳定 session（Claude Code 专用：
+// X-Claude-Code-Session-Id）。8/28 实证：claude /v1/messages 三样本 header 均带
+// 该字段且与 AIPM 会话 sid 一致。header==nil（测试/健康探针）返回空。
+func sessionIDFromHeader(header http.Header) string {
+	if header == nil {
+		return ""
+	}
+	if sid := header.Get("X-Claude-Code-Session-Id"); sid != "" {
 		return sid
 	}
 	return ""
@@ -208,7 +225,7 @@ func projectRootFromBody(body []byte) string {
 // If the request body contains file paths (from code context), file→task
 // associations are added to help the agent understand which PM entities
 // are related to the files it's working on.
-func InjectSessionContext(body []byte, agent string) []byte {
+func InjectSessionContext(body []byte, agent string, header http.Header) []byte {
 	// A/B 开关（8/17 实验）：AIPMC_INJECT=0 关闭注入，默认开启（生产不变）。
 	// 关闭用于隔离「注入 SP 抖动」对 deepseek prefix cache 的独立影响。
 	if os.Getenv("AIPMC_INJECT") == "0" {
@@ -224,7 +241,7 @@ func InjectSessionContext(body []byte, agent string) []byte {
 	proj := injectProjectForRequest(body)
 	// W1（8/13）：session/req 标识进 inject/suppressed 日志，供可见性漏斗按
 	// (agent, session, req, ts) 对齐注入与事件处理记录。
-	sessionID := extractSessionID(body)
+	sessionID := extractSessionID(body, header)
 	// req 标识带 pid：跨进程/重启后不冲突（P3，8/13 审核）。
 	reqID := fmt.Sprintf("r%d-%d", os.Getpid(), atomic.AddUint64(&injectReqSeq, 1))
 	// 开工状态锚点（机制 6，8/28）：session 首请求快照 in_progress task。
