@@ -881,15 +881,15 @@ func extractFilePaths(body []byte, agent string) []string {
 			}
 		}
 
-		// Codex format: instructions field
-		if instr, ok := raw["instructions"].(string); ok && instr != "" {
-			textParts = append(textParts, instr)
-		}
-
 		// OpenAI Responses format: input array (codex /v1/responses).
 		// Elements: {"type":"message","content":[{"type":"input_text","text":...}]}
 		// or content as a plain string. Previously unparsed → codex silently
 		// extracted 0 file paths (C2).
+		//
+		// 相关性优先 (Claude Challenge 3, 8/28 实测 r20223-51): input 承载 agent
+		// 当前操作的用户消息，先于 instructions（系统指令、多为静态路径）提取，
+		// 使实际操作文件排在 fileAssoc 头部、占满子预算而把 store/... 裁掉。
+		// 实测 file_total=13/file_cut=8：build.sh 等指令路径在前，store/... 被裁。
 		if input, ok := raw["input"].([]any); ok {
 			for _, item := range input {
 				im, _ := item.(map[string]any)
@@ -911,6 +911,12 @@ func extractFilePaths(body []byte, agent string) []string {
 					}
 				}
 			}
+		}
+
+		// Codex format: instructions field (system directive, lower priority
+		// than input — see note above).
+		if instr, ok := raw["instructions"].(string); ok && instr != "" {
+			textParts = append(textParts, instr)
 		}
 
 		// Gemini format: systemInstruction.parts[].text

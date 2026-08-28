@@ -39,6 +39,36 @@ func TestExtractFilePathsResponsesStringContent(t *testing.T) {
 	}
 }
 
+// Claude Challenge 3 (8/28): extractFilePaths 必须让 input（用户实际操作）的
+// 路径先于 instructions（系统指令/静态路径）提取。否则指令静态路径（build.sh
+// 等）占满 fileAssoc 子预算，真实操作文件（store/...）被 buildContextBlock
+// 裁掉。实测 r20223-51: file_total=13 / file_cut=8。
+func TestExtractFilePathsInputBeforeInstructions(t *testing.T) {
+	body := []byte(`{"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"implement store/discussion_entities.go"}]}],"instructions":"also read build.sh and proxy/context_inject.go"}`)
+	got := extractFilePaths(body, "codex")
+	if len(got) == 0 {
+		t.Fatalf("no paths extracted from %s", body)
+	}
+	if got[0] != "store/discussion_entities.go" {
+		t.Fatalf("input path must precede instructions paths, got %v", got)
+	}
+	sawInput, sawBuild := false, false
+	for _, p := range got {
+		if p == "store/discussion_entities.go" {
+			sawInput = true
+		}
+		if p == "build.sh" {
+			sawBuild = true
+			if !sawInput {
+				t.Fatalf("build.sh (instructions) appeared before input path: %v", got)
+			}
+		}
+	}
+	if !sawBuild {
+		t.Fatalf("expected build.sh from instructions, got %v", got)
+	}
+}
+
 // Anthropic messages format must keep working (claude path).
 func TestExtractFilePathsAnthropicMessages(t *testing.T) {
 	body := []byte(`{"messages":[{"role":"user","content":[{"type":"text","text":"touch web/frontend.tsx"}]}]}`)
