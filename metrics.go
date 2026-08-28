@@ -39,6 +39,8 @@ func dispatchMetrics(args *cli.Args) {
 	}
 	// --window 生效于日志类指标：解析为截止时间，扫描时跳过更早的行。
 	// DB 类指标仅 F1/F4 支持窗口回算（见上），其余行始终为当前全表值。
+	// 8/28：日志类 --since——用户显式传绝对时间（且未给 --window）时，把 since
+	// 作为日志扫描下界，实现「从重启时刻起算」的精确窗口（E 线 8/29 复测前置）。
 	var cutoff time.Time
 	var hasCutoff bool
 	if window != "" {
@@ -49,6 +51,13 @@ func dispatchMetrics(args *cli.Args) {
 			cutoff = time.Now().Add(-d)
 			hasCutoff = true
 		}
+	} else if args.Get("since") != "" && since != "all" {
+		if t, ok := parseAbsoluteSince(since); ok {
+			cutoff = t
+			hasCutoff = true
+		} else {
+			fmt.Printf("⚠ --since %q 无法解析为绝对时间，日志窗口不生效（示例: 2026-08-28T13:01:00）\n", since)
+		}
 	}
 	// --baseline: M0 捕获层完整性对账（独立命令，不走常规指标清单）。
 	if args.Bool("baseline") {
@@ -58,8 +67,10 @@ func dispatchMetrics(args *cli.Args) {
 	fmt.Println("AIPM 评估指标 — 目标值来自 docs/EVALUATION.md")
 	fmt.Println("DB 类指标: 当前项目 point-in-time；日志类指标: ~/.aipmc/logs/aipmc.log（serve 行带 project= 标签，proxy/hook 行无；已按 20MB 归档，只扫当前文件）")
 	fmt.Printf("窗口: since=%s（--since all 看全表；F1/F4/E5 验收/诊断/行为行随窗口，其余 DB 行保持全表=机制健康现状）\n", since)
-	if hasCutoff {
+	if hasCutoff && window != "" {
 		fmt.Printf("日志窗口: %s（截止 %s）\n", window, cutoff.Format("2006-01-02 15:04:05"))
+	} else if hasCutoff {
+		fmt.Printf("日志窗口: 从 %s 起（绝对 since）\n", cutoff.Format("2006-01-02 15:04:05"))
 	}
 	fmt.Println()
 
@@ -734,4 +745,22 @@ func parseLogTimestamp(line string) (t time.Time, hasDate, ok bool) {
 		return t, false, true
 	}
 	return time.Time{}, false, false
+}
+
+// parseAbsoluteSince 把 --since 值解析为本地绝对时间。日志类 --since（8/28）用它
+// 作为日志扫描下界；兼容 RFC3339、ISO-T、空格、纯日期等输入（与 DB 端字符串比较
+// 解耦——日志行时间是 time.Local，故此处也用 Local 以正确比较）。
+func parseAbsoluteSince(s string) (time.Time, bool) {
+	layouts := []string{
+		time.RFC3339,
+		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05",
+		"2006-01-02",
+	}
+	for _, l := range layouts {
+		if t, err := time.ParseInLocation(l, s, time.Local); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
 }

@@ -39,6 +39,37 @@ func TestParseLogTimestamp(t *testing.T) {
 	}
 }
 
+// 8/28：日志类 --since——把绝对时间解析为本地时间作日志扫描下界（E 线复测前置）。
+func TestParseAbsoluteSince(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string // 期望格式"2006-01-02 15:04:05"；空=期望解析失败
+	}{
+		{"ISO-T", "2026-08-28T13:01:00", "2026-08-28 13:01:00"},
+		{"space", "2026-08-28 13:01:00", "2026-08-28 13:01:00"},
+		{"date-only", "2026-08-28", "2026-08-28 00:00:00"},
+		{"garbage", "not-a-time", ""},
+		{"all", "all", ""},
+	}
+	for _, c := range cases {
+		ts, ok := parseAbsoluteSince(c.in)
+		if c.want == "" {
+			if ok {
+				t.Errorf("%s: expected parse fail, got %v", c.name, ts)
+			}
+			continue
+		}
+		if !ok {
+			t.Errorf("%s: expected parse ok for %q", c.name, c.in)
+			continue
+		}
+		if ts.Format("2006-01-02 15:04:05") != c.want {
+			t.Errorf("%s: got %v want %v", c.name, ts.Format("2006-01-02 15:04:05"), c.want)
+		}
+	}
+}
+
 // HARNESS M1（8/18 修正）：inject_coverage 分母排除 no_summary_data。
 // 原实现分母含 injNoSum → 覆盖率被稀释（metrics.go:503 注释/代码不一致）。
 func TestInjectCoverageExcludesNoSummary(t *testing.T) {
