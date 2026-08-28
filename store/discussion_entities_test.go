@@ -98,7 +98,10 @@ func TestFetchRelatedEntities(t *testing.T) {
 	db := newIsolatedTestDB(t)
 	insertTestDecision(t, db)
 
-	out := FetchRelatedEntities(db, []string{testDecisionID, "decision-19990101-000000-deadbe"})
+	out, err := FetchRelatedEntities(db, []string{testDecisionID, "decision-19990101-000000-deadbe"})
+	if err != nil {
+		t.Fatalf("FetchRelatedEntities err: %v", err)
+	}
 	if len(out) != 1 {
 		t.Fatalf("FetchRelatedEntities = %v, want 1 (存在=%s, 不存在跳过)", out, testDecisionID)
 	}
@@ -107,7 +110,11 @@ func TestFetchRelatedEntities(t *testing.T) {
 	}
 
 	// 空输入
-	if got := FetchRelatedEntities(db, nil); len(got) != 0 {
+	got, err := FetchRelatedEntities(db, nil)
+	if err != nil {
+		t.Fatalf("FetchRelatedEntities(nil) err: %v", err)
+	}
+	if len(got) != 0 {
 		t.Fatalf("FetchRelatedEntities(nil) = %v, want empty", got)
 	}
 }
@@ -121,8 +128,24 @@ func TestRelatedEntitiesFromRows(t *testing.T) {
 		{"content": "这个方案和 " + testDecisionID + " 有关，注意其约束"},
 		{"content": "纯文本无引用"},
 	}
-	out := RelatedEntitiesFromRows(db, rows)
+	out, err := RelatedEntitiesFromRows(db, rows)
+	if err != nil {
+		t.Fatalf("RelatedEntitiesFromRows err: %v", err)
+	}
 	if len(out) != 1 || out[0].ID != testDecisionID {
 		t.Fatalf("RelatedEntitiesFromRows = %v, want [%s]", out, testDecisionID)
+	}
+}
+
+// 8/28 Claude 补充观察：查询失败必须返回 error（供 related_entities_status 区分
+// 「无引用」与「查询失败」）。用不存在的表名无法触发——改用关闭的 db 模拟失败。
+func TestFetchRelatedEntitiesReportsQueryFailure(t *testing.T) {
+	db := newIsolatedTestDB(t)
+	insertTestDecision(t, db)
+	db.Close() // 关闭后查询必然失败
+
+	_, err := FetchRelatedEntities(db, []string{testDecisionID})
+	if err == nil {
+		t.Fatal("FetchRelatedEntities with closed db: want error, got nil")
 	}
 }

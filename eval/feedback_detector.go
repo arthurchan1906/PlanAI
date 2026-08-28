@@ -26,6 +26,9 @@ import (
 
 var (
 	// entityIDRe 匹配 AIPM 实体 ID：<type>-YYYYMMDD-HHMMSS-xxxxxx（库内全小写，引用时容忍大小写）。
+	// 设计边界（8/28 确认）：git 短 SHA（如 8a804e9）不匹配——讨论里引用短 SHA 提交
+	// 不会触发漏查判定，属故意选择（短 SHA 无法可靠 resolve 到 AIPM commit 实体）；
+	// 若未来要让短 SHA 引用也进反馈通道，需单独的正则 + resolve 逻辑（非本次范围）。
 	entityIDRe = regexp.MustCompile(`(?i)\b(decision|task|bug|commit|plan|thread|idea)-\d{8}-\d{6}-[0-9a-f]{6}\b`)
 	// mcpCallRe 匹配 hook 写入的工具调用行：🛠 mcp__aipm__aipm_get_decision
 	mcpCallRe = regexp.MustCompile(`(?i)mcp__aipm__aipm_([a-z_]+)`)

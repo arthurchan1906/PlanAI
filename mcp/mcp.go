@@ -2159,10 +2159,19 @@ func (s *mcpServer) handleReadDiscussions(args map[string]interface{}) mcpToolRe
 	// Ch3（8/28 codex 审核）：改 SharedProject 复用进程内连接（D 线决策 A），
 	// 避免热路径每次 Open/Close 重复 sql.Open+Ping；Shared 连接由连接池管理，
 	// 不 Close（与 OpenProject 的借还语义不同）。
+	// 8/28 Claude 补充观察：related_entities_status 暴露查询状态，供 M 线区分
+	// 「讨论无引用」（ok+空）与「查询失败」（db_failed/query_failed）。
 	relatedEntities := []store.RelatedEntity{}
+	relatedStatus := "ok"
 	if len(rows) > 0 {
 		if db, err := pmdb.SharedProject(projectPath); err == nil {
-			relatedEntities = store.RelatedEntitiesFromRows(db, rows)
+			var qerr error
+			relatedEntities, qerr = store.RelatedEntitiesFromRows(db, rows)
+			if qerr != nil {
+				relatedStatus = "query_failed"
+			}
+		} else {
+			relatedStatus = "db_failed"
 		}
 	}
 
@@ -2204,7 +2213,7 @@ func (s *mcpServer) handleReadDiscussions(args map[string]interface{}) mcpToolRe
 
 	return mcpToolResult{
 		Content:        []mcpContent{{Type: "text", Text: text}},
-		RelatedContext: map[string]interface{}{"results": rows, "count": len(rows), "full": full, "cursor": discussion.CursorFromResults(rows), "related_entities": relatedEntities},
+		RelatedContext: map[string]interface{}{"results": rows, "count": len(rows), "full": full, "cursor": discussion.CursorFromResults(rows), "related_entities": relatedEntities, "related_entities_status": relatedStatus},
 		Reflection:     reflection,
 	}
 }

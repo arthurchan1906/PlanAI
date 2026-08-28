@@ -57,8 +57,11 @@ func ExtractRelatedEntities(contents []string) []string {
 // 返回顺序与输入 ids 一致（去重后的）。
 // 8/28 codex 审核 Ch1：查询统一走 fetchEntityTitle（BUSY 重试，D 线决策 B）；
 // 查询失败记录 warn 日志（零告警原则），实体不存在（title 空）属正常跳过。
-func FetchRelatedEntities(db *sql.DB, ids []string) []RelatedEntity {
+// 8/28 Claude 补充观察：返回 error 供调用方区分「无引用」与「查询失败」
+// （related_entities_status 字段，M 线测量机制 1 有效性的前提）。
+func FetchRelatedEntities(db *sql.DB, ids []string) ([]RelatedEntity, error) {
 	var out []RelatedEntity
+	var qerr error
 	for _, id := range ids {
 		lower := strings.ToLower(id)
 		typ := entityType(lower)
@@ -75,6 +78,9 @@ func FetchRelatedEntities(db *sql.DB, ids []string) []RelatedEntity {
 				continue // 实体不存在（已删除/过期）→ 正常跳过，不记日志
 			}
 			u.LogShared("MCP", "related_entity query failed type=%s id=%s err=%v", typ, lower, err)
+			if qerr == nil {
+				qerr = err
+			}
 			continue
 		}
 		if title == "" {
@@ -82,7 +88,7 @@ func FetchRelatedEntities(db *sql.DB, ids []string) []RelatedEntity {
 		}
 		out = append(out, RelatedEntity{Type: typ, ID: lower, Title: title, Status: status})
 	}
-	return out
+	return out, qerr
 }
 
 func entityType(id string) string {
@@ -130,7 +136,7 @@ func fetchEntityTitle(db *sql.DB, table, id string) (string, string, error) {
 
 // RelatedEntitiesFromRows 从 discussion 行提取并查询相关实体。
 // rows 是 ReadDiscussions 的返回（map 含 "content" 键）。
-func RelatedEntitiesFromRows(db *sql.DB, rows []map[string]any) []RelatedEntity {
+func RelatedEntitiesFromRows(db *sql.DB, rows []map[string]any) ([]RelatedEntity, error) {
 	contents := make([]string, 0, len(rows))
 	for _, r := range rows {
 		if c, ok := r["content"].(string); ok {
