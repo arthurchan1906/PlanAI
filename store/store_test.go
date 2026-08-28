@@ -97,6 +97,40 @@ func TestResolveCommitLookupID(t *testing.T) {
 	}
 }
 
+// Regression: aipm_get_decision 允许按缺 6 位后缀的前缀 id（decision-YYYYMMDD-HHMMSS）
+// 或短后缀（334e73）查询（8/28 mcp_error：agent 传 decision-20260828-154653 却
+// 按 id 精确查不到，实际 id 为 decision-20260828-154653-334e73）。
+func TestResolveDecisionLookupID(t *testing.T) {
+	d := openTestDB(t)
+	// resolve 只读 id/date，最小表即可（对齐 openTestDB 只建 commits 的做法）。
+	if _, err := d.Exec(`CREATE TABLE decisions (id TEXT PRIMARY KEY, date TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec(`INSERT INTO decisions (id, date) VALUES (?, ?)`,
+		"decision-20260828-154653-334e73", "2026-08-28"); err != nil {
+		t.Fatal(err)
+	}
+
+	// 缺后缀前缀 → 归一化为完整 id
+	got, err := resolveDecisionLookupID(d, "decision-20260828-154653")
+	if err != nil || got != "decision-20260828-154653-334e73" {
+		t.Fatalf("prefix: got %q err=%v want decision-20260828-154653-334e73", got, err)
+	}
+	// 短后缀 → 归一化为完整 id
+	got, err = resolveDecisionLookupID(d, "334e73")
+	if err != nil || got != "decision-20260828-154653-334e73" {
+		t.Fatalf("suffix: got %q err=%v want decision-20260828-154653-334e73", got, err)
+	}
+	// 未知前缀 → 原样返回（最终查询 no rows）
+	if got, err = resolveDecisionLookupID(d, "decision-19990101-000000"); err != nil || got != "decision-19990101-000000" {
+		t.Fatalf("unknown: got %q err=%v want same", got, err)
+	}
+	// 空 id 防御
+	if got, err = resolveDecisionLookupID(d, ""); err != nil || got != "" {
+		t.Fatalf("empty: got %q err=%v want ''", got, err)
+	}
+}
+
 // Regression: done-gate must reject commits with empty/NULL commit_hash —
 // they can't be traced to a real git object (StoreGitCommit bug aftermath:
 // MCP-recorded commits without hash previously passed the gate).

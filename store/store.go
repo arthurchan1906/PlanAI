@@ -1119,9 +1119,57 @@ func GetDecision(id string) (map[string]any, error) {
 	d := map[string]any{}
 	row := db.QueryRow("SELECT * FROM decisions WHERE id = ?", id)
 	if err := ScanDecisionRow(row, d); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			// 8/28 A 前置修复：agent 常传缺 6 位后缀的前缀 id（如
+			// decision-20260828-154653，实际 id 为 ...-334e73），或传短后缀
+			// （334e73）。精确查找不到即归一化为完整 id 再查，避免 mcp_error
+			// 「未找到该 decision」反复出现（Claude 曾因此误报决策未落盘）。
+			lookup, rerr := resolveDecisionLookupID(db, id)
+			if rerr != nil {
+				return nil, rerr
+			}
+			if lookup != id {
+				row = db.QueryRow("SELECT * FROM decisions WHERE id = ?", lookup)
+				if err := ScanDecisionRow(row, d); err != nil {
+					return nil, err
+				}
+				return d, nil
+			}
+		}
 		return nil, err
 	}
 	return d, nil
+}
+
+// resolveDecisionLookupID 将调用方传入的 decision id 归一化为完整可查询 key。
+// - 空 id → 原样返回（防御：避免 LIKE '%' 全表匹配）。
+// - 带 `decision-` 前缀（缺 6 位后缀，如 decision-YYYYMMDD-HHMMSS）→ 前缀匹配唯一完整 id。
+// - 短后缀（6 位，如 334e73）→ 按 id 后缀 `'-'+suffix` 匹配。
+// - 均不匹配 → 原样返回 id（最终 WHERE 查询自然 no rows，语义正确）。
+func resolveDecisionLookupID(db *sql.DB, id string) (string, error) {
+	if id == "" {
+		return id, nil
+	}
+	var full string
+	if strings.HasPrefix(strings.ToLower(id), "decision-") {
+		err := db.QueryRow("SELECT id FROM decisions WHERE id LIKE ? || '%' ORDER BY date DESC, id DESC LIMIT 1", id).Scan(&full)
+		if err == nil {
+			return full, nil
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			return id, nil
+		}
+		return "", err
+	}
+	// 短后缀：id 以 '-' + 后缀 结尾
+	err := db.QueryRow("SELECT id FROM decisions WHERE id LIKE '%-' || ? ORDER BY date DESC, id DESC LIMIT 1", id).Scan(&full)
+	if err == nil {
+		return full, nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return id, nil
+	}
+	return "", err
 }
 
 func CreateDecision(projectPath string, title, background, decision, status string) (map[string]any, error) {
