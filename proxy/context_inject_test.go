@@ -759,9 +759,12 @@ func TestResolveAnchorContextDeterministic(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	defer db.Close()
-	// 直接插 4 条 in_progress（Mock 库，无需 plan 关联）。
+	// 倒序插入 4 条 in_progress（Mock 库，无需 plan 关联）。SQL 的
+	// ORDER BY（status, priority, updated_at）全为同值 → 依赖 rowid 返回
+	// 0004,0003,0002,0001；若不显式 ID 排序，锚点会按插入序截取。显式
+	// ID 排序后必须返回 0001,0002,0003——锁死 Challenge 1 的确定性。
 	now := "2026-08-28T12:00:00Z"
-	ids := []string{"task-anchor-0001", "task-anchor-0002", "task-anchor-0003", "task-anchor-0004"}
+	ids := []string{"task-anchor-0004", "task-anchor-0003", "task-anchor-0002", "task-anchor-0001"}
 	for _, id := range ids {
 		if _, err := db.Exec(`INSERT INTO tasks (id, title, status, priority, phase, acceptance_json, related_docs_json, related_decisions_json, last_note, updated_at, created_at) VALUES (?, ?, 'in_progress', 'P1', 'general', '[]', '[]', '[]', '', ?, ?)`, id, "任务 "+id, now, now); err != nil {
 			t.Fatalf("insert task %s: %v", id, err)
@@ -772,24 +775,18 @@ func TestResolveAnchorContextDeterministic(t *testing.T) {
 	if len(first) != anchorTasksCap {
 		t.Fatalf("first resolve: got %d lines want %d (cap)", len(first), anchorTasksCap)
 	}
-	for _, line := range first {
-		if !strings.HasPrefix(line, "- task-anchor-") || !strings.Contains(line, "(P1)") {
-			t.Fatalf("anchor line format wrong: %q", line)
+	want := []string{"task-anchor-0001", "task-anchor-0002", "task-anchor-0003"}
+	for i := range want {
+		if !strings.Contains(first[i], want[i]) {
+			t.Fatalf("anchor must be ID-sorted: got %v want %v", first, want)
+		}
+		if !strings.HasPrefix(first[i], "- ") || !strings.Contains(first[i], "(P1)") {
+			t.Fatalf("anchor line format wrong: %q", first[i])
 		}
 	}
 	// 删掉一条「已出现在首快照」的 in_progress 后再读——缓存命中，快照不变
 	// （session 内稳定，不破 prefix cache）。
-	var victim string
-	joined := strings.Join(first, "\n")
-	for _, id := range ids {
-		if strings.Contains(joined, id) {
-			victim = id
-			break
-		}
-	}
-	if victim == "" {
-		t.Fatalf("no victim id found in first snapshot: %v", first)
-	}
+	victim := "task-anchor-0002"
 	if _, err := db.Exec(`DELETE FROM tasks WHERE id = ?`, victim); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
@@ -804,5 +801,30 @@ func TestResolveAnchorContextDeterministic(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(second, "\n"), victim) {
 		t.Fatalf("cache must preserve deleted task %s snapshot: %v", victim, second)
+	}
+}
+
+// 机制 6（8/28）：anchorCache TTL sweep——过期 session 快照被周期清理，活跃条目保留。
+// 锁死 Claude Challenge 2 的「sync.Map 永不释放」内存泄漏缺口。
+func TestAnchorCacheSweep(t *testing.T) {
+	stat := "sess-anchor-sweep"
+	live := "sess-anchor-sweep-live"
+	anchorCache.Delete(stat)
+	anchorCache.Delete(live)
+	t.Cleanup(func() {
+		anchorCache.Delete(stat)
+		anchorCache.Delete(live)
+	})
+	// 过期条目（超 TTL）+ 活跃条目。
+	anchorCache.Store(stat, anchorEntry{lines: []string{"- task-stale"}, ts: time.Now().Add(-anchorCacheTTL - time.Minute)})
+	anchorCache.Store(live, anchorEntry{lines: []string{"- task-live"}, ts: time.Now()})
+	// 强制触发 sweep：seq 设为 interval-1，Add(1) 后命中 %interval==0。
+	anchorSweepSeq.Store(anchorSweepInterval - 1)
+	maybeSweepAnchorCache()
+	if _, ok := anchorCache.Load(stat); ok {
+		t.Fatal("expired entry not swept")
+	}
+	if _, ok := anchorCache.Load(live); !ok {
+		t.Fatal("live entry wrongly swept")
 	}
 }

@@ -831,7 +831,20 @@ func resolveFileContext(body []byte, agent string) []string {
 const anchorBudget = 180
 const anchorTasksCap = 3
 
-var anchorCache sync.Map // sessionID → []string (session 首请求快照)
+// anchorCacheTTL 控制 session 首请求快照的保留时长（Claude 8/28 Challenge 2）。
+// session 结束后条目不立即删，靠周期性 sweep（每 anchorSweepInterval 次走全量
+// Range）淘汰超 48h 的条目，防止长期运行进程内存泄漏。量级小（每 session 一条），
+// 不需要精确的 session 退出钩子。
+const anchorCacheTTL = 48 * time.Hour
+const anchorSweepInterval = 100
+
+type anchorEntry struct {
+	lines []string
+	ts    time.Time
+}
+
+var anchorCache sync.Map // sessionID → anchorEntry (session 首请求快照)
+var anchorSweepSeq atomic.Uint64
 
 // resolveAnchorContext 返回当前 in_progress task 列表（≤cap，按 task ID 排序
 // 确定性）。session 首请求计算后缓存：同一 session 内复用首请求快照，避免
@@ -842,15 +855,19 @@ func resolveAnchorContext(sessionID string) []string {
 		return nil
 	}
 	if v, ok := anchorCache.Load(sessionID); ok {
-		lines, _ := v.([]string)
-		return lines
+		e := v.(anchorEntry)
+		return e.lines
 	}
 	tasks, err := store.ListTasks("in_progress", "")
 	if err != nil {
 		u.LogShared("INJECT", "anchor list_err=%v session=%s", err, sessionID)
-		anchorCache.Store(sessionID, []string(nil))
+		anchorCache.Store(sessionID, anchorEntry{lines: nil, ts: time.Now()})
 		return nil
 	}
+	// 显式按 task ID 字典序排序：ListTasks 依赖 SQL（status, priority, updated_at）
+	// 的排序不能作为锚点段的确定性来源——Claude 8/28 Challenge 1 指出注释声称
+	// "按 t.ID 确定性排序"但实现没有。锚点是纯 status 快照，ID 序是最稳的确定性基线。
+	sort.Slice(tasks, func(i, j int) bool { return tasks[i].ID < tasks[j].ID })
 	var lines []string
 	for i, t := range tasks {
 		if i >= anchorTasksCap {
@@ -862,8 +879,26 @@ func resolveAnchorContext(sessionID string) []string {
 	if lines == nil {
 		lines = []string(nil)
 	}
-	anchorCache.Store(sessionID, lines)
+	anchorCache.Store(sessionID, anchorEntry{lines: lines, ts: time.Now()})
+	maybeSweepAnchorCache()
 	return lines
+}
+
+// maybeSweepAnchorCache 周期性清理过期 session 快照（Claude 8/28 Challenge 2）。
+// 用调用次数节流（anchorSweepInterval），避免每请求全量 Range。仅淘汰超 TTL 条目，
+// 活跃 session 的缓存不受影响。
+func maybeSweepAnchorCache() {
+	if anchorSweepSeq.Add(1)%anchorSweepInterval != 0 {
+		return
+	}
+	now := time.Now()
+	anchorCache.Range(func(k, v any) bool {
+		e := v.(anchorEntry)
+		if now.Sub(e.ts) > anchorCacheTTL {
+			anchorCache.Delete(k)
+		}
+		return true
+	})
 }
 
 // buildFileAssoc converts the file→task index into a deterministic list of
