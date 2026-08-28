@@ -184,7 +184,7 @@ func PromptPassword() ([]byte, error) {
 // ── Public API (dispatched to CGO or stub) ────────────────────────────────
 
 var (
-	errNoCGO = errors.New("credentials require SM4-GCM via CGO – rebuild with GmSSL: ./build.sh")
+	errNoCGO = errors.New("credentials encryption backend not initialized")
 )
 
 var loadImpl func([]byte) (*CredentialStore, error)

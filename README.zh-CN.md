@@ -96,7 +96,7 @@ Agent (Claude Code / Codex CLI，真实流量打磨)
 
 - 三协议翻译：Anthropic、OpenAI 兼容、Gemini，外加 Codex `/v1/responses` 原生透传
 - 虚拟模型注册表 `~/.aipmc/models.json`：一个模型 ID 路由到任意 Provider
-- 凭据加密存储：SM4-GCM 加密的 API Key，`0600` 权限，支持多 profile（`aipmc key` 系列命令）
+- 凭据加密存储：AES-256-GCM 加密的 API Key（纯 Go 标准库，无 CGO），`0600` 权限，支持多 profile（`aipmc key` 系列命令）
 - 代理内命令 `&aipmc-model`：对话中直接切换模型；`sessions` 子命令查看活跃 Agent 状态板
 
 ### Agent 接入与捕获
@@ -199,7 +199,7 @@ aipmc serve                    # 启动 Web UI + Proxy + Pipeline
 aipmc proxy [--profile <name>] # 单独启动协议代理
 aipmc chat                     # 命令行直接与 Agent 会话
 aipmc metrics [--since all]    # 只读评估指标（对照 docs/EVALUATION.md）
-aipmc key init/set/list/show   # 凭据管理（SM4-GCM 加密，多 profile）
+aipmc key init/set/list/show   # 凭据管理（AES-256-GCM 加密，多 profile）
 aipmc models                   # 模型注册表管理
 aipmc task|commit|plan|bug|decision|idea|roadmap|principle [CRUD]
 aipmc search|doctor|info|daily|session|thread|link|canon|event
@@ -212,7 +212,7 @@ Web UI 的 Settings / Proxy 页面提供完整配置管理。核心文件：
 | 文件 | 内容 |
 |------|------|
 | `~/.aipmc/models.json` | LLM 网关：Provider 注册 + 虚拟模型定义（含 responses 协议字段） |
-| `~/.aipmc/credentials` | SM4-GCM 加密的 API Key（`0600` 权限，多 profile） |
+| `~/.aipmc/credentials` | AES-256-GCM 加密的 API Key（`0600` 权限，多 profile） |
 | `~/.aipmc/config.json` | 全局：代理端口/绑定、upstream、Anthropic URL |
 | `.pmai/config.json` | 项目级：AI 模型、Agent 覆盖 |
 | `~/.aipmc/logs/aipmc.log` | 统一共享日志（20MB 归档） |
@@ -225,7 +225,7 @@ Web UI 的 Settings / Proxy 页面提供完整配置管理。核心文件：
 |----|------|
 | 后端 | Go 1.25（`modernc.org/sqlite` 纯 Go，无 CGO） |
 | 前端 | React 18 + Vite 5 + Ant Design 5（`go:embed frontend/dist` 打进二进制） |
-| 加密 | GmSSL（SM4-GCM，可选 CGO；无则凭据功能降级） |
+| 加密 | Go 标准库 AES-256-GCM + PBKDF2-SHA256（纯 Go，无 CGO） |
 | CI | GitHub Actions：前端 build + `go vet` + `go test` + build |
 
 ### 常用命令

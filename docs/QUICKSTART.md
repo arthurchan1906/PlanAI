@@ -61,7 +61,7 @@ aipmc agent codex
 ## 4. 凭据与模型
 
 ```bash
-# API Key 管理（SM4-GCM 加密，0600 权限，支持多 profile）
+# API Key 管理（AES-256-GCM 加密，0600 权限，支持多 profile）
 aipmc key init                     # 创建 profile（设主密码）
 aipmc key set <provider> <key>     # 保存某个 provider 的 key
 aipmc key list                     # 列出所有 key（脱敏）
@@ -162,4 +162,4 @@ curl http://127.0.0.1:19530/__proxy/capture?per_page=5
 | 端口被占 | `serve` 会检测并提示；同一项目拒绝多实例并发 |
 | Agent 没有 `aipm_*` 工具 | 检查是否跑过 `aipmc setup <platform>`，重启 Agent 会话 |
 | L2 摘要 401 / 无 AI 摘要 | 检查 `aipmc key status` 与 `.pmai/config.json` 的模型配置 |
-| 凭据功能不可用 | 构建时无 GmSSL 会降级；用 `./build.sh` 完整构建 |
+| 凭据功能 | 默认可用（纯 Go AES-256-GCM，无需 GmSSL/CGO）；`./build.sh` 纯 Go 构建 |

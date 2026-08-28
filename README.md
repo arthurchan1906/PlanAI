@@ -97,7 +97,7 @@ Agent (Claude Code / Codex CLI, battle-tested)
 
 - Three-protocol translation (Anthropic, OpenAI-compatible, Gemini) plus native Codex Responses passthrough
 - Virtual model registry `~/.aipmc/models.json`: one model ID routes to any provider
-- Encrypted credentials: SM4-GCM encrypted API keys, `0600` permissions, multi-profile (`aipmc key`)
+- Encrypted credentials: AES-256-GCM encrypted API keys (pure Go stdlib, no CGO), `0600` permissions, multi-profile (`aipmc key`)
 - In-proxy command `&aipmc-model`: switch models mid-conversation; `sessions` subcommand shows the live agents board
 
 ### Capture & collaboration
@@ -200,7 +200,7 @@ aipmc serve                    # web UI + proxy + pipeline in one process
 aipmc proxy [--profile <name>] # run the protocol proxy alone
 aipmc chat                     # talk to an agent from the terminal
 aipmc metrics [--since all]    # read-only evaluation metrics
-aipmc key init/set/list/show   # credential management (SM4-GCM, multi-profile)
+aipmc key init/set/list/show   # credential management (AES-256-GCM, multi-profile)
 aipmc models                   # model registry management
 aipmc task|commit|plan|bug|decision|idea|roadmap|principle [CRUD]
 aipmc search|doctor|info|daily|session|thread|link|canon|event
@@ -213,7 +213,7 @@ The Settings / Proxy pages in the web UI manage everything. Core files:
 | File | Content |
 |------|---------|
 | `~/.aipmc/models.json` | LLM gateway: provider registry + virtual model definitions |
-| `~/.aipmc/credentials` | SM4-GCM encrypted API keys (`0600`, multi-profile) |
+| `~/.aipmc/credentials` | AES-256-GCM encrypted API keys (`0600`, multi-profile) |
 | `~/.aipmc/config.json` | global: proxy port/bind, upstream, Anthropic URL |
 | `.pmai/config.json` | project-level: AI model, agent overrides |
 | `~/.aipmc/logs/aipmc.log` | unified shared log (20MB archive) |
@@ -226,7 +226,7 @@ The Settings / Proxy pages in the web UI manage everything. Core files:
 |-------|------|
 | Backend | Go 1.25 (`modernc.org/sqlite`, pure Go, no CGO) |
 | Frontend | React 18 + Vite 5 + Ant Design 5 (embedded via `go:embed frontend/dist`) |
-| Encryption | GmSSL (SM4-GCM, optional CGO; credentials degrade without it) |
+| Encryption | Go stdlib AES-256-GCM + PBKDF2-SHA256 (pure Go, no CGO) |
 | CI | GitHub Actions: frontend build + `go vet` + `go test` + build |
 
 ### Commands

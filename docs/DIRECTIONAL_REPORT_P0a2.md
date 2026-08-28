@@ -70,8 +70,8 @@
 ## 4. 复现命令
 
 ```
-# 构建（CGO 依赖 gmssl）
-CGO_ENABLED=1 CGO_CFLAGS="-I$PWD/gmssl/include" CGO_LDFLAGS="$PWD/gmssl/lib/darwin/libgmssl.a" go build -o dist/aipmc .
+# 构建（纯 Go，无 CGO/gmssl）
+go build -o dist/aipmc .
 
 # c0ad2534（死循环样本，fix commit d628b7a）
 ./dist/aipmc eval p0a2 --session c0ad2534-a2da-4c35-8ef6-33207c5e9a91 --fix-hash d628b7a --db /tmp/ed_t5_check.db
