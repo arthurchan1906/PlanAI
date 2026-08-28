@@ -600,7 +600,10 @@ func buildContextBlock(goals, warnings, actionItems, fileAssoc []string, guideli
 			reserve = warnActReserve
 		}
 		// 8/28：avail 扣除段头+结尾换行开销，reserve 精确兑现为 warn/act 可用空间。
-		avail := min(len(guidelines), guidelinesBudget, maxInjectChars-written-reserve-len(header)-1)
+		// 8/28 二次审计（Claude Challenge 1）：header 已由 write(header) 计费，
+		// avail 不再扣 len(header)——旧式再减一次造成「段头双重扣除」22B，
+		// guidelines 被不必要压缩，恰印证双重扣除风险类型（量在 header 非 reserve）。
+		avail := min(len(guidelines), guidelinesBudget, maxInjectChars-written-reserve-1)
 		if avail < 0 {
 			avail = 0
 		}
@@ -640,26 +643,37 @@ func buildContextBlock(goals, warnings, actionItems, fileAssoc []string, guideli
 
 	// ⚠️ 待处理: actionable items from pipeline emerge events
 	if len(actionItems) > 0 {
-		write("\n⚠️ 待处理:")
-		for _, a := range actionItems {
-			line := "\n" + a
-			if written+len(line) > maxInjectChars {
-				sc.actionItems++
-				continue
+		hdr := "\n⚠️ 待处理:"
+		if written+len(hdr) > maxInjectChars {
+			// 8/28：段头也纳入 guard——内容满时连段头都不写，防 block 超 cap。
+			sc.actionItems += len(actionItems)
+		} else {
+			write(hdr)
+			for _, a := range actionItems {
+				line := "\n" + a
+				if written+len(line) > maxInjectChars {
+					sc.actionItems++
+					continue
+				}
+				write(line)
 			}
-			write(line)
 		}
 	}
 
 	if len(goals) > 0 {
-		write("\n最近的 session:\n")
-		for _, g := range goals {
-			line := "- " + g + "\n"
-			if written+len(line) > maxInjectChars {
-				sc.goals++
-				continue
+		hdr := "\n最近的 session:\n"
+		if written+len(hdr) > maxInjectChars {
+			sc.goals += len(goals)
+		} else {
+			write(hdr)
+			for _, g := range goals {
+				line := "- " + g + "\n"
+				if written+len(line) > maxInjectChars {
+					sc.goals++
+					continue
+				}
+				write(line)
 			}
-			write(line)
 		}
 	}
 
