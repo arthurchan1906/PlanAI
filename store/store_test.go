@@ -20,7 +20,7 @@ func openTestDB(t *testing.T) *sql.DB {
 		t.Fatalf("open memory db: %v", err)
 	}
 	t.Cleanup(func() { d.Close() })
-	if _, err := d.Exec(`CREATE TABLE commits (id TEXT PRIMARY KEY, commit_hash TEXT, task_id TEXT, status TEXT, review_status TEXT, test_status TEXT)`); err != nil {
+	if _, err := d.Exec(`CREATE TABLE commits (id TEXT PRIMARY KEY, commit_hash TEXT, task_id TEXT, status TEXT, review_status TEXT, test_status TEXT, created_at TEXT)`); err != nil {
 		t.Fatalf("create table: %v", err)
 	}
 	return d
@@ -57,6 +57,43 @@ func TestFindExistingCommitByHashPrefixMatch(t *testing.T) {
 	}
 	if got := findExistingCommitByHash(d, "9c533e20a525"); got != "" {
 		t.Fatalf("unknown hash must not match, got %q", got)
+	}
+}
+
+// Regression: aipm_get_commit 允许按完整/短 git SHA 查（8/28 mcp_error：
+// agent 从 git log 拿短 SHA e65ca3c 直接调用却按 id 查不到）。
+func TestResolveCommitLookupID(t *testing.T) {
+	d := openTestDB(t)
+	// 表带 created_at，插入需列齐全；这里直接复用 openTestDB 的最小 schema
+	// 不够（resolveCommitLookupID 的 SELECT 只读 commit_hash，不依赖 created_at）。
+	if _, err := d.Exec(`INSERT INTO commits (id, commit_hash) VALUES (?, ?)`, "commit-1", "e65ca3c1234abcdef"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec(`INSERT INTO commits (id, commit_hash) VALUES (?, ?)`, "commit-2", "deadbeef000011112222"); err != nil {
+		t.Fatal(err)
+	}
+
+	// 短 SHA 前缀 → 解析为完整 SHA
+	got, err := resolveCommitLookupID(d, "e65ca3c")
+	if err != nil || got != "e65ca3c1234abcdef" {
+		t.Fatalf("short hash prefix: got %q err=%v want e65ca3c1234abcdef", got, err)
+	}
+	// 完整 SHA 精确匹配
+	got, err = resolveCommitLookupID(d, "deadbeef000011112222")
+	if err != nil || got != "deadbeef000011112222" {
+		t.Fatalf("full hash: got %q err=%v want deadbeef000011112222", got, err)
+	}
+	// PM id 原样返回
+	if got, err = resolveCommitLookupID(d, "commit-1"); err != nil || got != "commit-1" {
+		t.Fatalf("pm id: got %q err=%v want commit-1", got, err)
+	}
+	// 未知 short hash → 原 id（最终查询 no rows）
+	if got, err = resolveCommitLookupID(d, "nope123"); err != nil || got != "nope123" {
+		t.Fatalf("unknown: got %q err=%v want nope123", got, err)
+	}
+	// 空 id 防御：直接返回，不做 LIKE '%' 全表匹配
+	if got, err = resolveCommitLookupID(d, ""); err != nil || got != "" {
+		t.Fatalf("empty: got %q err=%v want ''", got, err)
 	}
 }
 

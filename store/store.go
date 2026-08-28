@@ -478,8 +478,16 @@ func getCommitFor(projectPath, id string) (map[string]any, error) {
 		return nil, err
 	}
 	defer db.Close()
+	// 归一化查询键：允许按 PM commit id、完整 git SHA、或短 SHA 前缀查询。
+	// 8/28 mcp_error 复盘：agent 从 git log 拿到短 SHA（如 e65ca3c）直接调
+	// aipm_get_commit 时按 id 查不到（commits.id 是 PM id，commit_hash 存完整
+	// git SHA）——归一化为 commit_hash 完整 SHA 后按 id OR hash 命中。
+	lookup, err := resolveCommitLookupID(db, id)
+	if err != nil {
+		return nil, err
+	}
 	c := map[string]any{}
-	row := db.QueryRow("SELECT id, title, summary, evidence_summary, review_notes, branch, commit_hash, task_id, decision_id, status, test_status, review_status, files_json, created_at, updated_at FROM commits WHERE id = ?", id)
+	row := db.QueryRow("SELECT id, title, summary, evidence_summary, review_notes, branch, commit_hash, task_id, decision_id, status, test_status, review_status, files_json, created_at, updated_at FROM commits WHERE id = ? OR commit_hash = ?", lookup, lookup)
 	if err := ScanCommitRow(row, c); err != nil {
 		return nil, err
 	}
@@ -496,6 +504,29 @@ func getCommitFor(projectPath, id string) (map[string]any, error) {
 		}
 	}
 	return c, nil
+}
+
+// resolveCommitLookupID 将调用方传入的 commit id 归一化为可查询键。
+// - 带 `commit-` 前缀的 PM id → 原样返回（按 id 精确查）。
+// - 完整/短 git SHA（十六进制）→ 按 commit_hash 前缀匹配到唯一行的完整 SHA 返回。
+// - 均不匹配 → 返回原 id（最终 WHERE 查询自然 no rows，语义正确）。
+// 空 id 直接返回（防御：清空 commit_hash 行不参与 LIKE '%' 全表匹配）。
+func resolveCommitLookupID(db *sql.DB, id string) (string, error) {
+	if id == "" || strings.HasPrefix(strings.ToLower(id), "commit-") {
+		return id, nil
+	}
+	var hash string
+	err := db.QueryRow(
+		"SELECT commit_hash FROM commits WHERE commit_hash IS NOT NULL AND commit_hash != '' AND commit_hash LIKE ? || '%' ORDER BY created_at DESC LIMIT 1",
+		id,
+	).Scan(&hash)
+	if err == nil {
+		return hash, nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return id, nil
+	}
+	return "", err
 }
 
 func CreateCommit(projectPath string, title, summary, evidenceSummary, reviewNotes, branch, commitHash, taskID, decisionID, status, testStatus, reviewStatus string, files []string) (map[string]any, error) {

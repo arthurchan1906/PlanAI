@@ -195,7 +195,7 @@ func (s *mcpServer) registerTools() {
 
 	s.addTool(MCPTool{
 		Name:        "aipm_get_commit",
-		Description: "当你从 search_context/task 详情/日常 review 中看到 commit ID 后，调用此工具查看该 commit 的完整记录。\n\n返回：commit 标题、摘要、关联的 task_id 和 decision_id、review 状态（pending/approved/rejected/auto）、test 状态（not_run/passed/failed/auto）、变更文件列表、分支名、创建时间。\n\n与 aipm_list_commits 的区别：get_commit 需要已知 commit_id，返回单个 commit 的完整信息；list_commits 按 task_id/status 过滤返回多个 commit 的摘要列表。",
+		Description: "当你从 search_context/task 详情/日常 review 中看到 commit ID 后，调用此工具查看该 commit 的完整记录。\n\n返回：commit 标题、摘要、关联的 task_id 和 decision_id、review 状态（pending/approved/rejected/auto）、test 状态（not_run/passed/failed/auto）、变更文件列表、分支名、创建时间。\n\ncommit_id 支持三种形式：PM commit id（commit-...）、完整 git SHA、短 git SHA 前缀（如从 git log 拿到的 7 位 hash），后两者按 commit_hash 前缀匹配。\n\n与 aipm_list_commits 的区别：get_commit 需要已知 commit_id，返回单个 commit 的完整信息；list_commits 按 task_id/status 过滤返回多个 commit 的摘要列表。",
 		InputSchema: MCPInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
