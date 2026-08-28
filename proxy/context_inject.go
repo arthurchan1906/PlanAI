@@ -858,15 +858,14 @@ func extractFilePaths(body []byte, agent string) []string {
 	if json.Unmarshal(body, &raw) == nil {
 		var textParts []string
 
-		// Anthropic format: messages array with content blocks
+		// Anthropic format: messages array with content blocks.
+		// 相关性优先 (Claude Challenge, 8/28 实测 r24301-58): messages 里先提取
+		// role=user 的消息（agent 实际操作由用户消息驱动），再提取 system/assistant
+		// 静态/旧上下文。否则 assistant 消息（如 "review build.sh"）排在 user
+		// "implement store/..." 之前，占用 fileAssoc 子预算把实际操作文件挤出。
 		if messages, ok := raw["messages"].([]any); ok {
-			for _, m := range messages {
-				msg, _ := m.(map[string]any)
-				if msg == nil {
-					continue
-				}
-				content := msg["content"]
-				switch c := content.(type) {
+			extract := func(msg map[string]any) {
+				switch c := msg["content"].(type) {
 				case string:
 					textParts = append(textParts, c)
 				case []any:
@@ -876,6 +875,22 @@ func extractFilePaths(body []byte, agent string) []string {
 								textParts = append(textParts, t)
 							}
 						}
+					}
+				}
+			}
+			// Pass 1: user messages (highest relevance).
+			for _, m := range messages {
+				if msg, ok := m.(map[string]any); ok {
+					if r, _ := msg["role"].(string); r == "user" {
+						extract(msg)
+					}
+				}
+			}
+			// Pass 2: system/assistant messages as supporting context.
+			for _, m := range messages {
+				if msg, ok := m.(map[string]any); ok {
+					if r, _ := msg["role"].(string); r != "user" {
+						extract(msg)
 					}
 				}
 			}

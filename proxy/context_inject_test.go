@@ -69,6 +69,35 @@ func TestExtractFilePathsInputBeforeInstructions(t *testing.T) {
 	}
 }
 
+// Claude Challenge (8/28): extractFilePaths 的 messages（claude/Anthropic）分支
+// 也必须 user 消息优先，否则 assistant/system 消息里的静态路径（build.sh）排在
+// user 实际操作路径（store/...）之前，占满 fileAssoc 子预算把关键文件裁掉。
+// 实测 r24301-58: assistant "review build.sh" 排第 1 位，file_total=8/file_cut=4。
+func TestExtractFilePathsMessagesUserFirst(t *testing.T) {
+	body := []byte(`{"messages":[{"role":"assistant","content":"review build.sh"},{"role":"user","content":"implement store/discussion_entities.go"}]}`)
+	got := extractFilePaths(body, "claude")
+	if len(got) == 0 {
+		t.Fatalf("no paths extracted from %s", body)
+	}
+	if got[0] != "store/discussion_entities.go" {
+		t.Fatalf("user message path must precede assistant path, got %v", got)
+	}
+	// build.sh (assistant) must appear after the user path.
+	sawUser := false
+	for _, p := range got {
+		if p == "store/discussion_entities.go" {
+			sawUser = true
+		}
+		if p == "build.sh" {
+			if !sawUser {
+				t.Fatalf("build.sh (assistant) appeared before user path: %v", got)
+			}
+			return
+		}
+	}
+	t.Fatalf("expected build.sh from assistant message, got %v", got)
+}
+
 // Anthropic messages format must keep working (claude path).
 func TestExtractFilePathsAnthropicMessages(t *testing.T) {
 	body := []byte(`{"messages":[{"role":"user","content":[{"type":"text","text":"touch web/frontend.tsx"}]}]}`)
