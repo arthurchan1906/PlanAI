@@ -311,6 +311,7 @@ func main() {
 		probeLabel := ""
 		probeRuns := 3
 		limit := 10
+		limitSet := false
 		shadowPath := ""
 		backfillPath := ""
 		raw := os.Args[2:]
@@ -378,6 +379,7 @@ func main() {
 				i++
 			case raw[i] == "--limit" && i+1 < len(raw):
 				fmt.Sscanf(raw[i+1], "%d", &limit)
+				limitSet = true
 				i++
 			case raw[i] == "--shadow" && i+1 < len(raw):
 				shadowPath = raw[i+1]
@@ -627,8 +629,26 @@ func main() {
 			fmt.Println()
 			out, _ := json.MarshalIndent(probe, "", "  ")
 			fmt.Println(string(out))
+		case "precision":
+			// 机制 1 验收：read_discussions 附带相关实体 Precision 重测。
+			// Usage: aipmc eval precision [--limit <scan N>]（默认扫最近 1000 条实质讨论，
+			//         取含引用且时间最晚的 ≤30 条作为样本；JSON 含逐行 refs 供独立复核）
+			lastN := limit
+			if !limitSet {
+				lastN = 1000
+			}
+			rep, perr := eval.BuildPrecisionReport(db, lastN, 30)
+			if perr != nil {
+				fmt.Fprintf(os.Stderr, "eval precision: %v\n", perr)
+				os.Exit(1)
+			}
+			// 可选：prec 未达 90% 时非零退出（默认允许以 `--no-fail` 容忍？此处不设，仅供审计）。
+			fmt.Print(eval.FormatPrecisionHuman(rep))
+			fmt.Println()
+			out, _ := json.MarshalIndent(rep, "", "  ")
+			fmt.Println(string(out))
 		default:
-			fmt.Fprintf(os.Stderr, "eval: unknown kind %q (supported: attribution/process/acceptance/p0a2/p0b/l2-probe/feedback)\n", kind)
+			fmt.Fprintf(os.Stderr, "eval: unknown kind %q (supported: attribution/process/acceptance/p0a2/p0b/l2-probe/feedback/precision)\n", kind)
 			os.Exit(1)
 		}
 		return
