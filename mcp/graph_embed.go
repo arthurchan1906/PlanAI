@@ -38,8 +38,14 @@ func (s *mcpServer) handleTraceContext(args map[string]interface{}) mcpToolResul
 	}
 
 	allowed := map[string]bool{"session": true, "commit": true, "task": true, "plan": true, "decision": true, "bug": true, "idea": true}
-	if fromType == "" || fromID == "" || !allowed[fromType] {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "缺少 from_type / from_id 或类型无效"}}, IsError: true}
+	if fromType == "" {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "缺少必填参数 from_type（起点类型: session/commit/task/plan/decision/bug/idea）"}}, IsError: true}
+	}
+	if fromID == "" {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "缺少必填参数 from_id（起点 ID）"}}, IsError: true}
+	}
+	if !allowed[fromType] {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("from_type 无效: %s（允许: session/commit/task/plan/decision/bug/idea）", fromType)}}, IsError: true}
 	}
 	if direction != "in" && direction != "out" && direction != "both" {
 		direction = "both"
