@@ -2153,6 +2153,17 @@ func (s *mcpServer) handleReadDiscussions(args map[string]interface{}) mcpToolRe
 		}
 	}
 
+	// 机制 1（8/28）：从返回的讨论内容提取被引用的实体并附带其标题+状态——
+	// agent 读到讨论时自动看到被引用实体的当前状态（如 decision-X accepted），
+	// 无需再手动 search。失败不影响主流程（只跳过相关实体）。
+	relatedEntities := []store.RelatedEntity{}
+	if len(rows) > 0 {
+		if db, err := pmdb.OpenProject(projectPath); err == nil {
+			relatedEntities = store.RelatedEntitiesFromRows(db, rows)
+			db.Close()
+		}
+	}
+
 	var header strings.Builder
 	header.WriteString(fmt.Sprintf("讨论记录: %d 条", len(rows)))
 	if source != "" {
@@ -2191,7 +2202,7 @@ func (s *mcpServer) handleReadDiscussions(args map[string]interface{}) mcpToolRe
 
 	return mcpToolResult{
 		Content:        []mcpContent{{Type: "text", Text: text}},
-		RelatedContext: map[string]interface{}{"results": rows, "count": len(rows), "full": full, "cursor": discussion.CursorFromResults(rows)},
+		RelatedContext: map[string]interface{}{"results": rows, "count": len(rows), "full": full, "cursor": discussion.CursorFromResults(rows), "related_entities": relatedEntities},
 		Reflection:     reflection,
 	}
 }
