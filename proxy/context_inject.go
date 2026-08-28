@@ -552,8 +552,16 @@ func eventTypeBreakdown(events []map[string]any) string {
 
 func buildContextBlock(goals, warnings, actionItems, fileAssoc []string, guidelines string) (string, segCounts) {
 	var buf bytes.Buffer
-	buf.WriteString("\n[AIPM Context]")
-	written := 0
+	var written int
+	// write 统一计费：written = 实际 block 字节数（含段头/Vision tip）。
+	// 8/28 修 chars≤800（v1.13 §4 验收）：旧实现 written 不含段头与 Vision tip，
+	// guard(maxInjectChars-50) 只约束内容，block 实际可达 ~890 超出上限。
+	// 现在所有 guard 用 maxInjectChars，block 严格 ≤800。
+	write := func(s string) {
+		buf.WriteString(s)
+		written += len(s)
+	}
+	write("\n[AIPM Context]")
 	var sc segCounts
 
 	// ── File associations (highest priority, independent hard sub-budget) ──
@@ -566,7 +574,7 @@ func buildContextBlock(goals, warnings, actionItems, fileAssoc []string, guideli
 	// 预算（maxInjectChars=800）。参数依据记录于 task-20260818-134522-c6d5e9。
 	fileAssocBudget := min(200+30*len(fileAssoc), 500)
 	if len(fileAssoc) > 0 {
-		buf.WriteString("\n[文件关联]")
+		write("\n[文件关联]")
 		faWritten := 0
 		for _, fa := range fileAssoc {
 			line := "\n" + fa
@@ -574,11 +582,10 @@ func buildContextBlock(goals, warnings, actionItems, fileAssoc []string, guideli
 				sc.fileAssoc++
 				continue
 			}
-			buf.WriteString(line)
+			write(line)
 			faWritten += len(line)
 		}
-		written += faWritten
-		buf.WriteString("\n")
+		write("\n")
 	}
 
 	// ── Guidelines (dedicated budget, truncated to remaining headroom) ──
@@ -586,14 +593,20 @@ func buildContextBlock(goals, warnings, actionItems, fileAssoc []string, guideli
 	// warnings/actionItems 留保留空间（8/27 实测 warn 7631 条/日全被挤掉）；
 	// 无高优段时 reserve=0，guidelines 不浪费让渡空间（保持旧行为）。
 	if guidelines != "" {
-		buf.WriteString("\n[项目编码规范]\n")
+		header := "\n[项目编码规范]\n"
+		write(header)
 		reserve := 0
 		if len(warnings) > 0 || len(actionItems) > 0 {
 			reserve = warnActReserve
 		}
-		avail := min(len(guidelines), guidelinesBudget, maxInjectChars-50-written-reserve)
+		// 8/28：avail 扣除段头+结尾换行开销，reserve 精确兑现为 warn/act 可用空间。
+		avail := min(len(guidelines), guidelinesBudget, maxInjectChars-written-reserve-len(header)-1)
 		if avail < 0 {
 			avail = 0
+		}
+		if avail < len(guidelines) && avail >= 3 {
+			// 截断追加 "…"(3B)：预扣，防止精确计费后 block 超 maxInjectChars（8/28）。
+			avail -= 3
 		}
 		sc.guidelinesDel = avail
 		if avail < len(guidelines) {
@@ -607,56 +620,52 @@ func buildContextBlock(goals, warnings, actionItems, fileAssoc []string, guideli
 				for cut > 0 && !utf8.RuneStart(guidelines[cut]) {
 					cut--
 				}
-				buf.WriteString(guidelines[:cut] + "…")
+				write(guidelines[:cut] + "…")
 			} else {
-				buf.WriteString(guidelines[:avail])
+				write(guidelines[:avail])
 			}
 		}
-		written += avail + 20
-		buf.WriteString("\n")
+		write("\n")
 	}
 
 	// Warnings next (high priority)
 	for _, w := range warnings {
 		line := w + "\n"
-		if written+len(line) > maxInjectChars-50 {
+		if written+len(line) > maxInjectChars {
 			sc.warnings++
 			continue
 		}
-		buf.WriteString(line)
-		written += len(line)
+		write(line)
 	}
 
 	// ⚠️ 待处理: actionable items from pipeline emerge events
 	if len(actionItems) > 0 {
-		buf.WriteString("\n⚠️ 待处理:")
+		write("\n⚠️ 待处理:")
 		for _, a := range actionItems {
 			line := "\n" + a
-			if written+len(line) > maxInjectChars-50 {
+			if written+len(line) > maxInjectChars {
 				sc.actionItems++
 				continue
 			}
-			buf.WriteString(line)
-			written += len(line)
+			write(line)
 		}
 	}
 
 	if len(goals) > 0 {
-		buf.WriteString("\n最近的 session:\n")
+		write("\n最近的 session:\n")
 		for _, g := range goals {
 			line := "- " + g + "\n"
-			if written+len(line) > maxInjectChars-50 {
+			if written+len(line) > maxInjectChars {
 				sc.goals++
 				continue
 			}
-			buf.WriteString(line)
-			written += len(line)
+			write(line)
 		}
 	}
 
 	// Vision tool tip: inject only when vision models are configured and room permits.
 	if tip := visionToolTip(written, maxInjectChars); tip != "" {
-		buf.WriteString(tip)
+		write(tip)
 	}
 
 	return buf.String(), sc
@@ -668,7 +677,7 @@ func visionToolTip(written, maxChars int) string {
 		return ""
 	}
 	tip := "\n[工具] aipmc_vision 可截图自查 UI：\nscreencapture/adb/xcrun 截图后用 aipmc_vision 传入代码片段+期望效果\n"
-	if written+len(tip) > maxChars-50 {
+	if written+len(tip) > maxChars {
 		return ""
 	}
 	return tip

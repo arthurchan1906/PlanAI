@@ -139,8 +139,10 @@ func TestBuildContextBlockGuidelinesCountBug(t *testing.T) {
 	if sc.guidelines != 1 {
 		t.Fatalf("guidelines trim flag: got %d want 1", sc.guidelines)
 	}
-	if sc.guidelinesDel != guidelinesBudget {
-		t.Fatalf("guidelines delivered: got %d want %d", sc.guidelinesDel, guidelinesBudget)
+	// 8/28 精确计费：guidelines 截断时追加 "…"(3B) 预扣——guidelinesDel =
+	// guidelinesBudget-3（内容 597 + 省略号 3 = 600 预算内，保证 block ≤800）。
+	if sc.guidelinesDel != guidelinesBudget-3 {
+		t.Fatalf("guidelines delivered: got %d want %d", sc.guidelinesDel, guidelinesBudget-3)
 	}
 	if !strings.Contains(block, "a.go → task") {
 		t.Fatal("fileAssoc line should be present")
@@ -499,5 +501,31 @@ func TestBuildContextBlockActionItemsSurvive(t *testing.T) {
 	}
 	if len(block) > maxInjectChars {
 		t.Fatalf("block %d exceeds cap %d", len(block), maxInjectChars)
+	}
+}
+
+// 8/28 修 chars≤800（v1.13 §4 验收）：written 精确化（含段头/Vision tip）后，
+// 无论各段如何塞满，block 必须严格 ≤ maxInjectChars——旧实现 block 可达 ~890。
+func TestBuildContextBlockNeverExceedsCap(t *testing.T) {
+	files := make([]string, 20)
+	for i := range files {
+		files[i] = strings.Repeat("x", 40)
+	}
+	warns := make([]string, 10)
+	for i := range warns {
+		warns[i] = strings.Repeat("w", 60)
+	}
+	acts := make([]string, 10)
+	for i := range acts {
+		acts[i] = strings.Repeat("a", 60)
+	}
+	goals := make([]string, 5)
+	for i := range goals {
+		goals[i] = strings.Repeat("g", 60)
+	}
+	gl := strings.Repeat("spec", 300)
+	block, sc := buildContextBlock(goals, warns, acts, files, gl)
+	if len(block) > maxInjectChars {
+		t.Fatalf("block %d exceeds cap %d (sc=%+v)", len(block), maxInjectChars, sc)
 	}
 }
