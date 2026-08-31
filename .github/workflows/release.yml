@@ -1,0 +1,58 @@
+name: Release
+
+# 三平台 Release 构建（tag 触发：git tag v1.2.3 && git push --tags）
+# 前提：项目纯 Go（CGO_ENABLED=0，AES 纯 Go 凭据），go:embed frontend/dist 需先构建前端。
+# BuildVersion 注入 = tag 名（与 build.sh 的 git SHA 注入一致，BOOT banner 显示版本）。
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            asset: aipmc_darwin_amd64
+          - os: windows-latest
+            asset: aipmc_windows_amd64.exe
+          - os: ubuntu-latest
+            asset: aipmc_linux_amd64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+          cache: true
+
+      - name: 构建前端（go:embed 依赖）
+        shell: bash
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+        env:
+          CI: true
+
+      - name: 构建二进制
+        shell: bash
+        run: |
+          mkdir -p release
+          if [ "${{ runner.os }}" = "macOS" ]; then GOOS=darwin; elif [ "${{ runner.os }}" = "Windows" ]; then GOOS=windows; else GOOS=linux; fi
+          CGO_ENABLED=0 go build \
+            -ldflags="-s -w -X aipmc/u.BuildVersion=${{ github.ref_name }}" \
+            -o "release/${{ matrix.asset }}" .
+
+      - name: 上传 Release 资产
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
