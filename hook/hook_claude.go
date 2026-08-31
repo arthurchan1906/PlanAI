@@ -46,17 +46,12 @@ func ProcessClaudeHook() {
 		Prompt               string `json:"prompt"`
 		LastAssistantMessage string `json:"last_assistant_message"`
 		ToolName             string `json:"tool_name"`
-		// ToolInput 仅解析常用字段；ToolInputRaw 保留完整原始输入，
-		// 供 default 分支（mcp__aipm__*、WebSearch、ask* 等）以 post_tool
-		// 格式写入 metadata（T3b：claude tool 行空 metadata 33% → <10%）。
+		// ToolInputRaw 独占 tool_input tag，保留完整原始输入。
+		// 修复（8/31）：原实现 ToolInputRaw 与内联 ToolInput struct 共用
+		// json:"tool_input"——Go encoding/json 对同 struct 重复 tag 会忽略
+		// 该键，导致两者皆空，T3b 空 metadata 修复与结构化 desc 实际未生效。
+		// 结构化常用字段改为 parseClaudeToolInput(raw.ToolInputRaw) 解析。
 		ToolInputRaw json.RawMessage `json:"tool_input"`
-		ToolInput    struct {
-			Command   string `json:"command"`
-			FilePath  string `json:"file_path"`
-			Content   string `json:"content"`
-			OldString string `json:"old_string"`
-			NewString string `json:"new_string"`
-		} `json:"tool_input"`
 		ToolResponse toolResponse `json:"tool_response"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -87,7 +82,7 @@ func ProcessClaudeHook() {
 
 	case "PostToolUse":
 		desc := raw.ToolName
-		ti := raw.ToolInput
+		ti := parseClaudeToolInput(raw.ToolInputRaw)
 		tr := raw.ToolResponse
 		var metadataJSON string
 
@@ -293,6 +288,27 @@ func fmtExitCode(code int) string {
 		return ""
 	}
 	return " [exit:" + u.Itoa(code) + "]"
+}
+
+// claudeToolInput 提取 claude tool_input 的常用结构化字段。
+// 独立于 raw.ToolInputRaw（独占 json:"tool_input" tag），避免同 struct
+// 重复 tag 被 Go encoding/json 忽略而字段全空的回归（8/31 修复）。
+type claudeToolInput struct {
+	Command   string `json:"command"`
+	FilePath  string `json:"file_path"`
+	Content   string `json:"content"`
+	OldString string `json:"old_string"`
+	NewString string `json:"new_string"`
+}
+
+// parseClaudeToolInput 从 ToolInputRaw 反序列化常用字段；非法/空 JSON 返回
+// 零值（调用方能以 ti.X == "" 兜底，不影响 default 分支写完整原始输入）。
+func parseClaudeToolInput(raw json.RawMessage) claudeToolInput {
+	var ti claudeToolInput
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &ti)
+	}
+	return ti
 }
 
 // claudeWriteFile is one target of a Write tool call (input + response side).

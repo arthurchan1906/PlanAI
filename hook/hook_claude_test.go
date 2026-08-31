@@ -78,3 +78,41 @@ func TestCollectWriteFilesMergesInputAndResponse(t *testing.T) {
 		t.Fatalf("response-only files = %d, want 2", len(files))
 	}
 }
+
+func TestToolInputRawSurvivesParse(t *testing.T) {
+	// 修复（8/31）：原实现 ToolInputRaw 与内联 ToolInput struct 共用
+	// json:"tool_input" tag，Go encoding/json 会忽略该键使两者皆空（T3b
+	// 空 metadata 修复与结构化 desc 实际未生效）。现 ToolInputRaw 独占 tag。
+	in := `{"tool_name":"Edit","tool_input":{"file_path":"/p/a.go","old_string":"a","new_string":"b"},"tool_response":{"success":true}}`
+	var raw struct {
+		ToolName     string          `json:"tool_name"`
+		ToolInputRaw json.RawMessage `json:"tool_input"`
+		ToolResponse toolResponse    `json:"tool_response"`
+	}
+	if err := json.Unmarshal([]byte(in), &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(raw.ToolInputRaw) == 0 {
+		t.Fatal("ToolInputRaw empty — tool_input was dropped by duplicate-tag conflict")
+	}
+	// 结构化字段从 ToolInputRaw 二次解析，不再依赖丢弃的结构体字段。
+	ti := parseClaudeToolInput(raw.ToolInputRaw)
+	if ti.FilePath != "/p/a.go" || ti.OldString != "a" || ti.NewString != "b" {
+		t.Fatalf("structured parse got %+v", ti)
+	}
+}
+
+func TestParseClaudeToolInput(t *testing.T) {
+	// Command（Grep/Bash）解析。
+	ti := parseClaudeToolInput(json.RawMessage(`{"command":"grep x","file_path":"/f"}`))
+	if ti.Command != "grep x" || ti.FilePath != "/f" {
+		t.Fatalf("got %+v", ti)
+	}
+	// 空/非法 JSON 应返回零值（调用方以 ti.X == "" 兜底）。
+	if zero := parseClaudeToolInput(nil); zero.Command != "" || zero.FilePath != "" {
+		t.Fatalf("nil raw should yield zero value, got %+v", zero)
+	}
+	if bad := parseClaudeToolInput(json.RawMessage(`not json`)); bad.Command != "" {
+		t.Fatalf("invalid raw should yield zero value, got %+v", bad)
+	}
+}
