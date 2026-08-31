@@ -17,7 +17,7 @@ import (
 const recordBugHintThreshold = 8
 
 // ProcessPostCommitHook handles git post-commit events.
-// Called via: aipmc hook post-commit
+// Called via: aipmc hook-post-commit (git post-commit hook，见 hook_install.go)
 // Reads the latest commit from git and records it into the PM system
 // immediately, bypassing the 30-minute GITSYNC cycle.
 func ProcessPostCommitHook() {
