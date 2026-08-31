@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button, Modal, Form, Input, Tag, Space, Popconfirm, Select, Typography, Table } from "antd";
 import { PlusOutlined, EditOutlined, DeleteOutlined, KeyOutlined } from "@ant-design/icons";
 
@@ -8,6 +8,9 @@ const { Text } = Typography;
 
 function ProviderModal({ open, provider, onCancel, onSave }) {
   const [form] = Form.useForm();
+  // destroyOnClose 只销毁 DOM，useForm 实例与 initialValues 快照会残留——
+  // 每次打开时重置一次，保证表单始终以当前 prop 为新初始值
+  useEffect(() => { if (open) form.resetFields(); }, [open, form]);
   return (
     <Modal title={provider ? "Edit Provider" : "Add Provider"} open={open}
       onOk={() => form.submit()} onCancel={() => { form.resetFields(); onCancel(); }} destroyOnClose>
@@ -34,6 +37,8 @@ function ProviderModal({ open, provider, onCancel, onSave }) {
 function ModelModal({ open, model, providers, onCancel, onSave }) {
   const [form] = Form.useForm();
   const isEdit = !!model;
+  // 与 ProviderModal 同理：打开即重置，避免显示上一个模型的表单数据
+  useEffect(() => { if (open) form.resetFields(); }, [open, form]);
 
   return (
     <Modal title={isEdit ? "Edit Model" : "Add Model"} open={open} width={640}
@@ -129,6 +134,8 @@ function ModelModal({ open, model, providers, onCancel, onSave }) {
 
 function KeyModal({ open, provider, unlocked, onCancel, onSave }) {
   const [form] = Form.useForm();
+  // key 输入框残留（如上次未清空就保存/关闭），打开时清空
+  useEffect(() => { if (open) form.resetFields(); }, [open, form]);
   return (
     <Modal title={`Key: ${provider}`} open={open}
       onOk={() => form.submit()} onCancel={() => { form.resetFields(); onCancel(); }} destroyOnClose>
@@ -192,9 +199,10 @@ export default function ModelRegistryEditor({ providers = [], models = [], keys 
     onChange(providers, models.filter(m => m.id !== id));
   }
 
-  function handleKeySave(v) {
-    onKeyChange(keyModal.provider, v.key, v.password || "");
-    setKeyModal({ open: false, provider: "" });
+  async function handleKeySave(v) {
+    // 失败时保留弹窗并提示错误，避免「假成功」
+    const ok = await onKeyChange(keyModal.provider, v.key, v.password || "");
+    if (ok !== false) setKeyModal({ open: false, provider: "" });
   }
 
   // Build model table data ? color routes by key availability.
@@ -262,7 +270,7 @@ export default function ModelRegistryEditor({ providers = [], models = [], keys 
         </Text>
         <Button type="dashed" size="small" icon={<PlusOutlined />}
           onClick={() => setProvModal({ open: true, edit: null })}>Add Provider</Button>
-        <ProviderModal open={provModal.open} provider={provModal.edit}
+        <ProviderModal key={provModal.edit?.name ?? "new"} open={provModal.open} provider={provModal.edit}
           onCancel={() => setProvModal({ open: false, edit: null })} onSave={handleProvSave} />
       </div>
     );
@@ -318,11 +326,11 @@ export default function ModelRegistryEditor({ providers = [], models = [], keys 
         <Text type="secondary" style={{ fontSize: 12 }}>No models configured.</Text>
       )}
 
-      <ProviderModal open={provModal.open} provider={provModal.edit}
+      <ProviderModal key={provModal.edit?.name ?? "new"} open={provModal.open} provider={provModal.edit}
         onCancel={() => setProvModal({ open: false, edit: null })} onSave={handleProvSave} />
-      <ModelModal open={modelModal.open} model={modelModal.edit} providers={providers}
+      <ModelModal key={modelModal.edit?.id ?? "new"} open={modelModal.open} model={modelModal.edit} providers={providers}
         onCancel={() => setModelModal({ open: false, edit: null })} onSave={handleModelSave} />
-      <KeyModal open={keyModal.open} provider={keyModal.provider} unlocked={unlocked}
+      <KeyModal key={keyModal.provider || "new"} open={keyModal.open} provider={keyModal.provider} unlocked={unlocked}
         onCancel={() => setKeyModal({ open: false, provider: "" })} onSave={handleKeySave} />
     </div>
   );

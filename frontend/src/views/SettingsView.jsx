@@ -46,13 +46,19 @@ export default function SettingsView() {
     setLoading(false);
   }
   async function handleKeyChange(provider, key, password) {
-    await api("/pmai/credentials", {
-      method: "POST",
+    try {
+      await api("/pmai/credentials", {
+        method: "POST",
         body: JSON.stringify({ action: "set", provider, key, password, profile }),
-    });
-    setKeys(prev => ({ ...prev, [provider]: key.startsWith("sk-") ? key.slice(0, 6) + "..." + key.slice(-4) : "***" }));
-    if (password) { setKeyUn(true); setKeyExists(true); }
-    message.success(`Key for ${provider} saved`);
+      });
+      setKeys(prev => ({ ...prev, [provider]: key.startsWith("sk-") ? key.slice(0, 6) + "..." + key.slice(-4) : "***" }));
+      if (password) { setKeyUn(true); setKeyExists(true); }
+      message.success(`Key for ${provider} saved`);
+      return true;
+    } catch (e) {
+      message.error(`Key for ${provider} failed: ${e.message}`);
+      return false;
+    }
   }
   async function saveRegistry(provs, mods) {
     setProviders(provs); setModels(mods);

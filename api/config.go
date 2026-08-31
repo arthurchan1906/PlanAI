@@ -323,9 +323,20 @@ func (s *Server) handleCredentials(w http.ResponseWriter, body map[string]any) {
 		provider, _ := body["provider"].(string)
 		key, _ := body["key"].(string)
 		if provider == "" || key == "" { web.SendError(w, 400, "provider and key required"); return }
-		// Always require password for key modification
+		// password 为空时允许使用已解锁会话的会话密钥保存（UI 在解锁状态下不提示密码）
 		password, _ := body["password"].(string)
-		if password == "" { web.SendError(w, 400, "password required to modify keys"); return }
+		if password == "" {
+			if !pmdb.IsUnlocked() || pmdb.GetCredentialStore() == nil {
+				web.SendError(w, 401, "credential session locked or expired — unlock first or provide password"); return
+			}
+			cs := pmdb.GetCredentialStore()
+			cs.Set(provider, key)
+			cs.Profile = profile
+			if err := cs.SaveToFile(); err != nil { web.SendError(w, 500, err.Error()); return }
+			log.Printf("[CRED] set key provider=%q keyPrefix=%s profile=%s (session)", provider, key[:min(8, len(key))], profile)
+			web.SendJSON(w, map[string]any{"ok": true})
+			return
+		}
 		store, err := pmdb.LoadCredentialsProfile([]byte(password), profile)
 		if err != nil || store == nil { web.SendError(w, 401, "wrong password"); return }
 		store.Set(provider, key)
@@ -339,9 +350,19 @@ func (s *Server) handleCredentials(w http.ResponseWriter, body map[string]any) {
 	case "delete":
 		provider, _ := body["provider"].(string)
 		if provider == "" { web.SendError(w, 400, "provider required"); return }
-		// Always require password for key modification
+		// password 为空时允许使用已解锁会话的会话密钥保存（UI 在解锁状态下不提示密码）
 		password, _ := body["password"].(string)
-		if password == "" { web.SendError(w, 400, "password required to modify keys"); return }
+		if password == "" {
+			if !pmdb.IsUnlocked() || pmdb.GetCredentialStore() == nil {
+				web.SendError(w, 401, "credential session locked or expired — unlock first or provide password"); return
+			}
+			cs := pmdb.GetCredentialStore()
+			cs.Remove(provider)
+			cs.Profile = profile
+			if err := cs.SaveToFile(); err != nil { web.SendError(w, 500, err.Error()); return }
+			web.SendJSON(w, map[string]any{"ok": true})
+			return
+		}
 		store, err := pmdb.LoadCredentialsProfile([]byte(password), profile)
 		if err != nil || store == nil { web.SendError(w, 401, "wrong password"); return }
 		store.Remove(provider)
