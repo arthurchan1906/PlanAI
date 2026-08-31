@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	pmdb "aipmc/db"
@@ -3273,4 +3274,70 @@ func listGraphEdgesFor(projectPath, sourceID, targetID, edgeType string) ([]map[
 		edges = []map[string]any{}
 	}
 	return edges, nil
+}
+
+// ListTaskFileAssoc returns taskID → sorted []file paths for tasks of the given
+// status, derived from graph_edges(file_touch) JOIN commits (commit.task_id).
+// Unlike ListGraphEdges (ORDER BY weight DESC LIMIT 200), this is scoped by task
+// status and NOT subject to the top-200 weight cap — P0 ④a agent_briefing needs
+// ALL current-task file associations, not just the highest-weight edges.
+// Returns an empty map on error (caller degrades gracefully, no injection budget).
+func ListTaskFileAssoc(status string) map[string][]string {
+	db, err := pmdb.OpenProject("")
+	if err != nil {
+		u.LogShared("STORE", "task_file_assoc open_err=%v", err)
+		return map[string][]string{}
+	}
+	defer db.Close()
+	q := `SELECT c.task_id, g.evidence_json
+	      FROM graph_edges g
+	      JOIN commits c ON c.id = g.target_id
+	      WHERE g.edge_type = 'file_touch' AND c.task_id != ''`
+	var args []any
+	if status != "" {
+		q += ` AND c.task_id IN (SELECT id FROM tasks WHERE status = ?)`
+		args = append(args, status)
+	}
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		u.LogShared("STORE", "task_file_assoc query_err=%v", err)
+		return map[string][]string{}
+	}
+	defer rows.Close()
+
+	files := map[string]map[string]bool{} // taskID → file set
+	for rows.Next() {
+		var tid, evJSON string
+		if err := rows.Scan(&tid, &evJSON); err != nil {
+			continue
+		}
+		if evJSON == "" {
+			continue
+		}
+		var ev map[string]any
+		if json.Unmarshal([]byte(evJSON), &ev) != nil {
+			continue
+		}
+		intersect, _ := ev["intersect"].([]any)
+		for _, f := range intersect {
+			fp := u.Str(f)
+			if fp == "" {
+				continue
+			}
+			if files[tid] == nil {
+				files[tid] = map[string]bool{}
+			}
+			files[tid][fp] = true
+		}
+	}
+	result := make(map[string][]string, len(files))
+	for tid, set := range files {
+		lst := make([]string, 0, len(set))
+		for f := range set {
+			lst = append(lst, f)
+		}
+		sort.Strings(lst)
+		result[tid] = lst
+	}
+	return result
 }

@@ -1235,7 +1235,12 @@ func BuildBriefing(aiClient *ai.Client, graphSection string) (string, []string) 
 // 两级均返回 surfaced 事件 ID（BRIEFING 日志口径不随 level 变化）。
 func BuildBriefingLevel(aiClient *ai.Client, graphSection, level string) (string, []string) {
 	if level == "summary" {
-		return buildBriefingSummary()
+		txt, surfaced := buildBriefingSummary()
+		// P0 ④a（8/31）：agent 上下文卡（任务×文件×决策，确定性关联）前置。
+		if card := BuildAgentBriefing(); card != "" {
+			txt = card + "\n" + txt
+		}
+		return txt, surfaced
 	}
 	report := RunFullAnalysis()
 	tasks, _ := store.ListTasks("in_progress", "")
@@ -1247,6 +1252,11 @@ func BuildBriefingLevel(aiClient *ai.Client, graphSection, level string) (string
 
 	var b strings.Builder
 	b.WriteString("🏗️ 项目简报 — AIPM\n\n")
+	// P0 ④a（8/31）：agent 上下文卡（任务×文件×决策，确定性关联）置顶。
+	if card := BuildAgentBriefing(); card != "" {
+		b.WriteString(card)
+		b.WriteString("\n")
+	}
 
 	// Thread summary first — this is the "story so far"
 	if threadSummary != "" {
