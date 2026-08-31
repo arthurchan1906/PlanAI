@@ -753,6 +753,37 @@ func TestBuildContextBlockNeverExceedsCap(t *testing.T) {
 	}
 }
 
+// 8/31 E 线段优先级治理（Claude 8/31 补充）：guidelines 降级为「可让位但保底」
+// ——高优段（fileAssoc/anchor/warn/act）先写占主预算（highCap=maxInjectChars-guidelinesMin），
+// guidelines 用剩余、线性裁剪留 ≥200B，确保 P0 ② 工具直映射关键句（「查决策→list_decisions」）
+// 不被挤掉。回归：warn/act 塞满 highCap 时关键句仍送达且 block ≤ maxInjectChars。
+func TestBuildContextBlockGuidelinesFloor(t *testing.T) {
+	guideKey := "查决策→list_decisions 查映射→get_decision"
+	gl := guideKey + strings.Repeat(" spec", 200) // 长指南，必须被显著线性截断
+	// warn+act 塞满 highCap（maxInjectChars-guidelinesMin），制造「高优段抢满预算」
+	warns := make([]string, 12)
+	for i := range warns {
+		warns[i] = strings.Repeat("w", 60)
+	}
+	acts := make([]string, 12)
+	for i := range acts {
+		acts[i] = strings.Repeat("a", 60)
+	}
+	block, sc := buildContextBlock(nil, warns, acts, nil, nil, gl)
+	if !strings.Contains(block, "查决策→list_decisions") {
+		t.Fatalf("guidelines 保底失效：工具直映射关键句被挤掉 (sc=%+v block=%q)", sc, block)
+	}
+	if len(block) > maxInjectChars {
+		t.Fatalf("block %d exceeds cap %d (sc=%+v)", len(block), maxInjectChars, sc)
+	}
+	// 关键句应在 [项目编码规范] 段内（重排后 act 之后），确认写序正确
+	gi := strings.Index(block, "[项目编码规范]")
+	ki := strings.Index(block, "查决策→list_decisions")
+	if gi == -1 || ki == -1 || ki < gi {
+		t.Fatalf("guidelines 段序或送达异常: guidelinesIdx=%d keyIdx=%d block=%q", gi, ki, block)
+	}
+}
+
 // 机制 6（8/28）：buildContextBlock anchor 段——[当前进行任务] 写入、line 送达、
 // sc.anchor 零裁剪、block 不超 cap。纯 status 快照，与 goals/fileAssoc 段独立。
 func TestBuildContextBlockAnchor(t *testing.T) {

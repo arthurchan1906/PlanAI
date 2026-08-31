@@ -36,6 +36,7 @@ const (
 	actionItemCeil   = 10             // 2.1: safety ceiling for formatted action items
 	perTypeCap       = 5              // 2.1: max individual items per event type
 	warnActReserve   = 200            // E 线（8/27）：warnings+actionItems 保留预算（字节）
+	guidelinesMin    = 200             // 段优先级治理（8/31）：guidelines 保底——P0 ② 工具直映射关键句可达（Claude 8/31 补充）
 )
 
 // E 线预算重排说明（8/27，数据依据见 METRICS_BASELINE 与注入日志）：
@@ -588,6 +589,13 @@ func buildContextBlock(goals, warnings, actionItems, fileAssoc, anchor []string,
 	}
 	write("\n[AIPM Context]")
 	var sc segCounts
+	// 段优先级治理（8/31）：guidelines 保底 200B——高优段共享 cap 为
+	// maxInjectChars-guidelinesMin，给 guidelines 留出工具直映射关键句空间。
+	// 高优段（fileAssoc/anchor/warn/act）在此 cap 内先写；guidelines 用剩余。
+	highCap := maxInjectChars
+	if guidelines != "" {
+		highCap = maxInjectChars - guidelinesMin
+	}
 
 	// ── File associations (highest priority, independent hard sub-budget) ──
 	// 8/13 F2 修复：独立 200 字节子预算 + 前置写入。旧实现 guidelines 先写且
@@ -603,7 +611,7 @@ func buildContextBlock(goals, warnings, actionItems, fileAssoc, anchor []string,
 		faWritten := 0
 		for _, fa := range fileAssoc {
 			line := "\n" + fa
-			if faWritten+len(line) > fileAssocBudget {
+			if faWritten+len(line) > fileAssocBudget || written+len(line) > highCap {
 				sc.fileAssoc++
 				continue
 			}
@@ -623,7 +631,7 @@ func buildContextBlock(goals, warnings, actionItems, fileAssoc, anchor []string,
 		aw := 0
 		for _, a := range anchor {
 			line := "\n" + a
-			if aw+len(line) > anchorBudget || written+len(line) > maxInjectChars {
+			if aw+len(line) > anchorBudget || written+len(line) > highCap {
 				sc.anchor++
 				continue
 			}
@@ -633,27 +641,47 @@ func buildContextBlock(goals, warnings, actionItems, fileAssoc, anchor []string,
 		write("\n")
 	}
 
-	// ── Guidelines (dedicated budget, truncated to remaining headroom) ──
-	// E 线（8/27）：avail 扣除 warnActReserve——guidelines 满 600 时也必须给
-	// warnings/actionItems 留保留空间（8/27 实测 warn 7631 条/日全被挤掉）；
-	// 无高优段时 reserve=0，guidelines 不浪费让渡空间（保持旧行为）。
+	// Warnings next (high priority)
+	for _, w := range warnings {
+		line := w + "\n"
+		if written+len(line) > highCap {
+			sc.warnings++
+			continue
+		}
+		write(line)
+	}
+
+	// ⚠️ 待处理: actionable items from pipeline emerge events
+	if len(actionItems) > 0 {
+		hdr := "\n⚠️ 待处理:"
+		if written+len(hdr) > highCap {
+			// 8/28：段头也纳入 guard——内容满时连段头都不写，防 block 超 cap。
+			sc.actionItems += len(actionItems)
+		} else {
+			write(hdr)
+			for _, a := range actionItems {
+				line := "\n" + a
+				if written+len(line) > highCap {
+					sc.actionItems++
+					continue
+				}
+				write(line)
+			}
+		}
+	}
+
+	// ── Guidelines (可让位但保底 200B; 8/31 重排到高优段之后) ──
+	// 段优先级治理（8/31）：warn/act 已提前写入，guidelines 移到其后，用真实剩余
+	// （avail = maxInjectChars-written）。配合 highCap（maxInjectChars-guidelinesMin）
+	// 保底 ≥200B，让 P0 ② 工具直映射关键句（如「查决策→list_decisions」）可达。
 	if guidelines != "" {
 		header := "\n[项目编码规范]\n"
 		write(header)
-		reserve := 0
-		if len(warnings) > 0 || len(actionItems) > 0 {
-			reserve = warnActReserve
-		}
-		// 8/28：avail 扣除段头+结尾换行开销，reserve 精确兑现为 warn/act 可用空间。
-		// 8/28 二次审计（Claude Challenge 1）：header 已由 write(header) 计费，
-		// avail 不再扣 len(header)——旧式再减一次造成「段头双重扣除」22B，
-		// guidelines 被不必要压缩，恰印证双重扣除风险类型（量在 header 非 reserve）。
-		avail := min(len(guidelines), guidelinesBudget, maxInjectChars-written-reserve-1)
+		avail := min(len(guidelines), guidelinesBudget, maxInjectChars-written-1)
 		if avail < 0 {
 			avail = 0
 		}
 		if avail < len(guidelines) && avail >= 3 {
-			// 截断追加 "…"(3B)：预扣，防止精确计费后 block 超 maxInjectChars（8/28）。
 			avail -= 3
 		}
 		sc.guidelinesDel = avail
@@ -662,8 +690,6 @@ func buildContextBlock(goals, warnings, actionItems, fileAssoc, anchor []string,
 		}
 		if avail > 0 {
 			if avail < len(guidelines) {
-				// avail is a byte budget — back off to a rune boundary so a
-				// multi-byte CJK character is never split mid-sequence.
 				cut := avail
 				for cut > 0 && !utf8.RuneStart(guidelines[cut]) {
 					cut--
@@ -674,35 +700,6 @@ func buildContextBlock(goals, warnings, actionItems, fileAssoc, anchor []string,
 			}
 		}
 		write("\n")
-	}
-
-	// Warnings next (high priority)
-	for _, w := range warnings {
-		line := w + "\n"
-		if written+len(line) > maxInjectChars {
-			sc.warnings++
-			continue
-		}
-		write(line)
-	}
-
-	// ⚠️ 待处理: actionable items from pipeline emerge events
-	if len(actionItems) > 0 {
-		hdr := "\n⚠️ 待处理:"
-		if written+len(hdr) > maxInjectChars {
-			// 8/28：段头也纳入 guard——内容满时连段头都不写，防 block 超 cap。
-			sc.actionItems += len(actionItems)
-		} else {
-			write(hdr)
-			for _, a := range actionItems {
-				line := "\n" + a
-				if written+len(line) > maxInjectChars {
-					sc.actionItems++
-					continue
-				}
-				write(line)
-			}
-		}
 	}
 
 	if len(goals) > 0 {
