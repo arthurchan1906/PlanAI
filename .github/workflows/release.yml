@@ -1,13 +1,14 @@
 name: Release
 
-# 三平台 Release 构建（tag 触发：git tag v1.2.3 && git push --tags）
+# 三平台 Release 构建（tag 触发：git tag 0.4.0 && git push --tags）
+# 现有 tag 风格无 v 前缀（0.2.x/0.3.x），触发模式匹配 [0-9]*（不含 v 的版本号）。
 # 前提：项目纯 Go（CGO_ENABLED=0，AES 纯 Go 凭据），go:embed frontend/dist 需先构建前端。
 # BuildVersion 注入 = tag 名（与 build.sh 的 git SHA 注入一致，BOOT banner 显示版本）。
 
 on:
   push:
     tags:
-      - 'v*'
+      - '[0-9]*'
 
 permissions:
   contents: write
