@@ -1,0 +1,167 @@
+{
+  "annotator": "claude-code",
+  "date": "2026-08-28",
+  "method": "反事实Q1/Q2",
+  "labels": [
+    {
+      "idx": 1,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-07-30T14:35:37",
+      "label": "任务映射",
+      "note": "工具调用属用户指令目标直接实现"
+    },
+    {
+      "idx": 2,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-08-07T09:28:37",
+      "label": "任务映射",
+      "note": "工具调用属用户指令目标直接实现"
+    },
+    {
+      "idx": 3,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-08-13T14:42:11",
+      "label": "任务映射",
+      "note": "工具调用属用户指令目标直接实现"
+    },
+    {
+      "idx": 4,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-08-20T15:01:28",
+      "label": "任务映射",
+      "note": "工具调用属用户指令目标直接实现"
+    },
+    {
+      "idx": 5,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-08-26T16:22:24",
+      "label": "任务映射",
+      "note": "工具调用属用户指令目标直接实现"
+    },
+    {
+      "idx": 6,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-06-30T14:28:10",
+      "label": "任务映射",
+      "note": "工具调用属用户指令目标直接实现"
+    },
+    {
+      "idx": 7,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-08-04T15:10:46",
+      "label": "任务映射",
+      "note": "工具调用属用户指令目标直接实现"
+    },
+    {
+      "idx": 8,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-08-18T10:28:21",
+      "label": "半自发",
+      "note": "用户点名记录,但search_discussions map range主动回溯超字面"
+    },
+    {
+      "idx": 9,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-08-19T09:47:52",
+      "label": "任务映射",
+      "note": "工具调用属用户指令目标直接实现"
+    },
+    {
+      "idx": 10,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-08-24T12:29:03",
+      "label": "任务映射",
+      "note": "工具调用属用户指令目标直接实现"
+    },
+    {
+      "idx": 11,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-07-21T16:38:27",
+      "label": "被动",
+      "note": "已安装+aipmc_vision,用户点名验证功能"
+    },
+    {
+      "idx": 12,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-07-30T17:56:12",
+      "label": "任务映射",
+      "note": "工具调用属用户指令目标直接实现"
+    },
+    {
+      "idx": 13,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-08-06T11:02:44",
+      "label": "任务映射",
+      "note": "工具调用属用户指令目标直接实现"
+    },
+    {
+      "idx": 14,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-08-11T11:59:05",
+      "label": "任务映射",
+      "note": "工具调用属用户指令目标直接实现"
+    },
+    {
+      "idx": 15,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-08-12T09:37:01",
+      "label": "任务映射",
+      "note": "工具调用属用户指令目标直接实现"
+    },
+    {
+      "idx": 16,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-07-10T16:55:10",
+      "label": "任务映射",
+      "note": "工具调用属用户指令目标直接实现"
+    },
+    {
+      "idx": 17,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-08-03T16:08:52",
+      "label": "任务映射",
+      "note": "工具调用属用户指令目标直接实现"
+    },
+    {
+      "idx": 18,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-08-14T11:04:29",
+      "label": "半自发",
+      "note": "用户贴大日志,agent主动record_bug是主动响应"
+    },
+    {
+      "idx": 19,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-08-24T14:29:25",
+      "label": "任务映射",
+      "note": "工具调用属用户指令目标直接实现"
+    },
+    {
+      "idx": 20,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-08-24T16:43:55",
+      "label": "半自发",
+      "note": "提交到aipm,但search_context/smart_search主动检索UI对齐超字面"
+    }
+  ]
+}

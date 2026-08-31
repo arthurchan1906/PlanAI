@@ -1,0 +1,807 @@
+{
+  "annotator": "codex",
+  "date": "2026-08-28",
+  "method": "反事实Q1/Q2",
+  "labels": [
+    {
+      "idx": 1,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-07-13T15:54:08",
+      "label": "任务映射",
+      "note": "用户点名查看/审核/挑战→工具直接实现"
+    },
+    {
+      "idx": 2,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-07-27T13:15:23",
+      "label": "任务映射",
+      "note": "用户点名查看/审核/挑战→工具直接实现"
+    },
+    {
+      "idx": 3,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-07-28T11:13:38",
+      "label": "任务映射",
+      "note": "用户点名查看/审核/挑战→工具直接实现"
+    },
+    {
+      "idx": 4,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-07-28T11:20:22",
+      "label": "任务映射",
+      "note": "用户点名查看/审核/挑战→工具直接实现"
+    },
+    {
+      "idx": 5,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-07-29T15:43:36",
+      "label": "任务映射",
+      "note": "用户点名\"查看/查记录\"→工具直接实现"
+    },
+    {
+      "idx": 6,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-07-30T13:02:43",
+      "label": "半自发",
+      "note": "用户未点名+agent主动检索/记录超出字面"
+    },
+    {
+      "idx": 7,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-07-30T14:35:37",
+      "label": "任务映射",
+      "note": "全局视角是修饰语,不构成超字面(试点裁决)"
+    },
+    {
+      "idx": 8,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-08-04T15:39:02",
+      "label": "任务映射",
+      "note": "用户点名查看/审核/挑战→工具直接实现"
+    },
+    {
+      "idx": 9,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-08-07T08:53:45",
+      "label": "任务映射",
+      "note": "用户点名查看/审核/挑战→工具直接实现"
+    },
+    {
+      "idx": 10,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-08-07T09:28:37",
+      "label": "任务映射",
+      "note": "挑战后回填是流程一环(试点裁决)"
+    },
+    {
+      "idx": 11,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-08-07T10:54:55",
+      "label": "任务映射",
+      "note": "用户点名\"添加进想法/thread\"→工具是实现"
+    },
+    {
+      "idx": 12,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-08-07T14:47:21",
+      "label": "任务映射",
+      "note": "用户点名\"查看/查记录\"→工具直接实现"
+    },
+    {
+      "idx": 13,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-08-12T17:08:28",
+      "label": "任务映射",
+      "note": "用户表达观点,read+append是讨论流程"
+    },
+    {
+      "idx": 14,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-08-12T17:21:19",
+      "label": "任务映射",
+      "note": "用户点名查看/审核/挑战→工具直接实现"
+    },
+    {
+      "idx": 15,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-08-13T08:57:58",
+      "label": "半自发",
+      "note": "用户未点名+agent主动检索/记录超出字面"
+    },
+    {
+      "idx": 16,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-08-13T14:42:11",
+      "label": "任务映射",
+      "note": "用户点名查看/审核/挑战→工具直接实现"
+    },
+    {
+      "idx": 17,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-08-13T16:37:33",
+      "label": "半自发",
+      "note": "用户点名查看,但update_decision/create_task超字面"
+    },
+    {
+      "idx": 18,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-08-14T13:22:15",
+      "label": "半自发",
+      "note": "用户未点名+agent主动检索/记录超出字面"
+    },
+    {
+      "idx": 19,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-08-17T13:34:09",
+      "label": "任务映射",
+      "note": "用户点名查看/审核/挑战→工具直接实现"
+    },
+    {
+      "idx": 20,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-08-18T14:39:40",
+      "label": "任务映射",
+      "note": "用户点名查看/审核/挑战→工具直接实现"
+    },
+    {
+      "idx": 21,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-08-18T14:47:26",
+      "label": "任务映射",
+      "note": "用户点名查看/审核/挑战→工具直接实现"
+    },
+    {
+      "idx": 22,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-08-19T13:42:51",
+      "label": "任务映射",
+      "note": "用户点名查看/审核/挑战→工具直接实现"
+    },
+    {
+      "idx": 23,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-08-20T15:01:28",
+      "label": "任务映射",
+      "note": "用户点名查看/审核/挑战→工具直接实现"
+    },
+    {
+      "idx": 24,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-08-25T14:47:20",
+      "label": "任务映射",
+      "note": "用户点名查看/审核/挑战→工具直接实现"
+    },
+    {
+      "idx": 25,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-08-26T16:22:24",
+      "label": "任务映射",
+      "note": "用户点名查看/审核/挑战→工具直接实现"
+    },
+    {
+      "idx": 26,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-06-30T14:28:10",
+      "label": "任务映射",
+      "note": "用户点名查看/审核/挑战→工具直接实现"
+    },
+    {
+      "idx": 27,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-07-20T11:09:28",
+      "label": "任务映射",
+      "note": "用户点名查看/审核/挑战→工具直接实现"
+    },
+    {
+      "idx": 28,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-07-28T17:28:45",
+      "label": "任务映射",
+      "note": "用户点名提交/记录→工具是标准工作流"
+    },
+    {
+      "idx": 29,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-07-30T11:51:50",
+      "label": "任务映射",
+      "note": "用户点名查看/审核/挑战→工具直接实现"
+    },
+    {
+      "idx": 30,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-08-04T15:10:46",
+      "label": "任务映射",
+      "note": "用户点名查看/审核/挑战→工具直接实现"
+    },
+    {
+      "idx": 31,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-08-07T10:46:59",
+      "label": "半自发",
+      "note": "用户未点名+agent主动检索/记录超出字面"
+    },
+    {
+      "idx": 32,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-08-07T13:55:35",
+      "label": "半自发",
+      "note": "用户未点名+agent主动检索/记录超出字面"
+    },
+    {
+      "idx": 33,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-08-10T15:55:14",
+      "label": "任务映射",
+      "note": "用户点名查看/审核/挑战→工具直接实现"
+    },
+    {
+      "idx": 34,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-08-12T15:30:36",
+      "label": "任务映射",
+      "note": "用户点名查看/审核/挑战→工具直接实现"
+    },
+    {
+      "idx": 35,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-08-12T16:36:31",
+      "label": "半自发",
+      "note": "用户未点名+agent主动检索/记录超出字面"
+    },
+    {
+      "idx": 36,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-08-12T17:14:00",
+      "label": "半自发",
+      "note": "用户未点名+agent主动检索/记录超出字面"
+    },
+    {
+      "idx": 37,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-08-12T17:19:31",
+      "label": "任务映射",
+      "note": "用户点名查看/审核/挑战→工具直接实现"
+    },
+    {
+      "idx": 38,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-08-12T17:47:13",
+      "label": "半自发",
+      "note": "记录讨论+主动search\"v1.14收敛\"超字面"
+    },
+    {
+      "idx": 39,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-08-17T10:18:20",
+      "label": "任务映射",
+      "note": "用户点名提交/记录→工具是标准工作流"
+    },
+    {
+      "idx": 40,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-08-17T16:58:23",
+      "label": "任务映射",
+      "note": "用户陈述已启动,list_sessions确认状态"
+    },
+    {
+      "idx": 41,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-08-18T10:28:21",
+      "label": "半自发",
+      "note": "用户未点名+agent主动检索/记录超出字面"
+    },
+    {
+      "idx": 42,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-08-18T12:06:26",
+      "label": "半自发",
+      "note": "用户未点名+agent主动检索/记录超出字面"
+    },
+    {
+      "idx": 43,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-08-19T09:47:52",
+      "label": "任务映射",
+      "note": "用户点名查看/审核/挑战→工具直接实现"
+    },
+    {
+      "idx": 44,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-08-19T11:28:04",
+      "label": "任务映射",
+      "note": "用户点名查看/审核/挑战→工具直接实现"
+    },
+    {
+      "idx": 45,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-08-20T16:42:03",
+      "label": "任务映射",
+      "note": "用户点名查看/审核/挑战→工具直接实现"
+    },
+    {
+      "idx": 46,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-08-24T12:29:03",
+      "label": "半自发",
+      "note": "用户未点名+agent主动检索/记录超出字面"
+    },
+    {
+      "idx": 47,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-08-24T14:26:36",
+      "label": "半自发",
+      "note": "用户未点名+agent主动检索/记录超出字面"
+    },
+    {
+      "idx": 48,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-08-26T09:50:03",
+      "label": "任务映射",
+      "note": "用户点名查看/审核/挑战→工具直接实现"
+    },
+    {
+      "idx": 49,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-08-26T14:52:54",
+      "label": "半自发",
+      "note": "用户未点名+agent主动检索/记录超出字面"
+    },
+    {
+      "idx": 50,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-08-26T17:09:16",
+      "label": "半自发",
+      "note": "用户未点名+agent主动检索/记录超出字面"
+    },
+    {
+      "idx": 51,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-06-16T11:40:03",
+      "label": "半自发",
+      "note": "用户点名看成果,但record_decision/commit超出查看字面"
+    },
+    {
+      "idx": 52,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-06-23T17:38:54",
+      "label": "任务映射",
+      "note": "用户点名查看aipm中记录→工具直接实现"
+    },
+    {
+      "idx": 53,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-06-24T10:09:39",
+      "label": "任务映射",
+      "note": "用户点名\"查看/查记录\"→工具直接实现"
+    },
+    {
+      "idx": 54,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-06-26T10:10:34",
+      "label": "任务映射",
+      "note": "用户点名提交/记录→工具是标准工作流"
+    },
+    {
+      "idx": 55,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-07-21T09:52:10",
+      "label": "任务映射",
+      "note": "aipmc_vision视觉工具,非aipm_决策类"
+    },
+    {
+      "idx": 56,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-07-21T16:38:27",
+      "label": "任务映射",
+      "note": "系统通知/贴日志/简短确认→agent被动响应"
+    },
+    {
+      "idx": 57,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-07-27T09:40:11",
+      "label": "半自发",
+      "note": "用户未点名+agent主动检索/记录超出字面"
+    },
+    {
+      "idx": 58,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-07-28T14:15:04",
+      "label": "任务映射",
+      "note": "用户复盘观点,read_discussions直接实现"
+    },
+    {
+      "idx": 59,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-07-29T10:47:50",
+      "label": "半自发",
+      "note": "用户未点名+agent主动检索/记录超出字面"
+    },
+    {
+      "idx": 60,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-07-29T13:15:25",
+      "label": "任务映射",
+      "note": "用户点名查看/审核/挑战→工具直接实现"
+    },
+    {
+      "idx": 61,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-07-30T17:56:12",
+      "label": "半自发",
+      "note": "用户未点名+agent主动检索/记录超出字面"
+    },
+    {
+      "idx": 62,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-07-31T14:29:08",
+      "label": "任务映射",
+      "note": "用户点名查看/审核/挑战→工具直接实现"
+    },
+    {
+      "idx": 63,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-08-03T09:07:16",
+      "label": "半自发",
+      "note": "用户未点名+agent主动检索/记录超出字面"
+    },
+    {
+      "idx": 64,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-08-03T10:05:35",
+      "label": "任务映射",
+      "note": "系统通知/贴日志/简短确认→agent被动响应"
+    },
+    {
+      "idx": 65,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-08-05T16:21:43",
+      "label": "任务映射",
+      "note": "aipmc_vision视觉工具,非aipm_决策类"
+    },
+    {
+      "idx": 66,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-08-06T10:15:29",
+      "label": "任务映射",
+      "note": "系统通知/贴日志/简短确认→agent被动响应"
+    },
+    {
+      "idx": 67,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-08-06T11:02:44",
+      "label": "半自发",
+      "note": "用户未点名+agent主动检索/记录超出字面"
+    },
+    {
+      "idx": 68,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-08-10T11:43:33",
+      "label": "任务映射",
+      "note": "系统通知/贴日志/简短确认→agent被动响应"
+    },
+    {
+      "idx": 69,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-08-11T11:08:18",
+      "label": "任务映射",
+      "note": "系统通知/贴日志/简短确认→agent被动响应"
+    },
+    {
+      "idx": 70,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-08-11T11:59:05",
+      "label": "任务映射",
+      "note": "系统通知/贴日志/简短确认→agent被动响应"
+    },
+    {
+      "idx": 71,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-08-12T09:37:01",
+      "label": "半自发",
+      "note": "用户未点名+agent主动检索/记录超出字面"
+    },
+    {
+      "idx": 72,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-08-13T10:07:31",
+      "label": "半自发",
+      "note": "用户未点名+agent主动检索/记录超出字面"
+    },
+    {
+      "idx": 73,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-08-20T10:48:05",
+      "label": "任务映射",
+      "note": "用户点名查看/审核/挑战→工具直接实现"
+    },
+    {
+      "idx": 74,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-08-20T16:13:32",
+      "label": "任务映射",
+      "note": "系统通知/贴日志/简短确认→agent被动响应"
+    },
+    {
+      "idx": 75,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-08-26T11:26:07",
+      "label": "任务映射",
+      "note": "用户点名查看/审核/挑战→工具直接实现"
+    },
+    {
+      "idx": 76,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-07-10T16:55:10",
+      "label": "任务映射",
+      "note": "默认任务映射"
+    },
+    {
+      "idx": 77,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-07-14T17:16:21",
+      "label": "任务映射",
+      "note": "用户点名查看/审核/挑战→工具直接实现"
+    },
+    {
+      "idx": 78,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-07-28T14:42:35",
+      "label": "任务映射",
+      "note": "用户点名查看/审核/挑战→工具直接实现"
+    },
+    {
+      "idx": 79,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-07-28T16:51:34",
+      "label": "任务映射",
+      "note": "用户点名查看/审核/挑战→工具直接实现"
+    },
+    {
+      "idx": 80,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-07-31T13:57:59",
+      "label": "半自发",
+      "note": "用户未点名+agent主动检索/记录超出字面"
+    },
+    {
+      "idx": 81,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-08-03T16:08:52",
+      "label": "任务映射",
+      "note": "用户点名提交/记录→工具是标准工作流"
+    },
+    {
+      "idx": 82,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-08-05T12:06:49",
+      "label": "半自发",
+      "note": "用户未点名+agent主动检索/记录超出字面"
+    },
+    {
+      "idx": 83,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-08-10T17:49:46",
+      "label": "任务映射",
+      "note": "用户点名提交/记录→工具是标准工作流"
+    },
+    {
+      "idx": 84,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-08-11T13:08:15",
+      "label": "半自发",
+      "note": "用户未点名+agent主动检索/记录超出字面"
+    },
+    {
+      "idx": 85,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-08-12T10:17:13",
+      "label": "半自发",
+      "note": "用户未点名+agent主动检索/记录超出字面"
+    },
+    {
+      "idx": 86,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-08-12T10:27:51",
+      "label": "任务映射",
+      "note": "用户明确建议搜索→search_context是用户点名"
+    },
+    {
+      "idx": 87,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-08-12T11:33:35",
+      "label": "任务映射",
+      "note": "继续响应+记录bug,任务实现"
+    },
+    {
+      "idx": 88,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-08-12T13:02:07",
+      "label": "半自发",
+      "note": "用户未点名+agent主动检索/记录超出字面"
+    },
+    {
+      "idx": 89,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-08-13T10:22:43",
+      "label": "任务映射",
+      "note": "用户点名提交/记录→工具是标准工作流"
+    },
+    {
+      "idx": 90,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-08-14T11:04:29",
+      "label": "任务映射",
+      "note": "系统通知/贴日志/简短确认→agent被动响应"
+    },
+    {
+      "idx": 91,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-08-14T11:31:28",
+      "label": "任务映射",
+      "note": "系统通知/贴日志/简短确认→agent被动响应"
+    },
+    {
+      "idx": 92,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-08-17T09:46:50",
+      "label": "半自发",
+      "note": "用户未点名+agent主动检索/记录超出字面"
+    },
+    {
+      "idx": 93,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-08-18T17:52:33",
+      "label": "半自发",
+      "note": "用户未点名+agent主动检索/记录超出字面"
+    },
+    {
+      "idx": 94,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-08-19T17:29:24",
+      "label": "半自发",
+      "note": "用户未点名+agent主动检索/记录超出字面"
+    },
+    {
+      "idx": 95,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-08-20T09:42:14",
+      "label": "任务映射",
+      "note": "系统通知/贴日志/简短确认→agent被动响应"
+    },
+    {
+      "idx": 96,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-08-20T16:05:21",
+      "label": "半自发",
+      "note": "用户未点名+agent主动检索/记录超出字面"
+    },
+    {
+      "idx": 97,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-08-24T14:29:25",
+      "label": "任务映射",
+      "note": "默认任务映射"
+    },
+    {
+      "idx": 98,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-08-24T15:01:16",
+      "label": "任务映射",
+      "note": "用户点名提交/记录→工具是标准工作流"
+    },
+    {
+      "idx": 99,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-08-24T16:43:55",
+      "label": "半自发",
+      "note": "提交+主动search_context UI对齐证据超字面"
+    },
+    {
+      "idx": 100,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-08-26T09:48:20",
+      "label": "半自发",
+      "note": "用户未点名+agent主动检索/记录超出字面"
+    }
+  ]
+}

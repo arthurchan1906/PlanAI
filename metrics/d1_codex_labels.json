@@ -1,0 +1,167 @@
+{
+  "annotator": "codex",
+  "date": "2026-08-28",
+  "method": "反事实Q1/Q2",
+  "labels": [
+    {
+      "idx": 1,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-07-30T14:35:37",
+      "label": "半自发",
+      "note": "用户点目标制定方案,未点名工具;read_discussions 查全局证据属目标直接实现,但主动读讨论带查证倾向"
+    },
+    {
+      "idx": 2,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-08-07T09:28:37",
+      "label": "任务映射",
+      "note": "用户点名challenge→read_discussions 拉待挑战点,update/create 属挑战后常规管理,均任务直接实现"
+    },
+    {
+      "idx": 3,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-08-13T14:42:11",
+      "label": "任务映射",
+      "note": "用户点名审核代码→record/update/append/get_briefing 审核后回填常规动作,属任务直接实现"
+    },
+    {
+      "idx": 4,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-08-20T15:01:28",
+      "label": "任务映射",
+      "note": "用户点名分析challenge→read_discussions 直接实现"
+    },
+    {
+      "idx": 5,
+      "project": "aipmc",
+      "agent": "claude-code",
+      "turn": "2026-08-26T16:22:24",
+      "label": "任务映射",
+      "note": "用户点名计划是否完成→list_plans/list_tasks 直接回应"
+    },
+    {
+      "idx": 6,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-06-30T14:28:10",
+      "label": "任务映射",
+      "note": "用户点名查看Claude意见→read_discussions 直接实现"
+    },
+    {
+      "idx": 7,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-08-04T15:10:46",
+      "label": "任务映射",
+      "note": "用户点名查看审核意见→read_discussions 直接实现"
+    },
+    {
+      "idx": 8,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-08-18T10:28:21",
+      "label": "半自发",
+      "note": "用户点名记录→record_decision/commit 是实现;但 search_discussions 主动回溯map range经验,超出字面记录,属半自发查证"
+    },
+    {
+      "idx": 9,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-08-19T09:47:52",
+      "label": "任务映射",
+      "note": "用户点名查看最新讨论→read_discussions 直接实现"
+    },
+    {
+      "idx": 10,
+      "project": "aipmc",
+      "agent": "codex-cli",
+      "turn": "2026-08-24T12:29:03",
+      "label": "半自发",
+      "note": "用户点名查看challenge→read_discussions 是实现;但 record/append_note 阅读后主动回填,超出查看字面,属半自发"
+    },
+    {
+      "idx": 11,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-07-21T16:38:27",
+      "label": "任务映射",
+      "note": "用户简短确认已安装;aipmc_vision 视觉工具,非aipm_决策类,代表性弱"
+    },
+    {
+      "idx": 12,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-07-30T17:56:12",
+      "label": "任务映射",
+      "note": "用户点名总结并提交→record_commit 直接实现;read/search 为总结前置查证"
+    },
+    {
+      "idx": 13,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-08-06T11:02:44",
+      "label": "任务映射",
+      "note": "用户点名加密分享问题→search_context/list_bugs 定位相关bug"
+    },
+    {
+      "idx": 14,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-08-11T11:59:05",
+      "label": "任务映射",
+      "note": "用户贴日志描述悬浮问题→get_bug/append_note 定位记录"
+    },
+    {
+      "idx": 15,
+      "project": "ed",
+      "agent": "claude-code",
+      "turn": "2026-08-12T09:37:01",
+      "label": "任务映射",
+      "note": "用户点名提交到aipm→list/create/record/link/update 标准工作流"
+    },
+    {
+      "idx": 16,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-07-10T16:55:10",
+      "label": "任务映射",
+      "note": "用户点名查看刚讨论问题→read/get_briefing 直接实现"
+    },
+    {
+      "idx": 17,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-08-03T16:08:52",
+      "label": "任务映射",
+      "note": "用户说可以提交→record_commit 直接实现"
+    },
+    {
+      "idx": 18,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-08-14T11:04:29",
+      "label": "半自发",
+      "note": "用户贴117KB设备日志+一句查看昨天修改→record_bug 记录;但未点名aipm工具且日志噪音大,agent主动定位发bug属半自发倾向;边界案例"
+    },
+    {
+      "idx": 19,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-08-24T14:29:25",
+      "label": "任务映射",
+      "note": "用户点名样式问题修改→record_commit 记录改动"
+    },
+    {
+      "idx": 20,
+      "project": "ed",
+      "agent": "codex-cli",
+      "turn": "2026-08-24T16:43:55",
+      "label": "半自发",
+      "note": "用户点名提交→record/update 是实现;但 search_context/smart_search 多处主动检索UI对齐证据,超出提交字面,属半自发查证"
+    }
+  ]
+}
