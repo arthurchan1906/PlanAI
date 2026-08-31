@@ -782,10 +782,21 @@ func UpdateCommitFor(projectPath, id string, payload map[string]any) (map[string
 		return nil, err
 	}
 	defer db.Close()
-	row := db.QueryRow("SELECT id, title, summary, evidence_summary, review_notes, branch, commit_hash, task_id, decision_id, status, test_status, review_status, files_json, created_at, updated_at FROM commits WHERE id = ?", id)
+	// 8/31 修复：aipm_update_commit 用短 SHA/短 commit 前缀时按 id 查不到报
+	// "sql: no rows"——与 get_commit 一致，先归一化（短 SHA → 完整 commit_hash），
+	// 再按 id OR commit_hash 命中，取回真实 PM id 以定位待更新行。
+	lookup, err := resolveCommitLookupID(db, id)
+	if err != nil {
+		return nil, err
+	}
+	row := db.QueryRow("SELECT id, title, summary, evidence_summary, review_notes, branch, commit_hash, task_id, decision_id, status, test_status, review_status, files_json, created_at, updated_at FROM commits WHERE id = ? OR commit_hash = ?", lookup, lookup)
 	existing := map[string]any{}
 	if err := ScanCommitRow(row, existing); err != nil {
 		return nil, err
+	}
+	existingID, _ := existing["id"].(string)
+	if existingID == "" {
+		existingID = id
 	}
 	setParts := []string{}
 	args := []any{}
@@ -802,14 +813,14 @@ func UpdateCommitFor(projectPath, id string, payload map[string]any) (map[string
 	}
 	setParts = append(setParts, "updated_at = ?")
 	args = append(args, u.NowISO())
-	args = append(args, id)
+	args = append(args, existingID)
 	_, err = execBusy(db, fmt.Sprintf("UPDATE commits SET %s WHERE id = ?", strings.Join(setParts, ", ")), args...)
 	if err != nil {
 		return nil, err
 	}
 	if tid, _ := payload["task_id"].(string); tid != "" {
 		// 2.3: binding an orphan commit to a task resolves its orphan event.
-		MarkEventProcessed("commit_orphan", id)
+		MarkEventProcessed("commit_orphan", existingID)
 	}
 	return existing, nil
 }
@@ -1163,6 +1174,37 @@ func resolveDecisionLookupID(db *sql.DB, id string) (string, error) {
 	}
 	// 短后缀：id 以 '-' + 后缀 结尾
 	err := db.QueryRow("SELECT id FROM decisions WHERE id LIKE '%-' || ? ORDER BY date DESC, id DESC LIMIT 1", id).Scan(&full)
+	if err == nil {
+		return full, nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return id, nil
+	}
+	return "", err
+}
+
+// resolveTaskLookupID 将调用方传入的 task id 归一化为完整可查询 key。
+// - 空 id → 原样返回（防御：避免 LIKE '%' 全表匹配）。
+// - 带 `task-` 前缀（缺 6 位后缀，如 task-YYYYMMDD-HHMMSS）→ 前缀匹配唯一完整 id。
+// - 短后缀（6 位）→ 按 id 后缀 `'-'+suffix` 匹配。
+// - 均不匹配 → 原样返回 id（最终 WHERE 查询自然 no rows，语义正确）。
+func resolveTaskLookupID(db *sql.DB, id string) (string, error) {
+	if id == "" {
+		return id, nil
+	}
+	var full string
+	if strings.HasPrefix(strings.ToLower(id), "task-") {
+		err := db.QueryRow("SELECT id FROM tasks WHERE id LIKE ? || '%' ORDER BY updated_at DESC, id DESC LIMIT 1", id).Scan(&full)
+		if err == nil {
+			return full, nil
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			return id, nil
+		}
+		return "", err
+	}
+	// 短后缀：id 以 '-' + 后缀 结尾
+	err := db.QueryRow("SELECT id FROM tasks WHERE id LIKE '%-' || ? ORDER BY updated_at DESC, id DESC LIMIT 1", id).Scan(&full)
 	if err == nil {
 		return full, nil
 	}
@@ -2756,6 +2798,15 @@ func getTask(id string) (map[string]any, error) {
 		return nil, err
 	}
 	defer db.Close()
+	// 8/31 修复：aipm_get_task 用短 task id（缺 6 位后缀）时按 id 查不到报
+	// "sql: no rows"——与 get_decision 一致，先前缀归一化到完整 task id。
+	lookup, err := resolveTaskLookupID(db, id)
+	if err != nil {
+		return nil, err
+	}
+	if lookup != id {
+		id = lookup
+	}
 	task := map[string]any{}
 	row := db.QueryRow("SELECT * FROM tasks WHERE id = ?", id)
 	if err := ScanTaskRow(row, task); err != nil {
