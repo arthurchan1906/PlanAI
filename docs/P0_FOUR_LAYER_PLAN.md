@@ -3,6 +3,7 @@
 > 状态：**draft**（Claude 已背书 2026-08-28 17:00 + 给出修订建议；待用户确认后 create aipm task / 开工实现）
 > 依据：`docs/D1_ATTRIBUTION_PROTOCOL.md` §7.1 四层失效模型 + 本次代码勘察 + ED 实证 + D1 双标数据
 > 原则：**「prompt 注入会被压缩吃掉，代码钩子不会」**；不以 agent 自述为口径，以日志为权威（M1a 对账）。
+> **8/31 修订（codex+Claude 共识）**：③ 原「compaction 重注入」前提经运行时数据实证**不成立**（注入是 per-request，每次请求必注入，compaction 不使注入消失）。真相 = **注入块到达率/裁剪率过高**（`inject_log` 全场 49.7%、8/31 94%，关键段 warn/act/fileAssoc 被裁）→ ③ 重定义为「**注入块到达率/裁剪治理**」并**并入 E 线**，不再新增独立机制。详见 §2 ③。
 
 ## 0. 一句话目标
 
@@ -14,7 +15,7 @@
 |---|---|---|---|---|
 | ① **动作点未固定** | `hook/hook_claude.go` 只做元数据收集（`collectWriteFiles`/`postToolMetaJSON`），**无**「引导/自动调用 aipm 工具」的确定性动作清单 | **确定性代码钩子**：session 开工注入上下文卡 / git commit 完成自动 `record_commit` / 大变更文件无 bug 记录则提示 `record_bug` | `hook/*.go`、`proxy/*.go` | commit→task 覆盖率提升；bug→commit 闭环率提升 |
 | ② **规范语义模糊** | `proxy/context_inject.go` 注入 `guidelines`（仅 600B），指令映射错（「decision 先查」→ 执行成 `search_context`） | **规范措辞对齐**：改写 guidelines/CLAUDE.md 指令为「工具名直映射」，消除语义相近工具歧义 | `proxy/context_inject.go`、guidelines 源 | `search_context` 误用（本当走 `list_decisions`）次数下降 |
-| ③ **compaction 后注入过期** | `proxy/context_inject.go` 有 `injectTracker`（content-hash 去重、`same_content` 跳过）；compaction 后 SessionStart 成早间快照 | **注入随 PM 变更刷新 + compaction 时清缓存强重注入** | `proxy/context_inject.go` | 后半程 PM 变化可见率（compaction 后 agent 仍能感知新 bug/decision） |
+| ③ **注入块到达率/裁剪治理**（原「compaction 重注入」已推翻→并入 E 线） | per-request 注入实证（每次请求必注入）；`inject_log` 裁剪率 49.7%/8.31 94%，关键段（warn/act/fileAssoc）被裁 | **E 线段优先级治理**（非新机制，并入 E 线） | `proxy/context_inject.go` | 关键段到达率提升；inject_coverage ≥80% |
 | ④ **工具输出形状不匹配** | `analyze/analyze.go` `BuildBriefingLevel` 只输出 PM 事件流（PM 最新变更/阻塞/孤儿/进行中/Scope 漂移/重复）；`agent_briefing`/代码上下文卡/验证台账**零实现** | **改工具输出形状，分层落地**：Phase A MVP 用**确定性关联**（当前 task × 文件 × decision）；Phase B 补数据地基（`bug.task_id` + 验证台账实体）；Phase C **不做**语义「相关」 | `analyze/analyze.go`、`mcp/mcp.go`、`db/store` | agent_briefing 上下文卡命中率（确定性关联，可复算） |
 
 ## 2. 每层细节（有事实依托）
@@ -28,9 +29,12 @@
 - **证据**：ED-claude B：「decision 先查」被映射成 `search_context`；`get_briefing` 被误当 PM 管理视图。
 - **设计**：`loadGuidelines()` 修正为「指令 → 唯一工具名」直映射短语（如「查决策 → `list_decisions`/`get_decision`」），并给语义相近工具加「何时不用」的排除句。注入预算仍守 600B，重在消除歧义而非加量。
 
-### ③ compaction 后注入过期 → 注入刷新
-- **证据**：ED-claude C 实测 compaction 后完整忘记 `record_bug` 但 43 工具全在手；`injectTracker` 以 content-hash 去重，系统级压缩后不会自动重注入。
-- **设计**：当 `discussion_log` 出现**系统级 compaction/summary 新数据**，或 session 摘要变化时，清除该 agent 的 `injectTracker`，强制下一次请求重注入最新 PM 状态。
+### ③ 注入块到达率/裁剪治理（原「compaction 重注入」前提已于 8/31 推翻 → 并入 E 线）
+- **证据（8/31 运行时实证，推翻前设）**：注入是 per-request—`InjectSessionContext`（`context_inject.go:271`）`sameContent := !shouldInject(...)` 之后 `result := injectIntoPrompt(body, block, agent)` **无条件执行**；`injectIntoPrompt`（`:1200`）只做 agent 分发，**无「已注入跳过」逻辑**，`same_content`（`shouldInject`）仅跳过 tracker 更新与注入日志。故**每次 LLM 请求 agent 都拿到最新注入块，compaction 不会让注入消失**。
+  - **真正缺口** = 注入块被 `maxInjectChars` 裁剪：`inject_log` 全场注入 6259 / 裁剪 6185（**49.7%**），8/31 达 **94%**；关键段（warn/act/fileAssoc）被裁 → agent 看不到最新 PM 状态/文件关联，这才是「agent 不用工具/忽视 PM」的更实质根因，且与 compaction 无关。
+- **设计**：**不新增独立机制**。合并回 **E 线**——chars≤800 已达标（8/28 实测 758/748），但裁剪率仍高说明 **E 线「段优先级」（v1.13 §4 表 1/4 行）未尽**：高优段（warn/act/fileAssoc/anchor）先写、低优段（goals/guidelines）让位。
+  - 验收 = 关键段（warn/act/fileAssoc）**到达率提升**、`inject_coverage ≥80%`。
+- **结论**：P0 ③ 从「compaction 重注入」**重定义/降级**；`task-20260828-171123-4b49aa` 与 E 线合并（置 paused），不再作独立 P0 待办。
 
 ### ④ 工具输出形状不匹配 → 分层落地（Claude 从 AIPM 数据地基背书的可行性）
 - **证据**：`BuildBriefingLevel` 只输出 PM 事件流/管理视图；agent 真正需要「相关文件 × bug × decision × 验证台账」。四要素在 AIPM 数据地基的**可落地性完全不同**（见 §2 表）。
@@ -55,7 +59,7 @@
 | 前置A | MCP 工具健壮性：get_decision 前缀匹配 + trace_context 校验 + get_commit 回归 | `task-20260828-171119-e3c9d3` | P0 | codex（mcp/store） | — |
 | ① | 确定性代码钩子（开工/commit/bug 里程碑自动触发） | `task-20260828-171120-f289f0` | P0 | codex（hook/proxy） | 前置A（工具好用是钩子前提） |
 | ② | 指南措辞对齐（guidelines 指令→工具名直映射） | `task-20260828-171122-a576b3` | P0 | codex（context_inject） | ① 的钩子（避免重复提示） |
-| ③ | compaction 重注入（扰动 injectTracker / 摘要变化刷新） | `task-20260828-171123-4b49aa` | P0 | codex（context_inject） | — |
+| ③ | ***已重定义→并入 E 线***（原「compaction 重注入」前提不成立；改为注入块到达率/裁剪治理） | `task-20260828-171123-4b49aa`（paused） | P0→E 线 | codex（context_inject） | E 线（段优先级） |
 | ④a | `agent_briefing` 上下文卡 MVP（task×file×decision，确定性关联） | `task-20260828-171124-29e793` | P0 | claude（analyze/mcp） | 前置A（读工具需稳定） |
 | ④b | 数据地基：`bug.task_id` 外键 + 验证台账实体（scene×device×KSN×result） | `task-20260828-171125-67755b` | P0 | claude（db/store） | ④a 设计定稿 |
 
