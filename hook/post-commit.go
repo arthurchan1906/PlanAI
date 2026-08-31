@@ -88,7 +88,7 @@ func uniqueTaskByFiles(files []string, taskFiles map[string][]string) string {
 	for _, f := range files {
 		for tid, tfs := range taskFiles {
 			for _, tf := range tfs {
-				if tf == f {
+				if normalizeRepoPath(tf) == normalizeRepoPath(f) {
 					candidates[tid] = true
 					break
 				}
@@ -103,6 +103,18 @@ func uniqueTaskByFiles(files []string, taskFiles map[string][]string) string {
 	return ""
 }
 
+// normalizeRepoPath 归一化仓库路径以便做稳定比较：去 "./" 前缀、统 "/" 分隔。
+// gitChangedFiles 返回 git 相对路径（无 ./），而 ListTaskFileAssoc 的 intersect 可能
+// 带 ./ 前缀——不归一化会导致「本该唯一命中」的关键 commit 漏绑（P0 ① 复核点 #2，
+// Claude 8/31）。
+func normalizeRepoPath(p string) string {
+	p = strings.TrimSpace(p)
+	p = strings.TrimPrefix(p, "./")
+	p = strings.TrimPrefix(p, "/")
+	p = strings.ReplaceAll(p, "\\", "/")
+	return strings.TrimSuffix(p, "/")
+}
+
 // autoBindCommit 在 post-commit 中执行高置信自动绑定。绑定成功记 [HOOK] BIND、
 // 失败记 BIND_ERR；低置信（无匹配）静默跳过（不追加提示噪音，避免重复引导）。
 func autoBindCommit(projectPath, commitID, title string, files []string) {
@@ -113,6 +125,12 @@ func autoBindCommit(projectPath, commitID, title string, files []string) {
 	}
 	code, err := store.BackfillCommitTask(projectPath, commitID, taskID, title, files)
 	if err != nil {
+		if err == store.ErrCommitTaskConflict {
+			// 该 commit 已绑其他任务——是正常状态而非错误，静默跳过避免噪音
+			// （P0 ① 复核点 #4，Claude 8/31）。
+			u.LogShared("HOOK", "hook=post-commit status=SKIP_CONFLICT commit=%s task=%s (已绑其他任务)", u.Prefix(commitID, 8), taskID)
+			return
+		}
 		u.LogShared("HOOK", "hook=post-commit status=BIND_ERR commit=%s task=%s err=%v", u.Prefix(commitID, 8), taskID, err)
 		return
 	}

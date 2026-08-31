@@ -60,6 +60,9 @@ func BuildAgentBriefing() string {
 				files = files[:agentBriefingFilesPerTask]
 			}
 			b.WriteString("  📄 文件: " + strings.Join(files, ", ") + "\n")
+		} else {
+			// 无文件关联：明确标注而非静默缺省（P0 ④a 复核建议，Claude 8/31）。
+			b.WriteString("  📄 文件: (无文件关联)\n")
 		}
 
 		if decs := formatTaskDecisions(t.RelatedDecisions); len(decs) > 0 {

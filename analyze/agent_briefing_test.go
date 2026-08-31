@@ -81,3 +81,24 @@ func TestBuildAgentBriefingNoInProgress(t *testing.T) {
 		t.Fatalf("无进行中任务应返回空，got %q", got)
 	}
 }
+
+// 无文件关联的进行中任务：card 应明确标注「无文件关联」，而非静默缺省
+// （P0 ④a 复核建议，Claude 8/31）。
+func TestBuildAgentBriefingNoFileAssocLabel(t *testing.T) {
+	newIsolatedBriefDBAgent(t)
+	d, err := pmdb.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if _, err := d.Exec(`INSERT INTO tasks (id, title, status, priority, phase, acceptance_json, related_docs_json, related_decisions_json, last_note, updated_at, roadmap_id, plan_id, created_at) VALUES ('task-3', '无文件关联任务', 'in_progress', 'P1', 'general', '[]', '[]', '[]', '', '2026-01-01', '', 'plan-1', '2026-01-01')`); err != nil {
+		t.Fatal(err)
+	}
+	card := BuildAgentBriefing()
+	if card == "" {
+		t.Fatal("应返回非空上下文卡")
+	}
+	if !strings.Contains(card, "无文件关联") {
+		t.Fatalf("card 应标注无文件关联，card=%q", card)
+	}
+}

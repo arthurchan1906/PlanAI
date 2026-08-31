@@ -40,6 +40,8 @@ func TestResolveAutoBindTask(t *testing.T) {
 	}{
 		{"消息含 task 引用直接绑", "feat(p0-1): foo task-20260828-171120-f289f0", nil, "task-20260828-171120-f289f0"},
 		{"文件唯一命中 in_progress 任务", "feat: bar", []string{"hook/hook_claude.go"}, "task-20260828-171120-f289f0"},
+		{"文件带 ./ 前缀仍唯一命中（路径归一化）", "feat: pfx", []string{"./hook/hook_claude.go"}, "task-20260828-171120-f289f0"},
+		{"intersect 带 ./、commit 不带仍唯一命中", "feat: rev", []string{"hook/hook_claude.go"}, "task-20260828-171120-f289f0"},
 		{"文件命中两个任务不绑", "feat: baz", []string{"hook/hook_claude.go", "proxy/context_inject.go"}, ""},
 		{"文件无命中不绑", "feat: qux", []string{"unknown.go"}, ""},
 		{"无文件无引用不绑", "feat: quux", nil, ""},
