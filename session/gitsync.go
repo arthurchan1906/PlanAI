@@ -59,7 +59,8 @@ func syncCommitsFromGit(projectPath string, fullBackfill bool) (created, updated
 	}
 
 	for _, gc := range parsed {
-		existingCommit := matchByHash(gc.hash); hasHash := existingCommit != nil
+		existingCommit := matchByHash(gc.hash)
+		hasHash := existingCommit != nil
 
 		if hasHash {
 			// Existing commit — check if files need backfill
@@ -132,8 +133,10 @@ type gitCommit struct {
 }
 
 // gitCommitHeaderPattern 匹配 git log --format=%H|%s|%aI 的 commit header 行：
-// 40 位十六进制 hash 后跟 "|"（%H 恒为完整 hash，文件行不可能以此起头）。
-var gitCommitHeaderPattern = regexp.MustCompile(`^[0-9a-f]{40}\|`)
+// 十六进制 hash 后跟 "|"（%H 恒为完整 hash，文件行不可能以此起头）。
+// 捕获组 m[1]=hash、m[2]=首根 "|" 之后剩余（title|date）。
+// 用 [0-9a-f]+ 而非写死 40：兼容 SHA-1（40 hex）与 SHA-256（64 hex）objectformat。
+var gitCommitHeaderPattern = regexp.MustCompile(`^([0-9a-f]+)\|(.*)$`)
 
 // parseGitLog parses "git log --format=%H|%s|%aI --name-only" output.
 //
@@ -166,13 +169,20 @@ func parseGitLog(output string) []gitCommit {
 		if gitCommitHeaderPattern.MatchString(line) {
 			// 新 commit header——闭合当前块（无论当前块有无文件）
 			flush()
-			parts := strings.SplitN(line, "|", 3)
-			current = &gitCommit{
-				hash:  parts[0],
-				title: parts[1],
+			m := gitCommitHeaderPattern.FindStringSubmatch(line)
+			// m[1]=hash；m[2]="title|date"。%aI 是末段 ISO 日期（不含 "|"），
+			// 标题 %s 却可能含 "|"——故从最右一个 "|" 切分，避免把标题后半段误当 date。
+			hash := m[1]
+			rest := m[2]
+			title, date := rest, ""
+			if i := strings.LastIndex(rest, "|"); i >= 0 {
+				title = rest[:i]
+				date = rest[i+1:]
 			}
-			if len(parts) >= 3 {
-				current.date = parts[2]
+			current = &gitCommit{
+				hash:  hash,
+				title: title,
+				date:  date,
 			}
 			continue
 		}

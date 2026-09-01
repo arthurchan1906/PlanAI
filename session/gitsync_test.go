@@ -98,3 +98,58 @@ func TestParseGitLogNoTrailingNewline(t *testing.T) {
 		t.Errorf("files mismatch: %+v", gitCommits[0])
 	}
 }
+
+// TestParseGitLogTitleVariants 覆盖 title/date 各形态（表驱动）：
+// 标题含 "|"、空标题、无 date。旧实现用 SplitN(line,"|",3) 从第一个 "|" 切，
+// 会把标题后半段误当 date；修复后从最右 "|" 切，title/date 各保真。
+func TestParseGitLogTitleVariants(t *testing.T) {
+	const h = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	cases := []struct {
+		name    string
+		header  string // 完整 header 行（hash|title|date）
+		wantTit string
+		wantDat string
+	}{
+		{
+			name:    "title 含多个 pipe",
+			header:  h + "|fix(a|b): 标题里带 | 的提交|2026-09-01T10:00:00+08:00",
+			wantTit: "fix(a|b): 标题里带 | 的提交",
+			wantDat: "2026-09-01T10:00:00+08:00",
+		},
+		{
+			name:    "空标题",
+			header:  h + "||2026-09-01T10:00:00+08:00",
+			wantTit: "",
+			wantDat: "2026-09-01T10:00:00+08:00",
+		},
+		{
+			name:    "无 date",
+			header:  h + "|chore: 只有标题没有日期",
+			wantTit: "chore: 只有标题没有日期",
+			wantDat: "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := strings.Join([]string{tc.header, "", "a.go", "b.go"}, "\n")
+			gitCommits := parseGitLog(out)
+			if len(gitCommits) != 1 {
+				t.Fatalf("want 1 commit, got %d: %+v", len(gitCommits), gitCommits)
+			}
+			c := gitCommits[0]
+			if c.hash != h {
+				t.Errorf("hash mismatch: %q", c.hash)
+			}
+			if c.title != tc.wantTit {
+				t.Errorf("title mismatch: got %q want %q", c.title, tc.wantTit)
+			}
+			if c.date != tc.wantDat {
+				t.Errorf("date mismatch: got %q want %q", c.date, tc.wantDat)
+			}
+			if len(c.files) != 2 || c.files[0] != "a.go" || c.files[1] != "b.go" {
+				t.Errorf("files mismatch: %+v", c.files)
+			}
+		})
+	}
+}
