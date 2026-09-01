@@ -530,9 +530,28 @@ func resolveCommitLookupID(db *sql.DB, id string) (string, error) {
 	return "", err
 }
 
+// validCommitHash 报告 commitHash 是否为形如 git 对象 hash 的十六进制串。
+// 兼容历史短 hash（≥4 位），一次性封死 "HEAD"、"$(cmd)"、空串、非十六进制等脏数据入口。
+func validCommitHash(h string) bool {
+	n := len(h)
+	if n < 4 || n > 64 {
+		return false
+	}
+	for i := 0; i < n; i++ {
+		c := h[i]
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
+
 func CreateCommit(projectPath string, title, summary, evidenceSummary, reviewNotes, branch, commitHash, taskID, decisionID, status, testStatus, reviewStatus string, files []string) (map[string]any, error) {
 	if commitHash == "" {
 		return nil, fmt.Errorf("commit requires commit_hash — run `git rev-parse HEAD` and pass the full SHA")
+	}
+	if !validCommitHash(commitHash) {
+		return nil, fmt.Errorf("invalid commit_hash %q: must be 4-64 lowercase hex (git object hash)", commitHash)
 	}
 	if taskID == "" {
 		return nil, fmt.Errorf("commit requires --task-id (or --task-ids for multi-task). Find a task: aipmc task list --status in_progress")
@@ -709,6 +728,9 @@ func BatchCreateCommits(projectPath, taskID, branch, status, testStatus, reviewS
 // Unlike CreateCommit, it does not require a task_id — suitable for
 // git-log-synced commits that haven't been task-associated yet.
 func StoreGitCommit(projectPath, title, commitHash, date string, files []string) (map[string]any, error) {
+	if !validCommitHash(commitHash) {
+		return nil, fmt.Errorf("invalid commit_hash %q: must be 4-64 lowercase hex (git object hash)", commitHash)
+	}
 	db, err := pmdb.OpenProject(projectPath)
 	if err != nil {
 		return nil, err
