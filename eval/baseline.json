@@ -1,43 +1,69 @@
 {
-  "generated_at": "2026-08-18T11:25:38+08:00",
+  "generated_at": "2026-09-01T13:25:48+08:00",
   "window": {
-    "since": "2026-08-17T11:25:38",
-    "until": "2026-08-18T11:25:38"
+    "since": "2026-08-28T12:38:00",
+    "until": "2026-09-01T13:25:48"
   },
   "llm_log_coverage": {
     "claude": {
-      "total_lines": 197,
-      "with_session": 0,
-      "empty_session": 197,
+      "total_lines": 1759,
+      "with_session": 1759,
+      "empty_session": 0,
       "probe_lines": 0
     },
     "codex": {
-      "total_lines": 1033,
-      "with_session": 923,
-      "empty_session": 110,
-      "probe_lines": 60
+      "total_lines": 1657,
+      "with_session": 1657,
+      "empty_session": 0,
+      "probe_lines": 0
+    },
+    "opencode": {
+      "total_lines": 18,
+      "with_session": 0,
+      "empty_session": 18,
+      "probe_lines": 0
     }
   },
   "underreport": {
     "claude": {
-      "status": "unmeasurable",
-      "reason": "该 agent 的 [LLM] 行 session= 为空（请求体无 session_id 字段），无法按 session join 对账",
-      "sessions_with_llm": 0,
-      "sessions_missing_in_discussion": 0,
-      "missing_rate": 0
+      "status": "ok",
+      "sessions_with_llm": 10,
+      "sessions_missing_in_discussion": 7,
+      "missing_rate": 0.7,
+      "missing_session_ids": [
+        "09bcf772-522b-460f-b4fd-1f82b11d85bc",
+        "614758e4-5397-42e1-8627-a00cd665f0ac",
+        "68d92364-16f6-4927-91da-9f98e293817d",
+        "7cef0b74-0e2b-435d-9628-44b6d57ece58",
+        "acaaf8ba-3498-4a95-8d5b-d5b405a09355",
+        "b9b66682-5c09-470a-b91d-cc43c7e6c266",
+        "f9c0a3c7-d2dd-407e-8230-62e731282767"
+      ]
     },
     "codex": {
       "status": "ok",
-      "sessions_with_llm": 2,
+      "sessions_with_llm": 6,
+      "sessions_missing_in_discussion": 4,
+      "missing_rate": 0.6666666666666666,
+      "missing_session_ids": [
+        "01a040af-1a47-7571-a85e-8b7d7bf0f950",
+        "01a05631-f02e-7b42-96a7-7e0ea9cd1cac",
+        "01a0566a-b774-7a83-94d8-691b2bfc5070",
+        "01a05a83-9f56-7391-b1f6-604ba642b319"
+      ]
+    },
+    "opencode": {
+      "status": "unmeasurable",
+      "reason": "该 agent 的 [LLM] 行 session= 为空（请求体无 session_id 字段），无法按 session join 对账",
+      "sessions_with_llm": 0,
       "sessions_missing_in_discussion": 0,
       "missing_rate": 0
     }
   },
   "orphan_sessions": {
     "claude": {
-      "status": "unmeasurable",
-      "reason": "日志侧无可 join 的 [LLM] session（该 agent 请求体无 session_id），脱链与否无法判定",
-      "sessions_with_discussion": 2,
+      "status": "ok",
+      "sessions_with_discussion": 3,
       "sessions_missing_in_llm_log": 0
     },
     "codex": {
@@ -47,13 +73,13 @@
     }
   },
   "self_report": {
-    "commits_in_window": 17,
+    "commits_in_window": 31,
     "test_status": {
-      "auto": 14,
+      "auto": 25,
       "failed": 0,
       "not_run": 0,
       "other": 0,
-      "passed": 3
+      "passed": 6
     },
     "system_verify_available": false,
     "verify_note": "commits 表无 verify_status 列——系统实测通过率（L-O）不可查，自报膨胀率 gap 待 schema 迁移后计算（DATA_AUDIT §3）"
@@ -61,18 +87,26 @@
   "coarse_alignment": {
     "claude": {
       "status": "ok",
-      "hours_with_llm": 9,
-      "hours_with_disc": 9,
-      "hours_both": 9,
-      "hours_llm_only": 0,
+      "hours_with_llm": 18,
+      "hours_with_disc": 16,
+      "hours_both": 16,
+      "hours_llm_only": 2,
       "hours_disc_only": 0
     },
     "codex": {
       "status": "ok",
+      "hours_with_llm": 19,
+      "hours_with_disc": 18,
+      "hours_both": 18,
+      "hours_llm_only": 1,
+      "hours_disc_only": 0
+    },
+    "opencode": {
+      "status": "ok",
       "hours_with_llm": 10,
-      "hours_with_disc": 10,
-      "hours_both": 10,
-      "hours_llm_only": 0,
+      "hours_with_disc": 0,
+      "hours_both": 0,
+      "hours_llm_only": 10,
       "hours_disc_only": 0
     }
   }
