@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -76,6 +77,7 @@ type selfReportStat struct {
 type baselineReport struct {
 	GeneratedAt     string                     `json:"generated_at"`
 	Window          baselineWindow             `json:"window"`
+	ProjectsScanned []string                   `json:"projects_scanned,omitempty"`
 	Coverage        map[string]coverageStat    `json:"llm_log_coverage"`
 	Underreport     map[string]underreportStat `json:"underreport"`
 	Orphans         map[string]orphanStat      `json:"orphan_sessions"`
@@ -292,6 +294,100 @@ func capDetail(ids []string) []string {
 	return ids[:maxDetail]
 }
 
+// scanDiscussionDBs 扫描给定的一组项目库路径的 discussion_log，聚合 (agent, session) 计数
+// 与 (agent, 小时)。单库打开失败则跳过不阻塞。返回对账成功的库路径（供报告标注范围）。
+func scanDiscussionDBs(dbPaths []string, sinceISO string) (map[string]map[string]int, map[string]map[string]bool, []string) {
+	discByAgent := map[string]map[string]int{}
+	discHours := map[string]map[string]bool{}
+	var scanned []string
+	for _, dbPath := range dbPaths {
+		if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+			continue
+		}
+		d, err := sql.Open("sqlite", dbPath+"?mode=ro")
+		if err != nil {
+			continue
+		}
+		rows, err := d.Query(`SELECT source, session_id, COUNT(*) FROM discussion_log
+			WHERE created_at >= ? AND session_id != '' AND session_id != 'unknown'
+			GROUP BY source, session_id`, sinceISO)
+		if err != nil {
+			d.Close()
+			continue
+		}
+		for rows.Next() {
+			var src, sid string
+			var n int
+			if err := rows.Scan(&src, &sid, &n); err != nil {
+				continue
+			}
+			ag := sourceToAgent[src]
+			if ag == "" {
+				continue
+			}
+			m := discByAgent[ag]
+			if m == nil {
+				m = map[string]int{}
+				discByAgent[ag] = m
+			}
+			m[sid] += n
+		}
+		rows.Close()
+
+		hrows, err := d.Query(`SELECT source, substr(created_at,1,13) FROM discussion_log
+			WHERE created_at >= ? AND session_id != '' AND session_id != 'unknown'`, sinceISO)
+		if err == nil {
+			for hrows.Next() {
+				var src, hk string
+				if err := hrows.Scan(&src, &hk); err != nil {
+					continue
+				}
+				ag := sourceToAgent[src]
+				if ag == "" {
+					continue
+				}
+				m := discHours[ag]
+				if m == nil {
+					m = map[string]bool{}
+					discHours[ag] = m
+				}
+				m[hk] = true
+			}
+			hrows.Close()
+		}
+		d.Close()
+		scanned = append(scanned, dbPath)
+	}
+	sort.Strings(scanned)
+	return discByAgent, discHours, scanned
+}
+
+// scanDiscussionAcrossProjects 聚合所有注册项目库的 discussion_log（bug-141137）：
+// [LLM] 日志是全局的（跨项目），而 discussion_log 按 hook 进程 CWD 分项目写入。
+// 只读当前项目库会把其他项目（如 EncryptDrive/HmApp）的 session 误判为「有 LLM 无
+// discussion」。此函数扫描 ~/.aipmc/projects.json 注册的全部项目 + 当前项目，把
+// (agent, session) 计数与 (agent, 小时) 合并，供漏录率/脱链/粗对齐使用。
+func scanDiscussionAcrossProjects(sinceISO string) (map[string]map[string]int, map[string]map[string]bool, []string) {
+	var dbPaths []string
+	seen := map[string]bool{}
+
+	// 当前项目（运行时 .pmai 的父目录）。
+	if runtimeDir, err := pmdb.RuntimeDir(); err == nil && runtimeDir != "" {
+		cur := filepath.Dir(runtimeDir)
+		if cur != "." && cur != "/" {
+			seen[filepath.Join(cur, ".pmai", "data", "pmai.db")] = true
+		}
+	}
+	// 注册的全部项目。
+	for _, p := range pmdb.LoadCleanProjects() {
+		seen[filepath.Join(p.Path, ".pmai", "data", "pmai.db")] = true
+	}
+	for dbPath := range seen {
+		dbPaths = append(dbPaths, dbPath)
+	}
+	return scanDiscussionDBs(dbPaths, sinceISO)
+}
+
 func runBaseline(args *cli.Args) {
 	now := time.Now()
 	skipWrite := args.Bool("skip_write")
@@ -331,53 +427,10 @@ func runBaseline(args *cli.Args) {
 	}
 	defer db.Close()
 
-	discByAgent := map[string]map[string]int{}
-	rows, err := db.Query(`SELECT source, session_id, COUNT(*) FROM discussion_log
-		WHERE created_at >= ? AND session_id != '' AND session_id != 'unknown'
-		GROUP BY source, session_id`, sinceISO)
-	if err == nil {
-		for rows.Next() {
-			var src, sid string
-			var n int
-			if err := rows.Scan(&src, &sid, &n); err != nil {
-				continue
-			}
-			ag := sourceToAgent[src]
-			if ag == "" {
-				continue
-			}
-			m := discByAgent[ag]
-			if m == nil {
-				m = map[string]int{}
-				discByAgent[ag] = m
-			}
-			m[sid] += n
-		}
-		rows.Close()
-	}
-
-	// discussion_log 按 (source, 小时) 聚合，供无 session 的 agent 做粗粒度对齐。
-	discHours := map[string]map[string]bool{}
-	hrows, err := db.Query(`SELECT source, substr(created_at,1,13) FROM discussion_log
-		WHERE created_at >= ? AND session_id != '' AND session_id != 'unknown'`, sinceISO)
-	if err == nil {
-		for hrows.Next() {
-			var src, hk string
-			if err := hrows.Scan(&src, &hk); err != nil {
-				continue
-			}
-			ag := sourceToAgent[src]
-			if ag == "" {
-				continue
-			}
-			m := discHours[ag]
-			if m == nil {
-				m = map[string]bool{}
-				discHours[ag] = m
-			}
-			m[hk] = true
-		}
-		hrows.Close()
+	// 跨项目聚合 discussion_log（bug-141137）：[LLM] 日志全局 vs discussion 分项目库。
+	discByAgent, discHours, scannedProjects := scanDiscussionAcrossProjects(sinceISO)
+	if len(scannedProjects) > 0 {
+		fmt.Printf("  对账项目库 %d 个: %s\n", len(scannedProjects), strings.Join(scannedProjects, ", "))
 	}
 
 	// 3. 计算漏录率 + 脱链。
@@ -422,6 +475,7 @@ func runBaseline(args *cli.Args) {
 	report := baselineReport{
 		GeneratedAt:     now.Format("2006-01-02T15:04:05-07:00"),
 		Window:          baselineWindow{Since: sinceISO, Until: now.Format("2006-01-02T15:04:05")},
+		ProjectsScanned: scannedProjects,
 		Coverage:        map[string]coverageStat{},
 		Underreport:     underreport,
 		Orphans:         orphans,

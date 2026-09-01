@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
@@ -143,5 +144,63 @@ func TestBuildCoarseAlignment(t *testing.T) {
 	codex := out["codex"]
 	if codex.Status != "ok" || codex.HoursLLMOnly != 1 || codex.HoursBoth != 0 {
 		t.Errorf("codex coarse = %+v, want llm_only=1 both=0（disc 侧无 codex 数据）", codex)
+	}
+}
+
+func TestScanDiscussionDBs(t *testing.T) {
+	dir := t.TempDir()
+	dbA := filepath.Join(dir, "projA", ".pmai", "data", "pmai.db")
+	dbB := filepath.Join(dir, "projB", ".pmai", "data", "pmai.db")
+	os.MkdirAll(filepath.Dir(dbA), 0o755)
+	os.MkdirAll(filepath.Dir(dbB), 0o755)
+
+	makeDB := func(path string, rows [][6]string) {
+		d, err := sql.Open("sqlite", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer d.Close()
+		_, err = d.Exec(`CREATE TABLE discussion_log (
+			id TEXT PRIMARY KEY, session_id TEXT NOT NULL, role TEXT NOT NULL,
+			source TEXT NOT NULL DEFAULT '', content TEXT NOT NULL, created_at TEXT NOT NULL,
+			embedding_json TEXT DEFAULT '', metadata TEXT DEFAULT '', thread_id TEXT DEFAULT '')`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range rows {
+			_, err := d.Exec(`INSERT INTO discussion_log (id, session_id, role, source, content, created_at)
+				VALUES (?,?,?,?,?,?)`, r[0], r[1], r[2], r[3], r[4], r[5])
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	// 同一 session 跨两个项目库（bug-141137 场景：断言被跨项目聚合，不误判为漏录）。
+	makeDB(dbA, [][6]string{
+		{"d1", "sess-a", "user", "claude-code", "hi", "2026-08-29T10:00:00"},
+		{"d2", "sess-b", "assistant", "codex-cli", "ok", "2026-08-29T10:00:00"},
+	})
+	makeDB(dbB, [][6]string{
+		{"d3", "sess-a", "tool", "claude-code", "op", "2026-08-29T11:00:00"},
+		{"d4", "sess-b", "user", "codex-cli", "x", "2026-08-29T10:00:00"},
+	})
+
+	missing := filepath.Join(dir, "missing", ".pmai", "data", "pmai.db")
+	disc, hours, scanned := scanDiscussionDBs([]string{dbA, dbB, missing}, "2026-08-29T00:00:00")
+
+	if len(scanned) != 2 {
+		t.Fatalf("scanned = %d, want 2 (missing DB 应跳过), got %v", len(scanned), scanned)
+	}
+	// claude sess-a 跨两库聚合 = 2，codex sess-b = 2。
+	if got := disc["claude"]["sess-a"]; got != 2 {
+		t.Fatalf("claude sess-a count = %d, want 2（跨项目聚合）", got)
+	}
+	if got := disc["codex"]["sess-b"]; got != 2 {
+		t.Fatalf("codex sess-b count = %d, want 2", got)
+	}
+	// 小时聚合：claude 同时有 10 点与 11 点。
+	if !hours["claude"]["2026-08-29T10"] || !hours["claude"]["2026-08-29T11"] {
+		t.Fatalf("claude hours 应含 10/11 两小时, got %v", hours["claude"])
 	}
 }
