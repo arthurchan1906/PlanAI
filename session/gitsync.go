@@ -135,8 +135,9 @@ type gitCommit struct {
 // gitCommitHeaderPattern 匹配 git log --format=%H|%s|%aI 的 commit header 行：
 // 十六进制 hash 后跟 "|"（%H 恒为完整 hash，文件行不可能以此起头）。
 // 捕获组 m[1]=hash、m[2]=首根 "|" 之后剩余（title|date）。
-// 用 [0-9a-f]+ 而非写死 40：兼容 SHA-1（40 hex）与 SHA-256（64 hex）objectformat。
-var gitCommitHeaderPattern = regexp.MustCompile(`^([0-9a-f]+)\|(.*)$`)
+// 长度上限 {40,64}：下限 40 封死「hex+pipe 文件名」被误判为 header 的窗口
+// （如 "cafe|b.md"，+ 版会把 "cafe" 当 hash），上限 64 兼容 SHA-256 objectformat。
+var gitCommitHeaderPattern = regexp.MustCompile(`^([0-9a-f]{40,64})\|(.*)$`)
 
 // parseGitLog parses "git log --format=%H|%s|%aI --name-only" output.
 //

@@ -153,3 +153,32 @@ func TestParseGitLogTitleVariants(t *testing.T) {
 		})
 	}
 }
+
+// TestParseGitLogHashLengthBounds 锁定 hash 长度边界（{40,64}）：
+// 1) 64 位 SHA-256 hash 正确解析（upper bound 兼容性）；
+// 2) 形如 "hex|pipe" 的合法文件名（<40 hex，如 "cafe|b.md"）不得被误判为 header。
+//   - 版正则 ^[0-9a-f]+\| 会把 "cafe" 当 hash、丢掉 b.md 并伪造一条 commit。
+func TestParseGitLogHashLengthBounds(t *testing.T) {
+	// 64 位 hex hash（SHA-256）
+	sha256Hash := strings.Repeat("a", 64)
+	out := sha256Hash + "|chore: sha256 提交|2026-09-01T10:00:00+08:00\n\nfile.go\n"
+	commits := parseGitLog(out)
+	if len(commits) != 1 {
+		t.Fatalf("sha256: want 1 commit, got %d: %+v", len(commits), commits)
+	}
+	if commits[0].hash != sha256Hash || len(commits[0].files) != 1 {
+		t.Errorf("sha256 parse mismatch: %+v", commits[0])
+	}
+
+	// hex+pipe 文件名（短 hex 前缀）不得成为 header
+	h40 := strings.Repeat("b", 40)
+	out2 := h40 + "|真实标题|2026-09-01T10:00:00+08:00\n\ncafe|b.md\nnormal.go\n"
+	commits2 := parseGitLog(out2)
+	if len(commits2) != 1 {
+		t.Fatalf("file-with-pipe: want 1 commit (header only), got %d: %+v", len(commits2), commits2)
+	}
+	fs := commits2[0].files
+	if len(fs) != 2 || fs[0] != "cafe|b.md" || fs[1] != "normal.go" {
+		t.Errorf("file-with-pipe: files mismatch, got %+v", fs)
+	}
+}
