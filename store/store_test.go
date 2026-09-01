@@ -34,7 +34,7 @@ func insertCommit(t *testing.T, d *sql.DB, id, hash string) {
 }
 
 // Regression: the dedup pre-check must NOT match empty/NULL commit_hash rows.
-// A bare `? LIKE commit_hash || '%'` turns `'' || '%'` into `'%'`, matching
+// A bare `? LIKE commit_hash || '%'` turns `” || '%'` into `'%'`, matching
 // every row and silently merging new hook-recorded commits into old rows.
 func TestFindExistingCommitByHashIgnoresEmptyHash(t *testing.T) {
 	d := openTestDB(t)
@@ -228,7 +228,7 @@ func TestBatchCreateCommitsRejectsEmptyHash(t *testing.T) {
 	}
 }
 
-// Regression: a hook-recorded commit (task_id='') must be bindable when the
+// Regression: a hook-recorded commit (task_id=”) must be bindable when the
 // agent later calls record_commit with the same hash — previously the dedup
 // branch returned "already exists" and the orphan could never be linked.
 func TestBackfillCommitTask(t *testing.T) {

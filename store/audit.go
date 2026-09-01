@@ -50,7 +50,13 @@ func ListAuditLog(actorType, entityType string, limit int) ([]map[string]any, er
 		e := map[string]any{}
 		var aid, at, act, et, eid, sum, ca string
 		rows.Scan(&aid, &at, &act, &et, &eid, &sum, &ca)
-		e["id"] = aid; e["actor_type"] = at; e["action"] = act; e["entity_type"] = et; e["entity_id"] = eid; e["summary"] = sum; e["created_at"] = ca
+		e["id"] = aid
+		e["actor_type"] = at
+		e["action"] = act
+		e["entity_type"] = et
+		e["entity_id"] = eid
+		e["summary"] = sum
+		e["created_at"] = ca
 		result = append(result, e)
 	}
 	if result == nil {

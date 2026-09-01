@@ -9,9 +9,9 @@ import (
 
 // TraceResult is the output of a graph trace operation.
 type TraceResult struct {
-	FromType string      `json:"from_type"`
-	FromID   string      `json:"from_id"`
-	Edges    []TraceEdge `json:"edges"`
+	FromType string       `json:"from_type"`
+	FromID   string       `json:"from_id"`
+	Edges    []TraceEdge  `json:"edges"`
 	Summary  TraceSummary `json:"summary"`
 }
 

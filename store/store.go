@@ -836,6 +836,8 @@ func UpdateCommitFor(projectPath, id string, payload map[string]any) (map[string
 		// 完整性收口：UpdateCommitFor 通用写路径也接受 commit_hash，
 		// 非空则校验格式，封死把脏 hash 写回。
 		if col == "commit_hash" {
+			// 空串 = 清空允许：历史脏数据/修正操作会刻意把 hash 清成空，
+			// 只对「非空」字段校验格式，不影响清空语义。
 			if s, ok := v.(string); ok && s != "" && !validCommitHash(s) {
 				return nil, fmt.Errorf("invalid commit_hash %q: must be 4-64 lowercase hex (git object hash)", s)
 			}
