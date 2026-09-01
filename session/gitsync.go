@@ -3,6 +3,7 @@ package session
 import (
 	"encoding/json"
 	"os/exec"
+	"regexp"
 	"strings"
 
 	"aipmc/store"
@@ -130,30 +131,42 @@ type gitCommit struct {
 	files []string
 }
 
+// gitCommitHeaderPattern 匹配 git log --format=%H|%s|%aI 的 commit header 行：
+// 40 位十六进制 hash 后跟 "|"（%H 恒为完整 hash，文件行不可能以此起头）。
+var gitCommitHeaderPattern = regexp.MustCompile(`^[0-9a-f]{40}\|`)
+
 // parseGitLog parses "git log --format=%H|%s|%aI --name-only" output.
+//
+// 实际布局（8/31 实测）：每个 commit 块为
+//
+//	HEADER\n\nfile1\nfile2\n<NEXT_HEADER>   ← 文件列表后直接紧跟下一 header，无空行！
+//
+// 空行只出现在 header 与第一个文件之间。旧实现以「空行且 files>0」finalize，
+// 会把下一个 header 行误 append 为上一 commit 的文件（污染 files_json，如
+// "61d4355...|ci(release)...|2026-08-31T17:58:08+08:00" 整行混入），并使下一 commit
+// 的文件行被当作 header 丢弃（只补一次后若该 commit 不在 DB 会被漏录）。
+// 修复：以 header 行判定（40hex+pipe）作为块边界，遇 header 先 flush 当前块。
 func parseGitLog(output string) []gitCommit {
 	var commits []gitCommit
 	lines := strings.Split(strings.TrimSpace(output), "\n")
 	var current *gitCommit
 
+	flush := func() {
+		if current != nil {
+			commits = append(commits, *current)
+			current = nil
+		}
+	}
+
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
-			// Only finalize when we already have files — empty lines
-			// between header and first file are separators, not delimiters.
-			if current != nil && len(current.files) > 0 {
-				commits = append(commits, *current)
-				current = nil
-			}
 			continue
 		}
-
-		if current == nil {
-			// New commit header: "hash|title|date"
+		if gitCommitHeaderPattern.MatchString(line) {
+			// 新 commit header——闭合当前块（无论当前块有无文件）
+			flush()
 			parts := strings.SplitN(line, "|", 3)
-			if len(parts) < 2 {
-				continue
-			}
 			current = &gitCommit{
 				hash:  parts[0],
 				title: parts[1],
@@ -161,17 +174,13 @@ func parseGitLog(output string) []gitCommit {
 			if len(parts) >= 3 {
 				current.date = parts[2]
 			}
-		} else {
-			// File path
-			if !strings.HasPrefix(line, " ") && line != "" {
-				current.files = append(current.files, line)
-			}
+			continue
+		}
+		if current != nil {
+			current.files = append(current.files, line)
 		}
 	}
-	// Don't forget the last one
-	if current != nil {
-		commits = append(commits, *current)
-	}
+	flush()
 
 	// Deduplicate files per commit
 	for i := range commits {
