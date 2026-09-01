@@ -8,10 +8,10 @@
 M0 漏录率由 Go 权威工具产出（aipmc metrics --baseline --since ...），本脚本解析其输出并合并，
 保证与 ad748b 收口时口径一致。
 
-⚠ 口径警告（bug-20260901-141137-acfabb）：aipmc metrics --baseline 读全局 [LLM] 日志，
-但仅比对当前项目 discussion_log；在多项目同时跑 aipm 时，跨项目（EncryptDrive/HmApp 等）
-claude/codex session 会被误判为「有 LLM 无 discussion」→ 漏录率虚高（实测 50-70%）。
-9/3 报告引用 M0 漏录率前须标注此跨项目隔离误报，或先修复 baseline 跨项目聚合。
+口径说明（bug-20260901-141137-acfabb 已修复）：aipmc metrics --baseline 现按
+~/.aipmc/projects.json 注册的全部项目库 + 当前项目库聚合 discussion_log 后再与全局 [LLM]
+日志对账，跨项目 session 不再误报漏录。注意：仅当所有活跃项目都在注册表内时漏录率才准确；
+若某活跃项目未注册，其 session 仍会被计为漏录。
 
 用法:
   python3 metrics/mcp_compare.py                     # since 默认 2026-08-29（排除 8/27-8/28 点破头2天）
@@ -148,9 +148,9 @@ def main():
     if not args.no_m0:
         compare["m0"] = run_m0(args.aipmc, since)
         compare["m0_caveat"] = (
-            "M0 漏录率含跨项目 DB 隔离误报（bug-20260901-141137-acfabb）：baseline 读全局 [LLM] "
-            "日志但仅比对当前项目 discussion_log，跨项目 claude/codex session 会被误计为漏录。"
-            "9/3 引用前需过滤掉跨项目 session 或修复 baseline 聚合。"
+            "M0 漏录率现按注册表跨项目聚合（bug-20260901-141137-acfabb 已修复），不再把跨项目 "
+            "claude/codex session 误计为漏录；残余漏录为真实捕获缺口（罕见短/一次性会话）。"
+            "注意：所有活跃项目须在 ~/.aipmc/projects.json 注册，否则其 session 仍会被计为漏录。"
         )
 
     out = Path(args.out) if args.out else HERE / f"mcp_compare_{since}_{until}.json"
@@ -177,7 +177,7 @@ def main():
                 print(f"  [LLM] {agent}: 总{c['total']} 空session{c['empty_session']}")
             for agent, o in m0.get("reverse_orphan", {}).items():
                 print(f"  反向对账 {agent}: 脱链 {o['missing']}/{o['total']}")
-            print("  ⚠ 漏录率含跨项目 DB 隔离误报（bug-20260901-141137-acfabb），见 m0_caveat")
+            print("  ⚠ 漏录率按注册表跨项目聚合（bug-141137 已修复）；确保活跃项目均已注册，见 m0_caveat")
     print("输出:", out)
 
 
