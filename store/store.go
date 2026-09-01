@@ -664,6 +664,11 @@ func BatchCreateCommits(projectPath, taskID, branch, status, testStatus, reviewS
 			result.Details[i] = BatchRecordItem{Index: i, Success: false, Error: "commit requires commit_hash — run `git rev-parse HEAD` and pass the full SHA"}
 			continue
 		}
+		if !validCommitHash(item.CommitHash) {
+			result.Failed++
+			result.Details[i] = BatchRecordItem{Index: i, Success: false, Error: fmt.Sprintf("invalid commit_hash %q: must be 4-64 lowercase hex (git object hash)", item.CommitHash)}
+			continue
+		}
 		// Dedup: same hash may already exist (hook/GITSYNC task-less row) —
 		// bind task + backfill gaps instead of inserting a duplicate row.
 		var existingID, existingTask string
@@ -827,6 +832,13 @@ func UpdateCommitFor(projectPath, id string, payload map[string]any) (map[string
 		col := MapKeyToColumn(k)
 		if col == "" {
 			continue
+		}
+		// 完整性收口：UpdateCommitFor 通用写路径也接受 commit_hash，
+		// 非空则校验格式，封死把脏 hash 写回。
+		if col == "commit_hash" {
+			if s, ok := v.(string); ok && s != "" && !validCommitHash(s) {
+				return nil, fmt.Errorf("invalid commit_hash %q: must be 4-64 lowercase hex (git object hash)", s)
+			}
 		}
 		setParts = append(setParts, col+" = ?")
 		args = append(args, v)

@@ -30,15 +30,3 @@ func TestValidCommitHash(t *testing.T) {
 		})
 	}
 }
-
-// TestCreateCommitRejectsBadHash 验证 CreateCommit 在非法 commit_hash 下直接报错
-// （不落到 DB），防止 HEAD/$(cmd)/错乱 hex 入库。
-func TestCreateCommitRejectsBadHash(t *testing.T) {
-	// 纯函数层已覆盖格式；CreateCommit 在此以非法 hash 断言错误路径触发，
-	// 不依赖真实 DB（避免测试耦合 pmdb/task 校验）。
-	for _, bad := range []string{"HEAD", "$(git rev-parse HEAD)", "", "not-a-hash"} {
-		if validCommitHash(bad) {
-			t.Errorf("expected %q to be rejected", bad)
-		}
-	}
-}
