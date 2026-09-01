@@ -15,7 +15,7 @@ import (
 )
 
 // baseline.go — M0 捕获层完整性对账（MEASUREMENT_LOOP §2）：
-// `aipmc metrics --baseline [--window 24h|--since <ISO>]`
+// `aipmc metrics --baseline [--window 24h|--since <ISO>] [--skip_write]`
 // 纯 SQL/日志对账，无 LLM 调用。输出 eval/baseline.json + 控制台摘要。
 
 // sourceToAgent 将 discussion_log.source 映射到 proxy [LLM] 行的 agent 名。
@@ -294,6 +294,7 @@ func capDetail(ids []string) []string {
 
 func runBaseline(args *cli.Args) {
 	now := time.Now()
+	skipWrite := args.Bool("skip_write")
 	sinceArg := args.Str("since", "")
 	var since time.Time
 	if sinceArg != "" {
@@ -432,12 +433,14 @@ func runBaseline(args *cli.Args) {
 	}
 	printBaselineSummary(report, sinceISO)
 
-	if err := os.MkdirAll("eval", 0o755); err == nil {
-		data, _ := json.MarshalIndent(report, "", "  ")
-		if werr := os.WriteFile("eval/baseline.json", data, 0o644); werr != nil {
-			fmt.Printf("⚠ 写 eval/baseline.json 失败: %v\n", werr)
-		} else {
-			fmt.Printf("\n✅ 已写入 eval/baseline.json（%d bytes）\n", len(data))
+	if !skipWrite {
+		if err := os.MkdirAll("eval", 0o755); err == nil {
+			data, _ := json.MarshalIndent(report, "", "  ")
+			if werr := os.WriteFile("eval/baseline.json", data, 0o644); werr != nil {
+				fmt.Printf("⚠ 写 eval/baseline.json 失败: %v\n", werr)
+			} else {
+				fmt.Printf("\n✅ 已写入 eval/baseline.json（%d bytes）\n", len(data))
+			}
 		}
 	}
 }
