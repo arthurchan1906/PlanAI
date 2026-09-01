@@ -8,10 +8,10 @@
 M0 漏录率由 Go 权威工具产出（aipmc metrics --baseline --since ...），本脚本解析其输出并合并，
 保证与 ad748b 收口时口径一致。
 
-口径说明（bug-20260901-141137-acfabb 已修复）：aipmc metrics --baseline 现按
-~/.aipmc/projects.json 注册的全部项目库 + 当前项目库聚合 discussion_log 后再与全局 [LLM]
-日志对账，跨项目 session 不再误报漏录。注意：仅当所有活跃项目都在注册表内时漏录率才准确；
-若某活跃项目未注册，其 session 仍会被计为漏录。
+口径说明（bug-20260901-141137-acfabb 已修复）：aipmc metrics --baseline 现聚合
+「当前项目 + ~/.aipmc/projects.json 注册的全部项目 + 全局日志中出现的绝对 project= 路径
+对应项目」的 discussion_log，再与全局 [LLM] 日志对账，跨项目 session 不再误报漏录。
+仅当某活跃项目既不注册、又从未以绝对路径出现在日志中（仅 bare-name）时，其 session 才会被误计。
 
 用法:
   python3 metrics/mcp_compare.py                     # since 默认 2026-08-29（排除 8/27-8/28 点破头2天）
@@ -148,9 +148,10 @@ def main():
     if not args.no_m0:
         compare["m0"] = run_m0(args.aipmc, since)
         compare["m0_caveat"] = (
-            "M0 漏录率现按注册表跨项目聚合（bug-20260901-141137-acfabb 已修复），不再把跨项目 "
-            "claude/codex session 误计为漏录；残余漏录为真实捕获缺口（罕见短/一次性会话）。"
-            "注意：所有活跃项目须在 ~/.aipmc/projects.json 注册，否则其 session 仍会被计为漏录。"
+            "M0 漏录率现按「当前项目 + 注册表 + 日志绝对 project= 路径」跨项目聚合 "
+            "（bug-20260901-141137-acfabb 已修复），不再把跨项目 claude/codex session 误计为漏录；"
+            "残余漏录为真实捕获缺口（罕见短/一次性会话）。仅当某活跃项目既不注册又从未以绝对路径"
+            "出现在日志中时，其 session 才会被误计。"
         )
 
     out = Path(args.out) if args.out else HERE / f"mcp_compare_{since}_{until}.json"

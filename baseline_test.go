@@ -204,3 +204,28 @@ func TestScanDiscussionDBs(t *testing.T) {
 		t.Fatalf("claude hours 应含 10/11 两小时, got %v", hours["claude"])
 	}
 }
+
+func TestCollectProjectPathsFromLog(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "aipmc.log")
+	log := `[2026-09-01 10:00:00] [PIPELINE] L3 x project=/Users/dazsec/workspace/aipmc more=1
+[2026-09-01 10:00:01] [PIPELINE] L3 y project=/Users/dazsec/projects/EncryptDrive/.pmai more=2
+[2026-09-01 10:00:02] [INJECT] agent=claude project=aipmc
+[2026-09-01 10:00:03] [BOOT] project=.
+[2026-09-01 10:00:04] [EVENT] project=
+`
+	if err := os.WriteFile(path, []byte(log), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := collectProjectPathsFromLog(path)
+	// collectProjectPathsFromLog 按字典序返回（确定性）。
+	want := []string{"/Users/dazsec/projects/EncryptDrive", "/Users/dazsec/workspace/aipmc"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("got[%d]=%q, want %q (全量 got=%v)", i, got[i], want[i], got)
+		}
+	}
+}

@@ -367,7 +367,51 @@ func scanDiscussionDBs(dbPaths []string, sinceISO string) (map[string]map[string
 // 只读当前项目库会把其他项目（如 EncryptDrive/HmApp）的 session 误判为「有 LLM 无
 // discussion」。此函数扫描 ~/.aipmc/projects.json 注册的全部项目 + 当前项目，把
 // (agent, session) 计数与 (agent, 小时) 合并，供漏录率/脱链/粗对齐使用。
-func scanDiscussionAcrossProjects(sinceISO string) (map[string]map[string]int, map[string]map[string]bool, []string) {
+// collectProjectPathsFromLog 从全局日志反推出现过绝对 project= 标签的项目根目录。
+// 用于补充注册表未涵盖的项目：即便某项目未登记在 ~/.aipmc/projects.json，
+// 只要其 serve/proxy 行带 project=/绝对路径，也能据此定位其 discussion 库。
+// bare-name（project=aipmc）无法可靠定位，跳过；测试临时目录（/var/folders/T/...）
+// 的库不存在会在扫描时被 os.Stat 跳过，无副作用。
+func collectProjectPathsFromLog(logPath string) []string {
+	f, err := os.Open(logPath)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	seen := map[string]bool{}
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 1024*1024), 1024*1024)
+	for sc.Scan() {
+		for _, tok := range strings.Fields(sc.Text()) {
+			if !strings.HasPrefix(tok, "project=/") {
+				continue
+			}
+			p := strings.TrimPrefix(tok, "project=")
+			// 归一化：project=/x/proj/.pmai → /x/proj
+			if strings.HasSuffix(p, "/.pmai") {
+				p = strings.TrimSuffix(p, "/.pmai")
+			} else if strings.HasSuffix(p, ".pmai") {
+				p = strings.TrimSuffix(p, ".pmai")
+			}
+			if p != "" && strings.HasPrefix(p, "/") && p != "/" {
+				seen[p] = true
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for p := range seen {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// scanDiscussionAcrossProjects 聚合所有注册项目库 + 全局日志反推项目库的 discussion_log
+// （bug-141137 + 增强）：[LLM] 日志是全局的（跨项目），而 discussion_log 按 hook 进程 CWD
+// 分项目写入。只读当前项目库会把其他项目（如 EncryptDrive/HmApp）的 session 误判为「有 LLM
+// 无 discussion」。此函数扫描 ~/.aipmc/projects.json 注册的项目 + 当前项目 + 日志中出现的
+// 绝对 project= 路径对应项目，把 (agent, session) 计数与 (agent, 小时) 合并，供对账使用。
+func scanDiscussionAcrossProjects(logPath, sinceISO string) (map[string]map[string]int, map[string]map[string]bool, []string) {
 	var dbPaths []string
 	seen := map[string]bool{}
 
@@ -381,6 +425,10 @@ func scanDiscussionAcrossProjects(sinceISO string) (map[string]map[string]int, m
 	// 注册的全部项目。
 	for _, p := range pmdb.LoadCleanProjects() {
 		seen[filepath.Join(p.Path, ".pmai", "data", "pmai.db")] = true
+	}
+	// 增强：从全局日志反推未注册项目的 project 路径（见 collectProjectPathsFromLog）。
+	for _, p := range collectProjectPathsFromLog(logPath) {
+		seen[filepath.Join(p, ".pmai", "data", "pmai.db")] = true
 	}
 	for dbPath := range seen {
 		dbPaths = append(dbPaths, dbPath)
@@ -428,7 +476,7 @@ func runBaseline(args *cli.Args) {
 	defer db.Close()
 
 	// 跨项目聚合 discussion_log（bug-141137）：[LLM] 日志全局 vs discussion 分项目库。
-	discByAgent, discHours, scannedProjects := scanDiscussionAcrossProjects(sinceISO)
+	discByAgent, discHours, scannedProjects := scanDiscussionAcrossProjects(logPath, sinceISO)
 	if len(scannedProjects) > 0 {
 		fmt.Printf("  对账项目库 %d 个: %s\n", len(scannedProjects), strings.Join(scannedProjects, ", "))
 	}
