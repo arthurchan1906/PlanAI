@@ -37,6 +37,7 @@ var metricRegistry = map[string]string{
 	"E5  mcp_read/write":               "log",
 	"E5  mcp_success_rate":             "log",
 	"E5  update_status 显式率(窗口)":   "since",
+	"E5b get_briefing 执行率(好探针)":  "since",
 	"E8  pipeline_health":              "log",
 	"E8  review_error":                 "log",
 	"E9  done_gate":                    "log",
@@ -47,6 +48,7 @@ var metricRegistry = map[string]string{
 var wantSince = map[string]bool{
 	"D2  event_processed_rate(可行动)": true,
 	"E5  update_status 显式率(窗口)":   true,
+	"E5b get_briefing 执行率(好探针)":  true,
 	"H2  rel_path_coverage(filetools)": true,
 }
 

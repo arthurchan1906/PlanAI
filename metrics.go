@@ -554,6 +554,33 @@ func dispatchMetrics(args *cli.Args) {
 		rate = fmt.Sprintf("%d/%d (%.1f%%)", expS, actS, float64(expS)/float64(actS)*100)
 	}
 	printRow("E5  update_status 显式率(窗口)", rate, "参考", true)
+	// 好探针：skill 强制动作遵守率（口径 = 会话内至少调用一次 get_briefing，
+	// 非"编码之前"的顺序服从率——那是 B 实验的时间戳细活）。get_briefing 是 skill
+	// 强制第一步（"❌ 在 aipm_get_briefing 之前开始写代码"）。
+	// 对比 E5 update_status：靠提示词哀求，agent 听话不调用 → 测不出（坏探针教材版）。
+	// ⚠ 人群纯度：skill 只装 .claude/skills/pmai.md（writeSkillFile），仅 claude 收到；
+	// codex/opencode/gemini/cursor 未收到指令，合并率被稀释（50/163≈30.7% 是稀释值，
+	// claude 实际 42.6%）。此值为与北星（D1 自发率）不同维度的"强制动作执行率"，
+	// 仅作对照参考值，NOT 北星指标。默认窗口（--since 8/07）数字会不同。
+	briefingRate := "无数据"
+	if bS, aS, err := store.CountBriefingCompliance("", since); err == nil && aS > 0 {
+		briefingRate = fmt.Sprintf("%d/%d (%.1f%%)", bS, aS, float64(bS)/float64(aS)*100)
+	}
+	printRow("E5b get_briefing 执行率(好探针)", briefingRate, "参考", true)
+	// E5b 按 agent：真正收到 skill 指令的人群（claude）与未收到的人群分列，避免
+	// "没收到指令的 agent"稀释合规率——merged 30.7% 是被稀释值，claude 42.6% 才是
+	// 收到指令人群的真实合规（codex 34.3% 是自发率，非本 skill 强制）。
+	if bySrc, err := store.CountBriefingBySource("", since); err == nil {
+		keys := make([]string, 0, len(bySrc))
+		for k := range bySrc {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, src := range keys {
+			st := bySrc[src]
+			fmt.Printf("%-28s %s=%d/%d\n", "E5b  按agent", src, st.Briefing, st.Active)
+		}
+	}
 	// E8 pipeline 健康度：L3 session 处理量 = 运行频率参考；reconcile 成功率为健康主指标。
 	reconTotal := pipeReconDone + pipeReconErr
 	reconRate := 0.0

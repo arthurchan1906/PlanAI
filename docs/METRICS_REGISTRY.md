@@ -49,6 +49,8 @@
 | E5 | mcp 工具分布 | 日志 | 日志 | Top8 工具调用分布（fmt 行） | 参考 | read_discussions=660 |
 | E5 | mcp 按agent | 日志 | 日志 | 按 src 拆分调用数（fmt 行） | 参考 | codex-cli=1830 |
 | E5 | update_status 显式率(窗口) | DB | 随 `--since` | 窗口内显式声明 session（agent_status explicit=1，JOIN discussion_log）/ 窗口活跃 session（users>0）；B0.5 重定义（8/27），旧行级口径 2/158 低估；`--since all` 等价旧口径可回溯；已知边界：8/24 上午 7 次 [MCP] 调用未落 explicit 库（M 线口径注意点） | 参考 | 2/40 (5.0%) |
+| E5b | get_briefing 执行率(好探针) | DB | 随 `--since` | 窗口内至少调用过一次 aipm_get_briefing 的活跃 session / 窗口活跃 session（users>0）；skill 强制第一步（❌ 在 aipm_get_briefing 之前开始写代码）；⚠口径="至少一次"非"编码之前"顺序服从率（时间戳埋点属 B 实验）；⚠人群纯度：skill 仅装 .claude/skills（writeSkillFile，main.go），只 claude 收到，codex/opencode/gemini/cursor 未收到，合并率被稀释（claude 26/61≈42.6% vs merged 50/163≈30.7%）；此值与北星（D1 自发率）不同维度，仅对照参考值 NOT 北星指标 | 参考 | claude 42.6%（merged 50/163≈30.7%） |
+- 9/2：E5b get_briefing 执行率（好探针）新增——"被强制的动作" execute 率，区别于 E5 update_status 坏探针（哀求型）；按 agent 分列规避未收到 skill 人群稀释
 | E8 | pipeline_health | 日志 | 日志 | L3 session 处理量 + reconcile 成功率 | ≥98% | 100.0% |
 | E8 | review_error | 日志 | 日志 | review 错误计数 | 计数 | 1 |
 | E9 | done_gate | 日志 | 日志 | done-gate pass/reject 分布（reject 带 reason） | 参考 | pass=58 reject=2 |

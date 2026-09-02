@@ -948,6 +948,93 @@ func CountExplicitStatusRate(projectPath, since string) (explicitSessions, activ
 	return explicitSessions, activeSessions, nil
 }
 
+// CountBriefingCompliance returns (briefingSessions, activeSessions) for the
+// "skill-mandated action" good-probe caliber: what fraction of window-active
+// sessions invoked aipm_get_briefing at least once. The skill mandates
+// get_briefing before coding ("❌ 在 aipm_get_briefing 之前开始写代码"),
+// but this numerator counts ">=1 call in the session", NOT the before-coding
+// ordering — a session that coded first and briefed later still counts as
+// compliant. It is a loose first-level breakpoint (behavior > 0, ≠ 已证伪),
+// not an ordering-compliance rate (that needs timestamp instrumentation, B
+// experiment). A low value is a genuine behavioral signal, unlike the
+// update_status probe where "agent obeys by not calling it".
+// Denominator uses the same window-active-session universe as
+// CountExplicitStatusRate (source != '' and at least one user turn), so the two
+// probes are comparable. Numeric hit matches IsMCPLog's prefixes (📡 aipm_* /
+// 🛠 MCP:aipm_*) with the exact tool name aipm_get_briefing.
+func CountBriefingCompliance(projectPath, since string) (briefingSessions, activeSessions int, err error) {
+	db, err := openOrCurrentDB(projectPath)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer db.Close()
+	if since == "" || since == "all" {
+		since = "1970-01-01T00:00:00"
+	}
+	q := `SELECT
+		(SELECT COUNT(DISTINCT session_id) FROM discussion_log
+		 WHERE (content LIKE '📡 aipm_get_briefing%' OR content LIKE '🛠 MCP:aipm_get_briefing%')
+		   AND created_at >= ? AND session_id != '' AND session_id != 'unknown'),
+		(SELECT COUNT(*) FROM (
+			SELECT session_id FROM discussion_log
+			WHERE created_at >= ? AND session_id != '' AND session_id != 'unknown' AND source != ''
+			GROUP BY session_id HAVING COUNT(CASE WHEN role = 'user' THEN 1 END) > 0))`
+	if err := db.QueryRow(q, since, since).Scan(&briefingSessions, &activeSessions); err != nil {
+		return 0, 0, err
+	}
+	return briefingSessions, activeSessions, nil
+}
+
+// BriefingStat is per-source get_briefing compliance for CountBriefingBySource.
+type BriefingStat struct {
+	Briefing int `json:"briefing"`
+	Active   int `json:"active"`
+}
+
+// CountBriefingBySource breaks CountBriefingCompliance down by source so the
+// probe can restrict to the population that actually received the skill
+// mandate. The skill file is written only to .claude/skills/pmai.md
+// (writeSkillFile, main.go), so claude-code is the only source covered by the
+// "❌ 在 aipm_get_briefing 之前开始写代码" mandate; codex/opencode/gemini/cursor
+// never received it. A merged rate (CountBriefingCompliance) mixes sources that
+// were never instructed and therefore understates the true compliance of the
+// mandated population — verified 9/2: merged 50/163≈30.7% vs claude 26/61≈42.6%.
+func CountBriefingBySource(projectPath, since string) (map[string]BriefingStat, error) {
+	db, err := openOrCurrentDB(projectPath)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	if since == "" || since == "all" {
+		since = "1970-01-01T00:00:00"
+	}
+	rows, err := db.Query(`SELECT source,
+		COUNT(DISTINCT CASE WHEN has_briefing = 1 THEN session_id END),
+		COUNT(DISTINCT session_id)
+		FROM (
+			SELECT session_id, source,
+				MAX(CASE WHEN (content LIKE '📡 aipm_get_briefing%' OR content LIKE '🛠 MCP:aipm_get_briefing%') THEN 1 ELSE 0 END) AS has_briefing
+			FROM discussion_log
+			WHERE created_at >= ? AND session_id != '' AND session_id != 'unknown' AND source != ''
+			GROUP BY session_id HAVING COUNT(CASE WHEN role = 'user' THEN 1 END) > 0
+		)
+		GROUP BY source`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]BriefingStat{}
+	for rows.Next() {
+		var src string
+		var s BriefingStat
+		if err := rows.Scan(&src, &s.Briefing, &s.Active); err != nil {
+			return nil, err
+		}
+		out[src] = s
+	}
+	return out, rows.Err()
+}
+
 // ListActiveSessions returns sessions with activity since the cutoff, joined
 // with their registered current status (agent_status). This is the public
 // "who is doing what right now" query that lets an agent tell apart

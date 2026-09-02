@@ -246,6 +246,82 @@ func TestCountExplicitStatusRate(t *testing.T) {
 	}
 }
 
+// CountBriefingCompliance must report the skill-mandated good probe: the share
+// of window-active sessions that actually invoked aipm_get_briefing. Unlike the
+// update_status probe, this measures a *forced* first step, so the rate is a
+// real behavioral signal (not "agent obeys by not calling it").
+func TestCountBriefingCompliance(t *testing.T) {
+	setupDailyDB(t)
+	if _, err := ReadDiscussions(ReadDiscussionsOpts{LastN: 5}); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+
+	// Three active sessions; two invoked aipm_get_briefing (MCP log line in the
+	// real 📡/🛠 format), one did not. Active universe = source != '' + a user turn.
+	for _, sid := range []string{"auto-1", "auto-2", "auto-3"} {
+		if _, err := LogDiscussion(sid, "user", "codex-cli", "处理任务", ""); err != nil {
+			t.Fatalf("log user %s: %v", sid, err)
+		}
+	}
+	for _, sid := range []string{"auto-1", "auto-2"} {
+		if _, err := LogDiscussion(sid, "tool", "codex-cli", "📡 aipm_get_briefing ✅", ""); err != nil {
+			t.Fatalf("log tool %s: %v", sid, err)
+		}
+	}
+
+	b, act, err := CountBriefingCompliance("", "1970-01-01T00:00:00")
+	if err != nil {
+		t.Fatalf("CountBriefingCompliance: %v", err)
+	}
+	if act != 3 {
+		t.Errorf("activeSessions = %d, want 3", act)
+	}
+	if b != 2 {
+		t.Errorf("briefingSessions = %d, want 2", b)
+	}
+}
+
+// CountBriefingBySource must break compliance down per source so the probe can
+// restrict to the population that actually received the skill mandate. claude
+// sessions (which receive .claude/skills/pmai.md) should not be diluted by
+// codex sessions that were never instructed.
+func TestCountBriefingBySource(t *testing.T) {
+	setupDailyDB(t)
+	if _, err := ReadDiscussions(ReadDiscussionsOpts{LastN: 5}); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+
+	// claude: two active sessions, both briefed -> 2/2.
+	for _, sid := range []string{"claude-a", "claude-b"} {
+		if _, err := LogDiscussion(sid, "user", "claude-code", "处理任务", ""); err != nil {
+			t.Fatalf("log user %s: %v", sid, err)
+		}
+		if _, err := LogDiscussion(sid, "tool", "claude-code", "📡 aipm_get_briefing ✅", ""); err != nil {
+			t.Fatalf("log tool %s: %v", sid, err)
+		}
+	}
+	// codex: two active sessions, only one briefed (spontaneous, no skill) -> 1/2.
+	for _, sid := range []string{"codex-a", "codex-b"} {
+		if _, err := LogDiscussion(sid, "user", "codex-cli", "处理任务", ""); err != nil {
+			t.Fatalf("log user %s: %v", sid, err)
+		}
+	}
+	if _, err := LogDiscussion("codex-a", "tool", "codex-cli", "📡 aipm_get_briefing ✅", ""); err != nil {
+		t.Fatalf("log tool codex-a: %v", err)
+	}
+
+	bySrc, err := CountBriefingBySource("", "1970-01-01T00:00:00")
+	if err != nil {
+		t.Fatalf("CountBriefingBySource: %v", err)
+	}
+	if cl := bySrc["claude-code"]; cl.Briefing != 2 || cl.Active != 2 {
+		t.Errorf("claude-code = %+v, want {2 2}", cl)
+	}
+	if cx := bySrc["codex-cli"]; cx.Briefing != 1 || cx.Active != 2 {
+		t.Errorf("codex-cli = %+v, want {1 2}", cx)
+	}
+}
+
 func TestReadDiscussionsByID(t *testing.T) {
 	setupDailyDB(t)
 	if _, err := ReadDiscussions(ReadDiscussionsOpts{LastN: 5}); err != nil {
