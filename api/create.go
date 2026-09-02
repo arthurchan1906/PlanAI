@@ -36,7 +36,7 @@ func (s *Server) handleCreateRoutes(w http.ResponseWriter, method, path string, 
 		}
 		web.SendJSON(w, plan)
 	case "bugs":
-		bug, err := store.CreateBug("", u.Str(body["title"]), pstr(body, "description", ""), pstr(body, "severity", "minor"), pstr(body, "status", "open"), pstr(body, "commit_id", ""), pstr(body, "error", ""), pstr(body, "files", ""), pstr(body, "root_cause", ""), pstr(body, "fix", ""), pstr(body, "tags", ""))
+		bug, err := store.CreateBug("", u.Str(body["title"]), pstr(body, "description", ""), pstr(body, "severity", "minor"), pstr(body, "status", "open"), pstr(body, "commit_id", ""), pstr(body, "task_id", ""), pstr(body, "error", ""), pstr(body, "files", ""), pstr(body, "root_cause", ""), pstr(body, "fix", ""), pstr(body, "tags", ""))
 		if err != nil {
 			web.SendError(w, 400, err.Error())
 			return true

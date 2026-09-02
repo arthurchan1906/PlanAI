@@ -23,7 +23,7 @@ import (
 // SQLite's PRAGMA user_version. Every time the schema or migrations
 // change, bump this — connections with user_version >= this skip the
 // (expensive, write-lock-acquiring) EnsureSchema DDL entirely.
-const SCHEMA_VERSION = 5
+const SCHEMA_VERSION = 6
 
 // schemaUpToDate reports whether the database at d already has the
 // current schema version, so we can skip the DDL pass on hot paths.
@@ -372,12 +372,13 @@ var schemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS doc_records (path TEXT PRIMARY KEY, type TEXT NOT NULL, status TEXT NOT NULL, layer TEXT NOT NULL, source_of_truth INTEGER NOT NULL DEFAULT 0, last_reviewed TEXT NOT NULL, superseded_by TEXT)`,
 	`CREATE TABLE IF NOT EXISTS daily_notes (note_date TEXT PRIMARY KEY, completed_json TEXT NOT NULL, problems_json TEXT NOT NULL, risks_json TEXT NOT NULL, next_json TEXT NOT NULL, updated_at TEXT NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS commits (id TEXT PRIMARY KEY, title TEXT NOT NULL, summary TEXT NOT NULL DEFAULT '', evidence_summary TEXT NOT NULL DEFAULT '', review_notes TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL, commit_hash TEXT NOT NULL, task_id TEXT, decision_id TEXT, status TEXT NOT NULL, test_status TEXT NOT NULL, review_status TEXT NOT NULL, files_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
-	`CREATE TABLE IF NOT EXISTS bugs (id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL, severity TEXT NOT NULL, status TEXT NOT NULL, commit_id TEXT, error TEXT NOT NULL DEFAULT '', files TEXT NOT NULL DEFAULT '', root_cause TEXT NOT NULL DEFAULT '', fix TEXT NOT NULL DEFAULT '', tags TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(commit_id) REFERENCES commits(id))`,
+	`CREATE TABLE IF NOT EXISTS bugs (id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL, severity TEXT NOT NULL, status TEXT NOT NULL, commit_id TEXT, task_id TEXT, error TEXT NOT NULL DEFAULT '', files TEXT NOT NULL DEFAULT '', root_cause TEXT NOT NULL DEFAULT '', fix TEXT NOT NULL DEFAULT '', tags TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(commit_id) REFERENCES commits(id), FOREIGN KEY(task_id) REFERENCES tasks(id))`,
 	`CREATE TABLE IF NOT EXISTS task_notes (id TEXT PRIMARY KEY, task_id TEXT NOT NULL, content TEXT NOT NULL, mode TEXT NOT NULL, created_at TEXT NOT NULL, FOREIGN KEY(task_id) REFERENCES tasks(id))`,
 	`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, type TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, summary TEXT NOT NULL, created_at TEXT NOT NULL, consumed_by_agent INTEGER NOT NULL DEFAULT 0, processed_by_agent INTEGER NOT NULL DEFAULT 0)`,
 	`CREATE TABLE IF NOT EXISTS threads (id TEXT PRIMARY KEY, title TEXT NOT NULL, summary TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active', source TEXT NOT NULL DEFAULT 'manual', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS thread_items (thread_id TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, added_at TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', PRIMARY KEY (thread_id, entity_type, entity_id), FOREIGN KEY(thread_id) REFERENCES threads(id))`,
 	`CREATE TABLE IF NOT EXISTS inject_log (id TEXT PRIMARY KEY, agent TEXT NOT NULL, session_id TEXT NOT NULL, req_id TEXT NOT NULL, ts TEXT NOT NULL, hash TEXT NOT NULL, source TEXT NOT NULL DEFAULT '', segments_json TEXT NOT NULL DEFAULT '{}', chars INTEGER NOT NULL DEFAULT 0, suppressed INTEGER NOT NULL DEFAULT 0, project TEXT NOT NULL DEFAULT '')`,
+	`CREATE TABLE IF NOT EXISTS verification_log (id TEXT PRIMARY KEY, scene TEXT NOT NULL, device TEXT NOT NULL DEFAULT '', ksn TEXT NOT NULL DEFAULT '', result TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', session_id TEXT NOT NULL DEFAULT '', project TEXT NOT NULL DEFAULT '', task_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(task_id) REFERENCES tasks(id))`,
 	`CREATE VIRTUAL TABLE IF NOT EXISTS fts5_index USING fts5(content, entity_type UNINDEXED, entity_id UNINDEXED, title, tokenize='unicode61')`,
 	`CREATE TABLE IF NOT EXISTS agent_profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'coder', capabilities TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS agent_status (session_id TEXT PRIMARY KEY, source TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL, explicit INTEGER NOT NULL DEFAULT 0)`,
@@ -414,6 +415,7 @@ func migrate(d *sql.DB) error {
 		{"bugs", "root_cause", "ALTER TABLE bugs ADD COLUMN root_cause TEXT NOT NULL DEFAULT ''"},
 		{"bugs", "fix", "ALTER TABLE bugs ADD COLUMN fix TEXT NOT NULL DEFAULT ''"},
 		{"bugs", "tags", "ALTER TABLE bugs ADD COLUMN tags TEXT NOT NULL DEFAULT ''"},
+		{"bugs", "task_id", "ALTER TABLE bugs ADD COLUMN task_id TEXT"},
 		{"inject_log", "project", "ALTER TABLE inject_log ADD COLUMN project TEXT NOT NULL DEFAULT ''"},
 	}
 	for _, m := range migrations {
@@ -441,6 +443,7 @@ func migrate(d *sql.DB) error {
 		{"meeting_rooms", `CREATE TABLE IF NOT EXISTS meeting_rooms (id TEXT PRIMARY KEY, title TEXT NOT NULL, topic TEXT NOT NULL, context TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active', agent_roles_context TEXT NOT NULL DEFAULT '', auto_arbitrate INTEGER NOT NULL DEFAULT 0, meeting_mode TEXT NOT NULL DEFAULT 'discussion', created_by TEXT NOT NULL, created_at TEXT NOT NULL, closed_at TEXT)`},
 		{"meeting_turns", `CREATE TABLE IF NOT EXISTS meeting_turns (id TEXT PRIMARY KEY, room_id TEXT NOT NULL, turn_number INTEGER NOT NULL, speaker_type TEXT NOT NULL, speaker_id TEXT NOT NULL, question TEXT NOT NULL, response TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'waiting', reply_to TEXT NOT NULL DEFAULT '', address_to TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, FOREIGN KEY(room_id) REFERENCES meeting_rooms(id))`},
 		{"discussion_log", `CREATE TABLE IF NOT EXISTS discussion_log (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, role TEXT NOT NULL, source TEXT NOT NULL DEFAULT '', content TEXT NOT NULL, created_at TEXT NOT NULL, embedding_json TEXT DEFAULT '', metadata TEXT DEFAULT '', thread_id TEXT DEFAULT '')`},
+		{"verification_log", `CREATE TABLE IF NOT EXISTS verification_log (id TEXT PRIMARY KEY, scene TEXT NOT NULL, device TEXT NOT NULL DEFAULT '', ksn TEXT NOT NULL DEFAULT '', result TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', session_id TEXT NOT NULL DEFAULT '', project TEXT NOT NULL DEFAULT '', task_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(task_id) REFERENCES tasks(id))`},
 	} {
 		if !tableOrVTableExists(d, spec.table) {
 			if _, err := d.Exec(spec.sql); err != nil {

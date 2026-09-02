@@ -293,7 +293,7 @@ func TestListBugsPagination(t *testing.T) {
 	}
 	for i := 0; i < 3; i++ {
 		title := fmt.Sprintf("分页测试 bug %d", i)
-		if _, err := CreateBug("", title, "desc", "major", "open", "", "", "", "", "", ""); err != nil {
+		if _, err := CreateBug("", title, "desc", "major", "open", "", "", "", "", "", "", ""); err != nil {
 			t.Fatalf("create bug %d: %v", i, err)
 		}
 	}
@@ -313,5 +313,73 @@ func TestListBugsPagination(t *testing.T) {
 	}
 	if page1[1]["id"] == page2[0]["id"] {
 		t.Error("offset page must not overlap page1")
+	}
+}
+
+// #P0④b 数据地基：verification_log 创建——result 归一化为小写 + 必填/取值校验。
+func TestCreateVerificationLog(t *testing.T) {
+	setupDailyDB(t)
+	log, err := CreateVerificationLog("", "扫码配网", "iPhone 15", "KSN-001", "PASS", "tls 握手成功", "sess-1", "")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if log["scene"] != "扫码配网" {
+		t.Errorf("scene = %v, want 扫码配网", log["scene"])
+	}
+	if log["result"] != "pass" {
+		t.Errorf("result = %v, want lowercase pass", log["result"])
+	}
+	if log["device"] != "iPhone 15" {
+		t.Errorf("device = %v, want iPhone 15", log["device"])
+	}
+	if log["ksn"] != "KSN-001" {
+		t.Errorf("ksn = %v, want KSN-001", log["ksn"])
+	}
+	if log["session_id"] != "sess-1" {
+		t.Errorf("session_id = %v, want sess-1", log["session_id"])
+	}
+
+	// result 取值非法必须报错
+	if _, err := CreateVerificationLog("", "s", "", "", "weird", "", "", ""); err == nil {
+		t.Fatal("invalid result must error")
+	}
+	// scene 必填
+	if _, err := CreateVerificationLog("", "", "", "", "pass", "", "", ""); err == nil {
+		t.Fatal("missing scene must error")
+	}
+}
+
+// #P0④b 数据地基：关联到不存在的 task 必须报错（FK 语义前置校验）。
+func TestCreateVerificationLogRejectsBadTask(t *testing.T) {
+	setupDailyDB(t)
+	if _, err := CreateVerificationLog("", "s", "", "", "pass", "", "", "task-NA"); err == nil {
+		t.Fatal("linking nonexistent task must error")
+	}
+}
+
+// #P0④b 数据地基：ListVerifications 按 project/task_id 过滤 + limit 生效。
+func TestListVerifications(t *testing.T) {
+	setupDailyDB(t)
+	if _, err := CreateVerificationLog("", "装柜", "d1", "", "pass", "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreateVerificationLog("", "解柜", "d1", "", "fail", "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	all, err := ListVerificationLogs("", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("len(all) = %d, want 2", len(all))
+	}
+	// 注：同秒创建时 id 带随机后缀，created_at DESC, id DESC 不保证秒内新者在先，
+	// 故不断言秒内顺序（P0④b 只校验 数量 + limit）。
+	limited, err := ListVerificationLogs("", "", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(limited) != 1 {
+		t.Fatalf("len(limited) = %d, want 1", len(limited))
 	}
 }

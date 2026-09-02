@@ -169,14 +169,14 @@ func dispatchBug(subcmd string, args *cli.Args) {
 		b, _ := store.GetBug(args.Get("id"))
 		cli.PrintJSON(b)
 	case "add":
-		b, err := store.CreateBug("", args.Get("title"), args.Str("description", ""), args.Str("severity", "minor"), args.Str("status", "open"), args.Str("commit_id", ""), args.Str("error", ""), args.Str("files", ""), args.Str("root_cause", ""), args.Str("fix", ""), args.Str("tags", ""))
+		b, err := store.CreateBug("", args.Get("title"), args.Str("description", ""), args.Str("severity", "minor"), args.Str("status", "open"), args.Str("commit_id", ""), args.Str("task_id", ""), args.Str("error", ""), args.Str("files", ""), args.Str("root_cause", ""), args.Str("fix", ""), args.Str("tags", ""))
 		if err != nil {
 			cli.Fail(err)
 			}
 		cli.PrintJSON(map[string]any{"bug": b})
 	case "update":
 		payload := map[string]any{}
-		for _, k := range []string{"title", "description", "severity", "status", "commit_id", "error", "files", "root_cause", "fix", "tags"} {
+		for _, k := range []string{"title", "description", "severity", "status", "commit_id", "task_id", "error", "files", "root_cause", "fix", "tags"} {
 			if v := args.Str(k, ""); v != "" {
 				payload[k] = v
 			}

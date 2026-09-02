@@ -1,7 +1,7 @@
 # P0 ④b 数据地基迁移方案
 
 > 归属：P0 四层计划 `docs/P0_FOUR_LAYER_PLAN.md` **层④ Phase B** | 关联 `task-20260828-171125-67755b`（P0）| 关联决策 `decision-20260902-133133-d776ed`（Goodhart 分离，§7 执行细则）
-> 状态：**proposal（待用户确认后开工）**。节奏：今天出方案，明天一整块做扎实（Claude 共识）。
+> 状态：**active（实施中，2026-09-02 开工）**。§3 步骤 1–4 已完成（schema+store+MCP+回填），步骤 5（上下文卡接线）待续。
 > 依据：`db/db.go:375` bugs 表 schema + 四层计划 Phase B 目标 + ED 最高频需求（验证台账）。
 
 ## 0. 目标
@@ -69,13 +69,14 @@ VERIFICATION_* 不存在（仅 commits.test_status 布尔）
 
 ## 3. 迁移步骤（明天一整块）
 
-1. schema：`db/db.go` 迁移函数加 `bugs.task_id` 列 + `verification_log` 表（guarded `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` 语义，迁到 `migrate_test.go` 覆盖）。
-2. model + store：`RecordBug` 加 task_id；新增 `CreateVerificationLog`/`ListVerificationLogsByProject`；补 `store_test.go`（PMAI_HOME 隔离，见 decision 2026-08-26 写路径测试）。
-3. MCP：`mcp/mcp.go` 加 `aipm_record_verification`/`aipm_list_verifications`；`aipm_record_bug` 加可选 `task_id`。**遵守 checklist（decision 2026-08-18 新工具/MCP 上线 checklist，含热路径 prefix-cache 敏感性检查）**。
-4. 回填脚本：`UPDATE bugs SET task_id=...` 跑 + 报告（可复算）+ 失败清单。
-5. 上下文卡接线 + `agent_briefing` 测试。
-6. `go build ./... && go test ./store/... ./db/... ./mcp/...`。
-7. `go vet ./...`。
+1. ✅ schema：`db/db.go` 迁移函数加 `bugs.task_id` 列 + `verification_log` 表（guarded `ALTER TABLE ... ADD COLUMN` 语义，`migrate_test.go` 覆盖）。`SCHEMA_VERSION` 5→6。
+2. ✅ model + store：`CreateBug` 签名加 `taskID`；新增 `CreateVerificationLog`/`ListVerificationLogs`/`GetVerificationLog`；补 `store_test.go`（PMAI_HOME 隔离）。
+   - **建模取舍**：沿用 bugs 的 `map[string]any` 建模（无 struct），与 `ScanBugRow` 一致，未额外加 `db/models.go` struct——与仓库现有实体一致。
+3. ✅ MCP：`mcp/mcp.go` 加 `aipm_record_verification`/`aipm_list_verifications`；`aipm_record_bug`/`aipm_update_bug` 加可选 `task_id`；`mcpLogDiscussion`/`mcpLogSummary` 补日志分支。
+4. ✅ 回填：`UPDATE bugs SET task_id=...` 跑 + 报告（可复算）+ 失败清单。**两库已执行**：aipmc 库 2/2 直连；EncryptDrive 库 v5→v6 迁移 + 9/10 直连，1 条因 commit 无 task_id（游离 commit）保持空。
+5. ⏳ 上下文卡接线 + `agent_briefing` 测试（下一块）。
+6. ✅ `go build ./... && go test ./store/... ./db/... ./mcp/...`（全绿）。
+7. ✅ `go vet ./...`（全绿）。
 
 ## 4. 验收指标
 
@@ -91,8 +92,8 @@ VERIFICATION_* 不存在（仅 commits.test_status 布尔）
 - **回填不可解析的 commit_id**：如实报告（可能为历史脏数据），不强行指派 task。
 - **新 MCP 工具热路径敏感性**：`aipm_list_verifications` 若高频走 prefix-cache 热路径，须评估；写入工具低频无碍。
 
-## 6. 待确认
+## 6. 待确认（已确认）
 
-- [ ] verification_log 字段用「scene/device/ksn/result」还是通用 `kind/key/value`？（默认四要素）
-- [ ] 范围是否含「bugs.files 索引化」？（默认否，独立后续）
-- [ ] 是否今天只做方案、明天整块开工？（Claude 共识：是）
+- [x] verification_log 字段用「scene/device/ksn/result」四要素（用户 + Claude 确认；不采用 `kind/key/value`）。
+- [x] 不含「bugs.files 索引化」（Phase C，独立后续 task）。
+- [x] 2026-09-02 整块开工（Claude 共识达成）。

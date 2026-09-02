@@ -1030,7 +1030,7 @@ func ListBugs(status, severity, commitID string, limit, offset int) ([]map[strin
 		return nil, err
 	}
 	defer db.Close()
-	q := "SELECT * FROM bugs"
+	q := "SELECT id, title, description, severity, status, commit_id, task_id, error, files, root_cause, fix, tags, created_at, updated_at FROM bugs"
 	var args []any
 	var clauses []string
 	if status != "" {
@@ -1072,7 +1072,7 @@ func GetBug(id string) (map[string]any, error) {
 	}
 	defer db.Close()
 	b := map[string]any{}
-	row := db.QueryRow("SELECT * FROM bugs WHERE id = ?", id)
+	row := db.QueryRow("SELECT id, title, description, severity, status, commit_id, task_id, error, files, root_cause, fix, tags, created_at, updated_at FROM bugs WHERE id = ?", id)
 	if err := ScanBugRow(row, b); err != nil {
 		return nil, err
 	}
@@ -1082,10 +1082,16 @@ func GetBug(id string) (map[string]any, error) {
 			b["linked_commit"] = map[string]any{"id": id2, "title": title, "status": status, "commit_hash": chash}
 		}
 	}
+	if tid, _ := b["task_id"].(string); tid != "" {
+		var id2, title, status string
+		if err := db.QueryRow("SELECT id, title, status FROM tasks WHERE id = ?", tid).Scan(&id2, &title, &status); err == nil {
+			b["linked_task"] = map[string]any{"id": id2, "title": title, "status": status}
+		}
+	}
 	return b, nil
 }
 
-func CreateBug(projectPath string, title, description, severity, status, commitID, errMsg, files, rootCause, fix, tags string) (map[string]any, error) {
+func CreateBug(projectPath string, title, description, severity, status, commitID, taskID, errMsg, files, rootCause, fix, tags string) (map[string]any, error) {
 	db, err := pmdb.OpenProject(projectPath)
 	if err != nil {
 		return nil, err
@@ -1097,9 +1103,15 @@ func CreateBug(projectPath string, title, description, severity, status, commitI
 			return nil, fmt.Errorf("commit not found: %s", commitID)
 		}
 	}
+	if taskID != "" {
+		var _x int
+		if err := db.QueryRow("SELECT 1 FROM tasks WHERE id = ?", taskID).Scan(&_x); err != nil {
+			return nil, fmt.Errorf("task not found: %s", taskID)
+		}
+	}
 	id := u.Slug("bug")
 	now := u.NowISO()
-	_, err = execBusy(db, "INSERT INTO bugs (id, title, description, severity, status, commit_id, error, files, root_cause, fix, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, title, description, severity, status, commitID, errMsg, files, rootCause, fix, tags, now, now)
+	_, err = execBusy(db, "INSERT INTO bugs (id, title, description, severity, status, commit_id, task_id, error, files, root_cause, fix, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, title, description, severity, status, commitID, taskID, errMsg, files, rootCause, fix, tags, now, now)
 	if err != nil {
 		return nil, err
 	}
@@ -1139,6 +1151,127 @@ func UpdateBug(id string, payload map[string]any) (map[string]any, error) {
 	}
 	return GetBug(id)
 }
+
+// ============================================================
+// Verification Logs
+// ============================================================
+
+func CreateVerificationLog(projectPath, scene, device, ksn, result, detail, sessionID, taskID string) (map[string]any, error) {
+	if scene == "" {
+		return nil, fmt.Errorf("scene 为必填字段")
+	}
+	result = strings.ToLower(strings.TrimSpace(result))
+	if result == "" {
+		return nil, fmt.Errorf("result 为必填字段")
+	}
+	switch result {
+	case "pass", "fail", "skip":
+	default:
+		return nil, fmt.Errorf("result 取值非法: %s（可选 pass|fail|skip）", result)
+	}
+	db, err := pmdb.OpenProject(projectPath)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	if taskID != "" {
+		var _x int
+		if err := db.QueryRow("SELECT 1 FROM tasks WHERE id = ?", taskID).Scan(&_x); err != nil {
+			return nil, fmt.Errorf("task not found: %s", taskID)
+		}
+	}
+	id := u.Slug("vf")
+	now := u.NowISO()
+	_, err = execBusy(db, "INSERT INTO verification_log (id, scene, device, ksn, result, detail, session_id, project, task_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, scene, device, ksn, result, detail, sessionID, projectPath, taskID, now, now)
+	if err != nil {
+		return nil, err
+	}
+	return GetVerificationLog(id)
+}
+
+func GetVerificationLog(id string) (map[string]any, error) {
+	db, err := pmdb.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	m := map[string]any{}
+	row := db.QueryRow("SELECT id, scene, device, ksn, result, detail, session_id, project, task_id, created_at, updated_at FROM verification_log WHERE id = ?", id)
+	if err := ScanVerificationLogRow(row, m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func ListVerificationLogs(project, taskID string, limit int) ([]map[string]any, error) {
+	db, err := pmdb.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	q := "SELECT id, scene, device, ksn, result, detail, session_id, project, task_id, created_at, updated_at FROM verification_log"
+	var args []any
+	var clauses []string
+	if project != "" {
+		clauses = append(clauses, "project = ?")
+		args = append(args, project)
+	}
+	if taskID != "" {
+		clauses = append(clauses, "task_id = ?")
+		args = append(args, taskID)
+	}
+	if len(clauses) > 0 {
+		q += " WHERE " + strings.Join(clauses, " AND ")
+	}
+	q += " ORDER BY created_at DESC, id DESC"
+	if limit > 0 {
+		q += " LIMIT ?"
+		args = append(args, limit)
+	}
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return ScanVerificationLogRows(rows)
+}
+
+func ScanVerificationLogRows(rows *sql.Rows) ([]map[string]any, error) {
+	defer rows.Close()
+	var logs []map[string]any
+	for rows.Next() {
+		m := map[string]any{}
+		if err := ScanVerificationLogRow(rows, m); err != nil {
+			return nil, err
+		}
+		logs = append(logs, m)
+	}
+	if logs == nil {
+		logs = []map[string]any{}
+	}
+	return logs, nil
+}
+
+func ScanVerificationLogRow(scanner interface{ Scan(...any) error }, m map[string]any) error {
+	var id, scene, device, ksn, result, detail, sessionID, project, createdAt, updatedAt string
+	var taskID sql.NullString
+	if err := scanner.Scan(&id, &scene, &device, &ksn, &result, &detail, &sessionID, &project, &taskID, &createdAt, &updatedAt); err != nil {
+		return err
+	}
+	m["id"] = id
+	m["scene"] = scene
+	m["device"] = device
+	m["ksn"] = ksn
+	m["result"] = result
+	m["detail"] = detail
+	m["session_id"] = sessionID
+	m["project"] = project
+	m["task_id"] = taskID.String
+	m["created_at"] = createdAt
+	m["updated_at"] = updatedAt
+	return nil
+}
+
 
 // ============================================================
 // Decisions
@@ -2641,8 +2774,8 @@ func ScanBugRows(rows *sql.Rows) ([]map[string]any, error) {
 
 func ScanBugRow(scanner interface{ Scan(...any) error }, m map[string]any) error {
 	var id, title, desc, severity, status, errMsg, files, rootCause, fix, tags, createdAt, updatedAt string
-	var commitID sql.NullString
-	if err := scanner.Scan(&id, &title, &desc, &severity, &status, &commitID, &errMsg, &files, &rootCause, &fix, &tags, &createdAt, &updatedAt); err != nil {
+	var commitID, taskID sql.NullString
+	if err := scanner.Scan(&id, &title, &desc, &severity, &status, &commitID, &taskID, &errMsg, &files, &rootCause, &fix, &tags, &createdAt, &updatedAt); err != nil {
 		return err
 	}
 	m["id"] = id
@@ -2651,6 +2784,7 @@ func ScanBugRow(scanner interface{ Scan(...any) error }, m map[string]any) error
 	m["severity"] = severity
 	m["status"] = status
 	m["commit_id"] = commitID.String
+	m["task_id"] = taskID.String
 	m["error"] = errMsg
 	m["files"] = files
 	m["root_cause"] = rootCause

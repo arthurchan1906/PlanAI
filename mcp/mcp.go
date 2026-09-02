@@ -418,7 +418,7 @@ func (s *mcpServer) registerTools() {
 
 	s.addTool(MCPTool{
 		Name:        "aipm_update_bug",
-		Description: "更新 Bug 的字段——状态、严重级别、修复方案等。\n\n常用场景：(1) 开始修 bug 时，将 status 改为 in_progress (2) 修复完成时，将 status 改为 resolved 并填写 fix (3) 调整严重级别。\n\n参数：bug_id（必填）。以下可选填一个或多个：status（open/in_progress/resolved/closed）、severity（critical/major/minor）、fix（修复方案描述）。",
+		Description: "更新 Bug 的字段——状态、严重级别、修复方案、关联 task 等。\n\n常用场景：(1) 开始修 bug 时，将 status 改为 in_progress (2) 修复完成时，将 status 改为 resolved 并填写 fix (3) 调整严重级别 (4) 关联 task，用 task_id 直接绑定 bug→task（取代 bug→commits→task 两跳）。\n\n参数：bug_id（必填）。以下可选填一个或多个：status（open/in_progress/resolved/closed）、severity（critical/major/minor）、fix（修复方案描述）、task_id（关联 Task ID）。",
 		InputSchema: MCPInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
@@ -426,6 +426,7 @@ func (s *mcpServer) registerTools() {
 				"status":   map[string]string{"type": "string", "description": "新状态: open/in_progress/resolved/closed（可选）"},
 				"severity": map[string]string{"type": "string", "description": "新严重级别: critical/major/minor（可选）"},
 				"fix":      map[string]string{"type": "string", "description": "修复方案（可选）"},
+				"task_id":  map[string]string{"type": "string", "description": "关联 Task ID（可选，直接绑定 bug→task）"},
 			},
 			Required: []string{"bug_id"},
 		},
@@ -487,6 +488,38 @@ func (s *mcpServer) registerTools() {
 			Required: []string{"title", "error", "root_cause", "fix"},
 		},
 	}, s.handleRecordBug)
+
+	s.addTool(MCPTool{
+		Name:        "aipm_record_verification",
+		Description: "记录一条验证日志（verification_log）。用于沉淀「四要素」验证事实：scene（验证场景）、device（设备/平台）、ksn（设备序列号/密钥号）、result（pass/fail/skip）。\n\n必填参数：scene、result（pass|fail|skip）。可选：device、ksn、detail（证据字段：错误信息/日志/截图/命令）、session_id、task_id（关联 task，取代 bug→commits→task 两跳）。\n\n提示：result 可带大小写，会自动归一化为小写。关联 task_id 或 session_id 时，会在简报/线索中建立验证证据链。",
+		InputSchema: MCPInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"scene":        map[string]string{"type": "string", "description": "验证场景（必填）"},
+				"device":       map[string]string{"type": "string", "description": "设备/平台"},
+				"ksn":          map[string]string{"type": "string", "description": "设备序列号/密钥号"},
+				"result":       map[string]string{"type": "string", "description": "pass/fail/skip"},
+				"detail":       map[string]string{"type": "string", "description": "证据字段：错误信息/日志/命令等"},
+				"session_id":   map[string]string{"type": "string", "description": "会话 ID（可选）"},
+				"task_id":      map[string]string{"type": "string", "description": "关联 Task ID（可选）"},
+				"project_path": map[string]string{"type": "string", "description": "可选: 目标项目路径。例: /Users/dazsec/projects/EncryptDrive"},
+			},
+			Required: []string{"scene", "result"},
+		},
+	}, s.handleRecordVerification)
+
+	s.addTool(MCPTool{
+		Name:        "aipm_list_verifications",
+		Description: "按 project 或 task_id 列出验证日志（verification_log）。用于复盘验证证据链。\n\n参数：project（可选）、task_id（可选）、limit（可选，默认返回全部，大于 0 时生效）。",
+		InputSchema: MCPInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"project": map[string]string{"type": "string", "description": "按项目路径过滤（可选）"},
+				"task_id": map[string]string{"type": "string", "description": "按 Task ID 过滤（可选）"},
+				"limit":   map[string]string{"type": "string", "description": "返回条数上限（可选）"},
+			},
+		},
+	}, s.handleListVerifications)
 
 	s.addTool(MCPTool{
 		Name:        "aipm_update_task_status",
@@ -1256,8 +1289,11 @@ func (s *mcpServer) handleUpdateBug(args map[string]interface{}) mcpToolResult {
 	if v := getStr(args, "fix", ""); v != "" {
 		payload["fix"] = v
 	}
+	if v := getStr(args, "task_id", ""); v != "" {
+		payload["task_id"] = v
+	}
 	if len(payload) == 0 {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "至少需要提供一个要更新的字段（status/severity/fix）"}}, IsError: true}
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "至少需要提供一个要更新的字段（status/severity/fix/task_id）"}}, IsError: true}
 	}
 	bug, err := store.UpdateBug(id, payload)
 	if err != nil {
@@ -1685,6 +1721,7 @@ func (s *mcpServer) handleRecordBug(args map[string]interface{}) mcpToolResult {
 	severity := getStr(args, "severity", "minor")
 	tags := getStr(args, "tags", "")
 	commitID := getStr(args, "commit_id", "")
+	taskID := getStr(args, "task_id", "")
 
 	if title == "" || errMsg == "" || rootCause == "" || fix == "" {
 		return mcpToolResult{
@@ -1693,7 +1730,7 @@ func (s *mcpServer) handleRecordBug(args map[string]interface{}) mcpToolResult {
 		}
 	}
 
-	bug, err := store.CreateBug(projectPath, title, errMsg, severity, "open", commitID, errMsg, files, rootCause, fix, tags)
+	bug, err := store.CreateBug(projectPath, title, errMsg, severity, "open", commitID, taskID, errMsg, files, rootCause, fix, tags)
 	if err != nil {
 		return mcpToolResult{
 			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("创建 bug 失败: %v", err)}},
@@ -1712,6 +1749,57 @@ func (s *mcpServer) handleRecordBug(args map[string]interface{}) mcpToolResult {
 			{Type: "text", Text: fmt.Sprintf("✅ Bug 已记录: %s [%s]", bug["id"], title)},
 		},
 		Reflection: reflection,
+	}
+}
+
+func (s *mcpServer) handleRecordVerification(args map[string]interface{}) mcpToolResult {
+	scene := getStr(args, "scene", "")
+	device := getStr(args, "device", "")
+	ksn := getStr(args, "ksn", "")
+	result := getStr(args, "result", "")
+	detail := getStr(args, "detail", "")
+	sessionID := getStr(args, "session_id", "")
+	taskID := getStr(args, "task_id", "")
+	projectPath := getStr(args, "project_path", "")
+
+	log, err := store.CreateVerificationLog(projectPath, scene, device, ksn, result, detail, sessionID, taskID)
+	if err != nil {
+		return mcpToolResult{
+			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("记录验证失败: %v", err)}},
+			IsError: true,
+		}
+	}
+
+	reflection := fmt.Sprintf("验证日志已记录 [%s] scene=%s result=%s", log["id"], scene, result)
+	if taskID != "" {
+		reflection += fmt.Sprintf("，已关联 task %s。", taskID)
+	}
+	reflection += " 请在验证通过后更新对应 task/commit 状态。"
+
+	return mcpToolResult{
+		Content: []mcpContent{
+			{Type: "text", Text: fmt.Sprintf("✅ 验证日志已记录: %s [%s]", log["id"], scene)},
+		},
+		RelatedContext: log,
+		Reflection:     reflection,
+	}
+}
+
+func (s *mcpServer) handleListVerifications(args map[string]interface{}) mcpToolResult {
+	project := getStr(args, "project", "")
+	taskID := getStr(args, "task_id", "")
+	limit := getInt(args, "limit", 0)
+
+	logs, err := store.ListVerificationLogs(project, taskID, limit)
+	if err != nil {
+		return mcpToolResult{
+			Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("列出验证日志失败: %v", err)}},
+			IsError: true,
+		}
+	}
+	return mcpToolResult{
+		Content:        []mcpContent{{Type: "text", Text: fmt.Sprintf("共 %d 条验证日志", len(logs))}},
+		RelatedContext: map[string]any{"verifications": logs},
 	}
 }
 
@@ -2968,6 +3056,17 @@ func mcpLogDiscussion(src, toolName string, args map[string]interface{}, result 
 		if t, ok := args["title"].(string); ok {
 			summary += " \"" + t + "\""
 		}
+	case "aipm_record_verification":
+		if sc, ok := args["scene"].(string); ok {
+			summary += " \"" + sc + "\""
+		}
+		if r, ok := args["result"].(string); ok {
+			summary += " →" + r
+		}
+	case "aipm_list_verifications":
+		if tid, ok := args["task_id"].(string); ok && tid != "" {
+			summary += " " + tid
+		}
 	case "aipm_update_task_status":
 		if tid, ok := args["task_id"].(string); ok {
 			summary += " " + tid
@@ -3020,6 +3119,10 @@ func mcpLogSummary(tool string, args map[string]interface{}) string {
 		return fmt.Sprintf("title=%s plan=%s", truncArg(args, "title", 60), strArg(args, "plan_id"))
 	case "aipm_record_bug":
 		return fmt.Sprintf("title=%s severity=%s", truncArg(args, "title", 60), strArg(args, "severity"))
+	case "aipm_record_verification":
+		return fmt.Sprintf("scene=%s result=%s task=%s", truncArg(args, "scene", 40), strArg(args, "result"), strArg(args, "task_id"))
+	case "aipm_list_verifications":
+		return fmt.Sprintf("project=%s task=%s limit=%d", strArg(args, "project"), strArg(args, "task_id"), intArg(args, "limit", 0))
 	case "aipm_update_task_status":
 		return fmt.Sprintf("task=%s status=%s", strArg(args, "task_id"), strArg(args, "status"))
 	case "aipm_search_context", "aipm_smart_search", "aipm_search_discussions":

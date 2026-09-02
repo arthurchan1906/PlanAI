@@ -31,7 +31,7 @@ func TestMigrateFreshDB(t *testing.T) {
 	if err := EnsureSchema(d); err != nil {
 		t.Fatalf("EnsureSchema fresh: %v", err)
 	}
-	for _, tbl := range []string{"audit_log", "meeting_rooms", "meeting_turns", "discussion_log", "agent_profiles", "meeting_participants", "fts5_index", "session_summaries", "agent_status"} {
+	for _, tbl := range []string{"audit_log", "meeting_rooms", "meeting_turns", "discussion_log", "agent_profiles", "meeting_participants", "fts5_index", "session_summaries", "agent_status", "verification_log"} {
 		if !tableOrVTableExists(d, tbl) {
 			t.Errorf("table %s missing after fresh schema", tbl)
 		}
@@ -40,6 +40,7 @@ func TestMigrateFreshDB(t *testing.T) {
 		{"discussion_log", "metadata"}, {"discussion_log", "thread_id"}, {"discussion_log", "source"},
 		{"meeting_rooms", "agent_roles_context"}, {"meeting_rooms", "pm_typing"},
 		{"meeting_turns", "reply_to"}, {"meeting_participants", "last_seen_turn"},
+		{"bugs", "task_id"},
 	} {
 		if !ColumnExists(d, c[0], c[1]) {
 			t.Errorf("column %s.%s missing after fresh schema", c[0], c[1])
@@ -77,6 +78,31 @@ func TestMigrateLegacyDB(t *testing.T) {
 	}
 	if cs != "s1" || ua != "2026-01-01" {
 		t.Errorf("ideas backfill wrong: current_summary=%q updated_at=%q", cs, ua)
+	}
+}
+
+// P0④b 数据地基：老库缺 bugs.task_id 列 + 无 verification_log 表。
+// EnsureSchema 不得重建，migrate 必须补列 + 补表。
+func TestMigrateLegacyBugsTaskIDAndVerificationLog(t *testing.T) {
+	d := openDBT(t)
+	mustExecT(t, d, `CREATE TABLE bugs (id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL, severity TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL)`)
+	mustExecT(t, d, `INSERT INTO bugs (id, title, description, severity, status, created_at) VALUES ('b1', 't', 'd', 'major', 'open', '2026-01-01')`)
+	if err := EnsureSchema(d); err != nil {
+		t.Fatalf("EnsureSchema legacy: %v", err)
+	}
+	if !ColumnExists(d, "bugs", "task_id") {
+		t.Errorf("bugs.task_id missing after legacy migrate (SCHEMA_VERSION=%d)", SCHEMA_VERSION)
+	}
+	if !tableOrVTableExists(d, "verification_log") {
+		t.Errorf("verification_log table missing after legacy migrate (SCHEMA_VERSION=%d)", SCHEMA_VERSION)
+	}
+	// 老行保底：task_id 默认 NULL，不因补列丢失数据
+	var tid sql.NullString
+	if err := d.QueryRow(`SELECT task_id FROM bugs WHERE id='b1'`).Scan(&tid); err != nil {
+		t.Fatalf("query bugs.task_id: %v", err)
+	}
+	if tid.Valid {
+		t.Errorf("legacy bug row task_id should be NULL, got %q", tid.String)
 	}
 }
 
