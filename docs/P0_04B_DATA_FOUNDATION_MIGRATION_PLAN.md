@@ -1,7 +1,7 @@
 # P0 ④b 数据地基迁移方案
 
 > 归属：P0 四层计划 `docs/P0_FOUR_LAYER_PLAN.md` **层④ Phase B** | 关联 `task-20260828-171125-67755b`（P0）| 关联决策 `decision-20260902-133133-d776ed`（Goodhart 分离，§7 执行细则）
-> 状态：**active（实施中，2026-09-02 开工）**。§3 步骤 1–4 已完成（schema+store+MCP+回填），步骤 5（上下文卡接线）待续。
+> 状态：**active（实施中，2026-09-02 开工）**。§3 步骤 1–5 已完成（schema+store+MCP+回填+上下文卡接线，build/vet/test 全绿）。
 > 依据：`db/db.go:375` bugs 表 schema + 四层计划 Phase B 目标 + ED 最高频需求（验证台账）。
 
 ## 0. 目标
@@ -74,7 +74,7 @@ VERIFICATION_* 不存在（仅 commits.test_status 布尔）
    - **建模取舍**：沿用 bugs 的 `map[string]any` 建模（无 struct），与 `ScanBugRow` 一致，未额外加 `db/models.go` struct——与仓库现有实体一致。
 3. ✅ MCP：`mcp/mcp.go` 加 `aipm_record_verification`/`aipm_list_verifications`；`aipm_record_bug`/`aipm_update_bug` 加可选 `task_id`；`mcpLogDiscussion`/`mcpLogSummary` 补日志分支。
 4. ✅ 回填：`UPDATE bugs SET task_id=...` 跑 + 报告（可复算）+ 失败清单。**两库已执行**：aipmc 库 2/2 直连；EncryptDrive 库 v5→v6 迁移 + 9/10 直连，1 条因 commit 无 task_id（游离 commit）保持空。
-5. ⏳ 上下文卡接线 + `agent_briefing` 测试（下一块）。
+5. ✅ 上下文卡接线 + `agent_briefing` 测试：`BuildAgentBriefing` 加「🐞 Bug（task_id 直连，`ListBugsByTask`）」与「✅ 验证（`verification_log.task_id`，`ListVerificationLogs`）」两个确定性 section；`agent_briefing_test.go` 加 `TestBuildAgentBriefingBugAndVerificationSections`。
 6. ✅ `go build ./... && go test ./store/... ./db/... ./mcp/...`（全绿）。
 7. ✅ `go vet ./...`（全绿）。
 

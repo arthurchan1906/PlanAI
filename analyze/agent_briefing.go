@@ -19,13 +19,16 @@ import (
 //     commit → task 映射，文件→task 字典确定性排序。
 //   - task×decision：tasks.related_decisions_json（JSON 数组）→
 //     get_decision 取 title/status/date。
-//   - Phase B（bug.task_id / 验证台账实体）不在本 MVP 范围。
+//   - task×bug：bugs.task_id 直连（P0④b，去 bugs→commits→task 两跳）。
+//   - task×verification：verification_log.task_id 直连（P0④b 验证台账）。
 
 // 上下文卡输出上限（防 token 膨胀，MVP 从紧）。
 const (
-	agentBriefingTasksCap         = 3 // 进行中任务上限（与 anchor cap 同量级）
-	agentBriefingFilesPerTask     = 6 // 每任务文件上限
-	agentBriefingDecisionsPerTask = 5 // 每任务决策上限
+	agentBriefingTasksCap            = 3 // 进行中任务上限（与 anchor cap 同量级）
+	agentBriefingFilesPerTask        = 6 // 每任务文件上限
+	agentBriefingDecisionsPerTask    = 5 // 每任务决策上限
+	agentBriefingBugsPerTask         = 4 // 每任务「相关 bug」上限（task_id 直连）
+	agentBriefingVerificationsPerTask = 3 // 每任务「验证台账」上限
 )
 
 // BuildAgentBriefing 生成确定性 agent_briefing 上下文卡 Markdown。
@@ -68,6 +71,12 @@ func BuildAgentBriefing() string {
 		if decs := formatTaskDecisions(t.RelatedDecisions); len(decs) > 0 {
 			b.WriteString("  📌 决策: " + strings.Join(decs, "; ") + "\n")
 		}
+		if bugs := formatTaskBugs(t.ID); len(bugs) > 0 {
+			b.WriteString("  🐞 Bug: " + strings.Join(bugs, "; ") + "\n")
+		}
+		if vlogs := formatTaskVerifications(t.ID); len(vlogs) > 0 {
+			b.WriteString("  ✅ 验证: " + strings.Join(vlogs, "; ") + "\n")
+		}
 		b.WriteString("\n")
 	}
 	return b.String()
@@ -108,6 +117,75 @@ func formatTaskDecisions(ids []any) []string {
 			tag += " 《" + title + "》"
 		}
 		out = append(out, tag)
+	}
+	return out
+}
+
+
+// formatTaskBugs 取该 task_id 直连的 bug（P0④b，去两跳），格式化为
+// 「bug-id (severity, status) 《title》」。确定性：按 id 排序，上限 4。
+func formatTaskBugs(taskID string) []string {
+	bugs, err := store.ListBugsByTask(taskID, 0)
+	if err != nil || len(bugs) == 0 {
+		return nil
+	}
+	sort.Slice(bugs, func(i, j int) bool {
+		return u.Str(bugs[i]["id"]) < u.Str(bugs[j]["id"])
+	})
+	if len(bugs) > agentBriefingBugsPerTask {
+		bugs = bugs[:agentBriefingBugsPerTask]
+	}
+	out := make([]string, 0, len(bugs))
+	for _, b := range bugs {
+		id := u.Str(b["id"])
+		severity, _ := b["severity"].(string)
+		status, _ := b["status"].(string)
+		title, _ := b["title"].(string)
+		tag := id
+		if severity != "" {
+			tag += " (" + severity + ", " + status + ")"
+		}
+		if title != "" {
+			tag += " 《" + title + "》"
+		}
+		out = append(out, tag)
+	}
+	return out
+}
+
+// formatTaskVerifications 取该 task_id 关联的验证台账（P0④b），格式化为
+// 「scene/device/ksn → result」。确定性：按 id 排序，上限 3。
+func formatTaskVerifications(taskID string) []string {
+	if taskID == "" {
+		return nil
+	}
+	logs, err := store.ListVerificationLogs("", taskID, 0)
+	if err != nil || len(logs) == 0 {
+		return nil
+	}
+	sort.Slice(logs, func(i, j int) bool {
+		return u.Str(logs[i]["id"]) < u.Str(logs[j]["id"])
+	})
+	if len(logs) > agentBriefingVerificationsPerTask {
+		logs = logs[:agentBriefingVerificationsPerTask]
+	}
+	out := make([]string, 0, len(logs))
+	for _, l := range logs {
+		scene, _ := l["scene"].(string)
+		device, _ := l["device"].(string)
+		ksn, _ := l["ksn"].(string)
+		result, _ := l["result"].(string)
+		key := scene
+		if device != "" {
+			key += "/" + device
+		}
+		if ksn != "" {
+			key += "/" + ksn
+		}
+		if result != "" {
+			key += " → " + result
+		}
+		out = append(out, key)
 	}
 	return out
 }

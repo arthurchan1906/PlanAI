@@ -102,3 +102,40 @@ func TestBuildAgentBriefingNoFileAssocLabel(t *testing.T) {
 		t.Fatalf("card 应标注无文件关联，card=%q", card)
 	}
 }
+
+// P0④b：上下文卡必须能携带 bug.task_id 直连（不再两跳）+ verification_log 台账。
+// 确定性：两次调用输出一致。
+func TestBuildAgentBriefingBugAndVerificationSections(t *testing.T) {
+	newIsolatedBriefDBAgent(t)
+	d, err := pmdb.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	if _, err := d.Exec(`INSERT INTO tasks (id, title, status, priority, phase, acceptance_json, related_docs_json, related_decisions_json, last_note, updated_at, roadmap_id, plan_id, created_at) VALUES ('task-4', '验证台账接线', 'in_progress', 'P1', 'agent', '[]', '[]', '[]', '', '2026-01-01', '', 'plan-1', '2026-01-01')`); err != nil {
+		t.Fatal(err)
+	}
+	// bug 通过 task_id 直连 task-4
+	if _, err := d.Exec(`INSERT INTO bugs (id, title, description, severity, status, commit_id, task_id, error, files, root_cause, fix, tags, created_at, updated_at) VALUES ('bug-4', 'task_id 直连 bug', 'desc', 'major', 'open', '', 'task-4', 'err', '', 'rc', 'fx', '', '2026-01-01', '2026-01-01')`); err != nil {
+		t.Fatal(err)
+	}
+	// verification_log 关联 task-4
+	if _, err := d.Exec(`INSERT INTO verification_log (id, scene, device, ksn, result, detail, session_id, project, task_id, created_at, updated_at) VALUES ('vf-4', '扫码配网', 'iPhone 15', 'KSN-4', 'pass', 'ok', 'sess-1', '', 'task-4', '2026-01-01', '2026-01-01')`); err != nil {
+		t.Fatal(err)
+	}
+
+	card := BuildAgentBriefing()
+	if card == "" {
+		t.Fatal("应返回非空上下文卡")
+	}
+	if !strings.Contains(card, "🐞 Bug: bug-4 (major, open) 《task_id 直连 bug》") {
+		t.Fatalf("上下文卡未含 task_id 直连 bug，card=%q", card)
+	}
+	if !strings.Contains(card, "✅ 验证: 扫码配网/iPhone 15/KSN-4 → pass") {
+		t.Fatalf("上下文卡未含验证台账，card=%q", card)
+	}
+	if card2 := BuildAgentBriefing(); card2 != card {
+		t.Fatalf("上下文卡非确定性：card1=%q card2=%q", card, card2)
+	}
+}

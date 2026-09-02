@@ -1024,6 +1024,33 @@ func UpdatePlan(id string, payload map[string]any) (map[string]any, error) {
 // Bugs
 // ============================================================
 
+// ListBugsByTask 按 task_id 直连过滤 bug（P0④b：去 bugs→commits→task 两跳）。
+// 供 agent_briefing 上下文卡做确定性「相关 bug」section。
+func ListBugsByTask(taskID string, limit int) ([]map[string]any, error) {
+	db, err := pmdb.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	q := "SELECT id, title, description, severity, status, commit_id, task_id, error, files, root_cause, fix, tags, created_at, updated_at FROM bugs"
+	var args []any
+	if taskID != "" {
+		q += " WHERE task_id = ?"
+		args = append(args, taskID)
+	}
+	q += " ORDER BY created_at DESC, id DESC"
+	if limit > 0 {
+		q += " LIMIT ?"
+		args = append(args, limit)
+	}
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return ScanBugRows(rows)
+}
+
 func ListBugs(status, severity, commitID string, limit, offset int) ([]map[string]any, error) {
 	db, err := pmdb.Open()
 	if err != nil {
