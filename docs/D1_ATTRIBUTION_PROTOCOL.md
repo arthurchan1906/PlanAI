@@ -5,6 +5,10 @@
 > 试点数据：`metrics/d1_annotation_pilot.json`（20 条）+ `metrics/d1_codex_labels.json` + `metrics/d1_claude_labels.json`
 > 复现：`python3 metrics/d1_agreement.py metrics/d1_codex_labels.json metrics/d1_claude_labels.json`
 
+> 100 条双标批状态：**8/28 双标 + 9/2 第三方裁定** → 严格双标 **76%（未达 80% 门禁，below-gate）** → 24 条经第三方（Claude 独立会话）裁定收敛为 gold 共识集 `metrics/d1_gold_100.json`（codex/claude 各自 vs gold 均 88/100）。原始 `d1_baseline_{codex,claude}_labels.json` 保留未覆盖。**本批协议口径 = 76% below-gate + 由 gold 共识校准，「达标 80%」尚未达成，须由下批复测判定。**
+>
+> 数据口径（重要）：两套 `idx` 语义不同——`d1_baseline_100.json` 的 `idx` = 日志 turn 号（7-1819），`d1_gold_100.json` / `d1_disagreements_100.json` 的 `idx` = D1 项目编号（1-100）。**跨文件 join 的稳定键是 `(project, agent, turn)`**；gold 已自带 `source_turn_idx` + `session` 双编号（`source_turn_idx`=日志 turn 号，`session`=会话 id），勿按 `idx` 直接 join。
+
 ## 0. 目的与边界
 
 - **目的**：把「MCP 工具 Agent 自发使用率」从拍脑袋变成可度量——给出可复算、可双标验证的自发率基线。
@@ -61,6 +65,8 @@
 - **分歧**：记录到标注集文件 → 人工裁决 → 作为参照范例。
 - **输出**：标注集文件（样本+两标+裁决记录）→ 自发率估计 + CI。
 - **标注集兼作未来自动规则的校准集**（若将来想上规则，用它验证）。
+- **参照范例前置**：本批 100 条裁决（`docs/D1_DISAGREEMENTS_100_ADJUDICATION.md`）须在下一批复测开工前并入协议/参照集，否则复测会用到未强化的协议。
+- **join 键**：标注/裁决/gold 跨文件一律用 `(project, agent, turn)` 匹配，勿用 `idx`（两套 `idx` 语义见头部注释）。
 
 ## 6. 指标口径：分列两数
 
@@ -105,9 +111,11 @@ D1 自发率≈0 的根因**不是**「agent 不愿用」或「工具没被唤�
 ## 8. 验收锚点 / 后续
 
 - 首次产出物：正式抽 100 条 baseline（复用试点抽取脚本 + 双标 + 一致率）。
+- **100 条双标批（8/28 双标 + 9/2 第三方裁定）已完成**：严格双标 **76%**（未达 80% 门禁，below-gate）→ 24 条裁定收敛为 gold 共识 `metrics/d1_gold_100.json`；codex/claude vs gold 均 88/100；原始 baseline 保留可复算。gold 含 `user_msg` 自包含 + `source_turn_idx`/`session` 双编号。
 - 每批（周/双周）抽样 → 对比上批。
 - 抽样脚本已固化：`metrics/d1_sampling.py`（含 ED/cursor 排除、📡 去重、分层抽样、`--n/--cutoff/--out/--seed` 参数，实测 1836 有效 turn）。
-- 待办：把 3 个分歧裁决 + 6 个参照范例并入 `docs/D1_ANNOTATION_PILOT.md` 标注表；下一批正式抽 100 条 baseline。
+- 下批复测：抽样窗口 **2026-09-10 ~ 2026-09-21**，**2026-09-24** 跑双标 + 一致率，判定是否达 80% 门禁（排除 8/27+ 点破效应日）。
+- 待办清理：~~把 3 个分歧裁决 + 6 个参照范例并入 `docs/D1_ANNOTATION_PILOT.md` 标注表~~ / ~~下一批正式抽 100 条 baseline~~ —— 试点期遗留，已由 100 条双标批校准 supersede。
 
 ## 附：试点分歧裁决记录
 
