@@ -15,6 +15,8 @@
 
 > 判定标签：`自发` / `半自发` / `任务映射` / `被动`。每个 turn 判定**主标签** + 备注边界理由。
 
+> 100 条正式双标批：`metrics/d1_baseline_100.json` + `docs/D1_BASELINE_100.md` + 24 条分歧裁定 `docs/D1_DISAGREEMENTS_100_ADJUDICATION.md` + gold 共识 `metrics/d1_gold_100.json`（严格双标 76% below-gate，详见 `D1_ATTRIBUTION_PROTOCOL.md`）。本试点表为 20 条 pilot，已被正式批 supersede 作参照。
+
 
 ## 样本与判定
 
@@ -68,5 +70,4 @@
 | #11 | codex=任务映射 / claude=被动 | **被动** | 「已经安装了」隐含点名验证功能 |
 
 **裁决后的基准判定**（codex 试用判定 15/5 → 裁决后调整）：半自发参照范例 = #8/#18/#20；反面参照（不算半自发）= #1/#10/#11。
-
 
