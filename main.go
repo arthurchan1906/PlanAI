@@ -660,6 +660,7 @@ func main() {
 			fmt.Println("Proxy must be running: aipmc proxy")
 			os.Exit(1)
 		}
+		ensureAgentMCPSetup(os.Args[2])
 		runAgent(os.Args[2])
 		return
 	}

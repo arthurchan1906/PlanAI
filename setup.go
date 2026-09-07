@@ -465,3 +465,118 @@ func checkMCPSetup() map[string]any {
 
 	return result
 }
+
+// agentPlatformKey returns the setup platform key for an agent name.
+// Returns "" for agents outside the auto-setup scope (e.g. gemini).
+func agentPlatformKey(agentName string) string {
+	switch strings.ToLower(strings.TrimSpace(agentName)) {
+	case "claude", "claude-code", "cc":
+		return "claude"
+	case "codex", "openai-codex", "openai":
+		return "codex"
+	}
+	return ""
+}
+
+// jsonMCPServersConfigured reports whether a JSON platform config contains an
+// "aipm" MCP entry whose command exactly matches commandPath — the same
+// predicate setupMCP uses to decide "already configured, skip".
+func jsonMCPServersConfigured(data []byte, commandPath string) bool {
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return false
+	}
+	servers, ok := cfg["mcpServers"].(map[string]any)
+	if !ok {
+		return false
+	}
+	entry, ok := servers["aipm"].(map[string]any)
+	if !ok {
+		return false
+	}
+	cmd, ok := entry["command"].(string)
+	return ok && cmd == commandPath
+}
+
+// codexMCPConfigured reports whether Codex's user-level TOML config contains a
+// [mcp_servers.aipm] section whose command exactly matches commandPath.
+func codexMCPConfigured(content, commandPath string) bool {
+	inSection := false
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !inSection {
+			if trimmed == "[mcp_servers.aipm]" {
+				inSection = true
+			}
+			continue
+		}
+		// Section ends at a blank line or the next header — never scan beyond it.
+		if trimmed == "" || strings.HasPrefix(trimmed, "[") {
+			return false
+		}
+		if strings.HasPrefix(trimmed, "command") {
+			val := strings.TrimSpace(strings.TrimPrefix(trimmed, "command"))
+			val = strings.TrimSpace(strings.TrimPrefix(val, "="))
+			val, ok := strings.CutPrefix(val, `"`)
+			if !ok {
+				return false
+			}
+			val, ok = strings.CutSuffix(val, `"`)
+			if !ok {
+				return false
+			}
+			return val == commandPath
+		}
+	}
+	return false
+}
+
+// ensureAgentMCPSetup auto-runs setupMCP for the agent's platform when its MCP
+// entry is missing or points at a stale command path. Never blocks the agent:
+// failures print a warning and the agent still launches.
+func ensureAgentMCPSetup(agentName string) {
+	key := agentPlatformKey(agentName)
+	if key == "" {
+		return // outside auto-setup scope (e.g. gemini)
+	}
+
+	var target platformConfig
+	for _, p := range platforms {
+		if p.Key == key {
+			target = p
+			break
+		}
+	}
+	commandPath := resolveCommandPath()
+	configured := false
+
+	if target.Name == "Codex (OpenAI)" {
+		// User-level config — no project root needed.
+		homeDir, err := os.UserHomeDir()
+		if err == nil {
+			if data, err := os.ReadFile(filepath.Join(homeDir, ".codex", "config.toml")); err == nil {
+				configured = codexMCPConfigured(string(data), commandPath)
+			}
+		}
+	} else {
+		rt, err := pmdb.RuntimeDir()
+		if err != nil {
+			// Project not initialized — nothing to write into, agent still launches.
+			fmt.Fprintf(os.Stderr, "aipm MCP 未配置且项目未初始化,跳过自动 setup(先运行 aipmc init,再 aipmc setup %s)\n", key)
+			return
+		}
+		projectRoot := filepath.Dir(rt)
+		configPath := filepath.Join(projectRoot, target.ConfigDir, target.ConfigFile)
+		if data, err := os.ReadFile(configPath); err == nil {
+			configured = jsonMCPServersConfigured(data, commandPath)
+		}
+	}
+
+	if configured {
+		return
+	}
+	fmt.Printf("aipm MCP 未配置,自动执行 aipmc setup %s ...\n", key)
+	if err := setupMCP(target.Name); err != nil {
+		fmt.Fprintf(os.Stderr, "aipmc setup %s failed: %v\n", key, err)
+	}
+}
