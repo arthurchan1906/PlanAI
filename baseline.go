@@ -96,7 +96,7 @@ func isProbeLine(fields map[string]string) bool {
 // scanLLMLines 扫描日志中窗口内的 [LLM] 行，返回按 agent 的覆盖统计、
 // (agent → session → 非探针请求数) 与 (agent → 活跃小时集合)。
 // 活跃小时用于 claude 等无 session 可 join 的 agent 的粗粒度对账。
-func scanLLMLines(path string, since time.Time) (map[string]*coverageStat, map[string]map[string]int, map[string]map[string]bool, error) {
+func scanLLMLines(path string, since, until time.Time) (map[string]*coverageStat, map[string]map[string]int, map[string]map[string]bool, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, nil, nil, err
@@ -118,6 +118,9 @@ func scanLLMLines(path string, since time.Time) (map[string]*coverageStat, map[s
 			continue // 旧格式无日期，窗口下保守跳过
 		}
 		if ts.Before(since) {
+			continue
+		}
+		if !until.IsZero() && ts.After(until) {
 			continue
 		}
 		fields := parseKVFields(line)
@@ -296,10 +299,16 @@ func capDetail(ids []string) []string {
 
 // scanDiscussionDBs 扫描给定的一组项目库路径的 discussion_log，聚合 (agent, session) 计数
 // 与 (agent, 小时)。单库打开失败则跳过不阻塞。返回对账成功的库路径（供报告标注范围）。
-func scanDiscussionDBs(dbPaths []string, sinceISO string) (map[string]map[string]int, map[string]map[string]bool, []string) {
+func scanDiscussionDBs(dbPaths []string, sinceISO, untilISO string) (map[string]map[string]int, map[string]map[string]bool, []string) {
 	discByAgent := map[string]map[string]int{}
 	discHours := map[string]map[string]bool{}
 	var scanned []string
+	whereCond := "created_at >= ?"
+	var whereArgs []any
+	if untilISO != "" {
+		whereCond = "created_at >= ? AND created_at <= ?"
+		whereArgs = []any{untilISO}
+	}
 	for _, dbPath := range dbPaths {
 		if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 			continue
@@ -308,9 +317,10 @@ func scanDiscussionDBs(dbPaths []string, sinceISO string) (map[string]map[string
 		if err != nil {
 			continue
 		}
+		queryArgs := append([]any{sinceISO}, whereArgs...)
 		rows, err := d.Query(`SELECT source, session_id, COUNT(*) FROM discussion_log
-			WHERE created_at >= ? AND session_id != '' AND session_id != 'unknown'
-			GROUP BY source, session_id`, sinceISO)
+			WHERE `+whereCond+` AND session_id != '' AND session_id != 'unknown'
+			GROUP BY source, session_id`, queryArgs...)
 		if err != nil {
 			d.Close()
 			continue
@@ -411,7 +421,7 @@ func collectProjectPathsFromLog(logPath string) []string {
 // 分项目写入。只读当前项目库会把其他项目（如 EncryptDrive/HmApp）的 session 误判为「有 LLM
 // 无 discussion」。此函数扫描 ~/.aipmc/projects.json 注册的项目 + 当前项目 + 日志中出现的
 // 绝对 project= 路径对应项目，把 (agent, session) 计数与 (agent, 小时) 合并，供对账使用。
-func scanDiscussionAcrossProjects(logPath, sinceISO string) (map[string]map[string]int, map[string]map[string]bool, []string) {
+func scanDiscussionAcrossProjects(logPath, sinceISO, untilISO string) (map[string]map[string]int, map[string]map[string]bool, []string) {
 	var dbPaths []string
 	seen := map[string]bool{}
 
@@ -433,7 +443,7 @@ func scanDiscussionAcrossProjects(logPath, sinceISO string) (map[string]map[stri
 	for dbPath := range seen {
 		dbPaths = append(dbPaths, dbPath)
 	}
-	return scanDiscussionDBs(dbPaths, sinceISO)
+	return scanDiscussionDBs(dbPaths, sinceISO, untilISO)
 }
 
 func runBaseline(args *cli.Args) {
@@ -459,9 +469,22 @@ func runBaseline(args *cli.Args) {
 	}
 	sinceISO := since.Format("2006-01-02T15:04:05")
 
+	// --until: M0 对账窗口上界（对齐 mcp_compare 对比窗口）；缺省不限（到 now）。
+	untilISO := ""
+	var until time.Time
+	if untilArg := args.Str("until", ""); untilArg != "" {
+		uts, err := parseBaselineSince(untilArg)
+		if err != nil {
+			fmt.Println("⚠", err)
+			return
+		}
+		until = uts
+		untilISO = until.Format("2006-01-02T15:04:05")
+	}
+
 	// 1. 日志侧：扫描 [LLM] 行。
 	logPath := filepath.Join(os.Getenv("HOME"), ".aipmc", "logs", "aipmc.log")
-	coverage, llmSessions, llmHours, err := scanLLMLines(logPath, since)
+	coverage, llmSessions, llmHours, err := scanLLMLines(logPath, since, until)
 	if err != nil {
 		fmt.Printf("⚠ 无法读取日志 %s: %v\n", logPath, err)
 		return
@@ -476,7 +499,7 @@ func runBaseline(args *cli.Args) {
 	defer db.Close()
 
 	// 跨项目聚合 discussion_log（bug-141137）：[LLM] 日志全局 vs discussion 分项目库。
-	discByAgent, discHours, scannedProjects := scanDiscussionAcrossProjects(logPath, sinceISO)
+	discByAgent, discHours, scannedProjects := scanDiscussionAcrossProjects(logPath, sinceISO, untilISO)
 	if len(scannedProjects) > 0 {
 		fmt.Printf("  对账项目库 %d 个: %s\n", len(scannedProjects), strings.Join(scannedProjects, ", "))
 	}
@@ -520,9 +543,13 @@ func runBaseline(args *cli.Args) {
 	}
 
 	// 5. 输出。
+	untilReport := untilISO
+	if untilReport == "" {
+		untilReport = now.Format("2006-01-02T15:04:05")
+	}
 	report := baselineReport{
 		GeneratedAt:     now.Format("2006-01-02T15:04:05-07:00"),
-		Window:          baselineWindow{Since: sinceISO, Until: now.Format("2006-01-02T15:04:05")},
+		Window:          baselineWindow{Since: sinceISO, Until: untilReport},
 		ProjectsScanned: scannedProjects,
 		Coverage:        map[string]coverageStat{},
 		Underreport:     underreport,

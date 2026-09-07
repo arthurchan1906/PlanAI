@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-07T15:42:38",
+  "generated_at": "2026-09-07T17:37:51",
   "window": "2026-08-29→2026-09-03",
   "source": "[MCP] 日志 + aipmc metrics --baseline",
   "anchors": {
@@ -37,56 +37,53 @@
     "test_tool_calls": 4,
     "active_days": 3,
     "daily_avg_active_days": 329.0,
-    "log_gap_days": [],
+    "log_gap_days": [
+      "2026-08-29",
+      "2026-08-30",
+      "2026-09-03"
+    ],
     "by_error_type": {
-      "other": 35,
-      "no_rows": 24,
-      "busy": 12,
-      "not_found": 24
+      "other": 15,
+      "no_rows": 9,
+      "not_found": 2
     }
   },
   "m0": {
-    "_cmd": "dist/aipmc metrics --baseline --since 2026-08-29T00:00:00 --skip_write",
+    "_cmd": "dist/aipmc metrics --baseline --since 2026-08-29T00:00:00 --skip_write --until 2026-09-03T23:59:59",
     "llm_session_coverage": {
       "claude": {
-        "total": 1338,
-        "with_session": 1338,
+        "total": 599,
+        "with_session": 599,
         "empty_session": 0,
         "probe": 0
       },
       "codex": {
-        "total": 909,
-        "with_session": 909,
+        "total": 519,
+        "with_session": 519,
         "empty_session": 0,
-        "probe": 0
-      },
-      "opencode": {
-        "total": 12,
-        "with_session": 0,
-        "empty_session": 12,
         "probe": 0
       }
     },
     "underreport": {
       "claude": {
         "missing": 0,
-        "total": 4,
+        "total": 2,
         "missing_rate": 0.0
       },
       "codex": {
-        "missing": 18,
-        "total": 24,
-        "missing_rate": 0.75
+        "missing": 0,
+        "total": 3,
+        "missing_rate": 0.0
       }
     },
     "reverse_orphan": {
       "claude": {
         "missing": 7,
-        "total": 11
+        "total": 9
       },
       "codex": {
         "missing": 5,
-        "total": 11
+        "total": 8
       }
     }
   },

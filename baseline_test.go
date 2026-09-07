@@ -25,7 +25,7 @@ func TestScanLLMLines(t *testing.T) {
 		t.Fatal(err)
 	}
 	since := time.Date(2026, 8, 18, 0, 0, 0, 0, time.Local)
-	coverage, sessions, hours, err := scanLLMLines(path, since)
+	coverage, sessions, hours, err := scanLLMLines(path, since, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,6 +56,26 @@ func TestScanLLMLines(t *testing.T) {
 	cl := coverage["claude"]
 	if cl == nil || cl.TotalLines != 1 || cl.WithSession != 0 || cl.EmptySession != 1 {
 		t.Errorf("claude coverage = %+v, want 1 line, session empty", cl)
+	}
+}
+
+func TestScanLLMLinesUntilBound(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "aipmc.log")
+	log := `[2026-08-18 00:00:01] [LLM] agent=codex session=a in_tok=500 out_tok=50 cache_hit=400 injected=N lat=1.0s
+[2026-08-18 00:00:05] [LLM] agent=codex session=a in_tok=600 out_tok=40 cache_hit=500 injected=N lat=1.2s
+`
+	if err := os.WriteFile(path, []byte(log), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	since := time.Date(2026, 8, 18, 0, 0, 0, 0, time.Local)
+	until := time.Date(2026, 8, 18, 0, 0, 3, 0, time.Local)
+	coverage, _, _, err := scanLLMLines(path, since, until)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cx := coverage["codex"]; cx == nil || cx.TotalLines != 1 {
+		t.Errorf("codex total = %+v, want 1（00:00:05 超出 until 上界应被排除）", coverage["codex"])
 	}
 }
 
@@ -187,7 +207,7 @@ func TestScanDiscussionDBs(t *testing.T) {
 	})
 
 	missing := filepath.Join(dir, "missing", ".pmai", "data", "pmai.db")
-	disc, hours, scanned := scanDiscussionDBs([]string{dbA, dbB, missing}, "2026-08-29T00:00:00")
+	disc, hours, scanned := scanDiscussionDBs([]string{dbA, dbB, missing}, "2026-08-29T00:00:00", "")
 
 	if len(scanned) != 2 {
 		t.Fatalf("scanned = %d, want 2 (missing DB 应跳过), got %v", len(scanned), scanned)

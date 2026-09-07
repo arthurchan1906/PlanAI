@@ -19,7 +19,7 @@ M0 漏录率由 Go 权威工具产出（aipmc metrics --baseline --since ...）�
   python3 metrics/mcp_compare.py --no-m0             # 只比 MCP 指标，不调 Go 工具
 """
 import argparse, json, re, subprocess, sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -44,11 +44,15 @@ def active_days(calls, since, until):
     return sorted({c["date"] for c in calls if since <= c["date"] <= until})
 
 
-def run_m0(aipmc, since):
+def run_m0(aipmc, since, until=""):
     """解析 aipmc metrics --baseline --since 的 M0 块；失败返回 {} + reason。"""
+    cmd = [aipmc, "metrics", "--baseline", "--since", f"{since}T00:00:00", "--skip_write"]
+    if until:
+        # --until 使 M0 对账窗口与对比窗口对齐（bug-20260907-172746-cef29f）
+        cmd += ["--until", f"{until}T23:59:59"]
     try:
         r = subprocess.run(
-            [aipmc, "metrics", "--baseline", "--since", f"{since}T00:00:00", "--skip_write"],
+            cmd,
             capture_output=True, text=True, timeout=180,
         )
     except FileNotFoundError:
@@ -58,7 +62,7 @@ def run_m0(aipmc, since):
     if r.returncode != 0:
         return {"error": r.stderr.strip()[-400:]}
 
-    m0 = {"_cmd": f"{aipmc} metrics --baseline --since {since}T00:00:00 --skip_write"}
+    m0 = {"_cmd": " ".join(cmd)}
     for line in r.stdout.splitlines():
         m = M0_COVER_RE.search(line)
         if m:
@@ -108,12 +112,23 @@ def main():
     base_stats = base["baseline"]
 
     adays = active_days(calls, since, until)
-    gap_days = [d for d in dates if since <= d <= until and d not in adays]
+    # 缺口日 = 窗口内日历日无任何 [MCP] 活动（按日历日滚动，而非日志已出现的日期，
+    # 否则无日志的日子（如整日 0 行）会被漏判 — 9/3 报告时缺口显示为 [] 即此 bug）。
+    d = datetime.strptime(since, "%Y-%m-%d")
+    end_d = datetime.strptime(until, "%Y-%m-%d")
+    gap_days = []
+    while d <= end_d:
+        iso = d.strftime("%Y-%m-%d")
+        if iso not in adays:
+            gap_days.append(iso)
+        d += timedelta(days=1)
     # 完整连续日（含未产生活动的日）——用于标注窗口是否完整
     cur_stats["active_days"] = len(adays)
     cur_stats["daily_avg_active_days"] = round(cur_stats["total_calls"] / len(adays), 1) if adays else 0
     cur_stats["log_gap_days"] = gap_days
-    cur_stats["by_error_type"] = dict(Counter(e["type"] for e in errs))
+    # by_error_type 按窗口内错误统计（与数量指标同窗）——bug-20260907-172743-f92a11
+    win_errs = [e for e in errs if since <= e.get("date", "") <= until]
+    cur_stats["by_error_type"] = dict(Counter(e["type"] for e in win_errs))
 
     base_daily = base.get("baseline_daily_avg_active_days") or (
         round(base_stats["total_calls"] / base.get("baseline_active_days", 1), 1))
@@ -146,7 +161,7 @@ def main():
     }
 
     if not args.no_m0:
-        compare["m0"] = run_m0(args.aipmc, since)
+        compare["m0"] = run_m0(args.aipmc, since, args.until)
         compare["m0_caveat"] = (
             "M0 漏录率现按「当前项目 + 注册表 + 日志绝对 project= 路径」跨项目聚合 "
             "（bug-20260901-141137-acfabb 已修复），不再把跨项目 claude/codex session 误计为漏录；"
