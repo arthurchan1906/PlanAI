@@ -47,7 +47,7 @@
 
 ## 3. M0 捕获完整性(per-session 漏录率)
 
-命令:`aipmc metrics --baseline --since 2026-08-29T00:00:00 --skip_write`(由 `mcp_compare.py` 合并;**无 `--until`,窗口 = 8/29→9/7**)。
+命令:`aipmc metrics --baseline --since 2026-08-29T00:00:00 --until 2026-09-03T23:59:59 --skip_write`(由 `mcp_compare.py` 合并;窗口对齐 8/29→9/3,与 §0 M0 口径注一致)。
 
 | agent | [LLM] 总数 | 空 session | 漏录率 | 归因 |
 |---|---|---|---|---|
