@@ -1,0 +1,94 @@
+{
+  "generated_at": "2026-09-07T15:42:38",
+  "window": "2026-08-29→2026-09-03",
+  "source": "[MCP] 日志 + aipmc metrics --baseline",
+  "anchors": {
+    "total_calls": {
+      "baseline": 2297,
+      "current": 987,
+      "delta_pct": -57.0
+    },
+    "daily_avg_active_days": {
+      "baseline": 287.1,
+      "current": 329.0,
+      "delta_pct": 14.6
+    },
+    "retrieval_ratio": {
+      "baseline": 0.6448,
+      "current": 0.6748
+    },
+    "diversity_unique_tools": {
+      "baseline": 43,
+      "current": 36
+    },
+    "deep_verify_ratio": {
+      "baseline": 0.1715,
+      "current": 0.232
+    }
+  },
+  "current_window": {
+    "window": "2026-08-29→2026-09-03",
+    "total_calls": 987,
+    "retrieval_ratio": 0.6748,
+    "diversity_unique_tools": 36,
+    "diversity_shannon": 4.324,
+    "deep_verify_ratio": 0.232,
+    "vision_calls": 0,
+    "test_tool_calls": 4,
+    "active_days": 3,
+    "daily_avg_active_days": 329.0,
+    "log_gap_days": [],
+    "by_error_type": {
+      "other": 35,
+      "no_rows": 24,
+      "busy": 12,
+      "not_found": 24
+    }
+  },
+  "m0": {
+    "_cmd": "dist/aipmc metrics --baseline --since 2026-08-29T00:00:00 --skip_write",
+    "llm_session_coverage": {
+      "claude": {
+        "total": 1338,
+        "with_session": 1338,
+        "empty_session": 0,
+        "probe": 0
+      },
+      "codex": {
+        "total": 909,
+        "with_session": 909,
+        "empty_session": 0,
+        "probe": 0
+      },
+      "opencode": {
+        "total": 12,
+        "with_session": 0,
+        "empty_session": 12,
+        "probe": 0
+      }
+    },
+    "underreport": {
+      "claude": {
+        "missing": 0,
+        "total": 4,
+        "missing_rate": 0.0
+      },
+      "codex": {
+        "missing": 18,
+        "total": 24,
+        "missing_rate": 0.75
+      }
+    },
+    "reverse_orphan": {
+      "claude": {
+        "missing": 7,
+        "total": 11
+      },
+      "codex": {
+        "missing": 5,
+        "total": 11
+      }
+    }
+  },
+  "m0_caveat": "M0 漏录率现按「当前项目 + 注册表 + 日志绝对 project= 路径」跨项目聚合 （bug-20260901-141137-acfabb 已修复），不再把跨项目 claude/codex session 误计为漏录；残余漏录为真实捕获缺口（罕见短/一次性会话）。仅当某活跃项目既不注册又从未以绝对路径出现在日志中时，其 session 才会被误计。"
+}
