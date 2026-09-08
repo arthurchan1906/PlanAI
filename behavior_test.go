@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"math"
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestParseToolRow(t *testing.T) {
 	ev, ok := parseToolRow("s1", "codex-cli", "📡 aipm_get_briefing ✅", "2026-09-08T10:00:00")
@@ -76,5 +81,34 @@ func TestPeerAwarenessBaseline(t *testing.T) {
 	}
 	if rep.PeerAwareness.Ratio != 0.5 || rep.PeerAwareness.Numerator != 1 || rep.PeerAwareness.Denominator != 2 {
 		t.Fatalf("peer awareness: %+v want 1/2=0.5", rep.PeerAwareness)
+	}
+}
+
+func TestMcpErrRateCrossArchive(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, content string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 主日志只从 9/2 起（与真实 aipmc.log 一致），8/29-9/1 在归档。
+	write("aipmc.log", "[2026-09-02 14:30:53] [MCP] tool=aipm_get_commit status=OK\n[2026-09-03 09:00:00] [MCP] tool=aipm_record_bug status=ERR\n[2026-09-05 10:00:00] [MCP] tool=aipm_search_context status=OK\n")
+	write("aipmc.log.20260902_140743", "[2026-08-29 16:00:00] [MCP] tool=aipm_read_discussions status=OK\n[2026-09-01 11:00:00] [MCP] tool=aipm_get_task status=ERR\n")
+	// 窗口外归档段 + 非 aipm 工具行应被排除。
+	write("aipmc.log.20260814_155529", "[2026-08-14 16:06:51] [MCP] tool=some_other status=ERR\n[2026-08-20 10:00:00] [MCP] tool=aipm_get_briefing status=OK\n")
+
+	// 8/29-9/3: 归档 8/29(OK)、9/1(ERR) + 主日志 9/2(OK)、9/3(ERR) = 4 调用 / 2 报错。
+	dim := mcpErrRate(dir, "2026-08-29", "2026-09-03")
+	if dim.Denominator != 4 || dim.Numerator != 2 {
+		t.Fatalf("window 8/29-9/3: %+v want denom 4 num 2", dim)
+	}
+	if math.Abs(dim.Ratio-0.5) > 1e-9 {
+		t.Fatalf("window ratio = %v want 0.5", dim.Ratio)
+	}
+
+	// 全量(无界): 全部 aipm 调用 = 8/29 OK、9/1 ERR、8/20 OK、9/2 OK、9/3 ERR、9/5 OK = 6 / 2 报错。
+	dim = mcpErrRate(dir, "", "")
+	if dim.Denominator != 6 || dim.Numerator != 2 {
+		t.Fatalf("full window: %+v want denom 6 num 2", dim)
 	}
 }

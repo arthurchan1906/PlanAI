@@ -278,14 +278,18 @@ func dispatchMetrics(args *cli.Args) {
 	}
 
 	// ── Behavior baseline (B12): surface the 3-dimension + peer-awareness behavior
-	// metrics into the regular metrics panel (same --since window as DB-class metrics).
+	// metrics into the regular metrics panel. Follows --since (default since→now) and,
+	// if given, --until to align with the --behavior one-shot window; the label always
+	// shows the exact bound (e.g. since→now) so it can't be conflated with a bounded
+	// --behavior run (Claude 4th-wave review).
 	fmt.Println("── [行为基线 B12] ──")
 	bhSince := ""
 	if since != "" && since != "all" {
 		bhSince = since
 	}
-	if brep, err := behaviorReport(bhSince, ""); err == nil {
-		printBehaviorPanel(brep, bhSince)
+	bhUntil := args.Str("until", "")
+	if brep, err := behaviorReport(bhSince, bhUntil); err == nil {
+		printBehaviorPanel(brep, windowLabel(bhSince, bhUntil))
 	} else {
 		fmt.Printf("  行为基线不可用: %v\n", err)
 	}
