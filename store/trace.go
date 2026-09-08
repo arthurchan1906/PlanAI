@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"path"
+	"strings"
 
 	pmdb "aipmc/db"
 )
@@ -301,8 +303,34 @@ func traceFileContext(db *sql.DB, relPath, since string, limit int) ([]FileCommi
 	return out, rows.Err()
 }
 
+// traceFileTotal returns the true count of commits touching relPath within the
+// since window — independent of the paginated slice (truncation-aware total).
+func traceFileTotal(db *sql.DB, relPath, since string) (int, error) {
+	var n int
+	err := db.QueryRow(`
+		SELECT COUNT(*) FROM commits c
+		WHERE json_valid(c.files_json)
+		  AND EXISTS (SELECT 1 FROM json_each(c.files_json) WHERE json_each.value = ?)
+		  AND c.created_at >= ?`, relPath, since).Scan(&n)
+	return n, err
+}
+
+// normalizeRelPath cleans a user-supplied repo-relative path for exact
+// json_each matching: trims leading "./" and resolves "."/".." segments.
+// Returns "" when the result is empty/root (e.g. "./" or ".").
+func normalizeRelPath(p string) string {
+	p = strings.TrimSpace(p)
+	p = strings.TrimPrefix(p, "./")
+	p = path.Clean(p)
+	if p == "." || p == "/" {
+		return ""
+	}
+	return p
+}
+
 // TraceFileContext resolves to the cwd project when projectPath is empty.
 func TraceFileContext(projectPath, relPath, since string, limit int) (*FileTraceResult, error) {
+	relPath = normalizeRelPath(relPath)
 	if relPath == "" {
 		return nil, fmt.Errorf("file path is required")
 	}
@@ -319,7 +347,11 @@ func TraceFileContext(projectPath, relPath, since string, limit int) (*FileTrace
 	if err != nil {
 		return nil, err
 	}
-	return &FileTraceResult{Path: relPath, Commits: commits, TotalCommits: len(commits)}, nil
+	total, err := traceFileTotal(db, relPath, since)
+	if err != nil {
+		total = len(commits)
+	}
+	return &FileTraceResult{Path: relPath, Commits: commits, TotalCommits: total}, nil
 }
 
 // FileTraceContextJSON wraps TraceFileContext for MCP output.

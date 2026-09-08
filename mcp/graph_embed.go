@@ -38,7 +38,7 @@ func (s *mcpServer) handleTraceContext(args map[string]interface{}) mcpToolResul
 	filePath := getStr(args, "file_path", "")
 	since := getStr(args, "since", "")
 	if limit <= 0 {
-		limit = 200
+		limit = 50
 	}
 
 	// File-path mode: 代码 ↔ 任务索引。file_path 非空时不再要求 from_type/from_id。

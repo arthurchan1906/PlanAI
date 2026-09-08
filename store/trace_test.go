@@ -80,3 +80,42 @@ func TestTraceFileContext(t *testing.T) {
 		t.Fatalf("absent file: want 0, got %d", len(got3))
 	}
 }
+
+func TestNormalizeRelPath(t *testing.T) {
+	cases := map[string]string{
+		"./store/trace.go":  "store/trace.go",
+		"store/trace.go":    "store/trace.go",
+		"store/./x.go":      "store/x.go",
+		"store/../other.go": "other.go",
+		"./":                "",
+		"":                  "",
+		"  ./a/b.go  ":      "a/b.go",
+	}
+	for in, want := range cases {
+		if got := normalizeRelPath(in); got != want {
+			t.Errorf("normalizeRelPath(%q)=%q want %q", in, got, want)
+		}
+	}
+}
+
+func TestTraceFileTotal(t *testing.T) {
+	d := openTraceTestDB(t)
+	mustExec(t, d, `INSERT INTO commits (id, commit_hash, title, status, review_status, test_status, created_at, task_id, files_json) VALUES ('c1','aaa','x','committed','approved','passed','2026-09-07T10:00:00','','["store/trace.go"]')`)
+	mustExec(t, d, `INSERT INTO commits (id, commit_hash, title, status, review_status, test_status, created_at, task_id, files_json) VALUES ('c2','bbb','y','committed','approved','passed','2026-09-05T10:00:00','','["store/trace.go"]')`)
+	mustExec(t, d, `INSERT INTO commits (id, commit_hash, title, status, review_status, test_status, created_at, task_id, files_json) VALUES ('c3','ccc','z','committed','approved','passed','2026-09-07T09:00:00','','["other/x.go"]')`)
+
+	n, err := traceFileTotal(d, "store/trace.go", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("traceFileTotal = %d want 2 (c1+c2; c3 不匹配)", n)
+	}
+	n2, err := traceFileTotal(d, "store/trace.go", "2026-09-07T00:00:00")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n2 != 1 {
+		t.Fatalf("traceFileTotal(since) = %d want 1 (仅 c1 在窗口内)", n2)
+	}
+}
