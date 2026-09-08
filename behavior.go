@@ -52,6 +52,7 @@ type BehaviorReport struct {
 	RetrievalAwareness BehaviorDim `json:"retrieval_awareness"`
 	Planfulness        BehaviorDim `json:"planfulness"`
 	BlindTry           BehaviorDim `json:"blind_try"`
+	PeerAwareness      BehaviorDim `json:"peer_awareness"`
 	TopTools           []TopTool   `json:"top_tools"`
 	Window             string      `json:"window,omitempty"`
 }
@@ -94,6 +95,10 @@ var planTools = map[string]bool{
 	"aipm_create_roadmap": true, "aipm_update_plan": true,
 }
 
+// peerAwareTools: L1 同行感知工具——用 `list_sessions` 查看跨 agent 状态板,
+// 是「感知同行在做什么」的行为信号(agent 协作感知 L1)。
+var peerAwareTools = map[string]bool{"aipm_list_sessions": true}
+
 // computeBehaviorBaseline computes the 3-dimension baseline from structured events.
 func computeBehaviorBaseline(events []ToolEvent) BehaviorReport {
 	rep := BehaviorReport{TotalCalls: len(events)}
@@ -101,6 +106,7 @@ func computeBehaviorBaseline(events []ToolEvent) BehaviorReport {
 	toolSet := map[string]*TopTool{}
 	var retrievalCalls, errCalls int
 	planSessions := map[string]bool{}
+	peerSessions := map[string]bool{}
 
 	for _, e := range events {
 		if e.Tool == "" {
@@ -116,6 +122,9 @@ func computeBehaviorBaseline(events []ToolEvent) BehaviorReport {
 		}
 		if planTools[e.Tool] && e.SessionID != "" {
 			planSessions[e.SessionID] = true
+		}
+		if peerAwareTools[e.Tool] && e.SessionID != "" {
+			peerSessions[e.SessionID] = true
 		}
 		if e.Status == "err" {
 			errCalls++
@@ -139,6 +148,11 @@ func computeBehaviorBaseline(events []ToolEvent) BehaviorReport {
 	rep.Planfulness.Numerator = len(planSessions)
 	if len(sessions) > 0 {
 		rep.Planfulness.Ratio = float64(len(planSessions)) / float64(len(sessions))
+	}
+	rep.PeerAwareness.Denominator = len(sessions)
+	rep.PeerAwareness.Numerator = len(peerSessions)
+	if len(sessions) > 0 {
+		rep.PeerAwareness.Ratio = float64(len(peerSessions)) / float64(len(sessions))
 	}
 	rep.BlindTry.Denominator = len(events)
 	rep.BlindTry.Numerator = errCalls
@@ -169,6 +183,22 @@ func computeBehaviorBaseline(events []ToolEvent) BehaviorReport {
 func runBehaviorBaseline(args *cli.Args) {
 	since := args.Str("since", "")
 	until := args.Str("until", "")
+	rep, err := behaviorReport(since, until)
+	if err != nil {
+		fmt.Printf("⚠ 行为基线构建失败: %v\n", err)
+		return
+	}
+	if args.Bool("json") {
+		b, _ := json.MarshalIndent(rep, "", "  ")
+		fmt.Println(string(b))
+		return
+	}
+	printBehaviorReport(rep, windowLabel(since, until))
+}
+
+// loadToolEvents loads + parses discussion_log role='tool' rows in the [since, until)
+// window. `until` is a date-only upper bound (whole day included via dayAfter).
+func loadToolEvents(since, until string) ([]ToolEvent, int, error) {
 	where := ""
 	var whereArgs []any
 	if since != "" {
@@ -181,15 +211,13 @@ func runBehaviorBaseline(args *cli.Args) {
 	}
 	db, err := pmdb.Open()
 	if err != nil {
-		fmt.Printf("⚠ 无法打开项目库: %v\n", err)
-		return
+		return nil, 0, err
 	}
 	defer db.Close()
 
 	rows, err := db.Query(`SELECT session_id, source, content, created_at FROM discussion_log WHERE role='tool'`+where+` ORDER BY created_at ASC`, whereArgs...)
 	if err != nil {
-		fmt.Printf("⚠ 查询 discussion_log role='tool' 失败: %v\n", err)
-		return
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -197,7 +225,7 @@ func runBehaviorBaseline(args *cli.Args) {
 	totalRows := 0
 	for rows.Next() {
 		var sid, src, content, ts string
-		if err := rows.Scan(&sid, &src, &content, &ts); err != nil {
+		if rows.Scan(&sid, &src, &content, &ts) != nil {
 			continue
 		}
 		if strings.Contains(content, "mcp__aipm") || strings.Contains(content, "📡") {
@@ -207,28 +235,37 @@ func runBehaviorBaseline(args *cli.Args) {
 			events = append(events, ev)
 		}
 	}
+	return events, totalRows, nil
+}
 
+// behaviorReport builds the 3-dimension behavior baseline (blind-try overridden by
+// the authoritative [MCP] log family) plus peer-awareness rate for [since, until).
+func behaviorReport(since, until string) (BehaviorReport, error) {
+	events, totalRows, err := loadToolEvents(since, until)
+	if err != nil {
+		return BehaviorReport{}, err
+	}
 	rep := computeBehaviorBaseline(events)
 	if totalRows > 0 {
 		rep.ParseCoverage = float64(len(events)) / float64(totalRows)
 	}
-	// 盲试检测(proxy): [MCP] 日志 status=ERR 占比 — discussion_log 不带权威状态,
-	// 故从权威 [MCP] 日志族(aipmc.log + aipmc.log.* 归档)按日窗口取, 与 session
-	// 基线不同源, 报告明确标注来源。归档读取与 metrics/mcp_baseline.py 一致。
 	rep.BlindTry = mcpErrRate(logsDir(), since, until)
 	if since != "" || until != "" {
 		rep.Window = windowLabel(since, until)
 	}
+	return rep, nil
+}
 
-	if args.Bool("json") {
-		b, _ := json.MarshalIndent(rep, "", "  ")
-		fmt.Println(string(b))
-		return
+// printBehaviorReport renders the behavior baseline report (B11 one-shot + B12 panel).
+func printBehaviorReport(rep BehaviorReport, win string) {
+	fmt.Println("行为基线三维度+同行感知（来源 discussion_log role='tool' 行 + [MCP] 日志族状态）")
+	if win != "" {
+		fmt.Printf("窗口: %s | ", win)
 	}
-	fmt.Println("B11 三维度行为基线（来源 discussion_log role='tool' 行 + [MCP] 日志族状态）")
-	fmt.Printf("窗口: %s | 解析覆盖率: %.1f%% | 会话 %d | 调用 %d\n\n", windowLabel(since, until), rep.ParseCoverage*100, rep.TotalSessions, rep.TotalCalls)
+	fmt.Printf("解析覆盖率: %.1f%% | 会话 %d | 调用 %d\n\n", rep.ParseCoverage*100, rep.TotalSessions, rep.TotalCalls)
 	fmt.Printf("历史检索意识: %.1f%%（%d/%d）— 检索类 aipm_* 调用占比\n", rep.RetrievalAwareness.Ratio*100, rep.RetrievalAwareness.Numerator, rep.RetrievalAwareness.Denominator)
 	fmt.Printf("计划性: %.1f%%（%d/%d）— 使用过 plan/task 工具的会话占比\n", rep.Planfulness.Ratio*100, rep.Planfulness.Numerator, rep.Planfulness.Denominator)
+	fmt.Printf("同行感知: %.1f%%（%d/%d）— 使用过 list_sessions 的会话占比\n", rep.PeerAwareness.Ratio*100, rep.PeerAwareness.Numerator, rep.PeerAwareness.Denominator)
 	fmt.Printf("盲试检测: %.1f%%（%d/%d）— 工具调用报错占比\n", rep.BlindTry.Ratio*100, rep.BlindTry.Numerator, rep.BlindTry.Denominator)
 	fmt.Println("\nTOP 工具:")
 	for _, tt := range rep.TopTools {
@@ -238,6 +275,19 @@ func runBehaviorBaseline(args *cli.Args) {
 		}
 		fmt.Printf("  %-30s %d%s\n", tt.Tool, tt.Calls, flag)
 	}
+}
+
+// printBehaviorPanel renders the B12 behavior baseline rows inside the regular
+// metrics panel. These are directional (非因果) signals, not gates — hence target
+// marked "参考" and ok=true to avoid false alarms in the panel's ❌/✅.
+func printBehaviorPanel(rep BehaviorReport, win string) {
+	if win != "" {
+		fmt.Printf("  窗口 %s\n", win)
+	}
+	printRow("B12 retrieval_awareness", pct(rep.RetrievalAwareness.Ratio)+fmt.Sprintf(" (%d/%d)", rep.RetrievalAwareness.Numerator, rep.RetrievalAwareness.Denominator), "参考(方向性)", true)
+	printRow("B12 planfulness", pct(rep.Planfulness.Ratio)+fmt.Sprintf(" (%d/%d)", rep.Planfulness.Numerator, rep.Planfulness.Denominator), "参考(方向性)", true)
+	printRow("B12 peer_awareness", pct(rep.PeerAwareness.Ratio)+fmt.Sprintf(" (%d/%d)", rep.PeerAwareness.Numerator, rep.PeerAwareness.Denominator), "参考(L1同行感知)", true)
+	printRow("B12 blind_try", pct(rep.BlindTry.Ratio)+fmt.Sprintf(" (%d/%d)", rep.BlindTry.Numerator, rep.BlindTry.Denominator), "参考([MCP]ERR占比)", true)
 }
 
 func orAll(s string) string {

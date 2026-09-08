@@ -63,3 +63,18 @@ func TestComputeBehaviorBaseline(t *testing.T) {
 		t.Fatalf("top tools missing expected entries: %+v", rep.TopTools)
 	}
 }
+
+func TestPeerAwarenessBaseline(t *testing.T) {
+	events := []ToolEvent{
+		{SessionID: "sA", Agent: "codex", Tool: "aipm_list_sessions", Status: "ok"},
+		{SessionID: "sA", Agent: "codex", Tool: "aipm_get_briefing", Status: "ok"},
+		{SessionID: "sB", Agent: "claude", Tool: "aipm_search_context", Status: "ok"},
+	}
+	rep := computeBehaviorBaseline(events)
+	if rep.TotalSessions != 2 || rep.TotalCalls != 3 {
+		t.Fatalf("session/call count: %d/%d want 2/3", rep.TotalSessions, rep.TotalCalls)
+	}
+	if rep.PeerAwareness.Ratio != 0.5 || rep.PeerAwareness.Numerator != 1 || rep.PeerAwareness.Denominator != 2 {
+		t.Fatalf("peer awareness: %+v want 1/2=0.5", rep.PeerAwareness)
+	}
+}

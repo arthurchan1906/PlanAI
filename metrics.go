@@ -277,6 +277,20 @@ func dispatchMetrics(args *cli.Args) {
 		fmt.Printf("⚠ 当前项目无 pmai.db（%v）— 跳过 DB 类指标\n\n", err)
 	}
 
+	// ── Behavior baseline (B12): surface the 3-dimension + peer-awareness behavior
+	// metrics into the regular metrics panel (same --since window as DB-class metrics).
+	fmt.Println("── [行为基线 B12] ──")
+	bhSince := ""
+	if since != "" && since != "all" {
+		bhSince = since
+	}
+	if brep, err := behaviorReport(bhSince, ""); err == nil {
+		printBehaviorPanel(brep, bhSince)
+	} else {
+		fmt.Printf("  行为基线不可用: %v\n", err)
+	}
+	fmt.Println()
+
 	// ── Log class (global proxy log) ──
 	logPath := filepath.Join(os.Getenv("HOME"), ".aipmc", "logs", "aipmc.log")
 	f, err := os.Open(logPath)
