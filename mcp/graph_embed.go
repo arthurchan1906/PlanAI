@@ -12,7 +12,7 @@ import (
 func registerTraceContext(s *mcpServer) {
 	s.addTool(MCPTool{
 		Name:        "aipm_trace_context",
-		Description: "查询实体间的关联关系。数据来源: graph_edges 表(系统自动计算的文件/会话关联) + FK 主关联(commit→task→plan→roadmap)。支持 out/in/both 方向 + min_weight 过滤 + limit 分页。适用场景: 追溯 task↔commit↔session 关联链、验证 link_entities 创建的关联是否生效。",
+		Description: "查询实体间的关联关系。数据来源: graph_edges 表(系统自动计算的文件/会话关联) + FK 主关联(commit→task→plan→roadmap)。支持 out/in/both 方向 + min_weight 过滤 + limit 分页。另支持按文件路径反查: 传 file_path(仓库相对路径)后返回最近改动该文件的 commit 及其关联 task(代码↔任务索引)。适用场景: 追溯 task↔commit↔session 关联链、验证 link_entities 创建的关联是否生效、定位某文件最近被谁/哪个任务改动。",
 		InputSchema: MCPInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
@@ -20,9 +20,11 @@ func registerTraceContext(s *mcpServer) {
 				"from_id":    map[string]string{"type": "string", "description": "起点 ID"},
 				"direction":  map[string]string{"type": "string", "description": "方向: out/in/both"},
 				"min_weight": map[string]string{"type": "number", "description": "最小权重，默认 0"},
-				"limit":      map[string]string{"type": "number", "description": "最多返回边数，默认 50"},
+				"limit":      map[string]string{"type": "number", "description": "最多返回边数/commit 数，默认 50"},
+				"file_path":  map[string]string{"type": "string", "description": "(可选) 仓库相对文件路径。设置后按文件反查最近改动 commit + 关联 task，此时无需 from_type/from_id"},
+				"since":      map[string]string{"type": "string", "description": "(可选) ISO 时间下限，仅 file_path 模式生效，如 2026-09-30T00:00:00"},
 			},
-			Required: []string{"from_type", "from_id"},
+			Required: []string{},
 		},
 	}, s.handleTraceContext)
 }
@@ -33,8 +35,21 @@ func (s *mcpServer) handleTraceContext(args map[string]interface{}) mcpToolResul
 	direction := getStr(args, "direction", "both")
 	minWeight := getFloat(args, "min_weight", 0)
 	limit := int(getFloat(args, "limit", 50))
+	filePath := getStr(args, "file_path", "")
+	since := getStr(args, "since", "")
 	if limit <= 0 {
 		limit = 200
+	}
+
+	// File-path mode: 代码 ↔ 任务索引。file_path 非空时不再要求 from_type/from_id。
+	if filePath != "" {
+		jsonStr, err := store.FileTraceContextJSON("", filePath, since, limit)
+		if err != nil {
+			u.LogShared("MCP", "tool=aipm_trace_context status=ERR src=%s file=%s err=%v", mcpClientName(s.clientInfo), filePath, err)
+			return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("文件反查失败: %v", err)}}, IsError: true}
+		}
+		u.LogShared("MCP", "tool=aipm_trace_context status=OK src=%s mode=file file=%s", mcpClientName(s.clientInfo), filePath)
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: jsonStr}}}
 	}
 
 	allowed := map[string]bool{"session": true, "commit": true, "task": true, "plan": true, "decision": true, "bug": true, "idea": true}

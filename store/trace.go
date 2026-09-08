@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 
 	pmdb "aipmc/db"
 )
@@ -234,6 +235,96 @@ func resolveFKEdges(db *sql.DB, fromType, fromID, direction string) []TraceEdge 
 // TraceContextJSON wraps TraceContext for MCP output.
 func TraceContextJSON(fromType, fromID, direction string, minWeight float64, limit int) (string, error) {
 	r, err := TraceContext(fromType, fromID, direction, minWeight, limit)
+	if err != nil {
+		return "", err
+	}
+	b, err := json.Marshal(r)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// FileCommitRef is one commit (with its linked task) that touched a repo-relative path.
+// It closes the 反馈 #29 loop: file path → commit → task (代码↔任务索引).
+type FileCommitRef struct {
+	CommitID     string `json:"commit_id"`
+	CommitHash   string `json:"commit_hash,omitempty"`
+	Title        string `json:"title,omitempty"`
+	Status       string `json:"status,omitempty"`
+	ReviewStatus string `json:"review_status,omitempty"`
+	TestStatus   string `json:"test_status,omitempty"`
+	CreatedAt    string `json:"created_at,omitempty"`
+	TaskID       string `json:"task_id,omitempty"`
+	TaskTitle    string `json:"task_title,omitempty"`
+	TaskStatus   string `json:"task_status,omitempty"`
+}
+
+// FileTraceResult is the output of a "who recently changed this file" query.
+type FileTraceResult struct {
+	Path         string          `json:"path"`
+	Commits      []FileCommitRef `json:"commits"`
+	TotalCommits int             `json:"total_commits"`
+}
+
+// traceFileContext queries commits whose files_json contains the exact
+// repo-relative path (json_each — no prefix/substring false positives),
+// LEFT JOINed to tasks to expose the task linkage (code ↔ task index).
+func traceFileContext(db *sql.DB, relPath, since string, limit int) ([]FileCommitRef, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := db.Query(`
+		SELECT c.id, c.commit_hash, c.title, c.status, c.review_status, c.test_status, c.created_at,
+		       COALESCE(c.task_id,''), COALESCE(t.title,''), COALESCE(t.status,'')
+		FROM commits c LEFT JOIN tasks t ON c.task_id = t.id
+		WHERE json_valid(c.files_json)
+		  AND EXISTS (SELECT 1 FROM json_each(c.files_json) WHERE json_each.value = ?)
+		  AND c.created_at >= ?
+		ORDER BY c.created_at DESC, c.id DESC
+		LIMIT ?`, relPath, since, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []FileCommitRef{}
+	for rows.Next() {
+		var ref FileCommitRef
+		if err := rows.Scan(&ref.CommitID, &ref.CommitHash, &ref.Title, &ref.Status,
+			&ref.ReviewStatus, &ref.TestStatus, &ref.CreatedAt,
+			&ref.TaskID, &ref.TaskTitle, &ref.TaskStatus); err != nil {
+			return nil, err
+		}
+		out = append(out, ref)
+	}
+	return out, rows.Err()
+}
+
+// TraceFileContext resolves to the cwd project when projectPath is empty.
+func TraceFileContext(projectPath, relPath, since string, limit int) (*FileTraceResult, error) {
+	if relPath == "" {
+		return nil, fmt.Errorf("file path is required")
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	db, err := pmdb.OpenProject(projectPath)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	commits, err := traceFileContext(db, relPath, since, limit)
+	if err != nil {
+		return nil, err
+	}
+	return &FileTraceResult{Path: relPath, Commits: commits, TotalCommits: len(commits)}, nil
+}
+
+// FileTraceContextJSON wraps TraceFileContext for MCP output.
+func FileTraceContextJSON(projectPath, relPath, since string, limit int) (string, error) {
+	r, err := TraceFileContext(projectPath, relPath, since, limit)
 	if err != nil {
 		return "", err
 	}
