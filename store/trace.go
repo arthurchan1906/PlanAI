@@ -277,13 +277,13 @@ func traceFileContext(db *sql.DB, relPath, since string, limit int) ([]FileCommi
 		limit = 50
 	}
 	rows, err := db.Query(`
-		SELECT c.id, c.commit_hash, c.title, c.status, c.review_status, c.test_status, c.created_at,
-		       COALESCE(c.task_id,''), COALESCE(t.title,''), COALESCE(t.status,'')
-		FROM commits c LEFT JOIN tasks t ON c.task_id = t.id
-		WHERE json_valid(c.files_json)
-		  AND EXISTS (SELECT 1 FROM json_each(c.files_json) WHERE json_each.value = ?)
-		  AND c.created_at >= ?
-		ORDER BY c.created_at DESC, c.id DESC
+		SELECT commits.id, commits.commit_hash, commits.title, commits.status, commits.review_status, commits.test_status, commits.created_at,
+		       COALESCE(commits.task_id,''), COALESCE(t.title,''), COALESCE(t.status,'')
+		FROM commits LEFT JOIN tasks t ON commits.task_id = t.id
+		WHERE json_valid(commits.files_json)
+		  AND `+commitFileMatches+`
+		  AND commits.created_at >= ?
+		ORDER BY commits.created_at DESC, commits.id DESC
 		LIMIT ?`, relPath, since, limit)
 	if err != nil {
 		return nil, err
@@ -308,10 +308,10 @@ func traceFileContext(db *sql.DB, relPath, since string, limit int) ([]FileCommi
 func traceFileTotal(db *sql.DB, relPath, since string) (int, error) {
 	var n int
 	err := db.QueryRow(`
-		SELECT COUNT(*) FROM commits c
-		WHERE json_valid(c.files_json)
-		  AND EXISTS (SELECT 1 FROM json_each(c.files_json) WHERE json_each.value = ?)
-		  AND c.created_at >= ?`, relPath, since).Scan(&n)
+		SELECT COUNT(*) FROM commits
+		WHERE json_valid(commits.files_json)
+		  AND `+commitFileMatches+`
+		  AND commits.created_at >= ?`, relPath, since).Scan(&n)
 	return n, err
 }
 

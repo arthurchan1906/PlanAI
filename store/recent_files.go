@@ -87,13 +87,20 @@ func GetRecentFileSessionsFor(projectPath, relPath, since string, limit int) ([]
 	return touches, nil
 }
 
+// commitFileMatches is the SQL predicate selecting commits whose files_json
+// contains the exact repo-relative path (json_each value equality — no
+// prefix/substring false positives). The matching path is supplied as the next
+// query argument (single ? placeholder). It is the single source of the
+// json_each match rule, shared by recentFileCommits and traceFileContext.
+const commitFileMatches = `EXISTS (SELECT 1 FROM json_each(commits.files_json) WHERE json_each.value = ?)`
+
 // recentFileCommits finds git commits whose files_json contains the exact
 // repo-relative path (json_each match — no prefix/substring false positives).
 func recentFileCommits(db *sql.DB, relPath, since string, limit int) ([]CommitEvidence, error) {
 	rows, err := db.Query(`
 		SELECT id, title, commit_hash, created_at FROM commits
-		WHERE json_valid(files_json)
-		  AND EXISTS (SELECT 1 FROM json_each(commits.files_json) WHERE json_each.value = ?)
+		WHERE json_valid(commits.files_json)
+		  AND `+commitFileMatches+`
 		  AND created_at >= ?
 		ORDER BY created_at DESC
 		LIMIT ?`, relPath, since, limit)
