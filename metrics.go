@@ -64,6 +64,11 @@ func dispatchMetrics(args *cli.Args) {
 		runBaseline(args)
 		return
 	}
+	// --behavior: B11 三维度行为基线（历史检索意识/计划性/盲试检测）一次性报告。
+	if args.Bool("behavior") {
+		runBehaviorBaseline(args)
+		return
+	}
 	fmt.Println("AIPM 评估指标 — 目标值来自 docs/EVALUATION.md")
 	fmt.Println("DB 类指标: 当前项目 point-in-time；日志类指标: ~/.aipmc/logs/aipmc.log（serve 行带 project= 标签，proxy/hook 行无；已按 20MB 归档，只扫当前文件）")
 	fmt.Printf("窗口: since=%s（--since all 看全表；F1/F4/E5 验收/诊断/行为行随窗口，其余 DB 行保持全表=机制健康现状）\n", since)
