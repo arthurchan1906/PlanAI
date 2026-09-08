@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"aipmc/cli"
 	pmdb "aipmc/db"
@@ -80,6 +81,8 @@ func parseToolRow(sessionID, agent, content, ts string) (ToolEvent, bool) {
 
 // retrievalTools / planTools define the dimension cohorts. These are AIPM tools
 // that expose "context acquisition" (检索) and "planning" (计划) respectively.
+// 注: aipm_get_briefing 在系统层面兼作 E5b 执行率探针(强制注入的基线), 本维度按
+// 「获取上下文」归入检索类——双归类仅为口径说明, 不改变报告的方向性结论。
 var retrievalTools = map[string]bool{
 	"aipm_search_context": true, "aipm_smart_search": true, "aipm_search_discussions": true,
 	"aipm_read_discussions": true, "aipm_get_briefing": true, "aipm_trace_context": true,
@@ -142,6 +145,9 @@ func computeBehaviorBaseline(events []ToolEvent) BehaviorReport {
 	if len(events) > 0 {
 		rep.BlindTry.Ratio = float64(errCalls) / float64(len(events))
 	}
+	// 盲试检测(session 派生口径): 来自讨论行内带 ❌/ERR/失败 标记的事件。此值在 CLI
+	// 报告路径被权威 [MCP] 日志的 mcpErrRate 覆盖——这里保留纯 session 版仅供测试/
+	// 独立复算, 不作为最终报告值(报告用 [MCP] 日志, 见 runBehaviorBaseline)。
 
 	// top tools, most-called first
 	for _, tt := range toolSet {
@@ -162,11 +168,16 @@ func computeBehaviorBaseline(events []ToolEvent) BehaviorReport {
 // runBehaviorBaseline implements `aipmc metrics --behavior` (B11 one-shot report).
 func runBehaviorBaseline(args *cli.Args) {
 	since := args.Str("since", "")
+	until := args.Str("until", "")
 	where := ""
 	var whereArgs []any
 	if since != "" {
 		where = " AND created_at >= ?"
-		whereArgs = []any{since}
+		whereArgs = append(whereArgs, since)
+	}
+	if until != "" {
+		where += " AND created_at < ?"
+		whereArgs = append(whereArgs, dayAfter(until))
 	}
 	db, err := pmdb.Open()
 	if err != nil {
@@ -201,18 +212,21 @@ func runBehaviorBaseline(args *cli.Args) {
 	if totalRows > 0 {
 		rep.ParseCoverage = float64(len(events)) / float64(totalRows)
 	}
-	// 盲试检测(proxy): [MCP] 日志 status=ERR 占比 — discussion_log 不带状态,
-	// 故从权威 [MCP] 日志取, 与 session 基线不同源, 报告明确标注来源。
-	rep.BlindTry = mcpErrRate(logPath(), since)
-	rep.Window = since
+	// 盲试检测(proxy): [MCP] 日志 status=ERR 占比 — discussion_log 不带权威状态,
+	// 故从权威 [MCP] 日志族(aipmc.log + aipmc.log.* 归档)按日窗口取, 与 session
+	// 基线不同源, 报告明确标注来源。归档读取与 metrics/mcp_baseline.py 一致。
+	rep.BlindTry = mcpErrRate(logsDir(), since, until)
+	if since != "" || until != "" {
+		rep.Window = windowLabel(since, until)
+	}
 
 	if args.Bool("json") {
 		b, _ := json.MarshalIndent(rep, "", "  ")
 		fmt.Println(string(b))
 		return
 	}
-	fmt.Println("B11 三维度行为基线（来源 discussion_log role='tool' 行 + [MCP] 日志状态）")
-	fmt.Printf("窗口: %s | 解析覆盖率: %.1f%% | 会话 %d | 调用 %d\n\n", orAll(since), rep.ParseCoverage*100, rep.TotalSessions, rep.TotalCalls)
+	fmt.Println("B11 三维度行为基线（来源 discussion_log role='tool' 行 + [MCP] 日志族状态）")
+	fmt.Printf("窗口: %s | 解析覆盖率: %.1f%% | 会话 %d | 调用 %d\n\n", windowLabel(since, until), rep.ParseCoverage*100, rep.TotalSessions, rep.TotalCalls)
 	fmt.Printf("历史检索意识: %.1f%%（%d/%d）— 检索类 aipm_* 调用占比\n", rep.RetrievalAwareness.Ratio*100, rep.RetrievalAwareness.Numerator, rep.RetrievalAwareness.Denominator)
 	fmt.Printf("计划性: %.1f%%（%d/%d）— 使用过 plan/task 工具的会话占比\n", rep.Planfulness.Ratio*100, rep.Planfulness.Numerator, rep.Planfulness.Denominator)
 	fmt.Printf("盲试检测: %.1f%%（%d/%d）— 工具调用报错占比\n", rep.BlindTry.Ratio*100, rep.BlindTry.Numerator, rep.BlindTry.Denominator)
@@ -233,36 +247,92 @@ func orAll(s string) string {
 	return s
 }
 
-// mcpErrRate returns the ERR ratio for aipm tool calls in the global [MCP] log.
-func mcpErrRate(log, since string) BehaviorDim {
-	f, err := os.Open(log)
+// windowLabel renders the report window as "since→until" (or "since→now" /
+// "all"). Missing bounds map to "all"/"now".
+func windowLabel(since, until string) string {
+	if since == "" && until == "" {
+		return "all"
+	}
+	s := orAll(since)
+	if until == "" {
+		return s + "→now"
+	}
+	return s + "→" + until
+}
+
+// dayOnly truncates a bound to its YYYY-MM-DD day (matching the log-day window in
+// metrics/mcp_baseline.py / mcp_compare.py). Non-date strings pass through unchanged.
+func dayOnly(s string) string {
+	if len(s) >= 10 {
+		return s[:10]
+	}
+	return s
+}
+
+// dayAfter returns the exclusive day upper bound for a date-only `until` (YYYY-MM-DD)
+// so the whole `until` day is included via `created_at < dayAfter(until)`. Non-date
+// bounds (full ISO datetime) pass through unchanged.
+func dayAfter(bound string) string {
+	t, err := time.ParseInLocation("2006-01-02", bound, time.Local)
+	if err != nil {
+		return bound
+	}
+	return t.AddDate(0, 0, 1).Format("2006-01-02")
+}
+
+// mcpErrRate returns the ERR ratio for aipm tool calls in the global [MCP] log family,
+// spanning the current aipmc.log and all rotated aipmc.log.* archives (glob pattern,
+// same as metrics/mcp_baseline.py load_calls). Window bounds are log-day granularity.
+func mcpErrRate(dir, since, until string) BehaviorDim {
+	sinceDay := dayOnly(since)
+	untilDay := dayOnly(until)
+	files, err := filepath.Glob(filepath.Join(dir, "aipmc.log*"))
 	if err != nil {
 		return BehaviorDim{}
 	}
-	defer f.Close()
+	sort.Strings(files)
 	var total, errs int
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := sc.Text()
-		if !strings.Contains(line, "[MCP]") || !strings.Contains(line, "tool=") {
+	for _, path := range files {
+		base := filepath.Base(path)
+		// 只读主日志 (aipmc.log) 与轮转归档 (aipmc.log.<ts>)，跳过非日志同名文件。
+		if !strings.HasSuffix(base, ".log") && !strings.Contains(base, ".log.") {
 			continue
 		}
-		// 窗口对齐: [MCP] 行前缀 [YYYY-MM-DD ...], 仅统计日期 >= since 的行。
-		if since != "" && len(line) >= 10 && line[:10] < since[:10] {
+		f, err := os.Open(path)
+		if err != nil {
 			continue
 		}
-		toolM := mcpToolRe.FindStringSubmatch(line)
-		if toolM == nil || !strings.HasPrefix(toolM[1], "aipm_") {
-			continue
+		sc := bufio.NewScanner(f)
+		for sc.Scan() {
+			line := sc.Text()
+			if !strings.Contains(line, "[MCP]") || !strings.Contains(line, "tool=") {
+				continue
+			}
+			dateM := mcpDateRe.FindStringSubmatch(line)
+			if dateM == nil {
+				continue
+			}
+			date := dateM[1]
+			if sinceDay != "" && date < sinceDay {
+				continue
+			}
+			if untilDay != "" && date > untilDay {
+				continue
+			}
+			toolM := mcpToolRe.FindStringSubmatch(line)
+			if toolM == nil || !strings.HasPrefix(toolM[1], "aipm_") {
+				continue
+			}
+			statusM := mcpStatusRe.FindStringSubmatch(line)
+			if statusM == nil {
+				continue
+			}
+			total++
+			if statusM[1] == "ERR" {
+				errs++
+			}
 		}
-		statusM := mcpStatusRe.FindStringSubmatch(line)
-		if statusM == nil {
-			continue
-		}
-		total++
-		if statusM[1] == "ERR" {
-			errs++
-		}
+		f.Close()
 	}
 	dim := BehaviorDim{Numerator: errs, Denominator: total}
 	if total > 0 {
@@ -273,7 +343,8 @@ func mcpErrRate(log, since string) BehaviorDim {
 
 var mcpToolRe = regexp.MustCompile(`tool=([a-z0-9_]+)`)
 var mcpStatusRe = regexp.MustCompile(`status=([A-Z]+)`)
+var mcpDateRe = regexp.MustCompile(`\[(\d{4}-\d{2}-\d{2}) \d{2}:\d{2}:\d{2}\]`)
 
-func logPath() string {
-	return filepath.Join(os.Getenv("HOME"), ".aipmc", "logs", "aipmc.log")
+func logsDir() string {
+	return filepath.Join(os.Getenv("HOME"), ".aipmc", "logs")
 }

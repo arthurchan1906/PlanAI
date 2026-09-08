@@ -44,6 +44,9 @@ func TestComputeBehaviorBaseline(t *testing.T) {
 	if rep.BlindTry.Ratio != 0.2 || rep.BlindTry.Numerator != 1 || rep.BlindTry.Denominator != 5 {
 		t.Fatalf("blind try: %+v want 1/5=0.2", rep.BlindTry)
 	}
+	// 注: computeBehaviorBaseline 的 BlindTry 是「session 派生」口径(讨论行带 ❌/ERR 标记)。
+	// CLI 报告路径会用权威 [MCP] 日志的 mcpErrRate 覆盖该值, 故此处断言覆盖的是
+	// 纯 session 版分支, 不是最终报告值(最终报告值需集成测试验证)。
 	if len(rep.TopTools) != 5 {
 		t.Fatalf("top tools len = %d want 5: %+v", len(rep.TopTools), rep.TopTools)
 	}
