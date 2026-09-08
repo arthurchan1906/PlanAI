@@ -161,7 +161,7 @@ def main():
     }
 
     if not args.no_m0:
-        compare["m0"] = run_m0(args.aipmc, since, args.until)
+        compare["m0"] = run_m0(args.aipmc, since, until)
         compare["m0_caveat"] = (
             "M0 漏录率现按「当前项目 + 注册表 + 日志绝对 project= 路径」跨项目聚合 "
             "（bug-20260901-141137-acfabb 已修复），不再把跨项目 claude/codex session 误计为漏录；"

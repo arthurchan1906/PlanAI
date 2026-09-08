@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 func TestScanLLMLines(t *testing.T) {
@@ -76,6 +78,46 @@ func TestScanLLMLinesUntilBound(t *testing.T) {
 	}
 	if cx := coverage["codex"]; cx == nil || cx.TotalLines != 1 {
 		t.Errorf("codex total = %+v, want 1（00:00:05 超出 until 上界应被排除）", coverage["codex"])
+	}
+}
+
+// ① 反馈 #29 审核: 自报 commits 分布漏绑 --until 上界会混入窗口外 commit。
+// 修复后 untilISO 非空时 COUNT 只计窗口内;空则开放窗口。
+func TestSelfReportQueryUntilBound(t *testing.T) {
+	d, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if _, err := d.Exec(`CREATE TABLE commits (id TEXT PRIMARY KEY, test_status TEXT, created_at TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	must := func(q string, args ...any) {
+		if _, err := d.Exec(q, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(`INSERT INTO commits (id, test_status, created_at) VALUES ('win-1','passed','2026-09-03T10:00:00')`)
+	must(`INSERT INTO commits (id, test_status, created_at) VALUES ('out-1','passed','2026-09-05T10:00:00')`)
+
+	var cPass, cAuto, cFail, cNotRun, cOther, total int
+	since := "2026-08-29T00:00:00"
+	until := "2026-09-03T23:59:59"
+
+	q, args := selfReportQuery(since, until)
+	if err := d.QueryRow(q, args...).Scan(&cPass, &cAuto, &cFail, &cNotRun, &cOther, &total); err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || cPass != 1 {
+		t.Fatalf("until-bound self-report: total=%d pass=%d want total=1 pass=1 (09/05 应被排除)", total, cPass)
+	}
+
+	q2, args2 := selfReportQuery(since, "")
+	if err := d.QueryRow(q2, args2...).Scan(&cPass, &cAuto, &cFail, &cNotRun, &cOther, &total); err != nil {
+		t.Fatal(err)
+	}
+	if total != 2 {
+		t.Fatalf("open-window self-report: total=%d want 2", total)
 	}
 }
 

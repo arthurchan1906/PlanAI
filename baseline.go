@@ -91,6 +91,26 @@ func isProbeLine(fields map[string]string) bool {
 	return atoi(fields["in_tok"]) <= 1 && atoi(fields["out_tok"]) <= 2
 }
 
+// selfReportQuery builds the commits self-report test_status distribution
+// query, optionally bounded by an untilISO upper bound. When untilISO is empty
+// the window is open-ended (since → now).
+func selfReportQuery(sinceISO, untilISO string) (string, []any) {
+	q := `SELECT
+		COALESCE(SUM(CASE WHEN test_status='passed' THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN test_status='auto' THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN test_status='failed' THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN test_status='not_run' THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN test_status NOT IN ('passed','auto','failed','not_run') THEN 1 ELSE 0 END),0),
+		COUNT(*)
+		FROM commits WHERE substr(created_at,1,19) >= ?`
+	args := []any{sinceISO}
+	if untilISO != "" {
+		q += ` AND substr(created_at,1,19) <= ?`
+		args = append(args, untilISO)
+	}
+	return q, args
+}
+
 // scanLLMLines 扫描日志中窗口内的 [LLM] 行，返回按 agent 的覆盖统计
 // 与 (agent → session → 非探针请求数)。
 // scanLLMLines 扫描日志中窗口内的 [LLM] 行，返回按 agent 的覆盖统计、
@@ -344,8 +364,15 @@ func scanDiscussionDBs(dbPaths []string, sinceISO, untilISO string) (map[string]
 		}
 		rows.Close()
 
-		hrows, err := d.Query(`SELECT source, substr(created_at,1,13) FROM discussion_log
-			WHERE created_at >= ? AND session_id != '' AND session_id != 'unknown'`, sinceISO)
+		dhQ := `SELECT source, substr(created_at,1,13) FROM discussion_log
+			WHERE created_at >= ?`
+		dhArgs := []any{sinceISO}
+		if untilISO != "" {
+			dhQ += ` AND created_at <= ?`
+			dhArgs = append(dhArgs, untilISO)
+		}
+		dhQ += ` AND session_id != '' AND session_id != 'unknown'`
+		hrows, err := d.Query(dhQ, dhArgs...)
 		if err == nil {
 			for hrows.Next() {
 				var src, hk string
@@ -512,14 +539,8 @@ func runBaseline(args *cli.Args) {
 	// 4. 自报可信度：commits 窗口内 test_status 分布；系统验证列存在性。
 	self := selfReportStat{TestStatus: map[string]int{}}
 	var cPass, cAuto, cFail, cNotRun, cOther int
-	db.QueryRow(`SELECT
-		COALESCE(SUM(CASE WHEN test_status='passed' THEN 1 ELSE 0 END),0),
-		COALESCE(SUM(CASE WHEN test_status='auto' THEN 1 ELSE 0 END),0),
-		COALESCE(SUM(CASE WHEN test_status='failed' THEN 1 ELSE 0 END),0),
-		COALESCE(SUM(CASE WHEN test_status='not_run' THEN 1 ELSE 0 END),0),
-		COALESCE(SUM(CASE WHEN test_status NOT IN ('passed','auto','failed','not_run') THEN 1 ELSE 0 END),0),
-		COUNT(*)
-		FROM commits WHERE substr(created_at,1,19) >= ?`, sinceISO).Scan(&cPass, &cAuto, &cFail, &cNotRun, &cOther, &self.CommitsInWindow)
+	selfQ, selfArgs := selfReportQuery(sinceISO, untilISO)
+	db.QueryRow(selfQ, selfArgs...).Scan(&cPass, &cAuto, &cFail, &cNotRun, &cOther, &self.CommitsInWindow)
 	self.TestStatus["passed"] = cPass
 	self.TestStatus["auto"] = cAuto
 	self.TestStatus["failed"] = cFail
