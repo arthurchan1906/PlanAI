@@ -3,7 +3,13 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"time"
 )
+
+// eventFreshness 是「可行动事件」的状态代理窗口：mcp_error / hotspot_untracked
+// 仅在近 eventFreshness 内发生才视为「当前仍待处理」。9/9 Claude 复核纠正：D2 曾把
+// 7/30-8/31 的历史事件长期占分母（mcp_error 71 条中近 7 天仅 4 条），使 D2 失真。
+const eventFreshness = 7 * 24 * time.Hour
 
 // 共享口径 helper：`aipmc metrics` 与 `aipmc snapshot` 共用同一批 SQL，
 // 防止口径分叉（8/27 指标注册表原则——同名指标不允许两套算法）。
@@ -84,12 +90,13 @@ func collectEventStats(db *sql.DB, since string) (*eventStats, error) {
 	// 使 D2 处理率失真。此处按事件当前状态过滤后再聚合（MVP：commit_orphan 状态感知）。
 	type evAcc struct{ total, processed int }
 	actionAcc := map[string]evAcc{}
-	if rows, err := db.Query("SELECT type, entity_type, entity_id, processed_by_agent FROM events"+evWhere, evArgs...); err == nil {
+	now := time.Now()
+	if rows, err := db.Query("SELECT type, entity_type, entity_id, processed_by_agent, created_at FROM events"+evWhere, evArgs...); err == nil {
 		for rows.Next() {
-			var typ, etype, eid string
+			var typ, etype, eid, createdAt string
 			var processed int
-			if err := rows.Scan(&typ, &etype, &eid, &processed); err == nil && actionNames[typ] {
-				if !eventStillActionable(db, typ, etype, eid) {
+			if err := rows.Scan(&typ, &etype, &eid, &processed, &createdAt); err == nil && actionNames[typ] {
+				if !eventStillActionable(db, typ, etype, eid, createdAt, now) {
 					continue // 事件所指问题已解决 → 不再纳入可行动
 				}
 				a := actionAcc[typ]
@@ -125,9 +132,10 @@ func collectEventStats(db *sql.DB, since string) (*eventStats, error) {
 }
 
 // eventStillActionable 判断一个「可行动」事件是否仍然代表未解决的当前状态。
-// 9/9 根因：D2 曾按事件类型全量计数，使得已解决的 commit_orphan 长期占分母
-// （实测 227/228 为 stale），观测量失真。只有当前仍处于问题状态的才计入。
-func eventStillActionable(db *sql.DB, typ, entityType, entityID string) bool {
+// 9/9 根因：D2 曾按事件类型全量计数，使得已解决的历史事件长期占分母
+// （commit_orphan 227/228 stale、mcp_error 近 7 天仅 4/71），观测量失真。
+// 只有「当前仍待处理」的才计入：commit_orphan 用真状态；mcp_error/hotspot 用新鲜度代理。
+func eventStillActionable(db *sql.DB, typ, entityType, entityID, createdAt string, now time.Time) bool {
 	switch typ {
 	case "commit_orphan":
 		if entityType != "commit" {
@@ -139,8 +147,13 @@ func eventStillActionable(db *sql.DB, typ, entityType, entityID string) bool {
 			return false
 		}
 		return taskID.String == ""
+	case "mcp_error", "hotspot_untracked":
+		t, err := time.ParseInLocation("2006-01-02T15:04:05", createdAt, time.Local)
+		if err != nil {
+			return false // 无法解析时间 → 保守视为 stale，不计入
+		}
+		return now.Sub(t) <= eventFreshness
 	default:
-		// MVP：mcp_error / hotspot_untracked 暂按原口径（后续再做状态感知）。
 		return true
 	}
 }
