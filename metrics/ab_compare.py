@@ -6,6 +6,9 @@
 原则（METRICS_REPORT-2026-09-03 §0 / decision-20260908-151649 / BEHAVIOR_BASELINE）：
   - 固定窗口可复算：一律 --since/--until，禁止 all 窗口（盲试分母随日志漂移 4880→4916）。
   - 行为维度（B10/B11/B12+同行感知）= 可复算信号，由 `aipmc metrics --behavior --json` 权威产出。
+  - 干预声明必填：--intervention on/off。**无真实 skill 开/关干预时，任何 after 数据都不得
+    解读为 A/B 效果**——自然漂移与强制净增量是两回事（Claude 9/9 指出：缺标注的 +50pp 同行
+    感知是最易产生健康幻觉的呈现）。
   - D1 自发率（双目标：纯自发≈0%↑ + 含半自发 15%→30%）依赖**人工双标 + gold**，本脚本
     不臆造；除非 `--d1-gold <文件>` 提供了标注集，否则只在占位处提示「需人工标注」。
   - 排除 auto：D1 标注层做；独立结果（task done / done_gate / 孤儿绑定）的 review_status=auto
@@ -14,7 +17,7 @@
 用法：
   python3 metrics/ab_compare.py \
       --before-since 2026-08-29 --before-until 2026-09-03 \
-      --after-since  2026-09-04 --after-until  2026-09-08
+      --after-since  2026-09-04 --after-until  2026-09-08 --intervention on
   python3 metrics/ab_compare.py --no-results   # 只比行为维度，不解析独立结果
 """
 import argparse
@@ -110,6 +113,8 @@ def main():
     ap.add_argument("--before-until", required=True, help="A/B before 窗口结束")
     ap.add_argument("--after-since", required=True, help="A/B after 窗口起始")
     ap.add_argument("--after-until", required=True, help="A/B after 窗口结束")
+    ap.add_argument("--intervention", required=True, choices=["on", "off"],
+                    help="是否有真实 skill 开/关干预；off=仅自然观测，禁止作 A/B 效果解读")
     ap.add_argument("--no-results", action="store_true", help="不解析独立结果指标")
     ap.add_argument("--d1-gold", default=None, help="D1 双标/gold 标注 JSON（可选）")
     args = ap.parse_args()
@@ -119,11 +124,17 @@ def main():
     if "error" in before or "error" in after:
         sys.exit(f"行为基线失败: before={before.get('error')} after={after.get('error')}")
 
-    print("== 路2 A/B 行为维度（固定窗口可复算）==")
+    header = "== 路2 A/B 行为维度（固定窗口可复算,intervention=on）==" if args.intervention == "on" \
+        else "== 无条件自然观测（intervention=off）——**禁止**解读为 A/B 效果 =="
+    print(header)
     print(f"before: {args.before_since}→{args.before_until}")
     print(f"after : {args.after_since}→{args.after_until}")
     print(f"会话/调用 before: {before.get('total_sessions')}/{before.get('total_calls')}  "
           f"after: {after.get('total_sessions')}/{after.get('total_calls')}")
+    if args.intervention != "on":
+        print("\n!!! 无干预条件：以下 Δ 为自然漂移，不是强制净增量。")
+        print("!!! 如需 A/B 对比，必须真实部署 skill 开/关并 --intervention on。")
+        print("!!! 任何 after 数据在无干预标注时，都不得进入 A/B 比较表。\n")
     print()
     print(fmt_table(dim_before_after(before, after)))
     print()
