@@ -174,9 +174,14 @@ func Reconcile(since, projectPath string) (ReconcileResult, error) {
 		// Execute auto-links for this session's batch
 		for _, link := range out.AutoLinked {
 			if link.SessionID == ss.SessionID {
-				store.CreateLink(projectPath, link.SourceType, link.SourceID, "relates_to",
+				// 账本完整性（反馈 #38）：CreateLink 现在会拒绝指向不存在实体的边。
+				// 这里若吞掉错误，被拒的边就完全不可审计——记一行日志留痕。
+				if _, err := store.CreateLink(projectPath, link.SourceType, link.SourceID, "relates_to",
 					link.TargetType, link.TargetID,
-					fmt.Sprintf("reconcile: %s", link.Reason))
+					fmt.Sprintf("reconcile: %s", link.Reason)); err != nil {
+					u.LogShared("RECONCILE", "auto-link rejected src=%s/%s dst=%s/%s err=%v",
+						link.SourceType, link.SourceID, link.TargetType, link.TargetID, err)
+				}
 			}
 		}
 

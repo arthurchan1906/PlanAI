@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -546,12 +547,70 @@ func validCommitHash(h string) bool {
 	return true
 }
 
+// repoRootForCommitCheck 定位 git 校验用的仓库根目录。
+func repoRootForCommitCheck(projectPath string) string {
+	if projectPath != "" {
+		return projectPath
+	}
+	d, err := pmdb.RuntimeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Dir(d)
+}
+
+func gitTrimmedOut(dir string, args ...string) (string, error) {
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	out, err := cmd.CombinedOutput()
+	return strings.TrimSpace(string(out)), err
+}
+
+// canonicalCommitHash 把提交引用规范化成仓库内的完整 SHA（反馈 #40）。
+//
+// 背景：record_commit 此前只校验「是不是 hex」，不校验「仓库里有没有这个
+// 对象」。EncryptDrive 实测 eb251bc06233b5b4c4b8b6ba4aa0f1c6f7e7b0f4 就是
+// 一条被写入账本、但 `git cat-file` 找不到的提交（与真实提交共享前 12 位）。
+// 后果有两层：① hash 去重匹配不上 hook 记的那条 → 同一提交落下两条记录，
+// 简报把同一条标题报两遍 orphan；② 账本里多了一笔不存在的提交——正是
+// C3 同族的「假绿灯」，只不过这次假的是记录本身。
+//
+// 判定（不阻断非 git 场景）：
+//   - 不在 git 仓库内 / git 不可用 → 原样返回，保持旧行为
+//   - 仓库内可解析 → 返回完整 SHA（短前缀也规范化，去重因此能命中 hook 行）
+//   - 仓库内不存在 / 前缀有歧义 → 报错并给出取真实 hash 的方式
+func canonicalCommitHash(projectPath, ref string) (string, error) {
+	root := repoRootForCommitCheck(projectPath)
+	if root == "" {
+		return ref, nil
+	}
+	if _, err := gitTrimmedOut(root, "rev-parse", "--git-dir"); err != nil {
+		return ref, nil
+	}
+	out, err := gitTrimmedOut(root, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
+	if err == nil {
+		if out != "" {
+			return out, nil
+		}
+		return ref, nil
+	}
+	if out != "" {
+		return "", fmt.Errorf("commit_hash %q 在仓库 %s 中无法解析：%s（前缀有歧义时请传更长的 SHA）", ref, root, out)
+	}
+	return "", fmt.Errorf("commit_hash %q 在仓库 %s 中不存在——git 找不到该对象，账本拒绝记录一笔无法溯源的提交；"+
+		"请用 `git rev-parse HEAD` 取本仓库完整 SHA，若该提交属于另一个仓库请把 project_path 指向那个仓库", ref, root)
+}
+
 func CreateCommit(projectPath string, title, summary, evidenceSummary, reviewNotes, branch, commitHash, taskID, decisionID, status, testStatus, reviewStatus string, files []string) (map[string]any, error) {
 	if commitHash == "" {
 		return nil, fmt.Errorf("commit requires commit_hash — run `git rev-parse HEAD` and pass the full SHA")
 	}
 	if !validCommitHash(commitHash) {
 		return nil, fmt.Errorf("invalid commit_hash %q: must be 4-64 lowercase hex (git object hash)", commitHash)
+	}
+	if canonical, cerr := canonicalCommitHash(projectPath, commitHash); cerr != nil {
+		return nil, cerr
+	} else {
+		commitHash = canonical
 	}
 	if taskID == "" {
 		return nil, fmt.Errorf("commit requires --task-id (or --task-ids for multi-task). Find a task: aipmc task list --status in_progress")
@@ -1118,6 +1177,49 @@ func GetBug(id string) (map[string]any, error) {
 	return b, nil
 }
 
+// resolveCommitRef 归一化 commit 引用：接受 PM commit id（形如
+// commit-20260922-140451-e58f9d）或 git SHA（完整/唯一前缀）。
+// 反馈 #43：此前只做 id 精确匹配，传短 hash 直接报「commit not found」
+// 且无任何格式指引；同族问题 8/28 已在 get_decision 上修过（前缀匹配）。
+func resolveCommitRef(db *sql.DB, ref string) (string, error) {
+	var id string
+	if err := db.QueryRow("SELECT id FROM commits WHERE id = ? LIMIT 1", ref).Scan(&id); err == nil {
+		return id, nil
+	}
+	rows, err := db.Query("SELECT id FROM commits WHERE commit_hash = ? OR commit_hash LIKE ? || '%' ORDER BY created_at DESC LIMIT 5", ref, ref)
+	if err == nil {
+		defer rows.Close()
+		var hits []string
+		for rows.Next() {
+			var h string
+			if scanErr := rows.Scan(&h); scanErr == nil {
+				hits = append(hits, h)
+			}
+		}
+		if len(hits) == 1 {
+			return hits[0], nil
+		}
+		if len(hits) > 1 {
+			return "", fmt.Errorf("commit 引用 %q 命中 %d 条提交，请传更长的 git SHA 前缀或 PM commit id", ref, len(hits))
+		}
+	}
+	return "", fmt.Errorf("commit 不存在: %s。可传 PM commit id（形如 commit-20260922-140451-e58f9d）或 git SHA（完整或唯一前缀，如 ba6a67e）；用 aipm_list_commits 查真实 id", ref)
+}
+
+// validateLinkEntity 校验关联端实体存在（反馈 #38）。
+// entityTable 返回空 = 非 PM 实体类型（discussion/session 等）→ 放行。
+func validateLinkEntity(db *sql.DB, typ, id string) error {
+	tbl := entityTable(strings.ToLower(typ))
+	if tbl == "" {
+		return nil
+	}
+	var n int
+	if err := db.QueryRow("SELECT 1 FROM "+tbl+" WHERE id = ? LIMIT 1", id).Scan(&n); err != nil {
+		return fmt.Errorf("关联失败：%s 实体不存在（%s / %s）。link_entities 拒绝写入悬空边——请先用 aipm_search_context 查真实 id", typ, typ, id)
+	}
+	return nil
+}
+
 func CreateBug(projectPath string, title, description, severity, status, commitID, taskID, errMsg, files, rootCause, fix, tags string) (map[string]any, error) {
 	db, err := pmdb.OpenProject(projectPath)
 	if err != nil {
@@ -1125,10 +1227,11 @@ func CreateBug(projectPath string, title, description, severity, status, commitI
 	}
 	defer db.Close()
 	if commitID != "" {
-		var _x int
-		if err := db.QueryRow("SELECT 1 FROM commits WHERE id = ?", commitID).Scan(&_x); err != nil {
-			return nil, fmt.Errorf("commit not found: %s", commitID)
+		resolved, rerr := resolveCommitRef(db, commitID)
+		if rerr != nil {
+			return nil, rerr
 		}
+		commitID = resolved
 	}
 	if taskID != "" {
 		var _x int
@@ -1298,7 +1401,6 @@ func ScanVerificationLogRow(scanner interface{ Scan(...any) error }, m map[strin
 	m["updated_at"] = updatedAt
 	return nil
 }
-
 
 // ============================================================
 // Decisions
@@ -1860,6 +1962,17 @@ func CreateLink(projectPath string, sourceType, sourceID, relation, targetType, 
 	}
 	if !allowedLinks[relation] {
 		return nil, fmt.Errorf("relation '%s' is not allowed. Valid options: relates_to, implements, fixes, blocked_by, depends_on, converted_to", relation)
+	}
+
+	// 账本完整性（反馈 #38）：拒绝指向不存在实体的悬空边。
+	// 此前只校验 relation 白名单即写入，agent 猜错 id 也会返回「✅ 已关联」，
+	// 之后 trace_context 会沿该边查到不存在的实体。仅对已知 PM 实体类型强
+	// 校验；未知类型（discussion/session 等）放行，避免破坏自动关联路径。
+	if err := validateLinkEntity(db, sourceType, sourceID); err != nil {
+		return nil, err
+	}
+	if err := validateLinkEntity(db, targetType, targetID); err != nil {
+		return nil, err
 	}
 
 	id := u.Slug("link")
