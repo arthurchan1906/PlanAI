@@ -310,8 +310,10 @@ func dispatchMetrics(args *cli.Args) {
 		latMax                                                            float64
 	}
 	byAgent := map[string]*llm{}
-	var agentHookErr, postCommitErr, faOK, faErr, supTotal, supChar, skipTotal int
+	var agentHookErr, postCommitErr, faOK, faErr int
 	var injOK, injGuidelines, injSame, injNoSum int
+	// C3 专用计数（口径见 suppressedRate）：分母只含实际注入，且限定 8/18 语义修订后。
+	var c3Injections, c3SupChar, c3PreEra int
 	var latestItems, latestTotal int
 	latestAt := ""
 	haveLatest := false
@@ -397,7 +399,6 @@ func dispatchMetrics(args *cli.Args) {
 				faOK++
 			}
 		case strings.Contains(line, "[INJECT] skip"):
-			skipTotal++
 			if strings.Contains(line, "reason=same_content") {
 				injSame++
 			} else if strings.Contains(line, "reason=no_summary_data") {
@@ -406,13 +407,24 @@ func dispatchMetrics(args *cli.Args) {
 		case strings.Contains(line, "[INJECT] inject "):
 			// 仅 guidelines_only 行带 "inject " 前缀（source=guidelines_only）。
 			injGuidelines++
+			if inC3Era(line) {
+				c3Injections++
+			}
 		case strings.Contains(line, "[INJECT] agent="):
 			// 正常注入行：agent=... goals=...（无 "inject " 前缀）。
 			injOK++
+			if inC3Era(line) {
+				c3Injections++
+			}
 		case strings.Contains(line, "suppressed="):
-			supTotal++
 			if strings.Contains(line, "reason=char_limit") {
-				supChar++
+				// C3 只统计 8/18 起的行：更早的旧实现把未注入请求（same_content/
+				// cooldown）的抑制也计入，与现口径同池会虚高（8/14 归档实测 >100%）。
+				if inC3Era(line) {
+					c3SupChar++
+				} else {
+					c3PreEra++
+				}
 			}
 		case strings.Contains(line, "[MCP-ERR]"):
 			// 错误已由 [MCP] status=ERR 计数（避免双计），此处统计 reason 分类分布
@@ -485,10 +497,7 @@ func dispatchMetrics(args *cli.Args) {
 	if faOK+faErr > 0 {
 		faRate = float64(faOK) / float64(faOK+faErr)
 	}
-	supRate := 0.0
-	if supTotal+skipTotal > 0 {
-		supRate = float64(supChar) / float64(supTotal+skipTotal)
-	}
+	supRate := suppressedRate(c3SupChar, c3Injections)
 	// B8: agent hook 调用总量不可测（无成功埋点），仅能统计错误计数。
 	printRow("B8  hook_error(agent)", fmt.Sprint(agentHookErr)+" 次", "计数", agentHookErr == 0)
 	printRow("B8  hook_error(post-commit)", fmt.Sprint(postCommitErr)+" 次", "计数", postCommitErr == 0)
@@ -498,7 +507,11 @@ func dispatchMetrics(args *cli.Args) {
 	covRate, _ := injectCoverage(injOK, injGuidelines, injSame, injNoSum)
 	printRow("C1  inject_coverage", pct(covRate)+fmt.Sprintf(" (注入%d+去重%d)", injOK+injGuidelines, injSame), "≥80%", covRate >= 0.80)
 	printRow("C2  file_parse_ok_rate", pct(faRate), "≥90%", faRate >= 0.90)
-	printRow("C3  suppressed(char_limit)", fmt.Sprintf("%d/%d", supChar, supTotal+skipTotal)+" 次", "<30%", supRate < 0.30)
+	c3Val := fmt.Sprintf("%d/%d", c3SupChar, c3Injections) + " 次"
+	if c3PreEra > 0 {
+		c3Val += fmt.Sprintf("(忽略8/18前%d行)", c3PreEra)
+	}
+	printRow("C3  suppressed(char_limit)", c3Val, "<30%", supRate < 0.30)
 	aiVal, aiOk := "无日志", false
 	if haveLatest {
 		aiVal = fmt.Sprintf("%d/%d", latestItems, latestTotal)
@@ -711,6 +724,42 @@ func printRow(name, val, target string, ok bool) {
 }
 
 func pct(v float64) string { return fmt.Sprintf("%.1f%%", v*100) }
+
+// c3EraStartDay 是 C3 suppressed 语义的修订日：自 8/18 起，`suppressed=N
+// reason=char_limit` 只在请求**实际注入**后产出（见 proxy/context_inject.go
+// shouldInject 之后的计数）。更早的旧实现把未注入请求（same_content/cooldown）
+// 的抑制一并计入，实测 8/12-8/14 段 suppressed(3303) > 注入(2236)，与现口径
+// 不可同池比较，故 C3 统计区间自此日起。
+//
+// 注：`aipmc metrics` 当前只扫当前日志文件（os.Open(logPath)，轮转归档不读），
+// 实际落在 9/2 之后，故本界限在 CLI 路径上暂不触发——保留它是为了防止扫描范围
+// 一旦放宽到归档（metrics/mcp_baseline.py 的 load_calls 已按 aipmc.log* glob）
+// 时 C3 静默 >100%，同时把该口径显式写进代码而非注释。
+const c3EraStartDay = "2026-08-18"
+
+// inC3Era reports whether a log line is dated on/after the C3 semantics revision.
+// 无日期行（旧格式 [HH:MM:SS]）返回 false——它们无法定位到具体日期。
+func inC3Era(line string) bool {
+	ts, hasDate, ok := parseLogTimestamp(line)
+	if !ok || !hasDate {
+		return false
+	}
+	return dayOnly(ts.Format("2006-01-02")) >= c3EraStartDay
+}
+
+// suppressedRate 计算 C3 suppressed(char_limit)：分子 = 被 cap 裁剪的注入数，
+// 分母 = **实际注入数**（注入 + guidelines_only）。
+// 旧实现分母误用「注入 + same_content 去重跳过」：去重请求按设计不产出 suppressed
+// 行，只能进分母不能进分子，把「每次注入都被 800 字符硬裁剪」稀释成 27.7% 达标
+// （见 bug-20260922-102406-70f863）。对照 C1：coverage 关心「请求是否被服务」，
+// 故把去重计入分母是对的；C3 关心「注入内容是否被裁剪」，裁剪只可能发生在实际
+// 注入上，故分母不含去重。
+func suppressedRate(c3SupChar, c3Injections int) float64 {
+	if c3Injections <= 0 {
+		return 0
+	}
+	return float64(c3SupChar) / float64(c3Injections)
+}
 
 // injectCoverage 计算 C1 inject_coverage（HARNESS M1，8/18 修正）：
 // 分子 = 注入 + 去重（same_content）；分母 = 注入 + 去重 + guidelines_only，

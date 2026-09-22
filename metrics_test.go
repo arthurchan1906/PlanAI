@@ -99,3 +99,53 @@ func TestInjectCoveragePartial(t *testing.T) {
 		t.Fatalf("rate = %v, want 1.0", rate)
 	}
 }
+
+// C3 回归（bug-20260922-102406-70f863）：分母必须是实际注入数，不含 same_content 去重跳过。
+// 旧公式 supChar/(supTotal+skipTotal) 会把「每次注入都被 800 字符硬裁剪」稀释成达标绿灯。
+func TestSuppressedRateExcludesDedupSkips(t *testing.T) {
+	// 2 次注入全部被裁剪 + 10 次去重跳过 → 真实 100%；旧公式 2/(2+10) ≈ 16.7%。
+	if got := suppressedRate(2, 2); got != 1.0 {
+		t.Errorf("suppressedRate(2,2) = %v, want 1.0", got)
+	}
+	if old := 2.0 / float64(2+10); old >= 0.30 {
+		t.Fatalf("前提失效：旧公式 %.3f 不再呈现为达标，回归价值消失", old)
+	}
+	// 线上真实数据（2026-09-22 实测）：5926 次注入，5926 次被裁剪。
+	// 旧公式 5926/21403 = 27.7% ✅；新公式 100.0% ❌。
+	if got := suppressedRate(5926, 5926); got != 1.0 {
+		t.Errorf("suppressedRate(5926,5926) = %v, want 1.0", got)
+	}
+}
+
+func TestSuppressedRatePartialAndZeroDenom(t *testing.T) {
+	if got := suppressedRate(3, 4); got != 0.75 {
+		t.Errorf("suppressedRate(3,4) = %v, want 0.75", got)
+	}
+	if got := suppressedRate(0, 0); got != 0 {
+		t.Errorf("suppressedRate(0,0) = %v, want 0（零分母不得 NaN）", got)
+	}
+	if got := suppressedRate(5, 0); got != 0 {
+		t.Errorf("suppressedRate(5,0) = %v, want 0", got)
+	}
+}
+
+// C3 语义分界：8/18 起 suppressed=reason=char_limit 才只在实际注入后产出；
+// 更早的旧实现把未注入请求的抑制也算进来（8/12-8/14 段实测 suppressed>注入），
+// 故旧行不得计入 C3 区间。
+func TestInC3EraBoundary(t *testing.T) {
+	cases := []struct {
+		line string
+		want bool
+	}{
+		{"[2026-08-17 23:59:59] [INJECT] suppressed=1 reason=char_limit cap=800", false},
+		{"[2026-08-18 00:00:00] [INJECT] suppressed=1 reason=char_limit cap=800", true},
+		{"[2026-09-22 10:10:20] [INJECT] suppressed=9 reason=char_limit cap=800", true},
+		{"[16:38:44] [INJECT] suppressed=1 reason=char_limit cap=800", false},
+		{"[2026-08-12 16:06:27] [INJECT] agent=codex goals=3 chars=707", false},
+	}
+	for _, c := range cases {
+		if got := inC3Era(c.line); got != c.want {
+			t.Errorf("inC3Era(%q) = %v, want %v", c.line, got, c.want)
+		}
+	}
+}
