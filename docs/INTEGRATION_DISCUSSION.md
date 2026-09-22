@@ -74,7 +74,8 @@
 
 ## 6. 删减/降级清单
 
-- meeting_* 三表 + agent_assignments：标 deprecated（不动 schema），除非共享记忆方向激活。
+- meeting_* 三表 + agent_assignments：标 deprecated，除非共享记忆方向激活。
+  **（2026-09-22 修订）执行方式改为「不再生成」**：这四张表两库均 0 行、全仓零引用，已在 `db/db.go` 删除其 CREATE 与全部 ALTER 迁移（不 DROP，存量表原样保留）——原写法「不动 schema」会让每个新库继续长出四张死表。留档见 `decision-20260922-150536-7f733a`。
 - agent/app/chatcli：降级为试验台，不作为产品线投入。
 - 两套 INJECT 解析器：合并为单一口径（M1a project= 过滤统一）。
 - EVAL_PIPELINE 被取代部分：标 deprecated，避免规格多头。

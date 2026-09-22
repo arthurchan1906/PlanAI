@@ -382,10 +382,7 @@ var schemaStatements = []string{
 	`CREATE VIRTUAL TABLE IF NOT EXISTS fts5_index USING fts5(content, entity_type UNINDEXED, entity_id UNINDEXED, title, tokenize='unicode61')`,
 	`CREATE TABLE IF NOT EXISTS agent_profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'coder', capabilities TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS agent_status (session_id TEXT PRIMARY KEY, source TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL, explicit INTEGER NOT NULL DEFAULT 0)`,
-	`CREATE TABLE IF NOT EXISTS meeting_rooms (id TEXT PRIMARY KEY, title TEXT NOT NULL, topic TEXT NOT NULL, context TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active', agent_roles_context TEXT NOT NULL DEFAULT '', auto_arbitrate INTEGER NOT NULL DEFAULT 0, meeting_mode TEXT NOT NULL DEFAULT 'discussion', created_by TEXT NOT NULL, created_at TEXT NOT NULL, closed_at TEXT)`,
-	`CREATE TABLE IF NOT EXISTS meeting_turns (id TEXT PRIMARY KEY, room_id TEXT NOT NULL, turn_number INTEGER NOT NULL, speaker_type TEXT NOT NULL, speaker_id TEXT NOT NULL, question TEXT NOT NULL, response TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'waiting', reply_to TEXT NOT NULL DEFAULT '', address_to TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, FOREIGN KEY(room_id) REFERENCES meeting_rooms(id))`,
-	`CREATE TABLE IF NOT EXISTS meeting_participants (meeting_id TEXT NOT NULL, agent_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', confirmed_at TEXT NOT NULL, PRIMARY KEY (meeting_id, agent_id), FOREIGN KEY(meeting_id) REFERENCES meeting_rooms(id), FOREIGN KEY(agent_id) REFERENCES agent_profiles(id))`,
-	`CREATE TABLE IF NOT EXISTS agent_assignments (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, task_id TEXT, role TEXT NOT NULL, scope TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'assigned', assigned_by TEXT NOT NULL, assigned_at TEXT NOT NULL, claimed_at TEXT, completed_at TEXT, FOREIGN KEY(agent_id) REFERENCES agent_profiles(id), FOREIGN KEY(task_id) REFERENCES tasks(id))`,
+
 	`CREATE TABLE IF NOT EXISTS audit_log (id TEXT PRIMARY KEY, actor_type TEXT NOT NULL, actor_id TEXT NOT NULL, action TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, summary TEXT NOT NULL, detail_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS graph_edges (id TEXT PRIMARY KEY, source_type TEXT NOT NULL, source_id TEXT NOT NULL, edge_type TEXT NOT NULL, target_type TEXT NOT NULL, target_id TEXT NOT NULL, weight REAL NOT NULL DEFAULT 1.0, evidence_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL)`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS idx_graph_edges_unique ON graph_edges(source_type, source_id, edge_type, target_type, target_id)`,
@@ -440,8 +437,6 @@ func migrate(d *sql.DB) error {
 	// 建表必须先于 ALTER：全新库若先 ALTER 后 CREATE，ALTER 因表不存在
 	// 失败且错误被吞（8/10 T1 压测发现 discussion_log 缺 metadata 列）。
 	for _, spec := range []struct{ table, sql string }{
-		{"meeting_rooms", `CREATE TABLE IF NOT EXISTS meeting_rooms (id TEXT PRIMARY KEY, title TEXT NOT NULL, topic TEXT NOT NULL, context TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active', agent_roles_context TEXT NOT NULL DEFAULT '', auto_arbitrate INTEGER NOT NULL DEFAULT 0, meeting_mode TEXT NOT NULL DEFAULT 'discussion', created_by TEXT NOT NULL, created_at TEXT NOT NULL, closed_at TEXT)`},
-		{"meeting_turns", `CREATE TABLE IF NOT EXISTS meeting_turns (id TEXT PRIMARY KEY, room_id TEXT NOT NULL, turn_number INTEGER NOT NULL, speaker_type TEXT NOT NULL, speaker_id TEXT NOT NULL, question TEXT NOT NULL, response TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'waiting', reply_to TEXT NOT NULL DEFAULT '', address_to TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, FOREIGN KEY(room_id) REFERENCES meeting_rooms(id))`},
 		{"discussion_log", `CREATE TABLE IF NOT EXISTS discussion_log (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, role TEXT NOT NULL, source TEXT NOT NULL DEFAULT '', content TEXT NOT NULL, created_at TEXT NOT NULL, embedding_json TEXT DEFAULT '', metadata TEXT DEFAULT '', thread_id TEXT DEFAULT '')`},
 		{"verification_log", `CREATE TABLE IF NOT EXISTS verification_log (id TEXT PRIMARY KEY, scene TEXT NOT NULL, device TEXT NOT NULL DEFAULT '', ksn TEXT NOT NULL DEFAULT '', result TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', session_id TEXT NOT NULL DEFAULT '', project TEXT NOT NULL DEFAULT '', task_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(task_id) REFERENCES tasks(id))`},
 	} {
@@ -449,31 +444,6 @@ func migrate(d *sql.DB) error {
 			if _, err := d.Exec(spec.sql); err != nil {
 				return fmt.Errorf("migration %s: %w", spec.table, err)
 			}
-		}
-	}
-	if !ColumnExists(d, "meeting_rooms", "agent_roles_context") {
-		if _, err := d.Exec("ALTER TABLE meeting_rooms ADD COLUMN agent_roles_context TEXT DEFAULT ''"); err != nil {
-			return fmt.Errorf("migration meeting_rooms.agent_roles_context: %w", err)
-		}
-	}
-	if !ColumnExists(d, "meeting_rooms", "auto_arbitrate") {
-		if _, err := d.Exec("ALTER TABLE meeting_rooms ADD COLUMN auto_arbitrate INTEGER DEFAULT 0"); err != nil {
-			return fmt.Errorf("migration meeting_rooms.auto_arbitrate: %w", err)
-		}
-	}
-	if !ColumnExists(d, "meeting_rooms", "meeting_mode") {
-		if _, err := d.Exec("ALTER TABLE meeting_rooms ADD COLUMN meeting_mode TEXT DEFAULT 'discussion'"); err != nil {
-			return fmt.Errorf("migration meeting_rooms.meeting_mode: %w", err)
-		}
-	}
-	if !ColumnExists(d, "meeting_turns", "reply_to") {
-		if _, err := d.Exec("ALTER TABLE meeting_turns ADD COLUMN reply_to TEXT DEFAULT ''"); err != nil {
-			return fmt.Errorf("migration meeting_turns.reply_to: %w", err)
-		}
-	}
-	if !ColumnExists(d, "meeting_turns", "address_to") {
-		if _, err := d.Exec("ALTER TABLE meeting_turns ADD COLUMN address_to TEXT DEFAULT ''"); err != nil {
-			return fmt.Errorf("migration meeting_turns.address_to: %w", err)
 		}
 	}
 	if !ColumnExists(d, "discussion_log", "embedding_json") {
@@ -505,39 +475,9 @@ func migrate(d *sql.DB) error {
 	if _, err := d.Exec("CREATE INDEX IF NOT EXISTS idx_discussion_log_session ON discussion_log(session_id)"); err != nil {
 		return fmt.Errorf("migration discussion_log.session_id index: %w", err)
 	}
-	if !ColumnExists(d, "meeting_rooms", "pm_typing") {
-		if _, err := d.Exec("ALTER TABLE meeting_rooms ADD COLUMN pm_typing INTEGER DEFAULT 0"); err != nil {
-			return fmt.Errorf("migration meeting_rooms.pm_typing: %w", err)
-		}
-	}
-	if !ColumnExists(d, "meeting_rooms", "pm_last_visit_at") {
-		if _, err := d.Exec("ALTER TABLE meeting_rooms ADD COLUMN pm_last_visit_at TEXT DEFAULT ''"); err != nil {
-			return fmt.Errorf("migration meeting_rooms.pm_last_visit_at: %w", err)
-		}
-	}
-	if !ColumnExists(d, "meeting_rooms", "plan_id") {
-		if _, err := d.Exec("ALTER TABLE meeting_rooms ADD COLUMN plan_id TEXT DEFAULT ''"); err != nil {
-			return fmt.Errorf("migration meeting_rooms.plan_id: %w", err)
-		}
-	}
-	for _, spec := range []struct{ table, sql string }{
-		{"meeting_participants", `CREATE TABLE IF NOT EXISTS meeting_participants (meeting_id TEXT NOT NULL, agent_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', confirmed_at TEXT NOT NULL, PRIMARY KEY (meeting_id, agent_id), FOREIGN KEY(meeting_id) REFERENCES meeting_rooms(id), FOREIGN KEY(agent_id) REFERENCES agent_profiles(id))`},
-		{"agent_assignments", `CREATE TABLE IF NOT EXISTS agent_assignments (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, task_id TEXT, role TEXT NOT NULL, scope TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'assigned', assigned_by TEXT NOT NULL, assigned_at TEXT NOT NULL, claimed_at TEXT, completed_at TEXT, FOREIGN KEY(agent_id) REFERENCES agent_profiles(id), FOREIGN KEY(task_id) REFERENCES tasks(id))`},
-	} {
-		if !tableOrVTableExists(d, spec.table) {
-			if _, err := d.Exec(spec.sql); err != nil {
-				return fmt.Errorf("migration %s: %w", spec.table, err)
-			}
-		}
-	}
 	if !tableOrVTableExists(d, "agent_profiles") {
 		if _, err := d.Exec(`CREATE TABLE IF NOT EXISTS agent_profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'coder', capabilities TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`); err != nil {
 			return fmt.Errorf("migration agent_profiles: %w", err)
-		}
-	}
-	if !ColumnExists(d, "meeting_participants", "last_seen_turn") {
-		if _, err := d.Exec("ALTER TABLE meeting_participants ADD COLUMN last_seen_turn INTEGER DEFAULT 0"); err != nil {
-			return fmt.Errorf("migration meeting_participants.last_seen_turn: %w", err)
 		}
 	}
 	if !tableOrVTableExists(d, "fts5_index") {

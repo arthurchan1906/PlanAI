@@ -31,15 +31,13 @@ func TestMigrateFreshDB(t *testing.T) {
 	if err := EnsureSchema(d); err != nil {
 		t.Fatalf("EnsureSchema fresh: %v", err)
 	}
-	for _, tbl := range []string{"audit_log", "meeting_rooms", "meeting_turns", "discussion_log", "agent_profiles", "meeting_participants", "fts5_index", "session_summaries", "agent_status", "verification_log"} {
+	for _, tbl := range []string{"audit_log", "discussion_log", "agent_profiles", "fts5_index", "session_summaries", "agent_status", "verification_log"} {
 		if !tableOrVTableExists(d, tbl) {
 			t.Errorf("table %s missing after fresh schema", tbl)
 		}
 	}
 	for _, c := range [][2]string{
 		{"discussion_log", "metadata"}, {"discussion_log", "thread_id"}, {"discussion_log", "source"},
-		{"meeting_rooms", "agent_roles_context"}, {"meeting_rooms", "pm_typing"},
-		{"meeting_turns", "reply_to"}, {"meeting_participants", "last_seen_turn"},
 		{"bugs", "task_id"},
 	} {
 		if !ColumnExists(d, c[0], c[1]) {
@@ -53,9 +51,6 @@ func TestMigrateLegacyDB(t *testing.T) {
 	d := openDBT(t)
 	mustExecT(t, d, `CREATE TABLE ideas (id TEXT PRIMARY KEY, title TEXT NOT NULL, summary TEXT NOT NULL, created_at TEXT NOT NULL)`)
 	mustExecT(t, d, `CREATE TABLE discussion_log (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, created_at TEXT NOT NULL)`)
-	mustExecT(t, d, `CREATE TABLE meeting_rooms (id TEXT PRIMARY KEY, title TEXT NOT NULL, topic TEXT NOT NULL, context TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active', created_by TEXT NOT NULL, created_at TEXT NOT NULL, closed_at TEXT)`)
-	mustExecT(t, d, `CREATE TABLE meeting_turns (id TEXT PRIMARY KEY, room_id TEXT NOT NULL, turn_number INTEGER NOT NULL, speaker_type TEXT NOT NULL, speaker_id TEXT NOT NULL, question TEXT NOT NULL, response TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'waiting', created_at TEXT NOT NULL)`)
-	mustExecT(t, d, `CREATE TABLE meeting_participants (meeting_id TEXT NOT NULL, agent_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', confirmed_at TEXT NOT NULL, PRIMARY KEY (meeting_id, agent_id))`)
 	// 旧数据行必须在 migrate 前存在，backfill 才覆盖得到
 	mustExecT(t, d, `INSERT INTO ideas (id, title, summary, created_at) VALUES ('i1', 't', 's1', '2026-01-01')`)
 	if err := EnsureSchema(d); err != nil {
@@ -64,8 +59,6 @@ func TestMigrateLegacyDB(t *testing.T) {
 	for _, c := range [][2]string{
 		{"ideas", "current_summary"}, {"ideas", "updated_at"},
 		{"discussion_log", "metadata"}, {"discussion_log", "source"}, {"discussion_log", "thread_id"},
-		{"meeting_rooms", "agent_roles_context"}, {"meeting_rooms", "plan_id"},
-		{"meeting_turns", "reply_to"}, {"meeting_participants", "last_seen_turn"},
 	} {
 		if !ColumnExists(d, c[0], c[1]) {
 			t.Errorf("column %s.%s missing after legacy migrate", c[0], c[1])
