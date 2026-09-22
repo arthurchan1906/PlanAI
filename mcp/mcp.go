@@ -1797,10 +1797,51 @@ func (s *mcpServer) handleListVerifications(args map[string]interface{}) mcpTool
 			IsError: true,
 		}
 	}
+	// 反馈 #41：此前 Content 只放计数，明细仅挂在 RelatedContext，调用方
+	// （agent 侧只呈现 Content 文本）拿到的是空内容，验证证据无法被读到。
+	text := formatVerificationLogs(logs)
 	return mcpToolResult{
-		Content:        []mcpContent{{Type: "text", Text: fmt.Sprintf("共 %d 条验证日志", len(logs))}},
+		Content:        []mcpContent{{Type: "text", Text: text}},
 		RelatedContext: map[string]any{"verifications": logs},
 	}
+}
+
+// formatVerificationLogs 把验证台账渲染成可读文本（反馈 #41）。
+// 明细必须进 Content——只挂 RelatedContext 时调用方读到的是空内容。
+// 超过 maxVerificationRows 行时截断并指明剩余数量。
+const maxVerificationRows = 20
+
+func formatVerificationLogs(logs []map[string]any) string {
+	var b strings.Builder
+	if len(logs) == 0 {
+		b.WriteString("共 0 条验证日志")
+		return b.String()
+	}
+	fmt.Fprintf(&b, "共 %d 条验证日志（按 created_at 倒序）：\n", len(logs))
+	for i, l := range logs {
+		if i >= maxVerificationRows {
+			fmt.Fprintf(&b, "…（余 %d 条见 RelatedContext.verifications）\n", len(logs)-maxVerificationRows)
+			break
+		}
+		fmt.Fprintf(&b, "%d. [%s] %s", i+1, getStr(l, "result", ""), getStr(l, "scene", ""))
+		if v := getStr(l, "device", ""); v != "" {
+			fmt.Fprintf(&b, " | %s", v)
+		}
+		if v := getStr(l, "ksn", ""); v != "" {
+			fmt.Fprintf(&b, " | ksn=%s", v)
+		}
+		if v := getStr(l, "task_id", ""); v != "" {
+			fmt.Fprintf(&b, " | %s", v)
+		}
+		if v := getStr(l, "created_at", ""); v != "" {
+			fmt.Fprintf(&b, " | %s", v)
+		}
+		if v := u.TruncateStr(getStr(l, "detail", ""), 200); v != "" {
+			fmt.Fprintf(&b, "\n   %s", v)
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 func (s *mcpServer) handleAppendTaskNote(args map[string]interface{}) mcpToolResult {
@@ -1996,8 +2037,8 @@ func (s *mcpServer) handleFeedbackTriage(args map[string]interface{}) mcpToolRes
 	return mcpToolResult{
 		Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("✅ 反馈 #%s 已标记为已处理，30 天复测窗口已启动%s", feedbackID, suffix)}},
 		RelatedContext: map[string]any{
-			"feedback_id":          feedbackID,
-			"note":                 note,
+			"feedback_id":           feedbackID,
+			"note":                  note,
 			"remaining_unprocessed": len(unprocessed),
 			"in_recheck_window":     inWindow,
 		},

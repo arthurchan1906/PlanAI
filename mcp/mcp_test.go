@@ -248,3 +248,45 @@ func TestFormatAnalyzeDetail(t *testing.T) {
 		t.Error("应提示 related_context 下钻")
 	}
 }
+
+// 反馈 #41：list_verifications 此前只把明细挂在 RelatedContext，Content 仅
+// 一行计数；agent 侧只呈现 Content，于是「验证证据链」读不到。
+func TestFormatVerificationLogs(t *testing.T) {
+	if got := formatVerificationLogs(nil); got != "共 0 条验证日志" {
+		t.Errorf("empty: got %q", got)
+	}
+
+	one := []map[string]any{{
+		"result":     "pass",
+		"scene":      "接收目录加密文档：连续 4 次 打开→编辑→保存",
+		"device":     "iPhone 真机（用户实测）",
+		"ksn":        "B45D542B0E61450C",
+		"task_id":    "task-1",
+		"created_at": "2026-09-14T10:00:00+08:00",
+	}}
+	out := formatVerificationLogs(one)
+	for _, want := range []string{"共 1 条", "pass", "接收目录加密文档", "iPhone 真机", "B45D542B0E61450C", "task-1", "2026-09-14T10:00:00"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("single row missing %q in:\n%s", want, out)
+		}
+	}
+
+	// 字段缺失不得 panic，也不得渲染出空的 " | " 分隔符。
+	bare := formatVerificationLogs([]map[string]any{{"result": "fail", "scene": "s"}})
+	if strings.Contains(bare, " | ") {
+		t.Errorf("missing fields must not emit separators: %q", bare)
+	}
+	formatVerificationLogs([]map[string]any{{}}) // 全空 map 不 panic
+
+	var many []map[string]any
+	for i := 0; i < maxVerificationRows+3; i++ {
+		many = append(many, map[string]any{"result": "pass", "scene": "s"})
+	}
+	trunc := formatVerificationLogs(many)
+	if !strings.Contains(trunc, "共 23 条") || !strings.Contains(trunc, "余 3 条") {
+		t.Errorf("truncation summary wrong:\n%s", trunc)
+	}
+	if strings.Count(trunc, "\n") > maxVerificationRows+2 {
+		t.Errorf("truncation did not cap rows: %d newlines", strings.Count(trunc, "\n"))
+	}
+}

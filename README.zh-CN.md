@@ -132,7 +132,7 @@ Agent (Claude Code / Codex CLI，真实流量打磨)
 ./build.sh
 
 # 一条命令启动：Web UI + 内嵌 Proxy + 后台 Pipeline
-./aipmc serve
+./dist/aipmc serve
 
 # 浏览器打开 http://127.0.0.1:8720
 ```

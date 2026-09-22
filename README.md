@@ -133,7 +133,7 @@ Agent (Claude Code / Codex CLI, battle-tested)
 ./build.sh
 
 # one command starts everything: web UI + embedded proxy + background pipeline
-./aipmc serve
+./dist/aipmc serve
 
 # open http://127.0.0.1:8720
 ```
