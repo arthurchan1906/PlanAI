@@ -62,7 +62,10 @@ func TestScopeDriftBoundedToRecentCommits(t *testing.T) {
 	seedPlanTask(t, `["视频预览"]`)
 	for i := 0; i < 55; i++ {
 		created := fmt.Sprintf("2026-01-01T00:%02d:%02d", i/60, i%60)
-		seedCommit(t, fmt.Sprintf("commit-%03d", i), created, `["Unmatched/File.swift"]`)
+		// 每条提交「多数文件在 scope 外」以触发漂移判定；同时保留一个命中
+		// scope 的路径——否则按 #42 的规则该 plan 的 scope 会被判为不可用于
+		// 路径匹配（纯意图描述），整条 plan 跳过。
+		seedCommit(t, fmt.Sprintf("commit-%03d", i), created, `["视频预览/A.swift","Unmatched/File.swift","Unmatched/Other.swift"]`)
 	}
 	results := AnalyzeScopeDrift()
 	if len(results) > scopeDriftCommitLimit {
@@ -157,5 +160,33 @@ func TestAggregateScopeDrifts(t *testing.T) {
 	aggHigh := AggregateScopeDrifts(drifts, 3)
 	if aggHigh.DriftRate != 1.0 {
 		t.Errorf("high drift rate = %f, want 1.0", aggHigh.DriftRate)
+	}
+}
+
+// 反馈 #42：scope 写成中文意图（「加密入口收敛」）时，路径关键词匹配对整条
+// plan 100% 失配，当天 4 笔提交全被判「超出 plan scope」，而每一笔都在做该
+// plan 描述的事。假警报会训练人忽略真警报——此类 plan 必须整条跳过。
+func TestScopeDriftSkipsProseScopePlans(t *testing.T) {
+	setupAnalyzeDB(t)
+	seedPlanTask(t, `["加密入口收敛", "处理中状态反馈", "资产列表信息密度"]`)
+	seedCommit(t, "commit-prose", "2026-01-01T00:00:00", `["EncryptDrive/Features/Main/FilesDecryptTab.swift"]`)
+
+	if got := AnalyzeScopeDrift(); len(got) != 0 {
+		t.Fatalf("纯意图 scope 不应产生漂移告警，得到 %d 条: %+v", len(got), got)
+	}
+}
+
+// 反馈 #42 后半：漂移条目必须给出建议动作，否则读完不知道该动什么手。
+func TestScopeDriftCarriesSuggestedAction(t *testing.T) {
+	setupAnalyzeDB(t)
+	seedPlanTask(t, `["视频预览"]`)
+	seedCommit(t, "commit-major", "2026-01-02T00:00:00", `["视频预览/A.swift","Other/C.swift","Other/D.swift"]`)
+
+	got := AnalyzeScopeDrift()
+	if len(got) != 1 {
+		t.Fatalf("want 1 drift, got %d", len(got))
+	}
+	if got[0].SuggestedAction == "" || !strings.Contains(got[0].SuggestedAction, "plan.scope") {
+		t.Errorf("漂移条目缺少建议动作: %q", got[0].SuggestedAction)
 	}
 }

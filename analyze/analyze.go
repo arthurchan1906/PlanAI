@@ -28,7 +28,12 @@ type DriftResult struct {
 	ChangedFiles []string `json:"changed_files"`
 	OutOfScope   []string `json:"out_of_scope"`
 	Severity     string   `json:"severity"` // "warn" | "info"
+	// SuggestedAction 说明「读到该条之后该做什么」。反馈 #42：此前只给下钻
+	// 入口，32 条漂移读完不知道该动什么手。
+	SuggestedAction string `json:"suggested_action"`
 }
+
+const driftSuggestedAction = "先判定这条是否真是范围外：若提交仍在计划内，把该文件/模块补进 plan.scope（否则会持续误报）；若确实是新方向，为它新建 plan/task 承载。"
 
 // DriftFileAgg folds drift entries by file: a file touched out-of-scope by
 // multiple commits is one row instead of N commit rows (#23 noise collapse).
@@ -182,14 +187,28 @@ type AnalyzeReport struct {
 	Summary    string            `json:"summary"`
 }
 
-// analyzeScopeDrift checks all commits for files that may fall outside their plan's scope.
-func AnalyzeScopeDrift() []DriftResult {
+// driftCandidate 是单个 commit 的 scope 漂移判定中间结果。
+type driftCandidate struct {
+	commitID    string
+	commitTitle string
+	taskID      string
+	taskTitle   string
+	planID      string
+	planTitle   string
+	files       []string
+	outOfScope  []string
+	// scope 关键词（小写），用于判断该 plan 的 scope 是否可用于路径匹配。
+	scopeKeywords []string
+}
+
+// collectDriftCandidates 在近期提交窗口内算出每个 commit 的越界文件。
+func collectDriftCandidates() []driftCandidate {
 	commits, err := store.ListCommits("", "", "", "", scopeDriftCommitLimit)
 	if err != nil {
 		return nil
 	}
 
-	var results []DriftResult
+	var cands []driftCandidate
 	for _, c := range commits {
 		taskID := u.Str(c["task_id"])
 		if taskID == "" {
@@ -236,16 +255,18 @@ func AnalyzeScopeDrift() []DriftResult {
 
 		// Check each changed file against the scope
 		var outOfScope []string
+		changedFiles := make([]string, 0, len(filesList))
 		for _, f := range filesList {
 			fileName, ok := f.(string)
 			if !ok {
 				continue
 			}
+			changedFiles = append(changedFiles, fileName)
 			fileNameLower := strings.ToLower(fileName)
 
 			matched := false
 			for _, kw := range scopeKeywords {
-				if strings.Contains(fileNameLower, kw) {
+				if kw != "" && strings.Contains(fileNameLower, kw) {
 					matched = true
 					break
 				}
@@ -255,30 +276,96 @@ func AnalyzeScopeDrift() []DriftResult {
 			}
 		}
 
-		// Only a strict majority of changed files out of scope counts as
-		// drift — one unmatched path is usually a scope-keyword mismatch.
-		if len(outOfScope) > 0 && float64(len(outOfScope))/float64(len(filesList)) > minOutOfScopeRatio {
-			changedFiles := make([]string, 0, len(filesList))
-			for _, f := range filesList {
-				if s, ok := f.(string); ok {
-					changedFiles = append(changedFiles, s)
-				}
+		cands = append(cands, driftCandidate{
+			commitID:      u.Str(c["id"]),
+			commitTitle:   u.Str(c["title"]),
+			taskID:        taskID,
+			taskTitle:     u.Str(task["title"]),
+			planID:        planID,
+			planTitle:     u.Str(plan["title"]),
+			files:         changedFiles,
+			outOfScope:    outOfScope,
+			scopeKeywords: scopeKeywords,
+		})
+	}
+	return cands
+}
+
+// pathCorpusLower 把项目内所有提交的文件路径拼成一个小写语料，用于判断某个
+// scope 关键词是否**有可能**命中路径（反馈 #42）。读不到时返回空串——此时没有
+// 任何 plan 会被判为可用，因此不会产生基于关键词的假漂移。
+func pathCorpusLower() string {
+	commits, err := store.ListCommits("", "", "", "", 0)
+	if err != nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, c := range commits {
+		filesList, _ := c["files"].([]any)
+		for _, f := range filesList {
+			if s, ok := f.(string); ok && s != "" {
+				b.WriteString(strings.ToLower(s))
+				b.WriteByte('\n')
 			}
-			results = append(results, DriftResult{
-				CommitID:     u.Str(c["id"]),
-				CommitTitle:  u.Str(c["title"]),
-				TaskID:       taskID,
-				TaskTitle:    u.Str(task["title"]),
-				PlanID:       planID,
-				PlanTitle:    u.Str(plan["title"]),
-				ChangedFiles: changedFiles,
-				OutOfScope:   outOfScope,
-				Severity:     "warn",
-			})
 		}
 	}
-	if results == nil {
-		results = []DriftResult{}
+	return b.String()
+}
+
+// analyzeScopeDrift checks all commits for files that may fall outside their plan's scope.
+func AnalyzeScopeDrift() []DriftResult {
+	cands := collectDriftCandidates()
+	if len(cands) == 0 {
+		return []DriftResult{}
+	}
+
+	// 反馈 #42：只对「scope 关键词在项目路径里出现过」的 plan 报漂移。
+	// scope 常写成中文意图（「加密入口收敛」「处理中状态反馈」），路径匹配对它
+	// 天然 100% 失配——当天 4 笔提交全部被判「超出 plan scope」，而每一笔都在
+	// 做该 plan 的事。假警报会训练人忽略真警报，比没有信号更糟。
+	// 判据取「项目内任何提交的文件路径」而非本窗口：窗口只有 50 条，短窗口
+	// 里没命中不等于该 scope 不可匹配。
+	corpus := pathCorpusLower()
+	usable := map[string]bool{}
+	for _, c := range cands {
+		if usable[c.planID] {
+			continue
+		}
+		for _, kw := range c.scopeKeywords {
+			if kw != "" && strings.Contains(corpus, kw) {
+				usable[c.planID] = true
+				break
+			}
+		}
+	}
+	logged := map[string]bool{}
+
+	results := []DriftResult{}
+	for _, c := range cands {
+		if !usable[c.planID] {
+			if !logged[c.planID] {
+				logged[c.planID] = true
+				u.LogShared("ANALYZE", "scope_drift skip plan=%s title=%q reason=scope_not_path_matchable", c.planID, c.planTitle)
+			}
+			continue
+		}
+		// Only a strict majority of changed files out of scope counts as
+		// drift — one unmatched path is usually a scope-keyword mismatch.
+		if len(c.outOfScope) == 0 || float64(len(c.outOfScope))/float64(len(c.files)) <= minOutOfScopeRatio {
+			continue
+		}
+		results = append(results, DriftResult{
+			CommitID:        c.commitID,
+			CommitTitle:     c.commitTitle,
+			TaskID:          c.taskID,
+			TaskTitle:       c.taskTitle,
+			PlanID:          c.planID,
+			PlanTitle:       c.planTitle,
+			ChangedFiles:    c.files,
+			OutOfScope:      c.outOfScope,
+			Severity:        "warn",
+			SuggestedAction: driftSuggestedAction,
+		})
 	}
 	return results
 }
