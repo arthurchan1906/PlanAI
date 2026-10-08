@@ -33,19 +33,39 @@ func (s *Server) handleQueryRoutes(w http.ResponseWriter, method, path string, q
 	case "inbox":
 		web.SendJSON(w, app.InboxSummary())
 	case "events":
-		events, _ := store.ListEvents(q.Get("filter"))
+		events, err := store.ListEvents(q.Get("filter"))
+		if err != nil {
+			web.SendError(w, http.StatusInternalServerError, err.Error())
+			return true
+		}
 		web.SendJSON(w, map[string]any{"events": events})
 	case "feedbacks":
-		fbs, _ := mcp.ListFeedbacks(q.Get("label"))
+		fbs, err := mcp.ListFeedbacks(q.Get("label"))
+		if err != nil {
+			web.SendError(w, http.StatusInternalServerError, err.Error())
+			return true
+		}
 		web.SendJSON(w, map[string]any{"feedbacks": fbs})
 	case "canon":
-		c, _ := store.GetCanon()
+		c, err := store.GetCanon()
+		if err != nil {
+			web.SendError(w, http.StatusInternalServerError, err.Error())
+			return true
+		}
 		web.SendJSON(w, c)
 	case "daily":
-		d, _ := store.GetDailyNote(q.Get("date"))
+		d, err := store.GetDailyNote(q.Get("date"))
+		if err != nil {
+			web.SendError(w, http.StatusInternalServerError, err.Error())
+			return true
+		}
 		web.SendJSON(w, d)
 	case "daily/history":
-		d, _ := store.ListDailyNotes()
+		d, err := store.ListDailyNotes()
+		if err != nil {
+			web.SendError(w, http.StatusInternalServerError, err.Error())
+			return true
+		}
 		web.SendJSON(w, map[string]any{"daily_notes": d})
 	case "docs/content":
 		c, err := store.ReadDocContent(q.Get("path"))
@@ -59,10 +79,18 @@ func (s *Server) handleQueryRoutes(w http.ResponseWriter, method, path string, q
 		if p := q.Get("page"); p != "" {
 			fmt.Sscanf(p, "%d", &page)
 		}
-		results, total, _ := app.SearchDiscussions(q.Get("q"), q.Get("source"), q.Get("session_id"), q.Get("type"), q.Get("project_path"), page, 20)
+		results, total, err := app.SearchDiscussions(q.Get("q"), q.Get("source"), q.Get("session_id"), q.Get("type"), q.Get("project_path"), page, 20)
+		if err != nil {
+			web.SendError(w, http.StatusInternalServerError, err.Error())
+			return true
+		}
 		web.SendJSON(w, map[string]any{"discussions": results, "total": total, "page": page})
 	case "discussions/sources":
-		sources, _ := store.ListDiscussionSources()
+		sources, err := store.ListDiscussionSources()
+		if err != nil {
+			web.SendError(w, http.StatusInternalServerError, err.Error())
+			return true
+		}
 		web.SendJSON(w, map[string]any{"sources": sources})
 	case "config":
 		s.handleGetConfig(w)
@@ -116,7 +144,11 @@ func (s *Server) handleMutateRoutes(w http.ResponseWriter, method, path string, 
 		}
 		web.SendJSON(w, fb)
 	case method == "POST" && path == "events":
-		evt, _ := store.CreateEvent(u.Str(body["type"]), u.Str(body["entity_type"]), u.Str(body["entity_id"]), u.Str(body["summary"]))
+		evt, err := store.CreateEvent(u.Str(body["type"]), u.Str(body["entity_type"]), u.Str(body["entity_id"]), u.Str(body["summary"]))
+		if err != nil {
+			web.SendError(w, http.StatusInternalServerError, err.Error())
+			return true
+		}
 		web.SendJSON(w, evt)
 	case method == "POST" && path == "daily":
 		d, err := store.AppendDailyNote(q.Get("date"), dailyPayload(body))

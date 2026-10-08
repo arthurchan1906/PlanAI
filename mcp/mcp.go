@@ -1438,7 +1438,8 @@ func (s *mcpServer) handleRecordCommit(args map[string]interface{}) mcpToolResul
 	}
 
 	// Get related commits for the same task
-	allCommits, _ := store.ListCommitsByTask(taskID)
+	allCommits, err := store.ListCommitsByTask(taskID)
+	u.LogIgnore("MCP", err)
 	related := map[string]interface{}{
 		"commit":         commit,
 		"task_commits":   len(allCommits),
@@ -1684,7 +1685,8 @@ func (s *mcpServer) handleCreateTask(args map[string]interface{}) mcpToolResult 
 		}
 		// sql.ErrNoRows → plan truly doesn't exist.
 		// Check if it's a task ID (common agent mistake: passing task ID as plan_id)
-		task, _ := store.GetTaskSimple(planID)
+		task, err := store.GetTaskSimple(planID)
+		u.LogIgnore("MCP", err)
 		if task != nil && task["id"] != nil {
 			return mcpToolResult{
 				Content: []mcpContent{{Type: "text", Text: fmt.Sprintf(
@@ -2734,7 +2736,8 @@ func (s *mcpServer) handleDailyReview(args map[string]interface{}) mcpToolResult
 		}
 	}
 
-	threads, _ := store.ListThreads("active")
+	threads, err := store.ListThreads("active")
+	u.LogIgnore("MCP", err)
 	suggestions := analyze.AnalyzeThreadSuggestions()
 	status := analyze.AnalyzeThreadStatus()
 

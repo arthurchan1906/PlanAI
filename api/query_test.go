@@ -1,10 +1,16 @@
 package api
 
 import (
+	"database/sql"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	pmdb "aipmc/db"
 )
 
 // Regression: the daily POST/PUT handlers previously discarded the request
@@ -45,6 +51,39 @@ func TestDailyRoutesPropagateErrors(t *testing.T) {
 		s.ServeHTTP(rec, req)
 		if rec.Code != http.StatusInternalServerError {
 			t.Fatalf("%s daily: status = %d, want 500 (error must propagate), body: %s", method, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// 反馈 #48：list 路由此前写 `bugs, _ := store.ListBugs(...)`，查询失败会被吞成
+// 200 + null——前端只看到「没有数据」，看不到「库读不了」。库比二进制新时必须
+// 回 500 并把错误带出去。
+func TestListRoutesPropagateErrors(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, "data"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	d, err := sql.Open("sqlite", filepath.Join(home, "data", "pmai.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec(fmt.Sprintf("PRAGMA user_version = %d", pmdb.SCHEMA_VERSION+1)); err != nil {
+		t.Fatal(err)
+	}
+	d.Close()
+	t.Setenv("PMAI_HOME", home)
+
+	s := New(Deps{})
+	for _, route := range []string{"tasks", "bugs", "decisions", "threads", "principles"} {
+		req := httptest.NewRequest("GET", "/pmai/"+route, nil)
+		rec := httptest.NewRecorder()
+		s.ServeHTTP(rec, req)
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("GET /pmai/%s: status = %d, want 500 (body: %s)", route, rec.Code, rec.Body.String())
+			continue
+		}
+		if !strings.Contains(rec.Body.String(), "error") {
+			t.Errorf("GET /pmai/%s: body must carry the error, got %s", route, rec.Body.String())
 		}
 	}
 }

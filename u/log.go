@@ -186,6 +186,15 @@ func pruneArchives(dir string) {
 // 跨天排障无需再靠上下文猜日期；metrics --window 依赖该日期过滤。
 // 8/14 起：写入口自动按大小归档（20MB，保留 7 份）、清洗非法 UTF-8/C1
 // 控制字节，且 serve 进程的行带 project=<name> 标签（SetLogProject 注入）。
+// LogIgnore 记录一次「有意忽略」的读取错误（best-effort 路径）：缺数据本身
+// 可接受，但静默不可接受——反馈 #48 的教训正是查询失败被吞成「没有数据」。
+// err 为 nil 时什么都不做，调用方不必写 if。
+func LogIgnore(tag string, err error) {
+	if err != nil {
+		LogShared(tag, "best-effort read failed: %v", err)
+	}
+}
+
 func LogShared(tag string, format string, args ...any) {
 	initSharedLogger()
 	if logLogger == nil {

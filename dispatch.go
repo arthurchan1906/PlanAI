@@ -19,11 +19,11 @@ import (
 func dispatchTask(subcmd string, args *cli.Args) {
 	switch subcmd {
 	case "list":
-		tasks, _ := store.ListTasks(args.Str("status", ""), "")
-		cli.PrintJSON(map[string]any{"tasks": tasks})
+		tasks, err := store.ListTasks(args.Str("status", ""), "")
+		cli.PrintJSONOrFail(map[string]any{"tasks": tasks}, err)
 	case "show":
-		t, _ := store.GetTask(args.Get("id"))
-		cli.PrintJSON(t)
+		t, err := store.GetTask(args.Get("id"))
+		cli.PrintJSONOrFail(t, err)
 	case "add":
 		t, err := store.CreateTask("", args.Get("title"), args.Str("priority", "P1"), args.Str("status", "todo"), args.Str("phase", "general"), args.Get("plan_id"), nil)
 		if err != nil {
@@ -37,17 +37,17 @@ func dispatchTask(subcmd string, args *cli.Args) {
 			}
 		cli.PrintJSON(map[string]any{"task": t})
 	case "note":
-		r, _ := store.AppendTaskNote("", args.Get("id"), args.Get("content"))
-		cli.PrintJSON(r)
+		r, err := store.AppendTaskNote("", args.Get("id"), args.Get("content"))
+		cli.PrintJSONOrFail(r, err)
 	case "notes":
-		n, _ := store.ListTaskNotes(args.Get("id"), args.Int("limit", 20))
-		cli.PrintJSON(map[string]any{"notes": n})
+		n, err := store.ListTaskNotes(args.Get("id"), args.Int("limit", 20))
+		cli.PrintJSONOrFail(map[string]any{"notes": n}, err)
 	case "plan":
-		t, _ := store.PlanTask(args.Get("id"), strings.Split(args.Get("steps"), " "))
-		cli.PrintJSON(map[string]any{"task": t})
+		t, err := store.PlanTask(args.Get("id"), strings.Split(args.Get("steps"), " "))
+		cli.PrintJSONOrFail(map[string]any{"task": t}, err)
 	case "checkpoint":
-		t, _ := store.UpdateTaskCheckpoint(args.Get("id"), args.Int("index", 0), !args.Bool("not_done"))
-		cli.PrintJSON(map[string]any{"task": t})
+		t, err := store.UpdateTaskCheckpoint(args.Get("id"), args.Int("index", 0), !args.Bool("not_done"))
+		cli.PrintJSONOrFail(map[string]any{"task": t}, err)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown task subcommand: %s\n", subcmd)
 		os.Exit(1)
@@ -78,8 +78,8 @@ func dispatchCommit(subcmd string, args *cli.Args) {
 			}
 		cli.PrintJSON(map[string]any{"commits": commits, "count": len(commits)})
 	case "show":
-		c, _ := store.GetCommit(args.Get("id"))
-		cli.PrintJSON(c)
+		c, err := store.GetCommit(args.Get("id"))
+		cli.PrintJSONOrFail(c, err)
 	case "add":
 		taskIDs := []string{}
 		if ids := args.Str("task_ids", ""); ids != "" {
@@ -120,8 +120,8 @@ func dispatchCommit(subcmd string, args *cli.Args) {
 		if args.Bool("clear_decision_id") {
 			payload["decision_id"] = nil
 			}
-		c, _ := store.UpdateCommit(args.Get("id"), payload)
-		cli.PrintJSON(map[string]any{"commit": c})
+		c, err := store.UpdateCommit(args.Get("id"), payload)
+		cli.PrintJSONOrFail(map[string]any{"commit": c}, err)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown commit subcommand: %s\n", subcmd)
 		os.Exit(1)
@@ -137,8 +137,8 @@ func dispatchPlan(subcmd string, args *cli.Args) {
 			}
 		cli.PrintJSON(map[string]any{"plans": p})
 	case "show":
-		p, _ := store.GetPlan(args.Get("id"))
-		cli.PrintJSON(p)
+		p, err := store.GetPlan(args.Get("id"))
+		cli.PrintJSONOrFail(p, err)
 	case "add":
 		p, err := store.CreatePlan(args.Get("title"), args.Str("goal", ""), args.Get("roadmap_id"), args.Str("vision_id", ""), args.Str("priority", "P1"), args.Str("status", "draft"), nil, nil, nil, nil)
 		if err != nil {
@@ -152,8 +152,8 @@ func dispatchPlan(subcmd string, args *cli.Args) {
 				payload[k] = v
 			}
 			}
-		p, _ := store.UpdatePlan(args.Get("id"), payload)
-		cli.PrintJSON(map[string]any{"plan": p})
+		p, err := store.UpdatePlan(args.Get("id"), payload)
+		cli.PrintJSONOrFail(map[string]any{"plan": p}, err)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown plan subcommand: %s\n", subcmd)
 		os.Exit(1)
@@ -163,11 +163,11 @@ func dispatchPlan(subcmd string, args *cli.Args) {
 func dispatchBug(subcmd string, args *cli.Args) {
 	switch subcmd {
 	case "list":
-		b, _ := store.ListBugs(args.Str("status", ""), args.Str("severity", ""), args.Str("commit_id", ""), args.Int("limit", 0), 0)
-		cli.PrintJSON(map[string]any{"bugs": b})
+		b, err := store.ListBugs(args.Str("status", ""), args.Str("severity", ""), args.Str("commit_id", ""), args.Int("limit", 0), 0)
+		cli.PrintJSONOrFail(map[string]any{"bugs": b}, err)
 	case "show":
-		b, _ := store.GetBug(args.Get("id"))
-		cli.PrintJSON(b)
+		b, err := store.GetBug(args.Get("id"))
+		cli.PrintJSONOrFail(b, err)
 	case "add":
 		b, err := store.CreateBug("", args.Get("title"), args.Str("description", ""), args.Str("severity", "minor"), args.Str("status", "open"), args.Str("commit_id", ""), args.Str("task_id", ""), args.Str("error", ""), args.Str("files", ""), args.Str("root_cause", ""), args.Str("fix", ""), args.Str("tags", ""))
 		if err != nil {
@@ -184,8 +184,8 @@ func dispatchBug(subcmd string, args *cli.Args) {
 		if args.Bool("clear_commit_id") {
 			payload["clear_commit_id"] = true
 			}
-		b, _ := store.UpdateBug(args.Get("id"), payload)
-		cli.PrintJSON(map[string]any{"bug": b})
+		b, err := store.UpdateBug(args.Get("id"), payload)
+		cli.PrintJSONOrFail(map[string]any{"bug": b}, err)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown bug subcommand: %s\n", subcmd)
 		os.Exit(1)
@@ -195,11 +195,11 @@ func dispatchBug(subcmd string, args *cli.Args) {
 func dispatchDecision(subcmd string, args *cli.Args) {
 	switch subcmd {
 	case "list":
-		d, _ := store.ListDecisions()
-		cli.PrintJSON(map[string]any{"decisions": d})
+		d, err := store.ListDecisions()
+		cli.PrintJSONOrFail(map[string]any{"decisions": d}, err)
 	case "show":
-		d, _ := store.GetDecision(args.Get("id"))
-		cli.PrintJSON(d)
+		d, err := store.GetDecision(args.Get("id"))
+		cli.PrintJSONOrFail(d, err)
 	case "add":
 		d, err := store.CreateDecision("", args.Get("title"), args.Get("background"), args.Get("decision"), args.Str("status", "proposed"))
 		if err != nil {
@@ -207,8 +207,8 @@ func dispatchDecision(subcmd string, args *cli.Args) {
 			}
 		cli.PrintJSON(map[string]any{"decision": d})
 	case "review":
-		d, _ := store.UpdateDecisionStatus(args.Get("id"), args.Get("status"))
-		cli.PrintJSON(map[string]any{"decision": d})
+		d, err := store.UpdateDecisionStatus(args.Get("id"), args.Get("status"))
+		cli.PrintJSONOrFail(map[string]any{"decision": d}, err)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown decision subcommand: %s\n", subcmd)
 		os.Exit(1)
@@ -221,8 +221,8 @@ func dispatchIdea(subcmd string, args *cli.Args) {
 		i, err := store.ListIdeas(args.Str("status", "")); if err != nil { cli.Fail(err) }
 		cli.PrintJSON(map[string]any{"ideas": i})
 	case "show":
-		i, _ := store.GetIdea(args.Get("id"))
-		cli.PrintJSON(i)
+		i, err := store.GetIdea(args.Get("id"))
+		cli.PrintJSONOrFail(i, err)
 	case "capture":
 		i, err := store.CreateIdea(args.Get("title"), args.Get("summary"), args.Str("impact", ""), args.Str("source", "manual"), args.Bool("canon_conflict"), args.Str("current_summary", ""), args.Str("main_question", ""), args.Str("recommended_next_action", "continue_discussion"))
 		if err != nil {
@@ -230,8 +230,8 @@ func dispatchIdea(subcmd string, args *cli.Args) {
 			}
 		cli.PrintJSON(map[string]any{"idea": i})
 	case "review":
-		i, _ := store.ReviewIdea(args.Get("id"), args.Get("status"), args.Str("note", ""))
-		cli.PrintJSON(map[string]any{"idea": i})
+		i, err := store.ReviewIdea(args.Get("id"), args.Get("status"), args.Str("note", ""))
+		cli.PrintJSONOrFail(map[string]any{"idea": i}, err)
 	case "update":
 		payload := map[string]any{}
 		for _, k := range []string{"title", "summary", "impact", "source", "status", "current_summary", "main_question", "recommended_next_action"} {
@@ -239,11 +239,11 @@ func dispatchIdea(subcmd string, args *cli.Args) {
 				payload[k] = v
 			}
 			}
-		i, _ := store.UpdateIdea(args.Get("id"), payload)
-		cli.PrintJSON(map[string]any{"idea": i})
+		i, err := store.UpdateIdea(args.Get("id"), payload)
+		cli.PrintJSONOrFail(map[string]any{"idea": i}, err)
 	case "comment":
-		c, _ := store.CreateIdeaComment(args.Get("id"), args.Get("content"), args.Str("kind", "comment"), args.Str("author_type", "ai"), args.Str("author_name", "aipmc"))
-		cli.PrintJSON(c)
+		c, err := store.CreateIdeaComment(args.Get("id"), args.Get("content"), args.Str("kind", "comment"), args.Str("author_type", "ai"), args.Str("author_name", "aipmc"))
+		cli.PrintJSONOrFail(c, err)
 	case "convert":
 		if args.Get("to") == "task" {
 			r, err := store.ConvertIdeaToTask(args.Get("id"), args.Str("plan_id", ""))
@@ -252,8 +252,8 @@ func dispatchIdea(subcmd string, args *cli.Args) {
 			}
 			cli.PrintJSON(r)
 			} else {
-			r, _ := store.ConvertIdeaToDecision(args.Get("id"))
-			cli.PrintJSON(r)
+			r, err := store.ConvertIdeaToDecision(args.Get("id"))
+			cli.PrintJSONOrFail(r, err)
 			}
 	default:
 		fmt.Fprintf(os.Stderr, "unknown idea subcommand: %s\n", subcmd)
@@ -264,11 +264,11 @@ func dispatchIdea(subcmd string, args *cli.Args) {
 func dispatchRoadmap(subcmd string, args *cli.Args) {
 	switch subcmd {
 	case "list":
-		r, _ := store.ListRoadmaps(args.Str("vision_id", ""))
-		cli.PrintJSON(map[string]any{"roadmaps": r})
+		r, err := store.ListRoadmaps(args.Str("vision_id", ""))
+		cli.PrintJSONOrFail(map[string]any{"roadmaps": r}, err)
 	case "show":
-		r, _ := store.GetRoadmap(args.Get("id"))
-		cli.PrintJSON(r)
+		r, err := store.GetRoadmap(args.Get("id"))
+		cli.PrintJSONOrFail(r, err)
 	case "add":
 		r, err := store.CreateRoadmap(args.Get("title"), args.Str("target_date", ""), args.Str("vision_id", ""), args.Str("status", "planned"), args.Str("priority", "P1"))
 		if err != nil {
@@ -282,8 +282,8 @@ func dispatchRoadmap(subcmd string, args *cli.Args) {
 				payload[k] = v
 			}
 			}
-		r, _ := store.UpdateRoadmap(args.Get("id"), payload)
-		cli.PrintJSON(map[string]any{"roadmap": r})
+		r, err := store.UpdateRoadmap(args.Get("id"), payload)
+		cli.PrintJSONOrFail(map[string]any{"roadmap": r}, err)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown roadmap subcommand: %s\n", subcmd)
 		os.Exit(1)
@@ -293,11 +293,11 @@ func dispatchRoadmap(subcmd string, args *cli.Args) {
 func dispatchPrinciple(subcmd string, args *cli.Args) {
 	switch subcmd {
 	case "list":
-		p, _ := store.ListPrinciples(args.Str("status", ""), args.Str("kind", ""))
-		cli.PrintJSON(map[string]any{"principles": p})
+		p, err := store.ListPrinciples(args.Str("status", ""), args.Str("kind", ""))
+		cli.PrintJSONOrFail(map[string]any{"principles": p}, err)
 	case "show":
-		p, _ := store.GetPrinciple(args.Get("id"))
-		cli.PrintJSON(p)
+		p, err := store.GetPrinciple(args.Get("id"))
+		cli.PrintJSONOrFail(p, err)
 	case "add":
 		p, err := store.CreatePrinciple(args.Get("title"), args.Str("summary", ""), args.Str("kind", "governance"), args.Str("status", "active"))
 		if err != nil {
@@ -311,8 +311,8 @@ func dispatchPrinciple(subcmd string, args *cli.Args) {
 				payload[k] = v
 			}
 			}
-		p, _ := store.UpdatePrinciple(args.Get("id"), payload)
-		cli.PrintJSON(map[string]any{"principle": p})
+		p, err := store.UpdatePrinciple(args.Get("id"), payload)
+		cli.PrintJSONOrFail(map[string]any{"principle": p}, err)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown principle subcommand: %s\n", subcmd)
 		os.Exit(1)
@@ -322,11 +322,11 @@ func dispatchPrinciple(subcmd string, args *cli.Args) {
 func dispatchLink(subcmd string, args *cli.Args) {
 	switch subcmd {
 	case "list":
-		l, _ := store.ListLinks(args.Str("source_id", ""), args.Str("target_id", ""), args.Str("relation", ""))
-		cli.PrintJSON(map[string]any{"links": l})
+		l, err := store.ListLinks(args.Str("source_id", ""), args.Str("target_id", ""), args.Str("relation", ""))
+		cli.PrintJSONOrFail(map[string]any{"links": l}, err)
 	case "add":
-		l, _ := store.CreateLink("", args.Get("source_type"), args.Get("source_id"), args.Get("relation"), args.Get("target_type"), args.Get("target_id"), args.Str("note", ""))
-		cli.PrintJSON(l)
+		l, err := store.CreateLink("", args.Get("source_type"), args.Get("source_id"), args.Get("relation"), args.Get("target_type"), args.Get("target_id"), args.Str("note", ""))
+		cli.PrintJSONOrFail(l, err)
 	case "delete":
 		store.DeleteLink(args.Get("id"))
 		cli.PrintJSON(map[string]any{"ok": true})
@@ -339,11 +339,11 @@ func dispatchLink(subcmd string, args *cli.Args) {
 func dispatchVision(subcmd string, args *cli.Args) {
 	switch subcmd {
 	case "list":
-		v, _ := store.ListVisions()
-		cli.PrintJSON(map[string]any{"visions": v})
+		v, err := store.ListVisions()
+		cli.PrintJSONOrFail(map[string]any{"visions": v}, err)
 	case "show":
-		v, _ := store.GetVision(args.Get("id"))
-		cli.PrintJSON(v)
+		v, err := store.GetVision(args.Get("id"))
+		cli.PrintJSONOrFail(v, err)
 	case "add":
 		v, err := store.CreateVision(args.Get("title"), args.Str("summary", ""), args.Str("status", "active"), args.Str("horizon", "long_term"))
 		if err != nil {
@@ -357,8 +357,8 @@ func dispatchVision(subcmd string, args *cli.Args) {
 				payload[k] = v
 			}
 			}
-		v, _ := store.UpdateVision(args.Get("id"), payload)
-		cli.PrintJSON(map[string]any{"vision": v})
+		v, err := store.UpdateVision(args.Get("id"), payload)
+		cli.PrintJSONOrFail(map[string]any{"vision": v}, err)
 		case "":
 		runVisionCLI(args)
 	default:
@@ -370,14 +370,14 @@ func dispatchVision(subcmd string, args *cli.Args) {
 func dispatchDaily(subcmd string, args *cli.Args) {
 	switch subcmd {
 	case "show":
-		d, _ := store.GetDailyNote(args.Str("date", ""))
-		cli.PrintJSON(d)
+		d, err := store.GetDailyNote(args.Str("date", ""))
+		cli.PrintJSONOrFail(d, err)
 	case "close":
-		d, _ := store.AppendDailyNote(args.Str("date", ""), map[string][]string{})
-		cli.PrintJSON(d)
+		d, err := store.AppendDailyNote(args.Str("date", ""), map[string][]string{})
+		cli.PrintJSONOrFail(d, err)
 	case "replace":
-		d, _ := store.ReplaceDailyNote(args.Str("date", ""), map[string][]string{})
-		cli.PrintJSON(d)
+		d, err := store.ReplaceDailyNote(args.Str("date", ""), map[string][]string{})
+		cli.PrintJSONOrFail(d, err)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown daily subcommand: %s\n", subcmd)
 		os.Exit(1)
@@ -434,8 +434,8 @@ func dispatchSession(subcmd string, args *cli.Args) {
 func dispatchDocs(subcmd string, args *cli.Args) {
 	switch subcmd {
 	case "list":
-		d, _ := store.ListDocRecords(args.Str("status", ""), args.Str("layer", ""))
-		cli.PrintJSON(map[string]any{"docs": d})
+		d, err := store.ListDocRecords(args.Str("status", ""), args.Str("layer", ""))
+		cli.PrintJSONOrFail(map[string]any{"docs": d}, err)
 	case "update":
 		payload := map[string]any{}
 		for _, k := range []string{"type", "status", "layer"} {
@@ -449,8 +449,8 @@ func dispatchDocs(subcmd string, args *cli.Args) {
 		if args.Bool("clear_source_of_truth") {
 			payload["source_of_truth"] = false
 			}
-		doc, _ := store.UpdateDocRecord(args.Get("path"), payload)
-		cli.PrintJSON(doc)
+		doc, err := store.UpdateDocRecord(args.Get("path"), payload)
+		cli.PrintJSONOrFail(doc, err)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown docs subcommand: %s\n", subcmd)
 		os.Exit(1)
@@ -460,11 +460,11 @@ func dispatchDocs(subcmd string, args *cli.Args) {
 func dispatchCanon(subcmd string, args *cli.Args) {
 	switch subcmd {
 	case "show":
-		c, _ := store.GetCanon()
-		cli.PrintJSON(c)
+		c, err := store.GetCanon()
+		cli.PrintJSONOrFail(c, err)
 	case "update":
-		c, _ := store.UpdateCanon(args.Get("decision_id"), args.Str("product_goal", ""), args.Str("engineering_focus", ""), args.Str("architecture", ""), u.SplitAndTrim(args.Str("add_scope", ""), "|"), u.SplitAndTrim(args.Str("add_avoid", ""), "|"))
-		cli.PrintJSON(c)
+		c, err := store.UpdateCanon(args.Get("decision_id"), args.Str("product_goal", ""), args.Str("engineering_focus", ""), args.Str("architecture", ""), u.SplitAndTrim(args.Str("add_scope", ""), "|"), u.SplitAndTrim(args.Str("add_avoid", ""), "|"))
+		cli.PrintJSONOrFail(c, err)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown canon subcommand: %s\n", subcmd)
 		os.Exit(1)
@@ -481,11 +481,11 @@ func dispatchBrief(subcmd string, args *cli.Args) {
 func dispatchEvent(subcmd string, args *cli.Args) {
 	switch subcmd {
 	case "list":
-		events, _ := store.ListEvents(args.Str("filter", ""))
-		cli.PrintJSON(map[string]any{"events": events})
+		events, err := store.ListEvents(args.Str("filter", ""))
+		cli.PrintJSONOrFail(map[string]any{"events": events}, err)
 	case "create":
-		evt, _ := store.CreateEvent(args.Get("type"), args.Get("entity_type"), args.Get("entity_id"), args.Get("summary"))
-		cli.PrintJSON(evt)
+		evt, err := store.CreateEvent(args.Get("type"), args.Get("entity_type"), args.Get("entity_id"), args.Get("summary"))
+		cli.PrintJSONOrFail(evt, err)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown event subcommand: %s\n", subcmd)
 		os.Exit(1)
@@ -495,11 +495,11 @@ func dispatchEvent(subcmd string, args *cli.Args) {
 func dispatchThread(subcmd string, args *cli.Args) {
 	switch subcmd {
 	case "list":
-		threads, _ := store.ListThreads(args.Str("status", ""))
-		cli.PrintJSON(map[string]any{"threads": threads})
+		threads, err := store.ListThreads(args.Str("status", ""))
+		cli.PrintJSONOrFail(map[string]any{"threads": threads}, err)
 	case "show":
-		t, _ := store.GetThread(args.Get("id"))
-		cli.PrintJSON(t)
+		t, err := store.GetThread(args.Get("id"))
+		cli.PrintJSONOrFail(t, err)
 	case "add":
 		t, err := store.CreateThread(args.Get("title"), args.Str("summary", ""), args.Str("source", "manual"))
 		if err != nil {
@@ -513,8 +513,8 @@ func dispatchThread(subcmd string, args *cli.Args) {
 				payload[k] = v
 			}
 			}
-		t, _ := store.UpdateThread(args.Get("id"), payload)
-		cli.PrintJSON(map[string]any{"thread": t})
+		t, err := store.UpdateThread(args.Get("id"), payload)
+		cli.PrintJSONOrFail(map[string]any{"thread": t}, err)
 	case "item":
 		// os.Args[3] is the item subcommand (add/remove), after "thread item"
 		itemSub := ""
@@ -523,8 +523,8 @@ func dispatchThread(subcmd string, args *cli.Args) {
 			}
 		switch itemSub {
 		case "add":
-			t, _ := store.AddToThread(args.Get("thread_id"), args.Get("entity_type"), args.Get("entity_id"), args.Str("note", ""))
-			cli.PrintJSON(map[string]any{"thread": t})
+			t, err := store.AddToThread(args.Get("thread_id"), args.Get("entity_type"), args.Get("entity_id"), args.Str("note", ""))
+			cli.PrintJSONOrFail(map[string]any{"thread": t}, err)
 		case "remove":
 			store.RemoveFromThread(args.Get("thread_id"), args.Get("entity_type"), args.Get("entity_id"))
 			cli.PrintJSON(map[string]any{"ok": true})
@@ -554,8 +554,8 @@ func dispatchFeedback(subcmd string, args *cli.Args) {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "feedback server unreachable, saved locally: %v\n", err)
 			// Fallback: store as idea in local DB
-			idea, _ := store.CreateIdea("[Feedback] "+args.Get("content")[:min(80, len(args.Get("content")))], args.Get("content"), "", "feedback", false, "", "", "continue_discussion")
-			cli.PrintJSON(map[string]any{"status": "stored_locally", "idea": idea})
+			idea, err := store.CreateIdea("[Feedback] "+args.Get("content")[:min(80, len(args.Get("content")))], args.Get("content"), "", "feedback", false, "", "", "continue_discussion")
+			cli.PrintJSONOrFail(map[string]any{"status": "stored_locally", "idea": idea}, err)
 			return
 			}
 		cli.PrintJSON(fb)

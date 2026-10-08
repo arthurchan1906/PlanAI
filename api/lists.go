@@ -15,40 +15,88 @@ func (s *Server) handleListRoutes(w http.ResponseWriter, method, path string, q 
 	}
 	switch path {
 	case "tasks":
-		tasks, _ := store.ListTasks(q.Get("status"), q.Get("plan_id"))
+		tasks, err := store.ListTasks(q.Get("status"), q.Get("plan_id"))
+		if err != nil {
+			web.SendError(w, http.StatusInternalServerError, err.Error())
+			return true
+		}
 		web.SendJSON(w, map[string]any{"tasks": tasks})
 	case "commits":
-		commits, _ := store.ListCommits(q.Get("status"), q.Get("task_id"), q.Get("decision_id"), "", 0)
+		commits, err := store.ListCommits(q.Get("status"), q.Get("task_id"), q.Get("decision_id"), "", 0)
+		if err != nil {
+			web.SendError(w, http.StatusInternalServerError, err.Error())
+			return true
+		}
 		web.SendJSON(w, map[string]any{"commits": commits})
 	case "plans":
-		plans, _ := store.ListPlans(q.Get("roadmap_id"), q.Get("status"))
+		plans, err := store.ListPlans(q.Get("roadmap_id"), q.Get("status"))
+		if err != nil {
+			web.SendError(w, http.StatusInternalServerError, err.Error())
+			return true
+		}
 		web.SendJSON(w, map[string]any{"plans": plans})
 	case "bugs":
-		bugs, _ := store.ListBugs(q.Get("status"), q.Get("severity"), q.Get("commit_id"), 0, 0)
+		bugs, err := store.ListBugs(q.Get("status"), q.Get("severity"), q.Get("commit_id"), 0, 0)
+		if err != nil {
+			web.SendError(w, http.StatusInternalServerError, err.Error())
+			return true
+		}
 		web.SendJSON(w, map[string]any{"bugs": bugs})
 	case "decisions":
-		decs, _ := store.ListDecisions()
+		decs, err := store.ListDecisions()
+		if err != nil {
+			web.SendError(w, http.StatusInternalServerError, err.Error())
+			return true
+		}
 		web.SendJSON(w, map[string]any{"decisions": decs})
 	case "ideas":
-		ideas, _ := store.ListIdeas(q.Get("status"))
+		ideas, err := store.ListIdeas(q.Get("status"))
+		if err != nil {
+			web.SendError(w, http.StatusInternalServerError, err.Error())
+			return true
+		}
 		web.SendJSON(w, map[string]any{"ideas": ideas})
 	case "roadmaps":
-		rds, _ := store.ListRoadmaps(q.Get("vision_id"))
+		rds, err := store.ListRoadmaps(q.Get("vision_id"))
+		if err != nil {
+			web.SendError(w, http.StatusInternalServerError, err.Error())
+			return true
+		}
 		web.SendJSON(w, map[string]any{"roadmaps": rds})
 	case "principles":
-		prs, _ := store.ListPrinciples(q.Get("status"), q.Get("kind"))
+		prs, err := store.ListPrinciples(q.Get("status"), q.Get("kind"))
+		if err != nil {
+			web.SendError(w, http.StatusInternalServerError, err.Error())
+			return true
+		}
 		web.SendJSON(w, map[string]any{"principles": prs})
 	case "docs":
-		docs, _ := store.ListDocRecords(q.Get("status"), q.Get("layer"))
+		docs, err := store.ListDocRecords(q.Get("status"), q.Get("layer"))
+		if err != nil {
+			web.SendError(w, http.StatusInternalServerError, err.Error())
+			return true
+		}
 		web.SendJSON(w, map[string]any{"docs": docs})
 	case "visions":
-		visions, _ := store.ListVisions()
+		visions, err := store.ListVisions()
+		if err != nil {
+			web.SendError(w, http.StatusInternalServerError, err.Error())
+			return true
+		}
 		web.SendJSON(w, map[string]any{"visions": visions})
 	case "links":
-		links, _ := store.ListLinks(q.Get("source_id"), q.Get("target_id"), q.Get("relation"))
+		links, err := store.ListLinks(q.Get("source_id"), q.Get("target_id"), q.Get("relation"))
+		if err != nil {
+			web.SendError(w, http.StatusInternalServerError, err.Error())
+			return true
+		}
 		web.SendJSON(w, map[string]any{"links": links})
 	case "threads":
-		threads, _ := store.ListThreads(q.Get("status"))
+		threads, err := store.ListThreads(q.Get("status"))
+		if err != nil {
+			web.SendError(w, http.StatusInternalServerError, err.Error())
+			return true
+		}
 		web.SendJSON(w, map[string]any{"threads": threads})
 	case "thread-suggestions":
 		web.SendJSON(w, map[string]any{
@@ -56,10 +104,18 @@ func (s *Server) handleListRoutes(w http.ResponseWriter, method, path string, q 
 			"thread_status": analyze.AnalyzeThreadStatus(),
 		})
 	case "agents":
-		agents, _ := store.ListAgentProfiles()
+		agents, err := store.ListAgentProfiles()
+		if err != nil {
+			web.SendError(w, http.StatusInternalServerError, err.Error())
+			return true
+		}
 		web.SendJSON(w, map[string]any{"agents": agents})
 	case "audit":
-		logs, _ := store.ListAuditLog(q.Get("actor_type"), q.Get("entity_type"), 200)
+		logs, err := store.ListAuditLog(q.Get("actor_type"), q.Get("entity_type"), 200)
+		if err != nil {
+			web.SendError(w, http.StatusInternalServerError, err.Error())
+			return true
+		}
 		web.SendJSON(w, map[string]any{"audit_logs": logs})
 	default:
 		return false

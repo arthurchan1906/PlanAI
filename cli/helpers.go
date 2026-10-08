@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 )
@@ -72,4 +74,20 @@ PROXY:
   aipmc proxy [--profile <name>]          Run proxy specifying which credential profile to use
 
 HIERARCHY: commit → task → plan → roadmap (no orphans, no back-fill)`)
+}
+
+// PrintJSONOrFail 打印 JSON 结果；err 非空时以非零退出码失败。
+//
+// 为什么需要它：`x, _ := store.Foo()` 再 cli.PrintJSON(x) 会把「查询失败」
+// 伪装成「没有数据」——调用方看到 {"bugs": null} 只会以为库里没数据，而不会
+// 知道库根本读不了。反馈 #48（库 schema 比二进制新）现场就是这个假象：错误
+// 被吞掉，只剩一个 null。所有 print 结果的地方都应走本函数。
+func PrintJSONOrFail(v any, err error) {
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			Fail(fmt.Errorf("未找到匹配记录（原始错误: %w）", err))
+		}
+		Fail(err)
+	}
+	PrintJSON(v)
 }

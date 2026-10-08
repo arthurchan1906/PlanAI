@@ -96,7 +96,8 @@ func ThreadsPayload() map[string]any {
 	b.loadTasks()
 	b.loadCommits()
 	b.loadDecisions()
-	threads, _ := store.ListThreads("")
+	threads, err := store.ListThreads("")
+	u.LogIgnore("WEB", err)
 	return map[string]any{
 		"threads":             threads,
 		"thread_suggestions":  analyze.AnalyzeThreadSuggestions(),
@@ -110,7 +111,8 @@ func ThreadsPayload() map[string]any {
 
 // AgentsPayload is returned by GET /pmai/web/agents.
 func AgentsPayload() map[string]any {
-	agents, _ := store.ListAgentProfiles()
+	agents, err := store.ListAgentProfiles()
+	u.LogIgnore("WEB", err)
 	if agents == nil {
 		agents = []map[string]any{}
 	}
@@ -119,7 +121,8 @@ func AgentsPayload() map[string]any {
 
 // AuditPayload is returned by GET /pmai/web/audit.
 func AuditPayload() map[string]any {
-	logs, _ := store.ListAuditLog("", "", 100)
+	logs, err := store.ListAuditLog("", "", 100)
+	u.LogIgnore("WEB", err)
 	if logs == nil {
 		logs = []map[string]any{}
 	}
@@ -143,14 +146,16 @@ func DailyPayload() map[string]any {
 // Provides light-narrative session cards, alerts, and graph edges.
 func ActivityPayload() map[string]any {
 	since := time.Now().Add(-7 * 24 * time.Hour).Format("2006-01-02T15:04:05")
-	sessions, _ := store.RecentAgentActivity(since, 30)
+	sessions, err := store.RecentAgentActivity(since, 30)
+	u.LogIgnore("WEB", err)
 	if sessions == nil {
 		sessions = []store.AgentSessionSummary{}
 	}
 
 	// B1 review data (available for all sessions)
 	// Use ListSessionSummariesSince to get ALL session_summaries, not just L2 ones
-	summaries, _ := store.ListSessionSummariesSince(since, 50)
+	summaries, err := store.ListSessionSummariesSince(since, 50)
+	u.LogIgnore("WEB", err)
 	if summaries == nil {
 		summaries = []store.SessionSummary{}
 	}

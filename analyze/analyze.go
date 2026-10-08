@@ -677,8 +677,10 @@ func AnalyzeCrossTaskFiles() []CrossTaskResult {
 	// Enrich with task titles
 	var results []CrossTaskResult
 	for _, r := range taskPairs {
-		t1, _ := store.GetTaskSimple(r.TaskID)
-		t2, _ := store.GetTaskSimple(r.OtherTaskID)
+		t1, err := store.GetTaskSimple(r.TaskID)
+		u.LogIgnore("ANALYZE", err)
+		t2, err := store.GetTaskSimple(r.OtherTaskID)
+		u.LogIgnore("ANALYZE", err)
 		if t1 != nil {
 			r.TaskTitle = u.Str(t1["title"])
 		}
@@ -1330,8 +1332,10 @@ func BuildBriefingLevel(aiClient *ai.Client, graphSection, level string) (string
 		return txt, surfaced
 	}
 	report := RunFullAnalysis()
-	tasks, _ := store.ListTasks("in_progress", "")
-	events, _ := store.GetUnconsumedEvents()
+	tasks, err := store.ListTasks("in_progress", "")
+	u.LogIgnore("ANALYZE", err)
+	events, err := store.GetUnconsumedEvents()
+	u.LogIgnore("ANALYZE", err)
 	threadSummary := BuildThreadSummary()
 	suggestions := AnalyzeThreadSuggestions()
 	threadStatus := AnalyzeThreadStatus()
@@ -1547,7 +1551,8 @@ func BuildBriefingLevel(aiClient *ai.Client, graphSection, level string) (string
 	activitySince := activityWindowSince()
 	activityLabel := activityWindowLabel(activitySince)
 	if sessions, err := store.RecentAgentActivity(activitySince, 8); err == nil && len(sessions) > 0 {
-		_, _ = store.AutoLinkDiscussions(sessions)
+		_, err := store.AutoLinkDiscussions(sessions)
+		u.LogIgnore("ANALYZE", err)
 		b.WriteString(fmt.Sprintf("## 📞 最近 Agent 活动 (%s)\n\n", activityLabel))
 		seen := map[string]bool{}
 		for _, s := range sessions {
@@ -1659,8 +1664,10 @@ func BuildBriefingLevel(aiClient *ai.Client, graphSection, level string) (string
 // counts + top-N entries only. Full detail stays one level=full call away.
 func buildBriefingSummary() (string, []string) {
 	report := RunFullAnalysis()
-	tasks, _ := store.ListTasks("in_progress", "")
-	events, _ := store.GetUnconsumedEvents()
+	tasks, err := store.ListTasks("in_progress", "")
+	u.LogIgnore("ANALYZE", err)
+	events, err := store.GetUnconsumedEvents()
+	u.LogIgnore("ANALYZE", err)
 	suggestions := AnalyzeThreadSuggestions()
 	var surfaced []string
 

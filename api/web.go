@@ -35,7 +35,11 @@ func (s *Server) handleWebRoutes(w http.ResponseWriter, method, path string, bod
 				return true
 			}
 			// Return remaining unconsumed count
-			events, _ := store.GetUnconsumedEvents()
+			events, err := store.GetUnconsumedEvents()
+			if err != nil {
+				web.SendError(w, http.StatusInternalServerError, err.Error())
+				return true
+			}
 			web.SendJSON(w, map[string]any{"ok": true, "remaining": len(events)})
 			return true
 		}
@@ -74,7 +78,11 @@ func (s *Server) handleWebRoutes(w http.ResponseWriter, method, path string, bod
 	case "web/activity":
 		web.SendJSON(w, webdata.ActivityPayload())
 	case "web/events":
-		events, _ := store.GetUnconsumedEvents()
+		events, err := store.GetUnconsumedEvents()
+		if err != nil {
+			web.SendError(w, http.StatusInternalServerError, err.Error())
+			return true
+		}
 		if events == nil {
 			events = []map[string]any{}
 		}

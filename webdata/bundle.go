@@ -46,10 +46,12 @@ func NewBundle() *Bundle {
 }
 
 func (b *Bundle) loadTasks() {
+	var err error
 	if b.flags.tasks {
 		return
 	}
-	b.tasks, _ = store.ListTasks("", "")
+	b.tasks, err = store.ListTasks("", "")
+	u.LogIgnore("WEB", err)
 	for _, t := range b.tasks {
 		b.taskTitles[t.ID] = t.Title
 	}
@@ -57,11 +59,13 @@ func (b *Bundle) loadTasks() {
 }
 
 func (b *Bundle) loadCommits() {
+	var err error
 	if b.flags.commits {
 		return
 	}
 	b.loadTasks()
-	b.commits, _ = store.ListCommits("", "", "", "", 0)
+	b.commits, err = store.ListCommits("", "", "", "", 0)
+	u.LogIgnore("WEB", err)
 	for _, c := range b.commits {
 		b.commitTitles[u.Str(c["id"])] = u.Str(c["title"])
 		if tid := u.Str(c["task_id"]); tid != "" {
@@ -72,10 +76,12 @@ func (b *Bundle) loadCommits() {
 }
 
 func (b *Bundle) loadDecisions() {
+	var err error
 	if b.flags.decisions {
 		return
 	}
-	b.decisions, _ = store.ListDecisions()
+	b.decisions, err = store.ListDecisions()
+	u.LogIgnore("WEB", err)
 	for _, d := range b.decisions {
 		b.decisionTitles[u.Str(d["id"])] = u.Str(d["title"])
 	}
@@ -83,74 +89,92 @@ func (b *Bundle) loadDecisions() {
 }
 
 func (b *Bundle) loadBugs() {
+	var err error
 	if b.flags.bugs {
 		return
 	}
-	b.bugs, _ = store.ListBugs("", "", "", 0, 0)
+	b.bugs, err = store.ListBugs("", "", "", 0, 0)
+	u.LogIgnore("WEB", err)
 	b.flags.bugs = true
 }
 
 func (b *Bundle) loadIdeas() {
+	var err error
 	if b.flags.ideas {
 		return
 	}
-	b.ideas, _ = store.ListIdeas("")
+	b.ideas, err = store.ListIdeas("")
+	u.LogIgnore("WEB", err)
 	b.flags.ideas = true
 }
 
 func (b *Bundle) loadDocs() {
+	var err error
 	if b.flags.docs {
 		return
 	}
-	b.docs, _ = store.ListDocRecords("", "")
+	b.docs, err = store.ListDocRecords("", "")
+	u.LogIgnore("WEB", err)
 	b.flags.docs = true
 }
 
 func (b *Bundle) loadVisions() {
+	var err error
 	if b.flags.visions {
 		return
 	}
-	b.visions, _ = store.ListVisions()
+	b.visions, err = store.ListVisions()
+	u.LogIgnore("WEB", err)
 	b.flags.visions = true
 }
 
 func (b *Bundle) loadRoadmaps() {
+	var err error
 	if b.flags.roadmaps {
 		return
 	}
-	b.roadmaps, _ = store.ListRoadmaps("")
+	b.roadmaps, err = store.ListRoadmaps("")
+	u.LogIgnore("WEB", err)
 	b.flags.roadmaps = true
 }
 
 func (b *Bundle) loadPlans() {
+	var err error
 	if b.flags.plans {
 		return
 	}
-	b.plans, _ = store.ListPlans("", "")
+	b.plans, err = store.ListPlans("", "")
+	u.LogIgnore("WEB", err)
 	b.flags.plans = true
 }
 
 func (b *Bundle) loadPrinciples() {
+	var err error
 	if b.flags.principles {
 		return
 	}
-	b.principles, _ = store.ListPrinciples("", "")
+	b.principles, err = store.ListPrinciples("", "")
+	u.LogIgnore("WEB", err)
 	b.flags.principles = true
 }
 
 func (b *Bundle) loadCanon() {
+	var err error
 	if b.flags.canon {
 		return
 	}
-	b.canon, _ = store.GetCanon()
+	b.canon, err = store.GetCanon()
+	u.LogIgnore("WEB", err)
 	b.flags.canon = true
 }
 
 func (b *Bundle) loadDaily() {
+	var err error
 	if b.flags.daily {
 		return
 	}
-	b.daily, _ = store.GetDailyNote("")
+	b.daily, err = store.GetDailyNote("")
+	u.LogIgnore("WEB", err)
 	b.flags.daily = true
 }
 
@@ -160,7 +184,8 @@ func (b *Bundle) loadTaskNotes() {
 	}
 	b.loadTasks()
 	for _, t := range b.tasks {
-		n, _ := store.ListTaskNotes(t.ID, 999)
+		n, err := store.ListTaskNotes(t.ID, 999)
+		u.LogIgnore("WEB", err)
 		b.taskNotes = append(b.taskNotes, n...)
 	}
 	b.flags.taskNotes = true

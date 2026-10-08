@@ -325,8 +325,13 @@ func ListTaskNotes(taskID string, limit int) ([]map[string]any, error) {
 	var notes []map[string]any
 	for rows.Next() {
 		var id, tid, content, mode, createdAt string
-		rows.Scan(&id, &tid, &content, &mode, &createdAt)
+		if err := rows.Scan(&id, &tid, &content, &mode, &createdAt); err != nil {
+			return nil, err
+		}
 		notes = append(notes, map[string]any{"id": id, "task_id": tid, "content": content, "mode": mode, "created_at": createdAt})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	if notes == nil {
 		notes = []map[string]any{}
@@ -1422,6 +1427,9 @@ func ScanVerificationLogRows(rows *sql.Rows) ([]map[string]any, error) {
 		}
 		logs = append(logs, m)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	if logs == nil {
 		logs = []map[string]any{}
 	}
@@ -1981,8 +1989,13 @@ func ListLinksFor(projectPath, sourceID, targetID, relation string) ([]map[strin
 	var links []map[string]any
 	for rows.Next() {
 		var id, sourceType, sid, rel, targetType, tid, note, createdAt string
-		rows.Scan(&id, &sourceType, &sid, &rel, &targetType, &tid, &note, &createdAt)
+		if err := rows.Scan(&id, &sourceType, &sid, &rel, &targetType, &tid, &note, &createdAt); err != nil {
+			return nil, err
+		}
 		links = append(links, map[string]any{"id": id, "source_type": sourceType, "source_id": sid, "relation": rel, "target_type": targetType, "target_id": tid, "note": note, "created_at": createdAt})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	if links == nil {
 		links = []map[string]any{}
@@ -2106,12 +2119,17 @@ func ListDocRecords(status, layer string) ([]map[string]any, error) {
 		var path, dtype, dstatus, layer, lastReviewed string
 		var sourceOfTruth int
 		var supersededBy sql.NullString
-		rows.Scan(&path, &dtype, &dstatus, &layer, &sourceOfTruth, &lastReviewed, &supersededBy)
+		if err := rows.Scan(&path, &dtype, &dstatus, &layer, &sourceOfTruth, &lastReviewed, &supersededBy); err != nil {
+			return nil, err
+		}
 		d := map[string]any{"path": path, "type": dtype, "status": dstatus, "layer": layer, "source_of_truth": sourceOfTruth == 1, "last_reviewed": lastReviewed}
 		if supersededBy.Valid {
 			d["superseded_by"] = supersededBy.String
 		}
 		docs = append(docs, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	if docs == nil {
 		docs = []map[string]any{}
@@ -2288,8 +2306,13 @@ func ListDailyNotes() ([]map[string]any, error) {
 	var notes []map[string]any
 	for rows.Next() {
 		var noteDate, completedJSON, problemsJSON, risksJSON, nextJSON, updatedAt string
-		rows.Scan(&noteDate, &completedJSON, &problemsJSON, &risksJSON, &nextJSON, &updatedAt)
+		if err := rows.Scan(&noteDate, &completedJSON, &problemsJSON, &risksJSON, &nextJSON, &updatedAt); err != nil {
+			return nil, err
+		}
 		notes = append(notes, map[string]any{"note_date": noteDate, "completed": u.ParseJSONList(completedJSON), "problems": u.ParseJSONList(problemsJSON), "risks": u.ParseJSONList(risksJSON), "next": u.ParseJSONList(nextJSON), "updated_at": updatedAt})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	if notes == nil {
 		notes = []map[string]any{}
@@ -2510,7 +2533,9 @@ func ListThreads(status string) ([]map[string]any, error) {
 	var threads []map[string]any
 	for rows.Next() {
 		var id, title, summary, status, source, createdAt, updatedAt string
-		rows.Scan(&id, &title, &summary, &status, &source, &createdAt, &updatedAt)
+		if err := rows.Scan(&id, &title, &summary, &status, &source, &createdAt, &updatedAt); err != nil {
+			return nil, err
+		}
 		threads = append(threads, map[string]any{
 			"id": id, "title": title, "summary": summary, "status": status,
 			"source": source, "created_at": createdAt, "updated_at": updatedAt,
@@ -2617,12 +2642,17 @@ func ListThreadItems(threadID string) ([]map[string]any, error) {
 	var items []map[string]any
 	for rows.Next() {
 		var etype, eid, note, addedAt string
-		rows.Scan(&etype, &eid, &note, &addedAt)
+		if err := rows.Scan(&etype, &eid, &note, &addedAt); err != nil {
+			return nil, err
+		}
 		title, status := ResolveEntityTitleStatus(etype, eid)
 		items = append(items, map[string]any{
 			"entity_type": etype, "entity_id": eid, "title": title, "status": status,
 			"note": note, "added_at": addedAt,
 		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	if items == nil {
 		items = []map[string]any{}
@@ -2848,7 +2878,9 @@ func ScanTasks(rows *sql.Rows, err error) ([]Task, error) {
 		var t Task
 		var acceptanceJSON, docsJSON, decsJSON string
 		var roadmapID, planID sql.NullString
-		rows.Scan(&t.ID, &t.Title, &t.Status, &t.Priority, &t.Phase, &acceptanceJSON, &docsJSON, &decsJSON, &t.LastNote, &t.UpdatedAt, &roadmapID, &planID, &t.CreatedAt)
+		if err := rows.Scan(&t.ID, &t.Title, &t.Status, &t.Priority, &t.Phase, &acceptanceJSON, &docsJSON, &decsJSON, &t.LastNote, &t.UpdatedAt, &roadmapID, &planID, &t.CreatedAt); err != nil {
+			return nil, err
+		}
 		t.RoadmapID = roadmapID.String
 		t.PlanID = planID.String
 		t.Acceptance = u.ParseJSONList(acceptanceJSON)
@@ -2894,6 +2926,9 @@ func ScanCommitRows(rows *sql.Rows) ([]map[string]any, error) {
 		}
 		commits = append(commits, m)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	if commits == nil {
 		commits = []map[string]any{}
 	}
@@ -2938,6 +2973,9 @@ func ScanPlanRows(rows *sql.Rows) ([]map[string]any, error) {
 		}
 		plans = append(plans, m)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	if plans == nil {
 		plans = []map[string]any{}
 	}
@@ -2976,6 +3014,9 @@ func ScanBugRows(rows *sql.Rows) ([]map[string]any, error) {
 			return nil, err
 		}
 		bugs = append(bugs, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	if bugs == nil {
 		bugs = []map[string]any{}
@@ -3016,6 +3057,9 @@ func ScanDecisionRows(rows *sql.Rows) ([]map[string]any, error) {
 		}
 		decisions = append(decisions, m)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	if decisions == nil {
 		decisions = []map[string]any{}
 	}
@@ -3050,6 +3094,9 @@ func ScanIdeaRows(rows *sql.Rows) ([]map[string]any, error) {
 			return nil, err
 		}
 		ideas = append(ideas, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	if ideas == nil {
 		ideas = []map[string]any{}
@@ -3088,6 +3135,9 @@ func ScanRoadmapRows(rows *sql.Rows) ([]map[string]any, error) {
 		}
 		roadmaps = append(roadmaps, m)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	if roadmaps == nil {
 		roadmaps = []map[string]any{}
 	}
@@ -3121,6 +3171,9 @@ func ScanPrincipleRows(rows *sql.Rows) ([]map[string]any, error) {
 		}
 		principles = append(principles, m)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	if principles == nil {
 		principles = []map[string]any{}
 	}
@@ -3148,7 +3201,9 @@ func ScanVisionRows(rows *sql.Rows) ([]map[string]any, error) {
 	for rows.Next() {
 		m := map[string]any{}
 		var id, title, summary, status, horizon, createdAt, updatedAt string
-		rows.Scan(&id, &title, &summary, &status, &horizon, &createdAt, &updatedAt)
+		if err := rows.Scan(&id, &title, &summary, &status, &horizon, &createdAt, &updatedAt); err != nil {
+			return nil, err
+		}
 		m["id"] = id
 		m["title"] = title
 		m["summary"] = summary
@@ -3157,6 +3212,9 @@ func ScanVisionRows(rows *sql.Rows) ([]map[string]any, error) {
 		m["created_at"] = createdAt
 		m["updated_at"] = updatedAt
 		visions = append(visions, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	if visions == nil {
 		visions = []map[string]any{}
@@ -3364,12 +3422,17 @@ func ListEvents(consumedOnly string) ([]map[string]any, error) {
 	for rows.Next() {
 		var id, typ, entityType, entityID, summary, createdAt string
 		var consumed, processed int
-		rows.Scan(&id, &typ, &entityType, &entityID, &summary, &createdAt, &consumed, &processed)
+		if err := rows.Scan(&id, &typ, &entityType, &entityID, &summary, &createdAt, &consumed, &processed); err != nil {
+			return nil, err
+		}
 		events = append(events, map[string]any{
 			"id": id, "type": typ, "entity_type": entityType, "entity_id": entityID,
 			"summary": summary, "created_at": createdAt, "consumed_by_agent": consumed == 1,
 			"processed_by_agent": processed == 1,
 		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	if events == nil {
 		events = []map[string]any{}
@@ -3459,7 +3522,9 @@ func GetAgentProfile(id string) (map[string]any, error) {
 	a := map[string]any{}
 	var caps string
 	var aid, aname, arole, astatus, acreatedAt, aupdatedAt string
-	row.Scan(&aid, &aname, &arole, &caps, &astatus, &acreatedAt, &aupdatedAt)
+	if err := row.Scan(&aid, &aname, &arole, &caps, &astatus, &acreatedAt, &aupdatedAt); err != nil {
+		return nil, err
+	}
 	a["id"] = aid
 	a["name"] = aname
 	a["role"] = arole
@@ -3486,7 +3551,9 @@ func ListAgentProfiles() ([]map[string]any, error) {
 		a := map[string]any{}
 		var caps string
 		var id, name, role, status, createdAt, updatedAt string
-		rows.Scan(&id, &name, &role, &caps, &status, &createdAt, &updatedAt)
+		if err := rows.Scan(&id, &name, &role, &caps, &status, &createdAt, &updatedAt); err != nil {
+			return nil, err
+		}
 		a["id"] = id
 		a["name"] = name
 		a["role"] = role
@@ -3495,6 +3562,9 @@ func ListAgentProfiles() ([]map[string]any, error) {
 		a["updated_at"] = updatedAt
 		a["capabilities"] = u.ParseJSONList(caps)
 		result = append(result, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	if result == nil {
 		result = []map[string]any{}
@@ -3513,7 +3583,9 @@ func UpdateAgentProfile(id string, payload map[string]any) (map[string]any, erro
 	var caps string
 	var existingStatus string
 	var existingID string
-	row.Scan(&existingID, &existingName, &existingRole, &caps, &existingStatus)
+	if err := row.Scan(&existingID, &existingName, &existingRole, &caps, &existingStatus); err != nil {
+		return nil, err
+	}
 	setParts := []string{}
 	args := []any{}
 	for k, v := range payload {
@@ -3644,12 +3716,17 @@ func listGraphEdgesFor(projectPath, sourceID, targetID, edgeType string) ([]map[
 	for rows.Next() {
 		var id, st, sid, et, tt, tid, evJSON, ca string
 		var w float64
-		rows.Scan(&id, &st, &sid, &et, &tt, &tid, &w, &evJSON, &ca)
+		if err := rows.Scan(&id, &st, &sid, &et, &tt, &tid, &w, &evJSON, &ca); err != nil {
+			return nil, err
+		}
 		edges = append(edges, map[string]any{
 			"id": id, "source_type": st, "source_id": sid, "edge_type": et,
 			"target_type": tt, "target_id": tid, "weight": w,
 			"evidence_json": evJSON, "created_at": ca,
 		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	if edges == nil {
 		edges = []map[string]any{}

@@ -19,8 +19,10 @@ func minInt(a, b int) int {
 
 // StatusSnapshot returns high-level project counts for dashboard/API.
 func StatusSnapshot() map[string]any {
-	tasks, _ := store.ListTasks("", "")
-	bugs, _ := store.ListBugs("open", "", "", 0, 0)
+	tasks, err := store.ListTasks("", "")
+	u.LogIgnore("PACKETS", err)
+	bugs, err := store.ListBugs("open", "", "", 0, 0)
+	u.LogIgnore("PACKETS", err)
 	inProgress := 0
 	for _, t := range tasks {
 		if t.Status == "in_progress" {
@@ -36,7 +38,8 @@ func StatusSnapshot() map[string]any {
 
 // InboxSummary returns new ideas awaiting review.
 func InboxSummary() map[string]any {
-	ideas, _ := store.ListIdeas("new")
+	ideas, err := store.ListIdeas("new")
+	u.LogIgnore("PACKETS", err)
 	return map[string]any{
 		"new_ideas": len(ideas),
 		"ideas":     ideas[:minInt(10, len(ideas))],
@@ -45,7 +48,8 @@ func InboxSummary() map[string]any {
 
 // NextActionPacket suggests the next CLI action for an agent.
 func NextActionPacket() map[string]any {
-	tasks, _ := store.ListTasks("in_progress", "")
+	tasks, err := store.ListTasks("in_progress", "")
+	u.LogIgnore("PACKETS", err)
 	if len(tasks) > 0 {
 		t := tasks[0]
 		return map[string]any{
@@ -68,9 +72,12 @@ func NextActionPacket() map[string]any {
 
 // ContextPack assembles project context for agents and web UI.
 func ContextPack() map[string]any {
-	tasks, _ := store.ListTasks("in_progress", "")
-	plans, _ := store.ListPlans("", "active")
-	docs, _ := store.ListDocRecords("", "")
+	tasks, err := store.ListTasks("in_progress", "")
+	u.LogIgnore("PACKETS", err)
+	plans, err := store.ListPlans("", "active")
+	u.LogIgnore("PACKETS", err)
+	docs, err := store.ListDocRecords("", "")
+	u.LogIgnore("PACKETS", err)
 
 	sotDocs := []any{}
 	for _, d := range docs {
@@ -79,7 +86,8 @@ func ContextPack() map[string]any {
 		}
 	}
 	report := analyze.RunFullAnalysis()
-	events, _ := store.GetUnconsumedEvents()
+	events, err := store.GetUnconsumedEvents()
+	u.LogIgnore("PACKETS", err)
 	alerts := pmAlerts(events)
 
 	return map[string]any{
@@ -102,10 +110,14 @@ func ContextPack() map[string]any {
 
 // AgentStartPacket is the payload for `aipmc start`.
 func AgentStartPacket(client *ai.Client) map[string]any {
-	tasks, _ := store.ListTasks("in_progress", "")
-	plans, _ := store.ListPlans("", "active")
-	threads, _ := store.ListThreads("active")
-	events, _ := store.GetUnconsumedEvents()
+	tasks, err := store.ListTasks("in_progress", "")
+	u.LogIgnore("PACKETS", err)
+	plans, err := store.ListPlans("", "active")
+	u.LogIgnore("PACKETS", err)
+	threads, err := store.ListThreads("active")
+	u.LogIgnore("PACKETS", err)
+	events, err := store.GetUnconsumedEvents()
+	u.LogIgnore("PACKETS", err)
 	briefing, eventIDs := analyze.BuildBriefing(client, "")
 	// W2-P2（8/13）：start 通道同样展示 PM 最新变更事件——surfaced 记录不能漏掉
 	// 这个更高频的通道。CLI 进程无 agent 归属，标 src=cli-start（统计上保守偏低）。

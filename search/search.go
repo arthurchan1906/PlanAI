@@ -440,6 +440,7 @@ func cjkBigrams(s string) []string {
 }
 
 func mustListTasks() []store.Task {
-	tasks, _ := store.ListTasks("", "")
+	tasks, err := store.ListTasks("", "")
+	u.LogIgnore("SEARCH", err)
 	return tasks
 }
