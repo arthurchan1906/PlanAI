@@ -68,7 +68,7 @@ func ListTasksFor(projectPath, status, planID string) ([]Task, error) {
 		return nil, err
 	}
 	defer db.Close()
-	q := "SELECT * FROM tasks"
+	q := "SELECT " + taskColumns + " FROM tasks"
 	var args []any
 	var clauses []string
 	if status != "" {
@@ -93,7 +93,7 @@ func GetTaskSimple(id string) (map[string]any, error) {
 	}
 	defer db.Close()
 	task := map[string]any{}
-	row := db.QueryRow("SELECT * FROM tasks WHERE id = ?", id)
+	row := db.QueryRow("SELECT "+taskColumns+" FROM tasks WHERE id = ?", id)
 	if err := ScanTaskRow(row, task); err != nil {
 		return nil, err
 	}
@@ -154,7 +154,7 @@ func UpdateTask(projectPath string, id, status, note string, allowWithoutCommit,
 		return nil, err
 	}
 	defer db.Close()
-	row := db.QueryRow("SELECT * FROM tasks WHERE id = ?", id)
+	row := db.QueryRow("SELECT "+taskColumns+" FROM tasks WHERE id = ?", id)
 	existing := map[string]any{}
 	if err := ScanTaskRow(row, existing); err != nil {
 		return nil, err
@@ -282,7 +282,7 @@ func AppendTaskNote(projectPath string, taskID, content string) (map[string]any,
 		return nil, err
 	}
 	defer db.Close()
-	row := db.QueryRow("SELECT * FROM tasks WHERE id = ?", taskID)
+	row := db.QueryRow("SELECT "+taskColumns+" FROM tasks WHERE id = ?", taskID)
 	existing := map[string]any{}
 	if err := ScanTaskRow(row, existing); err != nil {
 		return nil, err
@@ -354,7 +354,7 @@ func UpdateTaskCheckpoint(taskID string, index int, done bool) (map[string]any, 
 		return nil, err
 	}
 	defer db.Close()
-	row := db.QueryRow("SELECT * FROM tasks WHERE id = ?", taskID)
+	row := db.QueryRow("SELECT "+taskColumns+" FROM tasks WHERE id = ?", taskID)
 	existing := map[string]any{}
 	if err := ScanTaskRow(row, existing); err != nil {
 		return nil, err
@@ -389,7 +389,7 @@ func ListCommitsFor(projectPath, status, taskID, decisionID, since string, limit
 		return nil, err
 	}
 	defer db.Close()
-	q := "SELECT id, title, summary, evidence_summary, review_notes, branch, commit_hash, task_id, decision_id, status, test_status, review_status, files_json, created_at, updated_at FROM commits"
+	q := "SELECT " + commitColumns + " FROM commits"
 	var args []any
 	var clauses []string
 	if status != "" {
@@ -438,7 +438,7 @@ func ListCommitsWithOffset(status, taskID, decisionID, since string, limit, offs
 		return nil, err
 	}
 	defer db.Close()
-	q := "SELECT id, title, summary, evidence_summary, review_notes, branch, commit_hash, task_id, decision_id, status, test_status, review_status, files_json, created_at, updated_at FROM commits"
+	q := "SELECT " + commitColumns + " FROM commits"
 	var args []any
 	var clauses []string
 	if status != "" {
@@ -490,7 +490,7 @@ func ListOrphanCommits(limit, offset int) ([]map[string]any, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	q := "SELECT id, title, summary, evidence_summary, review_notes, branch, commit_hash, task_id, decision_id, status, test_status, review_status, files_json, created_at, updated_at FROM commits WHERE task_id IS NULL OR task_id = '' ORDER BY created_at DESC, id DESC LIMIT ?"
+	q := "SELECT " + commitColumns + " FROM commits WHERE task_id IS NULL OR task_id = '' ORDER BY created_at DESC, id DESC LIMIT ?"
 	args := []any{limit}
 	if offset > 0 {
 		q += " OFFSET ?"
@@ -535,7 +535,7 @@ func getCommitFor(projectPath, id string) (map[string]any, error) {
 		return nil, err
 	}
 	c := map[string]any{}
-	row := db.QueryRow("SELECT id, title, summary, evidence_summary, review_notes, branch, commit_hash, task_id, decision_id, status, test_status, review_status, files_json, created_at, updated_at FROM commits WHERE id = ? OR commit_hash = ?", lookup, lookup)
+	row := db.QueryRow("SELECT "+commitColumns+" FROM commits WHERE id = ? OR commit_hash = ?", lookup, lookup)
 	if err := ScanCommitRow(row, c); err != nil {
 		return nil, err
 	}
@@ -922,7 +922,7 @@ func UpdateCommitFor(projectPath, id string, payload map[string]any) (map[string
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRow("SELECT id, title, summary, evidence_summary, review_notes, branch, commit_hash, task_id, decision_id, status, test_status, review_status, files_json, created_at, updated_at FROM commits WHERE id = ? OR commit_hash = ?", lookup, lookup)
+	row := db.QueryRow("SELECT "+commitColumns+" FROM commits WHERE id = ? OR commit_hash = ?", lookup, lookup)
 	existing := map[string]any{}
 	if err := ScanCommitRow(row, existing); err != nil {
 		return nil, err
@@ -1038,7 +1038,7 @@ func ListPlans(roadmapID, status string) ([]map[string]any, error) {
 		return nil, err
 	}
 	defer db.Close()
-	q := "SELECT * FROM plans"
+	q := "SELECT " + planColumns + " FROM plans"
 	var args []any
 	var clauses []string
 	if roadmapID != "" {
@@ -1068,7 +1068,7 @@ func GetPlan(id string) (map[string]any, error) {
 	}
 	defer db.Close()
 	p := map[string]any{}
-	row := db.QueryRow("SELECT * FROM plans WHERE id = ?", id)
+	row := db.QueryRow("SELECT "+planColumns+" FROM plans WHERE id = ?", id)
 	if err := ScanPlanRow(row, p); err != nil {
 		return nil, err
 	}
@@ -1137,7 +1137,7 @@ func ListBugsByTask(taskID string, limit int) ([]map[string]any, error) {
 		return nil, err
 	}
 	defer db.Close()
-	q := "SELECT id, title, description, severity, status, commit_id, task_id, error, files, root_cause, fix, tags, created_at, updated_at FROM bugs"
+	q := "SELECT " + bugColumns + " FROM bugs"
 	var args []any
 	if taskID != "" {
 		q += " WHERE task_id = ?"
@@ -1162,7 +1162,7 @@ func ListBugs(status, severity, commitID string, limit, offset int) ([]map[strin
 		return nil, err
 	}
 	defer db.Close()
-	q := "SELECT id, title, description, severity, status, commit_id, task_id, error, files, root_cause, fix, tags, created_at, updated_at FROM bugs"
+	q := "SELECT " + bugColumns + " FROM bugs"
 	var args []any
 	var clauses []string
 	if status != "" {
@@ -1204,7 +1204,7 @@ func GetBug(id string) (map[string]any, error) {
 	}
 	defer db.Close()
 	b := map[string]any{}
-	row := db.QueryRow("SELECT id, title, description, severity, status, commit_id, task_id, error, files, root_cause, fix, tags, created_at, updated_at FROM bugs WHERE id = ?", id)
+	row := db.QueryRow("SELECT "+bugColumns+" FROM bugs WHERE id = ?", id)
 	if err := ScanBugRow(row, b); err != nil {
 		return nil, err
 	}
@@ -1458,7 +1458,7 @@ func ListDecisions() ([]map[string]any, error) {
 		return nil, err
 	}
 	defer db.Close()
-	rows, err := db.Query("SELECT * FROM decisions ORDER BY date DESC, id DESC")
+	rows, err := db.Query("SELECT " + decisionColumns + " FROM decisions ORDER BY date DESC, id DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -1473,7 +1473,7 @@ func GetDecision(id string) (map[string]any, error) {
 	}
 	defer db.Close()
 	d := map[string]any{}
-	row := db.QueryRow("SELECT * FROM decisions WHERE id = ?", id)
+	row := db.QueryRow("SELECT "+decisionColumns+" FROM decisions WHERE id = ?", id)
 	if err := ScanDecisionRow(row, d); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			// 8/28 A 前置修复：agent 常传缺 6 位后缀的前缀 id（如
@@ -1485,7 +1485,7 @@ func GetDecision(id string) (map[string]any, error) {
 				return nil, rerr
 			}
 			if lookup != id {
-				row = db.QueryRow("SELECT * FROM decisions WHERE id = ?", lookup)
+				row = db.QueryRow("SELECT "+decisionColumns+" FROM decisions WHERE id = ?", lookup)
 				if err := ScanDecisionRow(row, d); err != nil {
 					return nil, err
 				}
@@ -1600,7 +1600,7 @@ func ListIdeas(status string) ([]map[string]any, error) {
 		return nil, err
 	}
 	defer db.Close()
-	q := "SELECT * FROM ideas"
+	q := "SELECT " + ideaColumns + " FROM ideas"
 	var args []any
 	if status != "" {
 		q += " WHERE status = ?"
@@ -1632,7 +1632,7 @@ func GetIdea(id string) (map[string]any, error) {
 	}
 	defer db.Close()
 	idea := map[string]any{}
-	row := db.QueryRow("SELECT * FROM ideas WHERE id = ?", id)
+	row := db.QueryRow("SELECT "+ideaColumns+" FROM ideas WHERE id = ?", id)
 	if err := ScanIdeaRow(row, idea); err != nil {
 		return nil, err
 	}
@@ -1772,7 +1772,7 @@ func ListRoadmaps(visionID string) ([]map[string]any, error) {
 		return nil, err
 	}
 	defer db.Close()
-	q := "SELECT * FROM roadmap"
+	q := "SELECT " + roadmapColumns + " FROM roadmap"
 	var args []any
 	if visionID != "" {
 		q += " WHERE vision_id = ?"
@@ -1794,7 +1794,7 @@ func GetRoadmap(id string) (map[string]any, error) {
 	}
 	defer db.Close()
 	r := map[string]any{}
-	row := db.QueryRow("SELECT * FROM roadmap WHERE id = ?", id)
+	row := db.QueryRow("SELECT "+roadmapColumns+" FROM roadmap WHERE id = ?", id)
 	if err := ScanRoadmapRow(row, r); err != nil {
 		return nil, err
 	}
@@ -1856,7 +1856,7 @@ func ListPrinciples(status, kind string) ([]map[string]any, error) {
 		return nil, err
 	}
 	defer db.Close()
-	q := "SELECT * FROM principles"
+	q := "SELECT " + principleColumns + " FROM principles"
 	var args []any
 	var clauses []string
 	if status != "" {
@@ -1886,7 +1886,7 @@ func GetPrinciple(id string) (map[string]any, error) {
 	}
 	defer db.Close()
 	p := map[string]any{}
-	row := db.QueryRow("SELECT * FROM principles WHERE id = ?", id)
+	row := db.QueryRow("SELECT "+principleColumns+" FROM principles WHERE id = ?", id)
 	if err := ScanPrincipleRow(row, p); err != nil {
 		return nil, err
 	}
@@ -1954,7 +1954,7 @@ func ListLinksFor(projectPath, sourceID, targetID, relation string) ([]map[strin
 		return nil, err
 	}
 	defer db.Close()
-	q := "SELECT * FROM links"
+	q := "SELECT " + linkColumns + " FROM links"
 	var args []any
 	var clauses []string
 	if sourceID != "" {
@@ -2082,7 +2082,7 @@ func ListDocRecords(status, layer string) ([]map[string]any, error) {
 		return nil, err
 	}
 	defer db.Close()
-	q := "SELECT * FROM doc_records"
+	q := "SELECT " + docRecordColumns + " FROM doc_records"
 	var args []any
 	var clauses []string
 	if status != "" {
@@ -2180,7 +2180,7 @@ func GetDailyNote(date string) (map[string]any, error) {
 	if date == "" {
 		date = u.Today()
 	}
-	return scanDailyNote(db.QueryRow("SELECT * FROM daily_notes WHERE note_date = ?", date), date)
+	return scanDailyNote(db.QueryRow("SELECT "+dailyNoteColumns+" FROM daily_notes WHERE note_date = ?", date), date)
 }
 
 // scanDailyNote decodes one daily_notes row. A missing row yields the empty
@@ -2236,7 +2236,7 @@ func UpsertDaily(date string, payload map[string][]string, append_ bool) (map[st
 			}
 		}()
 
-		existing, err := scanDailyNote(conn.QueryRowContext(context.Background(), "SELECT * FROM daily_notes WHERE note_date = ?", date), date)
+		existing, err := scanDailyNote(conn.QueryRowContext(context.Background(), "SELECT "+dailyNoteColumns+" FROM daily_notes WHERE note_date = ?", date), date)
 		if err != nil {
 			return err
 		}
@@ -2280,7 +2280,7 @@ func ListDailyNotes() ([]map[string]any, error) {
 		return nil, err
 	}
 	defer db.Close()
-	rows, err := db.Query("SELECT * FROM daily_notes ORDER BY note_date DESC")
+	rows, err := db.Query("SELECT " + dailyNoteColumns + " FROM daily_notes ORDER BY note_date DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -2307,7 +2307,7 @@ func ListVisions() ([]map[string]any, error) {
 		return nil, err
 	}
 	defer db.Close()
-	rows, err := db.Query("SELECT * FROM visions ORDER BY created_at DESC")
+	rows, err := db.Query("SELECT " + visionColumns + " FROM visions ORDER BY created_at DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -2322,7 +2322,7 @@ func GetVision(id string) (map[string]any, error) {
 	}
 	defer db.Close()
 	v := map[string]any{}
-	row := db.QueryRow("SELECT * FROM visions WHERE id = ?", id)
+	row := db.QueryRow("SELECT "+visionColumns+" FROM visions WHERE id = ?", id)
 	var id2, title, summary, status, horizon, createdAt, updatedAt string
 	if err := row.Scan(&id2, &title, &summary, &status, &horizon, &createdAt, &updatedAt); err != nil {
 		return nil, err
@@ -2389,7 +2389,7 @@ func GetCanon() (map[string]any, error) {
 		return nil, err
 	}
 	defer db.Close()
-	row := db.QueryRow("SELECT * FROM canon WHERE id = 1")
+	row := db.QueryRow("SELECT " + canonColumns + " FROM canon WHERE id = 1")
 	var id int
 	var updatedAt, productGoal, engFocus, arch string
 	if err := row.Scan(&id, &updatedAt, &productGoal, &engFocus, &arch); err != nil {
@@ -2495,7 +2495,7 @@ func ListThreads(status string) ([]map[string]any, error) {
 		return nil, err
 	}
 	defer db.Close()
-	q := "SELECT * FROM threads"
+	q := "SELECT " + threadColumns + " FROM threads"
 	var args []any
 	if status != "" {
 		q += " WHERE status = ?"
@@ -2532,7 +2532,7 @@ func GetThread(id string) (map[string]any, error) {
 		return nil, err
 	}
 	defer db.Close()
-	row := db.QueryRow("SELECT * FROM threads WHERE id = ?", id)
+	row := db.QueryRow("SELECT "+threadColumns+" FROM threads WHERE id = ?", id)
 	var tid, title, summary, status, source, createdAt, updatedAt string
 	if err := row.Scan(&tid, &title, &summary, &status, &source, &createdAt, &updatedAt); err != nil {
 		return nil, err
@@ -2786,6 +2786,31 @@ func ListRecentCommitsWithContext(limit int) ([]CommitContext, error) {
 // ============================================================
 // Helpers
 // ============================================================
+
+// ── 显式列清单（反馈 #48）────────────────────────────────────────────
+// 这些表的读取此前用 `SELECT *` + 位置 Scan。SQLite 的 ALTER TABLE ADD
+// COLUMN 会把新列追加到物理末尾，与 CREATE TABLE 的列序不一致（bugs
+// 表在本机就是这种状态：task_id 在最后一列）；一旦某个二进制把库迁移
+// 到新 schema，旧二进制的 `SELECT *` 与固定位置 Scan 立刻错位——反馈
+// #48 的「expected 14 destination arguments in Scan, not 13」就是这么来的。
+// 显式列出列名后，列序由 SQL 决定，不再依赖物理布局。
+const (
+	taskColumns      = "id, title, status, priority, phase, acceptance_json, related_docs_json, related_decisions_json, last_note, updated_at, roadmap_id, plan_id, created_at"
+	planColumns      = "id, roadmap_id, vision_id, title, goal, status, priority, scope_json, risks_json, assumptions_json, task_ids_json, source, created_at, updated_at"
+	commitColumns    = "id, title, summary, evidence_summary, review_notes, branch, commit_hash, task_id, decision_id, status, test_status, review_status, files_json, created_at, updated_at"
+	decisionColumns  = "id, title, date, status, background, decision_text, impact_json, alternatives_json, related_tasks_json, updates_canon"
+	bugColumns       = "id, title, description, severity, status, commit_id, task_id, error, files, root_cause, fix, tags, created_at, updated_at"
+	ideaColumns      = "id, title, summary, impact, source, status, canon_conflict, current_summary, main_question, recommended_next_action, updated_at, created_at"
+	roadmapColumns   = "id, vision_id, title, target_date, status, priority, created_at, updated_at"
+	principleColumns = "id, title, summary, kind, status, created_at, updated_at"
+	linkColumns      = "id, source_type, source_id, relation, target_type, target_id, note, created_at"
+	docRecordColumns = "path, type, status, layer, source_of_truth, last_reviewed, superseded_by"
+	dailyNoteColumns = "note_date, completed_json, problems_json, risks_json, next_json, updated_at"
+	visionColumns    = "id, title, summary, status, horizon, created_at, updated_at"
+	canonColumns     = "id, updated_at, product_goal, engineering_focus, architecture"
+	threadColumns    = "id, title, summary, status, source, created_at, updated_at"
+	eventColumns     = "id, type, entity_type, entity_id, summary, created_at, consumed_by_agent, processed_by_agent"
+)
 
 func MapKeyToColumn(k string) string {
 	m := map[string]string{
@@ -3165,7 +3190,7 @@ func getTask(id string) (map[string]any, error) {
 		id = lookup
 	}
 	task := map[string]any{}
-	row := db.QueryRow("SELECT * FROM tasks WHERE id = ?", id)
+	row := db.QueryRow("SELECT "+taskColumns+" FROM tasks WHERE id = ?", id)
 	if err := ScanTaskRow(row, task); err != nil {
 		return nil, err
 	}
@@ -3323,7 +3348,7 @@ func ListEvents(consumedOnly string) ([]map[string]any, error) {
 		return nil, err
 	}
 	defer db.Close()
-	q := "SELECT * FROM events"
+	q := "SELECT " + eventColumns + " FROM events"
 	if consumedOnly == "unconsumed" {
 		// 2.3: "unconsumed" = 未读 AND 未处理。Agent 已处理的事件（processed_by_agent=1）
 		// 不再注入/展示，避免已解决问题反复打扰（D2 已读/已处理分离）。

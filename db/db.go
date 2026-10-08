@@ -28,11 +28,20 @@ const SCHEMA_VERSION = 6
 // schemaUpToDate reports whether the database at d already has the
 // current schema version, so we can skip the DDL pass on hot paths.
 func schemaUpToDate(d *sql.DB) (bool, error) {
-	var v int
-	if err := d.QueryRow("PRAGMA user_version").Scan(&v); err != nil {
+	v, err := schemaVersion(d)
+	if err != nil {
 		return false, err
 	}
 	return v >= SCHEMA_VERSION, nil
+}
+
+// schemaVersion reads the persistent schema marker (PRAGMA user_version).
+func schemaVersion(d *sql.DB) (int, error) {
+	var v int
+	if err := d.QueryRow("PRAGMA user_version").Scan(&v); err != nil {
+		return 0, err
+	}
+	return v, nil
 }
 
 // FindPath locates the main database file.
@@ -262,6 +271,22 @@ func RetryBusy(fn func() error) error {
 	return fmt.Errorf("still busy after 3 retries: %w", err)
 }
 
+// SchemaTooNewError 表示库的 schema 版本高于本二进制支持的版本——即该库
+// 已被更新版本的 aipmc 迁移过。反馈 #48：旧二进制此前会静默继续，然后在
+// 某次 SELECT/Scan 上抛出「sql: expected 14 destination arguments in Scan,
+// not 13」这种和业务毫无关系的错位报错；现在在打开库时就报可读错误。
+type SchemaTooNewError struct {
+	DBVersion     int
+	BinaryVersion int
+}
+
+func (e *SchemaTooNewError) Error() string {
+	return fmt.Sprintf(
+		"数据库 schema 为 v%d，当前 aipmc 二进制只支持到 v%d：该库已被更新版本的 aipmc 迁移过。\n"+
+			"请升级 aipmc（并重启 MCP server）后重试——继续用旧二进制会出现「sql: expected N destination arguments in Scan」类错位报错，而工具报的字段/行数也会失真。",
+		e.DBVersion, e.BinaryVersion)
+}
+
 // EnsureSchemaIfNeeded runs the schema DDL only when the database is not
 // already at the current SCHEMA_VERSION. On hot paths (every Open, the
 // discussion-log write connection) this is a single cheap PRAGMA read
@@ -272,7 +297,7 @@ func RetryBusy(fn func() error) error {
 // possibly locked), DDL is skipped and the actual query surfaces the lock
 // error — the caller then falls into its BUSY retry/spool path.
 func EnsureSchemaIfNeeded(d *sql.DB) error {
-	upToDate, err := schemaUpToDate(d)
+	v, err := schemaVersion(d)
 	if err != nil {
 		// Can't read schema state (DB possibly locked) — don't gamble on
 		// DDL while the file may be held by another writer. If the file
@@ -280,7 +305,16 @@ func EnsureSchemaIfNeeded(d *sql.DB) error {
 		// point; skip and let the actual query surface the lock error.
 		return nil
 	}
-	if upToDate {
+	if v > SCHEMA_VERSION {
+		// 库比二进制新：这里必须硬失败并给出可读指引（反馈 #48），
+		// 不能走上面的「读不到就放行」兜底。
+		err := &SchemaTooNewError{DBVersion: v, BinaryVersion: SCHEMA_VERSION}
+		// 部分 CLI 调用方用 `_` 丢掉了 error（如 dispatchBug list 会打印
+		// "bugs": null）——日志保证这件事不会被静默吞掉，至少 stderr 出声。
+		u.LogShared("SCHEMA", "%v", err)
+		return err
+	}
+	if v >= SCHEMA_VERSION {
 		return nil
 	}
 	return EnsureSchema(d)

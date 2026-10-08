@@ -1,7 +1,11 @@
 package db
 
 import (
+	"database/sql"
+	"errors"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -41,5 +45,52 @@ func TestEnsureSchemaIfNeededRunsDDLWhenStale(t *testing.T) {
 	}
 	if !upToDate {
 		t.Fatal("user_version not advanced after EnsureSchemaIfNeeded")
+	}
+}
+
+// 反馈 #48：库比二进制新时必须硬失败并给可读指引，而不是继续跑到某次
+// SELECT/Scan 上抛出「expected 14 destination arguments in Scan, not 13」。
+func TestEnsureSchemaIfNeededRejectsNewerSchema(t *testing.T) {
+	d := openDBT(t)
+	mustExecT(t, d, "PRAGMA user_version = "+strconv.Itoa(SCHEMA_VERSION+1))
+
+	err := EnsureSchemaIfNeeded(d)
+	if err == nil {
+		t.Fatal("must fail when DB schema is newer than this binary")
+	}
+	var tooNew *SchemaTooNewError
+	if !errors.As(err, &tooNew) {
+		t.Fatalf("want *SchemaTooNewError, got %T: %v", err, err)
+	}
+	if tooNew.DBVersion != SCHEMA_VERSION+1 || tooNew.BinaryVersion != SCHEMA_VERSION {
+		t.Errorf("versions = (%d,%d), want (%d,%d)", tooNew.DBVersion, tooNew.BinaryVersion, SCHEMA_VERSION+1, SCHEMA_VERSION)
+	}
+	if tableOrVTableExists(d, "tasks") {
+		t.Error("DDL must not run against a newer-schema database")
+	}
+	if !strings.Contains(err.Error(), "升级 aipmc") {
+		t.Errorf("error must tell the user to upgrade aipmc, got: %v", err)
+	}
+}
+
+// openAt 是生产路径（pmdb.Open → openAt）：库比二进制新时 Open 必须直接报错。
+func TestOpenAtSurfacesNewerSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pmai.db")
+	d, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec("PRAGMA user_version = " + strconv.Itoa(SCHEMA_VERSION+1)); err != nil {
+		t.Fatal(err)
+	}
+	d.Close()
+
+	if _, err := openAt(path); err == nil {
+		t.Fatal("openAt must reject a database migrated by a newer aipmc")
+	} else {
+		var tooNew *SchemaTooNewError
+		if !errors.As(err, &tooNew) {
+			t.Fatalf("openAt error type = %T, want *SchemaTooNewError: %v", err, err)
+		}
 	}
 }
