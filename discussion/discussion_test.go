@@ -277,3 +277,25 @@ func TestFormatResultsTruncationHint(t *testing.T) {
 		t.Error("短消息不应有截断标注")
 	}
 }
+
+func TestFormatResultsSessionIDIsQueryable(t *testing.T) {
+	full := "01a040b8-9b07-7a02-a47f-2d7650e57fa9" // 36 字符，真实 hook session id 形态
+	rows := []map[string]any{
+		{"id": "disc-20260818-000000-ccc333", "session_id": full, "role": "user", "source": "codex-cli", "created_at": "2026-08-18T00:00:00", "content": "短消息"},
+	}
+	out := FormatResults(rows, false)
+	// 反馈 #26：文本里的 sid 若被截断，直接拿它去过滤会 0 条——必须输出完整 id。
+	if !strings.Contains(out, "sid="+full) {
+		t.Errorf("sid 必须是完整可查询 id，got:\n%s", out)
+	}
+	if strings.Contains(out, full[:13]+"]") {
+		t.Errorf("sid 不得截断，got:\n%s", out)
+	}
+	// 空/未知 session 仍渲染占位符
+	unknown := []map[string]any{
+		{"id": "disc-20260818-000000-ddd444", "session_id": "", "role": "user", "source": "codex-cli", "created_at": "2026-08-18T00:00:00", "content": "x"},
+	}
+	if !strings.Contains(FormatResults(unknown, false), "sid=?") {
+		t.Error("空 session_id 应渲染为 ?")
+	}
+}

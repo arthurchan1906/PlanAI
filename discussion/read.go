@@ -60,7 +60,7 @@ func FormatResults(rows []map[string]any, full bool) string {
 		}
 		line := fmt.Sprintf("%s %s [%s][%s][sid=%s]\n%s\n\n",
 			u.Str(r["id"]), u.Str(r["created_at"]), u.Str(r["role"]), u.Str(r["source"]),
-			shortSessionID(u.Str(r["session_id"])), content)
+			displaySessionID(u.Str(r["session_id"])), content)
 		if truncated {
 			// B7：被截断的消息标注展开线索——agent 可按 id 单条展开，无需 full=true 拉整 session。
 			line = strings.TrimSuffix(line, "\n\n") +
@@ -72,14 +72,13 @@ func FormatResults(rows []map[string]any, full bool) string {
 	return b.String()
 }
 
-// shortSessionID renders a compact session handle for text output; the full
-// id stays available in the structured results.
-func shortSessionID(sid string) string {
+// displaySessionID renders the session handle for text output. It must stay
+// the *full* id: feedback #26 showed that a truncated sid (13 chars) copied
+// from the preview into aipm_read_discussions(session_id=...) matches nothing,
+// which reads as "no discussion" instead of "wrong id".
+func displaySessionID(sid string) string {
 	if sid == "" || sid == "unknown" {
 		return "?"
-	}
-	if len(sid) > 13 {
-		return sid[:13]
 	}
 	return sid
 }
