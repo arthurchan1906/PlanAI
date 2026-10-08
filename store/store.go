@@ -230,6 +230,52 @@ func UpdateTask(projectPath string, id, status, note string, allowWithoutCommit,
 	return GetTaskSimple(id)
 }
 
+// UpdateTaskFields 更新 task 的可编辑字段（title/priority/phase/status）。
+// 反馈 #47：aipm_update_task 声明了 title/priority/phase，但 handler 只读
+// status/note，这些字段被静默丢弃却仍回 ✅。这里以显式白名单承接字段写入；
+// 未知 key 直接报错（而非静默跳过），避免再次出现「调用成功但没改」。
+func UpdateTaskFields(id string, payload map[string]any) (map[string]any, error) {
+	db, err := pmdb.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	keys := make([]string, 0, len(payload))
+	for k := range payload {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	setParts := []string{}
+	args := []any{}
+	for _, k := range keys {
+		if !taskEditableFields[k] {
+			return nil, fmt.Errorf("不支持的 task 字段: %s（可改 title/priority/phase/status）", k)
+		}
+		setParts = append(setParts, k+" = ?")
+		args = append(args, payload[k])
+	}
+	if len(setParts) == 0 {
+		return nil, fmt.Errorf("至少需要提供一个要更新的字段（title/priority/phase/status）")
+	}
+	setParts = append(setParts, "updated_at = ?")
+	args = append(args, u.Today())
+	args = append(args, id)
+	res, err := execBusy(db, fmt.Sprintf("UPDATE tasks SET %s WHERE id = ?", strings.Join(setParts, ", ")), args...)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, fmt.Errorf("task 不存在: %s", id)
+	}
+	return GetTaskSimple(id)
+}
+
+// taskEditableFields 是 UpdateTaskFields 的白名单——字段名直接进 SQL 列名，
+// 因此必须闭集校验。
+var taskEditableFields = map[string]bool{
+	"title": true, "priority": true, "phase": true, "status": true,
+}
+
 func AppendTaskNote(projectPath string, taskID, content string) (map[string]any, error) {
 	db, err := pmdb.OpenProject(projectPath)
 	if err != nil {

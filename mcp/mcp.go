@@ -1211,17 +1211,47 @@ func (s *mcpServer) handleUpdateTask(args map[string]interface{}) mcpToolResult 
 	}
 	stat := getStr(args, "status", "")
 	note := getStr(args, "note", "")
-	appendNote := note != ""
-	result, err := store.UpdateTask("", id, stat, note, true, appendNote)
-	if err != nil {
-		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("更新 task 失败: %v", err)}}, IsError: true}
+	// 反馈 #47：title/priority/phase 此前只在 InputSchema 里声明，handler 从不读取，
+	// 调用回 ✅ 但字段没落库。这里显式收集后交给 store.UpdateTaskFields 白名单写入。
+	fields := map[string]any{}
+	for _, k := range []string{"title", "priority", "phase"} {
+		if v := getStr(args, k, ""); v != "" {
+			fields[k] = v
+		}
 	}
-	reflection := fmt.Sprintf("Task %s 已更新。", id)
+	if stat == "" && note == "" && len(fields) == 0 {
+		return mcpToolResult{Content: []mcpContent{{Type: "text", Text: "至少需要提供一个要更新的字段：title / priority / phase / status / note"}}, IsError: true}
+	}
+	var result map[string]any
+	var err error
+	// status/note 仍走 UpdateTask：保留状态变更系统备注、task_notes 追加与 done-gate 旁路语义。
+	if stat != "" || note != "" {
+		result, err = store.UpdateTask("", id, stat, note, true, note != "")
+		if err != nil {
+			return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("更新 task 失败: %v", err)}}, IsError: true}
+		}
+	}
+	if len(fields) > 0 {
+		result, err = store.UpdateTaskFields(id, fields)
+		if err != nil {
+			return mcpToolResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf("更新 task 字段失败: %v", err)}}, IsError: true}
+		}
+	}
+	changed := make([]string, 0, 3)
+	for _, k := range []string{"title", "priority", "phase"} {
+		if _, ok := fields[k]; ok {
+			changed = append(changed, k)
+		}
+	}
+	if stat != "" {
+		changed = append(changed, "status")
+	}
+	reflection := fmt.Sprintf("Task %s 已更新字段: %s。", id, strings.Join(changed, ", "))
 	if stat != "" {
 		reflection += fmt.Sprintf(" 状态: %s", stat)
 	}
 	if note != "" {
-		reflection += fmt.Sprintf(" 备注已追加。")
+		reflection += " 备注已追加。"
 	}
 	return mcpToolResult{
 		Content:        []mcpContent{{Type: "text", Text: fmt.Sprintf("✅ Task 已更新: %s", id)}},
