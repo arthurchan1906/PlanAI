@@ -132,11 +132,11 @@ func handleAnthropicPassthrough(w http.ResponseWriter, r *http.Request) {
 	if inputT, outputT, cacheHit, cacheCreate := extractAnthropicStreamUsage(captureBuf.String()); inputT > 0 || outputT > 0 || cacheHit > 0 {
 		totalPrompt := inputT + cacheHit // Anthropic: input_tokens excludes cache reads
 		RecordTokenUsage(TokenUsageRecord{
-			Agent:               "claude",
-			Model:               effectiveModelName,
-			PromptTokens:        totalPrompt,
-			CompletionTokens:    outputT,
-			CacheHitTokens:      cacheHit,
+			Agent:              "claude",
+			Model:              effectiveModelName,
+			PromptTokens:       totalPrompt,
+			CompletionTokens:   outputT,
+			CacheHitTokens:     cacheHit,
 			CacheCreationTokens: cacheCreate,
 		})
 		SetCaptureTokens(capID, totalPrompt, outputT)
