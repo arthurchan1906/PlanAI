@@ -1078,6 +1078,9 @@ func writeSkillFile() {
 
 func runDoctor(dbPath string) map[string]any {
 	problems := []string{}
+	warnings := []string{}
+	hints := []string{}
+
 	if dbPath == "" {
 		problems = append(problems, "No .pmai directory found. Run aipmc init first.")
 	} else {
@@ -1088,7 +1091,42 @@ func runDoctor(dbPath string) map[string]any {
 			db.Close()
 		}
 	}
-	return map[string]any{"ok": len(problems) == 0, "problems": problems, "db_path": dbPath, "binary": os.Args[0]}
+
+	cwd, _ := os.Getwd()
+	projectPath := doctorProjectPath(dbPath, cwd)
+	if isDrvFSPath(projectPath) {
+		warnings = append(warnings, "项目位于 /mnt/ 下，SQLite 跨 DrvFs 不可靠，建议移到 WSL 原生文件系统（如 ~/projects/...）")
+	}
+	if exe, err := os.Executable(); err == nil {
+		if path, err := exec.LookPath("aipmc"); err == nil {
+			if w := binaryShadowWarning(exe, path); w != "" {
+				warnings = append(warnings, w)
+			}
+		}
+	}
+
+	checks, upstreamHints := upstreamDoctorChecks()
+	hints = append(hints, upstreamHints...)
+
+	report := map[string]any{
+		"ok":           len(problems) == 0,
+		"problems":     problems,
+		"db_path":      dbPath,
+		"binary":       os.Args[0],
+		"project_path": projectPath,
+		"proxy":        proxyDoctorStatus(),
+		"upstreams":    checks,
+	}
+	if w := wslDoctorInfo(); w != nil {
+		report["wsl"] = w
+	}
+	if len(warnings) > 0 {
+		report["warnings"] = warnings
+	}
+	if len(hints) > 0 {
+		report["hints"] = hints
+	}
+	return report
 }
 
 func runAgent(name string) {
