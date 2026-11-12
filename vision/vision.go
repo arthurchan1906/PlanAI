@@ -24,9 +24,12 @@ import (
 	pmdb "aipmc/db"
 	"aipmc/session"
 	"aipmc/store"
+	"aipmc/u"
 
 	"github.com/google/uuid"
 )
+
+var visionHTTPClient = u.NewModelHTTPClient(0)
 
 // ── Public types ────────────────────────────────────────────────────────────
 
@@ -410,7 +413,7 @@ func callVisionAPI(vr *visionRoute, prompt, b64Image string) (text string, httpS
 		req.Header.Set("Authorization", "Bearer "+vr.APIKey)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := visionHTTPClient.Do(req)
 	if err != nil {
 		return "", 0, err
 	}

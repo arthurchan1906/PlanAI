@@ -150,7 +150,7 @@ func forwardToUpstream(endpoint string, body any, apiKey string, virtualModel, a
 
 	req, _ := http.NewRequest("POST", url, strings.NewReader(string(bodyJSON)))
 	copyUpstreamHeaders(req.Header, origReq.Header, apiKey)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := upstreamHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +177,7 @@ func forwardToUpstreamStream(endpoint string, body any, apiKey string, virtualMo
 
 	req, _ := http.NewRequest("POST", url, strings.NewReader(string(bodyJSON)))
 	copyUpstreamHeaders(req.Header, origReq.Header, apiKey)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := upstreamHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

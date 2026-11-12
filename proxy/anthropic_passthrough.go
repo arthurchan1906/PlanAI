@@ -89,7 +89,7 @@ func handleAnthropicPassthrough(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 8. Send request to upstream
-	resp, err := http.DefaultClient.Do(proxyReq)
+	resp, err := upstreamHTTPClient.Do(proxyReq)
 	if err != nil {
 		finishCapture(capID, http.StatusBadGateway, time.Since(startTime), nil, err.Error(), "")
 		http.Error(w, err.Error(), http.StatusBadGateway)
@@ -132,11 +132,11 @@ func handleAnthropicPassthrough(w http.ResponseWriter, r *http.Request) {
 	if inputT, outputT, cacheHit, cacheCreate := extractAnthropicStreamUsage(captureBuf.String()); inputT > 0 || outputT > 0 || cacheHit > 0 {
 		totalPrompt := inputT + cacheHit // Anthropic: input_tokens excludes cache reads
 		RecordTokenUsage(TokenUsageRecord{
-			Agent:              "claude",
-			Model:              effectiveModelName,
-			PromptTokens:       totalPrompt,
-			CompletionTokens:   outputT,
-			CacheHitTokens:     cacheHit,
+			Agent:               "claude",
+			Model:               effectiveModelName,
+			PromptTokens:        totalPrompt,
+			CompletionTokens:    outputT,
+			CacheHitTokens:      cacheHit,
 			CacheCreationTokens: cacheCreate,
 		})
 		SetCaptureTokens(capID, totalPrompt, outputT)

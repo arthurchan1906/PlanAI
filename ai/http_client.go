@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"aipmc/u"
 )
 
 // Client implements Embedder, Summarizer, and Searcher via an
@@ -32,7 +34,7 @@ func NewClient(endpoint, embeddingEndpoint, model, chatModel, apiKey string) *Cl
 		model:             model,
 		chatModel:         chatModel,
 		apiKey:            apiKey,
-		http:              &http.Client{Timeout: 600 * time.Second},
+		http:              u.NewModelHTTPClient(600 * time.Second),
 	}
 }
 
@@ -50,7 +52,9 @@ func (c *Client) Embed(texts []string) ([][]float64, error) {
 		return nil, err
 	}
 	var result struct {
-		Data []struct{ Embedding []float64 `json:"embedding"` } `json:"data"`
+		Data []struct {
+			Embedding []float64 `json:"embedding"`
+		} `json:"data"`
 	}
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, fmt.Errorf("parse embeddings response: %w", err)
@@ -64,21 +68,31 @@ func (c *Client) Embed(texts []string) ([][]float64, error) {
 
 // Summarize calls the /chat/completions endpoint.
 func (c *Client) Summarize(text, instruction string) (string, error) {
-	if !c.Enabled() { return "", fmt.Errorf("AI not configured") }
+	if !c.Enabled() {
+		return "", fmt.Errorf("AI not configured")
+	}
 	messages := []map[string]string{
 		{"role": "system", "content": instruction},
 		{"role": "user", "content": text},
 	}
 	body := map[string]any{"model": c.chatModel, "messages": messages, "max_tokens": 3072}
 	resp, err := c.post(c.endpoint, "/chat/completions", body)
-	if err != nil { return "", err }
+	if err != nil {
+		return "", err
+	}
 	var result struct {
-		Choices []struct{ Message struct{ Content string `json:"content"` } `json:"message"` } `json:"choices"`
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
 	}
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return "", fmt.Errorf("parse chat response: %w", err)
 	}
-	if len(result.Choices) == 0 { return "", fmt.Errorf("no choices") }
+	if len(result.Choices) == 0 {
+		return "", fmt.Errorf("no choices")
+	}
 	return result.Choices[0].Message.Content, nil
 }
 
@@ -86,7 +100,9 @@ func (c *Client) Summarize(text, instruction string) (string, error) {
 // to enforce valid JSON output from the model. Only use when the instruction
 // asks for JSON output (e.g. L2 summaries), not for natural language responses.
 func (c *Client) SummarizeJSON(text, instruction string) (string, error) {
-	if !c.Enabled() { return "", fmt.Errorf("AI not configured") }
+	if !c.Enabled() {
+		return "", fmt.Errorf("AI not configured")
+	}
 	messages := []map[string]string{
 		{"role": "system", "content": instruction},
 		{"role": "user", "content": text},
@@ -98,25 +114,37 @@ func (c *Client) SummarizeJSON(text, instruction string) (string, error) {
 		"response_format": map[string]string{"type": "json_object"},
 	}
 	resp, err := c.post(c.endpoint, "/chat/completions", body)
-	if err != nil { return "", err }
+	if err != nil {
+		return "", err
+	}
 	var result struct {
-		Choices []struct{ Message struct{ Content string `json:"content"` } `json:"message"` } `json:"choices"`
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
 	}
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return "", fmt.Errorf("parse chat response: %w", err)
 	}
-	if len(result.Choices) == 0 { return "", fmt.Errorf("no choices") }
+	if len(result.Choices) == 0 {
+		return "", fmt.Errorf("no choices")
+	}
 	return result.Choices[0].Message.Content, nil
 }
 
 // RankSimilarity embeds query and candidates, then ranks by cosine similarity.
 func (c *Client) RankSimilarity(query string, candidates []string) ([]RankedResult, error) {
-	if !c.Enabled() { return nil, fmt.Errorf("AI not configured") }
+	if !c.Enabled() {
+		return nil, fmt.Errorf("AI not configured")
+	}
 	texts := make([]string, 1+len(candidates))
 	texts[0] = query
 	copy(texts[1:], candidates)
 	embs, err := c.Embed(texts)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	if len(embs) != len(texts) {
 		return nil, fmt.Errorf("embedding count mismatch: got %d, want %d", len(embs), len(texts))
 	}
@@ -155,14 +183,14 @@ type ToolCallFunction struct {
 
 // ToolDef describes a tool available to the model.
 type ToolDef struct {
-	Type     string           `json:"type"` // "function"
-	Function ToolDefFunction  `json:"function"`
+	Type     string          `json:"type"` // "function"
+	Function ToolDefFunction `json:"function"`
 }
 
 // ToolDefFunction is the function-level definition.
 type ToolDefFunction struct {
-	Name        string       `json:"name"`
-	Description string       `json:"description"`
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
 	Parameters  map[string]any `json:"parameters"`
 }
 
@@ -248,17 +276,27 @@ func (c *Client) Chat(messages []ChatMessage, tools []ToolDef) (*ChatResponse, e
 // post sends a JSON POST request to the given URL and returns the raw body.
 func (c *Client) post(baseURL, path string, body any) ([]byte, error) {
 	payload, err := json.Marshal(body)
-	if err != nil { return nil, fmt.Errorf("marshal request: %w", err) }
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
 	url := baseURL + path
 	req, err := http.NewRequest("POST", url, bytes.NewReader(payload))
-	if err != nil { return nil, fmt.Errorf("create request: %w", err) }
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
 	req.Header.Set("Content-Type", "application/json")
-	if c.apiKey != "" { req.Header.Set("Authorization", "Bearer "+c.apiKey) }
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
 	resp, err := c.http.Do(req)
-	if err != nil { return nil, fmt.Errorf("http post %s: %w", url, err) }
+	if err != nil {
+		return nil, fmt.Errorf("http post %s: %w", url, err)
+	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(resp.Body)
-	if err != nil { return nil, fmt.Errorf("read response: %w", err) }
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("HTTP %d from %s: %s", resp.StatusCode, url, string(data))
 	}

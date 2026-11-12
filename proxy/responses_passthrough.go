@@ -81,7 +81,7 @@ func handleResponsesPassthrough(w http.ResponseWriter, r *http.Request) {
 		proxyReq.Header.Del("Authorization")
 		proxyReq.Header.Set("Authorization", "Bearer "+apiKey)
 	}
-	resp, err := http.DefaultClient.Do(proxyReq)
+	resp, err := upstreamHTTPClient.Do(proxyReq)
 	if err != nil {
 		finishCapture(capID, http.StatusBadGateway, time.Since(startTime), nil, err.Error(), "")
 		http.Error(w, err.Error(), http.StatusBadGateway)
@@ -107,10 +107,10 @@ func handleResponsesPassthrough(w http.ResponseWriter, r *http.Request) {
 
 	if in, out, cacheHit, cacheCreate := extractResponsesStreamUsage(string(respBody)); in > 0 || out > 0 {
 		RecordTokenUsage(TokenUsageRecord{
-			Agent:            agent,
-			Model:            effectiveModelName,
-			PromptTokens:     in,
-			CompletionTokens: out,
+			Agent:               agent,
+			Model:               effectiveModelName,
+			PromptTokens:        in,
+			CompletionTokens:    out,
 			CacheHitTokens:      cacheHit,
 			CacheCreationTokens: cacheCreate,
 		})
@@ -147,7 +147,7 @@ func handleResponsesPassthroughStream(w http.ResponseWriter, r *http.Request, bo
 		proxyReq.Header.Del("Authorization")
 		proxyReq.Header.Set("Authorization", "Bearer "+apiKey)
 	}
-	resp, err := http.DefaultClient.Do(proxyReq)
+	resp, err := upstreamHTTPClient.Do(proxyReq)
 	if err != nil {
 		finishCapture(capID, http.StatusBadGateway, time.Since(startTime), nil, err.Error(), "")
 		http.Error(w, err.Error(), http.StatusBadGateway)
@@ -183,10 +183,10 @@ func handleResponsesPassthroughStream(w http.ResponseWriter, r *http.Request, bo
 	finishCapture(capID, resp.StatusCode, time.Since(startTime), nil, captureBuf.String(), "")
 	if in, out, cacheHit, cacheCreate := extractResponsesStreamUsage(captureBuf.String()); in > 0 || out > 0 {
 		RecordTokenUsage(TokenUsageRecord{
-			Agent:            agent,
-			Model:            model,
-			PromptTokens:     in,
-			CompletionTokens: out,
+			Agent:               agent,
+			Model:               model,
+			PromptTokens:        in,
+			CompletionTokens:    out,
 			CacheHitTokens:      cacheHit,
 			CacheCreationTokens: cacheCreate,
 		})

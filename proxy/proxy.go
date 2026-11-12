@@ -34,6 +34,11 @@ import (
 // POST /__proxy/reload or /__proxy/capture/clear without credentials.
 var proxyToken = newProxyToken()
 
+// upstreamHTTPClient is used for all model-upstream requests. Its transport
+// falls back from loopback to the WSL host gateway when the local port is
+// refused (see u.NewWSLFallbackTransport).
+var upstreamHTTPClient = u.NewModelHTTPClient(0)
+
 func newProxyToken() string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
@@ -700,7 +705,7 @@ func handlePassthrough(w http.ResponseWriter, r *http.Request) {
 		proxyReq.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
-	resp, err := http.DefaultClient.Do(proxyReq)
+	resp, err := upstreamHTTPClient.Do(proxyReq)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -739,7 +744,7 @@ func handleModelsList(w http.ResponseWriter, r *http.Request) {
 		proxyReq.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
-	resp, err := http.DefaultClient.Do(proxyReq)
+	resp, err := upstreamHTTPClient.Do(proxyReq)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
