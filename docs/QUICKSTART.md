@@ -8,6 +8,8 @@
 - 构建前端需要 Node.js + npm；只想用后端可以用 `./build.sh -f` 跳过
 - 机器上已装你要接的 Agent（Claude Code / Codex CLI）
 
+> **WSL 用户**：项目、proxy、serve、Agent 都放在 WSL 内，模型服务放宿主机；不要把 proxy 放到 Windows。完整步骤见 [WSL.md](WSL.md)。
+
 ## 1. 构建
 
 ```bash

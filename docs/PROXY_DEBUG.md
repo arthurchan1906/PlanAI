@@ -68,6 +68,8 @@ llama.cpp 的模型路径如 `/Users/dazsec/llms/Qwen3.5-9B-Q4_K_M.gguf` → 取
 llama-server -m model.gguf --port 8080 --host 127.0.0.1 --reasoning off
 ```
 
+> WSL/跨机访问：把 `--host 127.0.0.1` 改为 `--host 0.0.0.0`，并在 Windows 防火墙放行该端口。WSL 内的 aipmc 会自动回退到宿主网关，详见 [WSL.md](WSL.md)。
+
 日志确认：`init: chat template, thinking = 0`。
 
 ---
